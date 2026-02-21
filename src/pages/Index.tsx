@@ -1,14 +1,56 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import React from "react";
+import { BookOpen, Library as LibraryIcon } from "lucide-react";
+import { useApp } from "@/context/AppContext";
+import PdfViewer from "@/components/PdfViewer";
+import Library from "@/components/Library";
 
-const Index = () => {
+const Index: React.FC = () => {
+  const { activeTab, setActiveTab, getActiveBook } = useApp();
+  const activeBook = getActiveBook();
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
-      <div className="text-center">
-        <h1 className="mb-4 text-4xl font-bold">Welcome to Your Blank App</h1>
-        <p className="text-xl text-muted-foreground">Start building your amazing project here!</p>
+    <div className="flex flex-col h-screen bg-background">
+      {/* Tab bar */}
+      <div className="flex items-center border-b border-border bg-viewer-toolbar px-2">
+        <TabButton
+          active={activeTab === "library"}
+          onClick={() => setActiveTab("library")}
+          icon={<LibraryIcon className="w-4 h-4" />}
+          label="Library"
+        />
+        <TabButton
+          active={activeTab === "viewer"}
+          onClick={() => setActiveTab("viewer")}
+          icon={<BookOpen className="w-4 h-4" />}
+          label={activeBook ? activeBook.title : "Reader"}
+        />
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 overflow-hidden">
+        {activeTab === "library" ? <Library /> : <PdfViewer />}
       </div>
     </div>
   );
 };
+
+const TabButton: React.FC<{
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  label: string;
+}> = ({ active, onClick, icon, label }) => (
+  <button
+    onClick={onClick}
+    className={`flex items-center gap-2 px-4 py-3 text-sm font-body font-medium border-b-2 transition-colors max-w-[200px] truncate ${
+      active
+        ? "border-primary text-foreground"
+        : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
+    }`}
+  >
+    {icon}
+    <span className="truncate">{label}</span>
+  </button>
+);
 
 export default Index;
