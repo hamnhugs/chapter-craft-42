@@ -1,0 +1,4 @@
+project_id = "ktzaysdkdkocqhewwtnn"
+
+[functions.chapters-api]
+verify_jwt = false
