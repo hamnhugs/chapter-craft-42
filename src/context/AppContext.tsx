@@ -136,21 +136,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (!user) return "";
 
-    const { data, error } = await supabase.storage
-      .from("book-pdfs")
-      .download(`${user.id}/${bookId}.pdf`);
+    try {
+      const { data, error } = await supabase.storage
+        .from("book-pdfs")
+        .download(`${user.id}/${bookId}.pdf`);
 
-    if (error || !data) {
-      console.error("Failed to download PDF:", error);
+      if (error || !data) {
+        console.error("Failed to download PDF:", error);
+        return "";
+      }
+
+      const url = URL.createObjectURL(data);
+      // Cache in state
+      setBooks((prev) =>
+        prev.map((b) => (b.id === bookId ? { ...b, fileData: url } : b))
+      );
+      return url;
+    } catch (err) {
+      console.error("Error loading book file:", err);
       return "";
     }
-
-    const url = URL.createObjectURL(data);
-    // Cache in state
-    setBooks((prev) =>
-      prev.map((b) => (b.id === bookId ? { ...b, fileData: url } : b))
-    );
-    return url;
   }, [user, books]);
 
   return (
