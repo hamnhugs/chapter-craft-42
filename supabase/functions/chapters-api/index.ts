@@ -17,6 +17,29 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
+    // Validate API key
+    const apiKey = req.headers.get("x-api-key");
+    if (!apiKey) {
+      return new Response(JSON.stringify({ error: "Missing x-api-key header" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const { data: keyRow, error: keyError } = await supabase
+      .from("api_keys")
+      .select("id")
+      .eq("key_value", apiKey)
+      .is("revoked_at", null)
+      .maybeSingle();
+
+    if (keyError || !keyRow) {
+      return new Response(JSON.stringify({ error: "Invalid or revoked API key" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const url = new URL(req.url);
     const bookId = url.searchParams.get("book_id");
     const chapterId = url.searchParams.get("chapter_id");

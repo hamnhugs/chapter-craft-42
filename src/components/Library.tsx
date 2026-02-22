@@ -1,12 +1,14 @@
-import React, { useRef } from "react";
-import { Upload, BookOpen, Trash2, BookMarked } from "lucide-react";
+import React, { useRef, useState } from "react";
+import { Upload, BookOpen, Trash2, BookMarked, Key } from "lucide-react";
 import { useApp } from "@/context/AppContext";
+import ApiKeyManager from "@/components/ApiKeyManager";
 import { BookDocument } from "@/types/library";
 import { pdfjs } from "react-pdf";
 
 const Library: React.FC = () => {
   const { books, addBook, removeBook, setActiveBook } = useApp();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showApiKeys, setShowApiKeys] = useState(false);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -59,13 +61,23 @@ const Library: React.FC = () => {
               {books.length} {books.length === 1 ? "document" : "documents"}
             </p>
           </div>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity shadow-sm"
-          >
-            <Upload className="w-4 h-4" />
-            Upload PDF
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowApiKeys((v) => !v)}
+              className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-border text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+              title="Manage API Keys"
+            >
+              <Key className="w-4 h-4" />
+              API Keys
+            </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity shadow-sm"
+            >
+              <Upload className="w-4 h-4" />
+              Upload PDF
+            </button>
+          </div>
           <input
             ref={fileInputRef}
             type="file"
@@ -76,6 +88,13 @@ const Library: React.FC = () => {
           />
         </div>
       </div>
+
+      {/* API Key Manager Panel */}
+      {showApiKeys && (
+        <div className="px-6 py-4 border-b border-border bg-card">
+          <ApiKeyManager />
+        </div>
+      )}
 
       {/* Book grid */}
       <div className="flex-1 overflow-auto p-6 scrollbar-thin">
