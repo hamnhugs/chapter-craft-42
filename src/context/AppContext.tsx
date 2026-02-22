@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
 import { BookDocument, Chapter } from "@/types/library";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 
 interface AppState {
   books: BookDocument[];
@@ -12,6 +13,7 @@ interface AppState {
   setActiveTab: (tab: "library" | "viewer") => void;
   addChapter: (bookId: string, chapter: Chapter) => void;
   getActiveBook: () => BookDocument | undefined;
+  signOut: () => void;
 }
 
 const AppContext = createContext<AppState | null>(null);
@@ -20,22 +22,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [books, setBooks] = useState<BookDocument[]>([]);
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"library" | "viewer">("library");
+  const { user, signOut } = useAuth();
 
-  // Load books metadata from DB on mount
   useEffect(() => {
+    if (!user) return;
     const loadBooks = async () => {
       const { data } = await supabase
         .from("books")
         .select("id, title, file_name, page_count, created_at, chapters(id, name, start_page, end_page, text_content)")
+        .eq("user_id", user.id)
         .order("created_at", { ascending: false });
 
       if (data) {
-        // We store DB books but without fileData (they need to re-upload to read)
         const dbBooks: BookDocument[] = data.map((b: any) => ({
           id: b.id,
           title: b.title,
           fileName: b.file_name,
-          fileData: "", // Will be populated when user uploads again
+          fileData: "",
           pageCount: b.page_count,
           chapters: (b.chapters || []).map((c: any) => ({
             id: c.id,
@@ -50,23 +53,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     };
     loadBooks();
-  }, []);
+  }, [user]);
 
   const addBook = useCallback(async (book: BookDocument) => {
-    // Insert into DB
+    if (!user) return;
     const { data, error } = await supabase
       .from("books")
-      .insert({ id: book.id, title: book.title, file_name: book.fileName, page_count: book.pageCount })
+      .insert({ id: book.id, title: book.title, file_name: book.fileName, page_count: book.pageCount, user_id: user.id })
       .select()
       .single();
 
     if (!error && data) {
       setBooks((prev) => [...prev, { ...book, id: data.id }]);
     } else {
-      // Still add locally even if DB fails
       setBooks((prev) => [...prev, book]);
     }
-  }, []);
+  }, [user]);
 
   const removeBook = useCallback(async (id: string) => {
     await supabase.from("books").delete().eq("id", id);
@@ -80,7 +82,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const addChapter = useCallback(async (bookId: string, chapter: Chapter) => {
-    // Insert into DB
+    if (!user) return;
     const { data } = await supabase
       .from("chapters")
       .insert({
@@ -90,20 +92,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         start_page: chapter.startPage,
         end_page: chapter.endPage,
         text_content: chapter.textContent,
+        user_id: user.id,
       })
       .select()
       .single();
 
-    const finalChapter = data
-      ? { ...chapter, id: data.id }
-      : chapter;
-
+    const finalChapter = data ? { ...chapter, id: data.id } : chapter;
     setBooks((prev) =>
       prev.map((b) =>
         b.id === bookId ? { ...b, chapters: [...b.chapters, finalChapter] } : b
       )
     );
-  }, []);
+  }, [user]);
 
   const getActiveBook = useCallback(() => {
     return books.find((b) => b.id === activeBookId);
@@ -121,6 +121,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setActiveTab,
         addChapter,
         getActiveBook,
+        signOut,
       }}
     >
       {children}

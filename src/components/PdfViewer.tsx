@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Chapter } from "@/types/library";
+import ChapterNameDialog from "@/components/ChapterNameDialog";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
@@ -26,8 +27,10 @@ const PdfViewer: React.FC = () => {
   const [scale, setScale] = useState(1.2);
   const [chapterStart, setChapterStart] = useState<number | null>(null);
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
+  const [namingDialog, setNamingDialog] = useState<{ open: boolean; endPage: number; defaultName: string }>({
+    open: false, endPage: 0, defaultName: "",
+  });
   const containerRef = useRef<HTMLDivElement>(null);
-  const pdfDocRef = useRef<any>(null);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -35,10 +38,8 @@ const PdfViewer: React.FC = () => {
     setSelectedChapterId(null);
   }, [activeBookId]);
 
-  const onDocumentLoadSuccess = useCallback(({ numPages, ...rest }: any) => {
+  const onDocumentLoadSuccess = useCallback(({ numPages }: any) => {
     setNumPages(numPages);
-    // Store a reference to extract text later
-    pdfDocRef.current = rest;
   }, []);
 
   const goToPage = (page: number) => {
@@ -53,15 +54,24 @@ const PdfViewer: React.FC = () => {
     setChapterStart(currentPage);
   };
 
-  const markChapterEnd = async () => {
+  const markChapterEnd = () => {
     if (chapterStart === null || !book) return;
     const endPage = currentPage;
     if (endPage < chapterStart) return;
 
-    // Extract text from the chapter pages
+    const defaultName = `Chapter ${book.chapters.length + 1} (pp. ${chapterStart}–${endPage})`;
+    setNamingDialog({ open: true, endPage, defaultName });
+  };
+
+  const handleChapterConfirm = async (name: string) => {
+    if (chapterStart === null || !book) return;
+    const endPage = namingDialog.endPage;
+
+    setNamingDialog({ open: false, endPage: 0, defaultName: "" });
+
+    // Extract text
     let textContent = "";
     try {
-      // We need to load the pdf document to extract text
       const loadingTask = pdfjs.getDocument(book.fileData);
       const pdf = await loadingTask.promise;
       for (let i = chapterStart; i <= endPage; i++) {
@@ -76,7 +86,7 @@ const PdfViewer: React.FC = () => {
 
     const chapter: Chapter = {
       id: crypto.randomUUID(),
-      name: `Chapter ${book.chapters.length + 1} (pp. ${chapterStart}–${endPage})`,
+      name,
       startPage: chapterStart,
       endPage,
       textContent,
@@ -111,21 +121,11 @@ const PdfViewer: React.FC = () => {
       <div className="flex items-center gap-2 px-4 py-3 bg-viewer-toolbar border-b border-border flex-wrap">
         {/* Navigation */}
         <div className="flex items-center gap-1">
-          <button
-            onClick={() => goToPage(currentPage - 1)}
-            disabled={currentPage <= 1}
-            className="p-1.5 rounded-md hover:bg-secondary disabled:opacity-30 transition-colors"
-          >
+          <button onClick={() => goToPage(currentPage - 1)} disabled={currentPage <= 1} className="p-1.5 rounded-md hover:bg-secondary disabled:opacity-30 transition-colors">
             <ChevronLeft className="w-4 h-4" />
           </button>
-          <span className="text-sm font-body min-w-[80px] text-center tabular-nums">
-            {currentPage} / {numPages}
-          </span>
-          <button
-            onClick={() => goToPage(currentPage + 1)}
-            disabled={currentPage >= numPages}
-            className="p-1.5 rounded-md hover:bg-secondary disabled:opacity-30 transition-colors"
-          >
+          <span className="text-sm font-body min-w-[80px] text-center tabular-nums">{currentPage} / {numPages}</span>
+          <button onClick={() => goToPage(currentPage + 1)} disabled={currentPage >= numPages} className="p-1.5 rounded-md hover:bg-secondary disabled:opacity-30 transition-colors">
             <ChevronRight className="w-4 h-4" />
           </button>
         </div>
@@ -134,19 +134,11 @@ const PdfViewer: React.FC = () => {
 
         {/* Zoom */}
         <div className="flex items-center gap-1">
-          <button
-            onClick={() => zoom(-0.2)}
-            className="p-1.5 rounded-md hover:bg-secondary transition-colors"
-          >
+          <button onClick={() => zoom(-0.2)} className="p-1.5 rounded-md hover:bg-secondary transition-colors">
             <ZoomOut className="w-4 h-4" />
           </button>
-          <span className="text-xs font-body min-w-[40px] text-center tabular-nums text-muted-foreground">
-            {Math.round(scale * 100)}%
-          </span>
-          <button
-            onClick={() => zoom(0.2)}
-            className="p-1.5 rounded-md hover:bg-secondary transition-colors"
-          >
+          <span className="text-xs font-body min-w-[40px] text-center tabular-nums text-muted-foreground">{Math.round(scale * 100)}%</span>
+          <button onClick={() => zoom(0.2)} className="p-1.5 rounded-md hover:bg-secondary transition-colors">
             <ZoomIn className="w-4 h-4" />
           </button>
         </div>
@@ -156,33 +148,18 @@ const PdfViewer: React.FC = () => {
         {/* Chapter isolation */}
         <div className="flex items-center gap-1">
           {chapterStart === null ? (
-            <button
-              onClick={markChapterStart}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-body hover:bg-secondary transition-colors"
-              title="Mark chapter start"
-            >
+            <button onClick={markChapterStart} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-body hover:bg-secondary transition-colors" title="Mark chapter start">
               <Flag className="w-3.5 h-3.5 text-accent" />
               <span>Start</span>
             </button>
           ) : (
             <>
-              <span className="text-xs text-accent font-medium px-2">
-                Started p.{chapterStart}
-              </span>
-              <button
-                onClick={markChapterEnd}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-body bg-accent text-accent-foreground hover:opacity-90 transition-colors"
-                title="Mark chapter end"
-              >
+              <span className="text-xs text-accent font-medium px-2">Started p.{chapterStart}</span>
+              <button onClick={markChapterEnd} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-body bg-accent text-accent-foreground hover:opacity-90 transition-colors" title="Mark chapter end">
                 <FlagOff className="w-3.5 h-3.5" />
                 <span>End</span>
               </button>
-              <button
-                onClick={() => setChapterStart(null)}
-                className="text-xs text-muted-foreground hover:text-foreground px-1"
-              >
-                Cancel
-              </button>
+              <button onClick={() => setChapterStart(null)} className="text-xs text-muted-foreground hover:text-foreground px-1">Cancel</button>
             </>
           )}
         </div>
@@ -192,52 +169,36 @@ const PdfViewer: React.FC = () => {
         {/* Chapter dropdown */}
         <div className="flex items-center gap-1.5">
           <Bookmark className="w-3.5 h-3.5 text-muted-foreground" />
-          <select
-            value={selectedChapterId || ""}
-            onChange={(e) => handleChapterSelect(e.target.value)}
-            className="text-xs font-body bg-transparent border border-border rounded-md px-2 py-1.5 min-w-[160px] focus:outline-none focus:ring-1 focus:ring-ring"
-          >
-            <option value="">
-              {book.chapters.length === 0
-                ? "No chapters yet"
-                : "Jump to chapter…"}
-            </option>
+          <select value={selectedChapterId || ""} onChange={(e) => handleChapterSelect(e.target.value)} className="text-xs font-body bg-transparent border border-border rounded-md px-2 py-1.5 min-w-[160px] focus:outline-none focus:ring-1 focus:ring-ring">
+            <option value="">{book.chapters.length === 0 ? "No chapters yet" : "Jump to chapter…"}</option>
             {book.chapters.map((ch) => (
-              <option key={ch.id} value={ch.id}>
-                {ch.name}
-              </option>
+              <option key={ch.id} value={ch.id}>{ch.name}</option>
             ))}
           </select>
         </div>
       </div>
 
       {/* PDF content */}
-      <div
-        ref={containerRef}
-        className="flex-1 overflow-auto bg-viewer-bg flex justify-center py-6 scrollbar-thin"
-      >
+      <div ref={containerRef} className="flex-1 overflow-auto bg-viewer-bg flex justify-center py-6 scrollbar-thin">
         <Document
           file={book.fileData}
           onLoadSuccess={onDocumentLoadSuccess}
-          loading={
-            <div className="flex items-center justify-center py-20">
-              <div className="animate-pulse text-muted-foreground text-sm">Loading document…</div>
-            </div>
-          }
-          error={
-            <div className="text-destructive text-sm text-center py-20">
-              Failed to load the document.
-            </div>
-          }
+          loading={<div className="flex items-center justify-center py-20"><div className="animate-pulse text-muted-foreground text-sm">Loading document…</div></div>}
+          error={<div className="text-destructive text-sm text-center py-20">Failed to load the document.</div>}
         >
-          <Page
-            pageNumber={currentPage}
-            scale={scale}
-            renderTextLayer={true}
-            renderAnnotationLayer={true}
-          />
+          <Page pageNumber={currentPage} scale={scale} renderTextLayer={true} renderAnnotationLayer={true} />
         </Document>
       </div>
+
+      {/* Chapter naming dialog */}
+      <ChapterNameDialog
+        open={namingDialog.open}
+        defaultName={namingDialog.defaultName}
+        onConfirm={handleChapterConfirm}
+        onCancel={() => {
+          setNamingDialog({ open: false, endPage: 0, defaultName: "" });
+        }}
+      />
     </div>
   );
 };
