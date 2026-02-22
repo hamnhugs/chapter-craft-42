@@ -29,7 +29,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const loadBooks = async () => {
       const { data } = await supabase
         .from("books")
-        .select("id, title, file_name, page_count, created_at, chapters(id, name, start_page, end_page, text_content)")
+        .select("id, title, file_name, page_count, cover_image_url, created_at, chapters(id, name, start_page, end_page, text_content)")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false });
 
@@ -40,6 +40,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           fileName: b.file_name,
           fileData: "",
           pageCount: b.page_count,
+          coverImageUrl: b.cover_image_url || undefined,
           chapters: (b.chapters || []).map((c: any) => ({
             id: c.id,
             name: c.name,
