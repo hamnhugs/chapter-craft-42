@@ -19,7 +19,7 @@ import ChapterNameDialog from "@/components/ChapterNameDialog";
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 const PdfViewer: React.FC = () => {
-  const { getActiveBook, addChapter, activeBookId } = useApp();
+  const { getActiveBook, addChapter, activeBookId, loadBookFile } = useApp();
   const book = getActiveBook();
 
   const [numPages, setNumPages] = useState<number>(0);
@@ -30,13 +30,30 @@ const PdfViewer: React.FC = () => {
   const [namingDialog, setNamingDialog] = useState<{ open: boolean; endPage: number; defaultName: string }>({
     open: false, endPage: 0, defaultName: "",
   });
+  const [fileUrl, setFileUrl] = useState<string>("");
+  const [loading, setLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setCurrentPage(1);
     setChapterStart(null);
     setSelectedChapterId(null);
+    setFileUrl("");
   }, [activeBookId]);
+
+  // Load PDF file from storage when book is selected
+  useEffect(() => {
+    if (!activeBookId) return;
+    if (book?.fileData) {
+      setFileUrl(book.fileData);
+      return;
+    }
+    setLoading(true);
+    loadBookFile(activeBookId).then((url) => {
+      setFileUrl(url);
+      setLoading(false);
+    });
+  }, [activeBookId, book?.fileData, loadBookFile]);
 
   const onDocumentLoadSuccess = useCallback(({ numPages }: any) => {
     setNumPages(numPages);
@@ -72,7 +89,7 @@ const PdfViewer: React.FC = () => {
     // Extract text
     let textContent = "";
     try {
-      const loadingTask = pdfjs.getDocument(book.fileData);
+      const loadingTask = pdfjs.getDocument(fileUrl);
       const pdf = await loadingTask.promise;
       for (let i = chapterStart; i <= endPage; i++) {
         const page = await pdf.getPage(i);
@@ -111,6 +128,15 @@ const PdfViewer: React.FC = () => {
         <BookOpen className="w-16 h-16 mb-4 opacity-30" />
         <p className="text-lg font-display">No document selected</p>
         <p className="text-sm mt-1">Choose a book from your library to start reading</p>
+      </div>
+    );
+  }
+
+  if (loading || !fileUrl) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-muted-foreground animate-fade-in">
+        <BookOpen className="w-16 h-16 mb-4 opacity-30 animate-pulse" />
+        <p className="text-lg font-display">Loading document…</p>
       </div>
     );
   }
@@ -181,7 +207,7 @@ const PdfViewer: React.FC = () => {
       {/* PDF content */}
       <div ref={containerRef} className="flex-1 overflow-auto bg-viewer-bg flex justify-center py-6 scrollbar-thin">
         <Document
-          file={book.fileData}
+          file={fileUrl}
           onLoadSuccess={onDocumentLoadSuccess}
           loading={<div className="flex items-center justify-center py-20"><div className="animate-pulse text-muted-foreground text-sm">Loading document…</div></div>}
           error={<div className="text-destructive text-sm text-center py-20">Failed to load the document.</div>}

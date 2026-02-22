@@ -13,6 +13,7 @@ interface AppState {
   setActiveTab: (tab: "library" | "viewer") => void;
   addChapter: (bookId: string, chapter: Chapter) => void;
   getActiveBook: () => BookDocument | undefined;
+  loadBookFile: (bookId: string) => Promise<string>;
   signOut: () => void;
 }
 
@@ -64,6 +65,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .select()
       .single();
 
+    const bookId = data?.id || book.id;
+
+    // Upload PDF to storage
+    if (book.fileData) {
+      try {
+        const res = await fetch(book.fileData);
+        const blob = await res.blob();
+        await supabase.storage
+          .from("book-pdfs")
+          .upload(`${user.id}/${bookId}.pdf`, blob, { contentType: "application/pdf", upsert: true });
+      } catch (err) {
+        console.error("Failed to upload PDF to storage:", err);
+      }
+    }
+
     if (!error && data) {
       setBooks((prev) => [...prev, { ...book, id: data.id }]);
     } else {
@@ -72,10 +88,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [user]);
 
   const removeBook = useCallback(async (id: string) => {
+    if (user) {
+      await supabase.storage.from("book-pdfs").remove([`${user.id}/${id}.pdf`]);
+    }
     await supabase.from("books").delete().eq("id", id);
     setBooks((prev) => prev.filter((b) => b.id !== id));
     setActiveBookId((prev) => (prev === id ? null : prev));
-  }, []);
+  }, [user]);
 
   const setActiveBook = useCallback((id: string) => {
     setActiveBookId(id);
@@ -110,6 +129,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return books.find((b) => b.id === activeBookId);
   }, [books, activeBookId]);
 
+  const loadBookFile = useCallback(async (bookId: string): Promise<string> => {
+    // Check if already loaded in state
+    const existing = books.find((b) => b.id === bookId);
+    if (existing?.fileData) return existing.fileData;
+
+    if (!user) return "";
+
+    const { data, error } = await supabase.storage
+      .from("book-pdfs")
+      .download(`${user.id}/${bookId}.pdf`);
+
+    if (error || !data) {
+      console.error("Failed to download PDF:", error);
+      return "";
+    }
+
+    const url = URL.createObjectURL(data);
+    // Cache in state
+    setBooks((prev) =>
+      prev.map((b) => (b.id === bookId ? { ...b, fileData: url } : b))
+    );
+    return url;
+  }, [user, books]);
+
   return (
     <AppContext.Provider
       value={{
@@ -122,6 +165,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setActiveTab,
         addChapter,
         getActiveBook,
+        loadBookFile,
         signOut,
       }}
     >
