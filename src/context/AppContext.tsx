@@ -14,6 +14,7 @@ interface AppState {
   addChapter: (bookId: string, chapter: Chapter) => void;
   getActiveBook: () => BookDocument | undefined;
   loadBookFile: (bookId: string) => Promise<string>;
+  reuploadBookFile: (bookId: string, file: File) => Promise<string>;
   signOut: () => void;
 }
 
@@ -158,6 +159,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [user, books]);
 
+  const reuploadBookFile = useCallback(async (bookId: string, file: File): Promise<string> => {
+    if (!user) return "";
+    try {
+      await supabase.storage
+        .from("book-pdfs")
+        .upload(`${user.id}/${bookId}.pdf`, file, { contentType: "application/pdf", upsert: true });
+
+      const { data, error } = await supabase.storage
+        .from("book-pdfs")
+        .download(`${user.id}/${bookId}.pdf`);
+
+      if (error || !data) return "";
+
+      const url = URL.createObjectURL(data);
+      setBooks((prev) =>
+        prev.map((b) => (b.id === bookId ? { ...b, fileData: url } : b))
+      );
+      return url;
+    } catch (err) {
+      console.error("Failed to re-upload PDF:", err);
+      return "";
+    }
+  }, [user]);
+
   return (
     <AppContext.Provider
       value={{
@@ -171,6 +196,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addChapter,
         getActiveBook,
         loadBookFile,
+        reuploadBookFile,
         signOut,
       }}
     >
