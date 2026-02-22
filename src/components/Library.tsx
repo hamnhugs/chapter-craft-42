@@ -139,17 +139,29 @@ const BookCard: React.FC<{
     >
       {/* Book cover area */}
       <div
-        className="h-40 flex items-center justify-center relative"
+        className="h-40 flex items-center justify-center relative overflow-hidden"
         style={{
-          background: `linear-gradient(135deg, hsl(${hue}, 35%, 82%), hsl(${hue}, 25%, 72%))`,
+          background: book.coverImageUrl
+            ? undefined
+            : `linear-gradient(135deg, hsl(${hue}, 35%, 82%), hsl(${hue}, 25%, 72%))`,
         }}
       >
-        {/* Spine accent */}
-        <div
-          className="absolute left-0 top-0 bottom-0 w-2"
-          style={{ backgroundColor: `hsl(${hue}, 40%, 40%)` }}
-        />
-        <BookOpen className="w-10 h-10 text-white/60" />
+        {book.coverImageUrl ? (
+          <img
+            src={book.coverImageUrl}
+            alt={book.title}
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+        ) : (
+          <>
+            {/* Spine accent */}
+            <div
+              className="absolute left-0 top-0 bottom-0 w-2"
+              style={{ backgroundColor: `hsl(${hue}, 40%, 40%)` }}
+            />
+            <BookOpen className="w-10 h-10 text-white/60" />
+          </>
+        )}
 
         {/* Remove button */}
         <button

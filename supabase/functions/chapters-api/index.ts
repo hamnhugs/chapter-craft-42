@@ -44,10 +44,41 @@ Deno.serve(async (req) => {
     const bookId = url.searchParams.get("book_id");
     const chapterId = url.searchParams.get("chapter_id");
 
-    // GET /chapters-api — list all books
-    // GET /chapters-api?book_id=xxx — list chapters for a book
-    // GET /chapters-api?chapter_id=xxx — get a single chapter with text
+    // PATCH /chapters-api?book_id=xxx — update book title and/or cover image
+    if (req.method === "PATCH") {
+      if (!bookId) {
+        return new Response(JSON.stringify({ error: "book_id query param required for PATCH" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
 
+      const body = await req.json();
+      const updates: Record<string, unknown> = {};
+      if (body.title !== undefined) updates.title = body.title;
+      if (body.cover_image_url !== undefined) updates.cover_image_url = body.cover_image_url;
+
+      if (Object.keys(updates).length === 0) {
+        return new Response(JSON.stringify({ error: "Provide at least one field to update: title, cover_image_url" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const { data, error } = await supabase
+        .from("books")
+        .update(updates)
+        .eq("id", bookId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return new Response(JSON.stringify(data), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // GET endpoints
     if (chapterId) {
       const { data, error } = await supabase
         .from("chapters")
@@ -77,7 +108,7 @@ Deno.serve(async (req) => {
     // List all books with chapter count
     const { data: books, error } = await supabase
       .from("books")
-      .select("id, title, file_name, page_count, created_at, chapters(id)")
+      .select("id, title, file_name, page_count, cover_image_url, created_at, chapters(id)")
       .order("created_at", { ascending: false });
 
     if (error) throw error;

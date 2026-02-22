@@ -43,6 +43,7 @@ export type Database = {
       }
       books: {
         Row: {
+          cover_image_url: string | null
           created_at: string
           file_name: string
           id: string
@@ -51,6 +52,7 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
+          cover_image_url?: string | null
           created_at?: string
           file_name: string
           id?: string
@@ -59,6 +61,7 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
+          cover_image_url?: string | null
           created_at?: string
           file_name?: string
           id?: string
