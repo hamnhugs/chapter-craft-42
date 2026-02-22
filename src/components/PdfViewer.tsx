@@ -11,7 +11,6 @@ import {
   Flag,
   FlagOff,
   Bookmark,
-  Upload,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Chapter } from "@/types/library";
@@ -20,7 +19,7 @@ import ChapterNameDialog from "@/components/ChapterNameDialog";
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 const PdfViewer: React.FC = () => {
-  const { getActiveBook, addChapter, activeBookId, loadBookFile, reuploadBookFile } = useApp();
+  const { getActiveBook, addChapter, activeBookId, loadBookFile } = useApp();
   const book = getActiveBook();
 
   const [numPages, setNumPages] = useState<number>(0);
@@ -33,9 +32,7 @@ const PdfViewer: React.FC = () => {
   });
   const [fileUrl, setFileUrl] = useState<string>("");
   const [loading, setLoading] = useState(false);
-  const [reuploading, setReuploading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const reuploadInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -148,37 +145,12 @@ const PdfViewer: React.FC = () => {
     );
   }
 
-  const handleReupload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !activeBookId) return;
-    setReuploading(true);
-    const url = await reuploadBookFile(activeBookId, file);
-    if (url) setFileUrl(url);
-    setReuploading(false);
-    if (reuploadInputRef.current) reuploadInputRef.current.value = "";
-  };
-
   if (!fileUrl) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground animate-fade-in">
         <BookOpen className="w-16 h-16 mb-4 opacity-30" />
         <p className="text-lg font-display">PDF file not found</p>
-        <p className="text-sm mt-1 mb-4">This book was added before cloud storage was enabled.</p>
-        <button
-          onClick={() => reuploadInputRef.current?.click()}
-          disabled={reuploading}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity shadow-sm disabled:opacity-50"
-        >
-          <Upload className="w-4 h-4" />
-          {reuploading ? "Uploading…" : "Re-upload PDF"}
-        </button>
-        <input
-          ref={reuploadInputRef}
-          type="file"
-          accept=".pdf"
-          onChange={handleReupload}
-          className="hidden"
-        />
+        <p className="text-sm mt-1">This book was added before cloud storage was enabled. Please re-upload it.</p>
       </div>
     );
   }
