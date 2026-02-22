@@ -46,11 +46,15 @@ const PdfViewer: React.FC = () => {
     if (!activeBookId) return;
     if (book?.fileData) {
       setFileUrl(book.fileData);
+      setLoading(false);
       return;
     }
     setLoading(true);
     loadBookFile(activeBookId).then((url) => {
       setFileUrl(url);
+      setLoading(false);
+    }).catch(() => {
+      setFileUrl("");
       setLoading(false);
     });
   }, [activeBookId, book?.fileData, loadBookFile]);
@@ -132,11 +136,21 @@ const PdfViewer: React.FC = () => {
     );
   }
 
-  if (loading || !fileUrl) {
+  if (loading) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground animate-fade-in">
         <BookOpen className="w-16 h-16 mb-4 opacity-30 animate-pulse" />
         <p className="text-lg font-display">Loading document…</p>
+      </div>
+    );
+  }
+
+  if (!fileUrl) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-muted-foreground animate-fade-in">
+        <BookOpen className="w-16 h-16 mb-4 opacity-30" />
+        <p className="text-lg font-display">PDF file not found</p>
+        <p className="text-sm mt-1">This book was added before cloud storage was enabled. Please re-upload it.</p>
       </div>
     );
   }
