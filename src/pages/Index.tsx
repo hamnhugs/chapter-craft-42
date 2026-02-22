@@ -1,11 +1,11 @@
 import React from "react";
-import { BookOpen, Library as LibraryIcon } from "lucide-react";
+import { BookOpen, Library as LibraryIcon, LogOut } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import PdfViewer from "@/components/PdfViewer";
 import Library from "@/components/Library";
 
 const Index: React.FC = () => {
-  const { activeTab, setActiveTab, getActiveBook } = useApp();
+  const { activeTab, setActiveTab, getActiveBook, signOut } = useApp();
   const activeBook = getActiveBook();
 
   return (
@@ -24,6 +24,12 @@ const Index: React.FC = () => {
           icon={<BookOpen className="w-4 h-4" />}
           label={activeBook ? activeBook.title : "Reader"}
         />
+        <div className="ml-auto">
+          <button onClick={signOut} className="flex items-center gap-1.5 px-3 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors" title="Sign out">
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Sign out</span>
+          </button>
+        </div>
       </div>
 
       {/* Content */}

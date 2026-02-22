@@ -21,6 +21,7 @@ export type Database = {
           id: string
           page_count: number
           title: string
+          user_id: string | null
         }
         Insert: {
           created_at?: string
@@ -28,6 +29,7 @@ export type Database = {
           id?: string
           page_count?: number
           title: string
+          user_id?: string | null
         }
         Update: {
           created_at?: string
@@ -35,6 +37,7 @@ export type Database = {
           id?: string
           page_count?: number
           title?: string
+          user_id?: string | null
         }
         Relationships: []
       }
@@ -47,6 +50,7 @@ export type Database = {
           name: string
           start_page: number
           text_content: string
+          user_id: string | null
         }
         Insert: {
           book_id: string
@@ -56,6 +60,7 @@ export type Database = {
           name: string
           start_page: number
           text_content?: string
+          user_id?: string | null
         }
         Update: {
           book_id?: string
@@ -65,6 +70,7 @@ export type Database = {
           name?: string
           start_page?: number
           text_content?: string
+          user_id?: string | null
         }
         Relationships: [
           {
