@@ -62,6 +62,20 @@ const Library: React.FC = () => {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            {books.length > 0 && (
+              <button
+                onClick={() => {
+                  if (window.confirm(`Delete all ${books.length} books? This cannot be undone.`)) {
+                    books.forEach((book) => removeBook(book.id));
+                  }
+                }}
+                className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-destructive/50 text-sm font-medium text-destructive hover:bg-destructive hover:text-destructive-foreground transition-colors"
+                title="Delete All Books"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete All
+              </button>
+            )}
             <button
               onClick={() => setShowApiKeys((v) => !v)}
               className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-border text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
