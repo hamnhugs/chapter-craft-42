@@ -18,16 +18,25 @@ const Library: React.FC = () => {
     });
   }, [books, sortBy]);
 
+  const readFileAsDataUrl = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
 
-    for (const file of Array.from(files)) {
-      if (file.type !== "application/pdf") continue;
+    const pdfFiles = Array.from(files).filter(
+      (file) => file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"),
+    );
 
-      const reader = new FileReader();
-      reader.onload = async (ev) => {
-        const dataUrl = ev.target?.result as string;
+    for (const file of pdfFiles) {
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
 
         // Get page count
         let pageCount = 0;
@@ -49,9 +58,10 @@ const Library: React.FC = () => {
           addedAt: Date.now(),
         };
 
-        addBook(newBook);
-      };
-      reader.readAsDataURL(file);
+        await addBook(newBook, file);
+      } catch (err) {
+        console.error("Failed to process PDF upload:", err);
+      }
     }
 
     // Reset input
