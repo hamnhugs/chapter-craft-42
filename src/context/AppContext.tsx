@@ -108,7 +108,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         console.error("Failed to upload PDF to storage:", err);
       }
     }
-  }, [user, books]);
+  }, [user, books]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const removeBook = useCallback(async (id: string) => {
     if (user) {
