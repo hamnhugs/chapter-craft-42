@@ -59,33 +59,56 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const addBook = useCallback(async (book: BookDocument) => {
     if (!user) return;
-    const { data, error } = await supabase
-      .from("books")
-      .insert({ id: book.id, title: book.title, file_name: book.fileName, page_count: book.pageCount, user_id: user.id })
-      .select()
-      .single();
 
-    const bookId = data?.id || book.id;
+    const normalizedFileName = book.fileName.trim().toLowerCase();
+    const existingBook = books.find(
+      (b) => b.fileName.trim().toLowerCase() === normalizedFileName,
+    );
 
-    // Upload PDF to storage
+    let finalBookId = existingBook?.id || book.id;
+
+    if (!existingBook) {
+      const { data, error } = await supabase
+        .from("books")
+        .insert({ id: book.id, title: book.title, file_name: book.fileName, page_count: book.pageCount, user_id: user.id })
+        .select()
+        .single();
+
+      if (!error && data) {
+        finalBookId = data.id;
+        setBooks((prev) => [...prev, { ...book, id: data.id }]);
+      } else {
+        setBooks((prev) => [...prev, book]);
+      }
+    } else {
+      await supabase
+        .from("books")
+        .update({ title: book.title, file_name: book.fileName, page_count: book.pageCount })
+        .eq("id", existingBook.id)
+        .eq("user_id", user.id);
+
+      setBooks((prev) =>
+        prev.map((b) =>
+          b.id === existingBook.id
+            ? { ...b, title: book.title, fileName: book.fileName, pageCount: book.pageCount }
+            : b,
+        ),
+      );
+    }
+
+    // Upload (or replace) PDF in storage
     if (book.fileData) {
       try {
         const res = await fetch(book.fileData);
         const blob = await res.blob();
         await supabase.storage
           .from("book-pdfs")
-          .upload(`${user.id}/${bookId}.pdf`, blob, { contentType: "application/pdf", upsert: true });
+          .upload(`${user.id}/${finalBookId}.pdf`, blob, { contentType: "application/pdf", upsert: true });
       } catch (err) {
         console.error("Failed to upload PDF to storage:", err);
       }
     }
-
-    if (!error && data) {
-      setBooks((prev) => [...prev, { ...book, id: data.id }]);
-    } else {
-      setBooks((prev) => [...prev, book]);
-    }
-  }, [user]);
+  }, [user, books]);
 
   const removeBook = useCallback(async (id: string) => {
     if (user) {
