@@ -1,5 +1,5 @@
-import React, { useRef, useState } from "react";
-import { Upload, BookOpen, Trash2, BookMarked, Key } from "lucide-react";
+import React, { useRef, useState, useMemo } from "react";
+import { Upload, BookOpen, Trash2, BookMarked, Key, ArrowUpDown } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import ApiKeyManager from "@/components/ApiKeyManager";
 import { BookDocument } from "@/types/library";
@@ -9,6 +9,14 @@ const Library: React.FC = () => {
   const { books, addBook, removeBook, setActiveBook } = useApp();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showApiKeys, setShowApiKeys] = useState(false);
+  const [sortBy, setSortBy] = useState<"date" | "name">("date");
+
+  const sortedBooks = useMemo(() => {
+    return [...books].sort((a, b) => {
+      if (sortBy === "name") return a.title.localeCompare(b.title);
+      return b.addedAt - a.addedAt;
+    });
+  }, [books, sortBy]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -77,6 +85,14 @@ const Library: React.FC = () => {
               </button>
             )}
             <button
+              onClick={() => setSortBy((v) => (v === "date" ? "name" : "date"))}
+              className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-border text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+              title="Sort books"
+            >
+              <ArrowUpDown className="w-4 h-4" />
+              {sortBy === "date" ? "Date" : "Name"}
+            </button>
+            <button
               onClick={() => setShowApiKeys((v) => !v)}
               className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-border text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
               title="Manage API Keys"
@@ -120,7 +136,7 @@ const Library: React.FC = () => {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-            {books.map((book, i) => (
+            {sortedBooks.map((book, i) => (
               <BookCard
                 key={book.id}
                 book={book}
