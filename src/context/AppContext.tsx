@@ -58,17 +58,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [user]);
 
   const addBook = useCallback(async (book: BookDocument, sourceFile?: File) => {
-    if (!user) return;
+    if (!user) throw new Error("You must be signed in to upload books");
 
-    const { data: existingRows } = await supabase
+    const { data: existingRows, error: existingRowsError } = await supabase
       .from("books")
-      .select("id")
+      .select("id, file_name")
       .eq("user_id", user.id)
-      .eq("file_name", book.fileName)
-      .order("created_at", { ascending: false })
-      .limit(1);
+      .limit(1000);
 
-    const existingBookId = existingRows?.[0]?.id as string | undefined;
+    if (existingRowsError) {
+      console.error("Failed to look up existing book record:", existingRowsError);
+      throw existingRowsError;
+    }
+
+    const normalizedFileName = book.fileName.trim().toLowerCase();
+    const existingBookId = existingRows?.find(
+      (row) => row.file_name?.trim().toLowerCase() === normalizedFileName,
+    )?.id as string | undefined;
     let finalBookId = existingBookId || book.id;
     let createdNewBook = false;
 
@@ -81,43 +87,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       if (error || !data) {
         console.error("Failed to create book record:", error);
-        return;
+        throw error || new Error("Failed to create book record");
       }
 
       finalBookId = data.id;
       createdNewBook = true;
-      setBooks((prev) => [...prev, { ...book, id: data.id }]);
     } else {
-      await supabase
+      const { error: updateError } = await supabase
         .from("books")
         .update({ title: book.title, file_name: book.fileName, page_count: book.pageCount })
         .eq("id", existingBookId)
         .eq("user_id", user.id);
 
-      setBooks((prev) => {
-        const existsInState = prev.some((b) => b.id === existingBookId);
-        if (!existsInState) {
-          return [{ ...book, id: existingBookId }, ...prev];
-        }
-
-        return prev.map((b) =>
-          b.id === existingBookId
-            ? { ...b, title: book.title, fileName: book.fileName, pageCount: book.pageCount, fileData: book.fileData }
-            : b,
-        );
-      });
+      if (updateError) {
+        console.error("Failed to update existing book record:", updateError);
+        throw updateError;
+      }
     }
 
-    if (!sourceFile && !book.fileData) return;
+    if (!sourceFile && !book.fileData) {
+      setBooks((prev) => {
+        const existingIndex = prev.findIndex((b) => b.id === finalBookId);
+        const nextBook = { ...book, id: finalBookId, fileData: "" };
+
+        if (existingIndex === -1) return [nextBook, ...prev];
+
+        return prev.map((b) => (b.id === finalBookId ? { ...b, ...nextBook } : b));
+      });
+      return;
+    }
 
     try {
       const blob = sourceFile
         ? sourceFile
         : await (await fetch(book.fileData)).blob();
 
-      await supabase.storage
+      const { error: uploadError } = await supabase.storage
         .from("book-pdfs")
         .upload(`${user.id}/${finalBookId}.pdf`, blob, { contentType: "application/pdf", upsert: true });
+
+      if (uploadError) throw uploadError;
+
+      const cachedFileUrl = sourceFile ? URL.createObjectURL(sourceFile) : book.fileData;
+
+      setBooks((prev) => {
+        const existingIndex = prev.findIndex((b) => b.id === finalBookId);
+        const nextBook = { ...book, id: finalBookId, fileData: cachedFileUrl };
+
+        if (existingIndex === -1) return [nextBook, ...prev];
+
+        return prev.map((b) => (b.id === finalBookId ? { ...b, ...nextBook } : b));
+      });
     } catch (err) {
       console.error("Failed to upload PDF to storage:", err);
 
@@ -125,6 +145,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await supabase.from("books").delete().eq("id", finalBookId).eq("user_id", user.id);
         setBooks((prev) => prev.filter((b) => b.id !== finalBookId));
       }
+
+      throw err instanceof Error ? err : new Error("PDF upload failed");
     }
   }, [user]);
 

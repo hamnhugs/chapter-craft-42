@@ -5,11 +5,21 @@ import ApiKeyManager from "@/components/ApiKeyManager";
 import { BookDocument } from "@/types/library";
 import { pdfjs } from "react-pdf";
 
+type UploadState = {
+  id: string;
+  fileName: string;
+  status: "queued" | "uploading" | "success" | "failed";
+  attempts: number;
+  error?: string;
+};
+
 const Library: React.FC = () => {
   const { books, addBook, removeBook, setActiveBook } = useApp();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showApiKeys, setShowApiKeys] = useState(false);
   const [sortBy, setSortBy] = useState<"date" | "name">("date");
+  const [uploadStates, setUploadStates] = useState<UploadState[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
 
   const sortedBooks = useMemo(() => {
     return [...books].sort((a, b) => {
@@ -18,13 +28,28 @@ const Library: React.FC = () => {
     });
   }, [books, sortBy]);
 
-  const readFileAsDataUrl = (file: File) =>
-    new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(file);
-    });
+  const getPdfPageCount = async (file: File) => {
+    try {
+      const data = await file.arrayBuffer();
+      const loadingTask = pdfjs.getDocument({ data });
+      const pdf = await loadingTask.promise;
+      return pdf.numPages;
+    } catch {
+      return 0;
+    }
+  };
+
+  const updateUploadState = (id: string, patch: Partial<UploadState>) => {
+    setUploadStates((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  };
+
+  const getErrorMessage = (error: unknown) => {
+    if (error && typeof error === "object" && "message" in error) {
+      return String((error as { message: string }).message);
+    }
+
+    return "Upload failed";
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -34,37 +59,71 @@ const Library: React.FC = () => {
       (file) => file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"),
     );
 
-    for (const file of pdfFiles) {
-      try {
-        const dataUrl = await readFileAsDataUrl(file);
+    if (pdfFiles.length === 0) {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
 
-        // Get page count
-        let pageCount = 0;
+    const queue = pdfFiles.map((file) => ({
+      id: `${file.name}-${file.size}-${file.lastModified}`,
+      file,
+    }));
+
+    setUploadStates((prev) => [
+      ...queue.map(({ id, file }) => ({
+        id,
+        fileName: file.name,
+        status: "queued" as const,
+        attempts: 0,
+      })),
+      ...prev,
+    ].slice(0, 60));
+
+    setIsUploading(true);
+
+    for (const item of queue) {
+      const pageCount = await getPdfPageCount(item.file);
+      let attempt = 0;
+      let uploaded = false;
+      let lastError: unknown = null;
+
+      while (attempt < 3 && !uploaded) {
+        attempt += 1;
+        updateUploadState(item.id, { status: "uploading", attempts: attempt, error: undefined });
+
         try {
-          const loadingTask = pdfjs.getDocument(dataUrl);
-          const pdf = await loadingTask.promise;
-          pageCount = pdf.numPages;
-        } catch {
-          pageCount = 0;
+          const newBook: BookDocument = {
+            id: crypto.randomUUID(),
+            title: item.file.name.replace(/\.pdf$/i, ""),
+            fileName: item.file.name,
+            fileData: "",
+            pageCount,
+            chapters: [],
+            addedAt: Date.now(),
+          };
+
+          await addBook(newBook, item.file);
+          updateUploadState(item.id, { status: "success", attempts: attempt, error: undefined });
+          uploaded = true;
+        } catch (error) {
+          lastError = error;
+          if (attempt < 3) {
+            await new Promise((resolve) => setTimeout(resolve, 700 * attempt));
+          }
         }
+      }
 
-        const newBook: BookDocument = {
-          id: crypto.randomUUID(),
-          title: file.name.replace(/\.pdf$/i, ""),
-          fileName: file.name,
-          fileData: dataUrl,
-          pageCount,
-          chapters: [],
-          addedAt: Date.now(),
-        };
-
-        await addBook(newBook, file);
-      } catch (err) {
-        console.error("Failed to process PDF upload:", err);
+      if (!uploaded) {
+        updateUploadState(item.id, {
+          status: "failed",
+          attempts: attempt,
+          error: getErrorMessage(lastError),
+        });
       }
     }
 
-    // Reset input
+    setIsUploading(false);
+
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -112,10 +171,11 @@ const Library: React.FC = () => {
             </button>
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity shadow-sm"
+              disabled={isUploading}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <Upload className="w-4 h-4" />
-              Upload PDF
+              {isUploading ? "Uploading…" : "Upload PDF"}
             </button>
           </div>
           <input
@@ -128,6 +188,33 @@ const Library: React.FC = () => {
           />
         </div>
       </div>
+
+      {uploadStates.length > 0 && (
+        <div className="px-6 py-3 border-b border-border bg-card">
+          <p className="text-xs text-muted-foreground mb-2">
+            {isUploading ? "Upload in progress" : "Latest upload results"}
+          </p>
+          <div className="max-h-28 overflow-auto space-y-1 scrollbar-thin">
+            {uploadStates.slice(0, 12).map((item) => (
+              <div key={item.id} className="flex items-center justify-between gap-4 text-xs">
+                <span className="truncate text-foreground">{item.fileName}</span>
+                <span
+                  className={
+                    item.status === "failed"
+                      ? "text-destructive"
+                      : item.status === "success"
+                        ? "text-primary"
+                        : "text-muted-foreground"
+                  }
+                >
+                  {item.status === "uploading" ? `Uploading (try ${item.attempts}/3)` : item.status}
+                  {item.status === "failed" && item.error ? ` · ${item.error}` : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* API Key Manager Panel */}
       {showApiKeys && (
