@@ -7,7 +7,7 @@ interface AppState {
   books: BookDocument[];
   activeBookId: string | null;
   activeTab: "library" | "viewer";
-  addBook: (book: BookDocument) => void;
+  addBook: (book: BookDocument, sourceFile?: File) => Promise<void>;
   removeBook: (id: string) => void;
   setActiveBook: (id: string) => void;
   setActiveTab: (tab: "library" | "viewer") => void;
@@ -57,58 +57,76 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     loadBooks();
   }, [user]);
 
-  const addBook = useCallback(async (book: BookDocument) => {
+  const addBook = useCallback(async (book: BookDocument, sourceFile?: File) => {
     if (!user) return;
 
-    const normalizedFileName = book.fileName.trim().toLowerCase();
-    const existingBook = books.find(
-      (b) => b.fileName.trim().toLowerCase() === normalizedFileName,
-    );
+    const { data: existingRows } = await supabase
+      .from("books")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("file_name", book.fileName)
+      .order("created_at", { ascending: false })
+      .limit(1);
 
-    let finalBookId = existingBook?.id || book.id;
+    const existingBookId = existingRows?.[0]?.id as string | undefined;
+    let finalBookId = existingBookId || book.id;
+    let createdNewBook = false;
 
-    if (!existingBook) {
+    if (!existingBookId) {
       const { data, error } = await supabase
         .from("books")
         .insert({ id: book.id, title: book.title, file_name: book.fileName, page_count: book.pageCount, user_id: user.id })
         .select()
         .single();
 
-      if (!error && data) {
-        finalBookId = data.id;
-        setBooks((prev) => [...prev, { ...book, id: data.id }]);
-      } else {
-        setBooks((prev) => [...prev, book]);
+      if (error || !data) {
+        console.error("Failed to create book record:", error);
+        return;
       }
+
+      finalBookId = data.id;
+      createdNewBook = true;
+      setBooks((prev) => [...prev, { ...book, id: data.id }]);
     } else {
       await supabase
         .from("books")
         .update({ title: book.title, file_name: book.fileName, page_count: book.pageCount })
-        .eq("id", existingBook.id)
+        .eq("id", existingBookId)
         .eq("user_id", user.id);
 
-      setBooks((prev) =>
-        prev.map((b) =>
-          b.id === existingBook.id
-            ? { ...b, title: book.title, fileName: book.fileName, pageCount: book.pageCount }
+      setBooks((prev) => {
+        const existsInState = prev.some((b) => b.id === existingBookId);
+        if (!existsInState) {
+          return [{ ...book, id: existingBookId }, ...prev];
+        }
+
+        return prev.map((b) =>
+          b.id === existingBookId
+            ? { ...b, title: book.title, fileName: book.fileName, pageCount: book.pageCount, fileData: book.fileData }
             : b,
-        ),
-      );
+        );
+      });
     }
 
-    // Upload (or replace) PDF in storage
-    if (book.fileData) {
-      try {
-        const res = await fetch(book.fileData);
-        const blob = await res.blob();
-        await supabase.storage
-          .from("book-pdfs")
-          .upload(`${user.id}/${finalBookId}.pdf`, blob, { contentType: "application/pdf", upsert: true });
-      } catch (err) {
-        console.error("Failed to upload PDF to storage:", err);
+    if (!sourceFile && !book.fileData) return;
+
+    try {
+      const blob = sourceFile
+        ? sourceFile
+        : await (await fetch(book.fileData)).blob();
+
+      await supabase.storage
+        .from("book-pdfs")
+        .upload(`${user.id}/${finalBookId}.pdf`, blob, { contentType: "application/pdf", upsert: true });
+    } catch (err) {
+      console.error("Failed to upload PDF to storage:", err);
+
+      if (createdNewBook) {
+        await supabase.from("books").delete().eq("id", finalBookId).eq("user_id", user.id);
+        setBooks((prev) => prev.filter((b) => b.id !== finalBookId));
       }
     }
-  }, [user, books]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user]);
 
   const removeBook = useCallback(async (id: string) => {
     if (user) {
