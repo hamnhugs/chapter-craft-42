@@ -24,6 +24,8 @@ const Library: React.FC = () => {
 
     for (const file of Array.from(files)) {
       if (file.type !== "application/pdf") continue;
+      // Skip duplicates by file name
+      if (books.some((b) => b.fileName === file.name)) continue;
 
       const reader = new FileReader();
       reader.onload = async (ev) => {
