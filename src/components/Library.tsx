@@ -1,9 +1,10 @@
 import React, { useRef, useState, useMemo } from "react";
-import { Upload, BookOpen, Trash2, BookMarked, Key, ArrowUpDown } from "lucide-react";
+import { Upload, BookOpen, Trash2, BookMarked, Key, ArrowUpDown, FileText } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import ApiKeyManager from "@/components/ApiKeyManager";
 import { BookDocument } from "@/types/library";
 import { pdfjs } from "react-pdf";
+import { Progress } from "@/components/ui/progress";
 
 type UploadState = {
   id: string;
@@ -13,6 +14,10 @@ type UploadState = {
   error?: string;
 };
 
+const SUPPORTED_UPLOAD_EXTENSIONS = ["pdf", "doc", "docx", "txt", "rtf", "odt"] as const;
+const MAX_UPLOAD_ATTEMPTS = 3;
+const MAX_CONCURRENT_UPLOADS = 3;
+
 const Library: React.FC = () => {
   const { books, addBook, removeBook, setActiveBook } = useApp();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -20,6 +25,7 @@ const Library: React.FC = () => {
   const [sortBy, setSortBy] = useState<"date" | "name">("date");
   const [uploadStates, setUploadStates] = useState<UploadState[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [currentBatchIds, setCurrentBatchIds] = useState<string[]>([]);
 
   const sortedBooks = useMemo(() => {
     return [...books].sort((a, b) => {
@@ -27,6 +33,28 @@ const Library: React.FC = () => {
       return b.addedAt - a.addedAt;
     });
   }, [books, sortBy]);
+
+  const currentBatchStateMap = useMemo(() => {
+    const ids = new Set(currentBatchIds);
+    return uploadStates.filter((state) => ids.has(state.id));
+  }, [currentBatchIds, uploadStates]);
+
+  const currentBatchCompletedCount = currentBatchStateMap.filter(
+    (state) => state.status === "success" || state.status === "failed",
+  ).length;
+
+  const currentBatchProgress = currentBatchIds.length
+    ? Math.round((currentBatchCompletedCount / currentBatchIds.length) * 100)
+    : 0;
+
+  const isSupportedDocument = (file: File) => {
+    const extension = file.name.toLowerCase().split(".").pop();
+    return !!extension && SUPPORTED_UPLOAD_EXTENSIONS.includes(extension as (typeof SUPPORTED_UPLOAD_EXTENSIONS)[number]);
+  };
+
+  const getDisplayTitle = (fileName: string) => {
+    return fileName.replace(/\.[^/.]+$/i, "");
+  };
 
   const getPdfPageCount = async (file: File) => {
     try {
@@ -55,20 +83,33 @@ const Library: React.FC = () => {
     const files = e.target.files;
     if (!files) return;
 
-    const pdfFiles = Array.from(files).filter(
-      (file) => file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"),
-    );
+    const selectedFiles = Array.from(files);
+    const supportedFiles = selectedFiles.filter(isSupportedDocument);
+    const unsupportedFiles = selectedFiles.filter((file) => !isSupportedDocument(file));
 
-    if (pdfFiles.length === 0) {
+    if (unsupportedFiles.length > 0) {
+      const skippedStates: UploadState[] = unsupportedFiles.map((file) => ({
+        id: `${file.name}-${file.size}-${file.lastModified}-unsupported`,
+        fileName: file.name,
+        status: "failed",
+        attempts: 0,
+        error: "Unsupported file type",
+      }));
+
+      setUploadStates((prev) => [...skippedStates, ...prev].slice(0, 80));
+    }
+
+    if (supportedFiles.length === 0) {
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
 
-    const queue = pdfFiles.map((file) => ({
+    const queue = supportedFiles.map((file) => ({
       id: `${file.name}-${file.size}-${file.lastModified}`,
       file,
     }));
 
+    setCurrentBatchIds(queue.map((item) => item.id));
     setUploadStates((prev) => [
       ...queue.map(({ id, file }) => ({
         id,
@@ -77,24 +118,25 @@ const Library: React.FC = () => {
         attempts: 0,
       })),
       ...prev,
-    ].slice(0, 60));
+    ].slice(0, 80));
 
     setIsUploading(true);
 
-    for (const item of queue) {
-      const pageCount = await getPdfPageCount(item.file);
+    const processQueueItem = async (item: { id: string; file: File }) => {
+      const isPdf = item.file.name.toLowerCase().endsWith(".pdf");
+      const pageCount = isPdf ? await getPdfPageCount(item.file) : 0;
       let attempt = 0;
       let uploaded = false;
       let lastError: unknown = null;
 
-      while (attempt < 3 && !uploaded) {
+      while (attempt < MAX_UPLOAD_ATTEMPTS && !uploaded) {
         attempt += 1;
         updateUploadState(item.id, { status: "uploading", attempts: attempt, error: undefined });
 
         try {
           const newBook: BookDocument = {
             id: crypto.randomUUID(),
-            title: item.file.name.replace(/\.pdf$/i, ""),
+            title: getDisplayTitle(item.file.name),
             fileName: item.file.name,
             fileData: "",
             pageCount,
@@ -107,7 +149,7 @@ const Library: React.FC = () => {
           uploaded = true;
         } catch (error) {
           lastError = error;
-          if (attempt < 3) {
+          if (attempt < MAX_UPLOAD_ATTEMPTS) {
             await new Promise((resolve) => setTimeout(resolve, 700 * attempt));
           }
         }
@@ -120,7 +162,20 @@ const Library: React.FC = () => {
           error: getErrorMessage(lastError),
         });
       }
-    }
+    };
+
+    let nextIndex = 0;
+    const workerCount = Math.min(MAX_CONCURRENT_UPLOADS, queue.length);
+
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        while (nextIndex < queue.length) {
+          const item = queue[nextIndex];
+          nextIndex += 1;
+          await processQueueItem(item);
+        }
+      }),
+    );
 
     setIsUploading(false);
 
@@ -175,13 +230,13 @@ const Library: React.FC = () => {
               className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <Upload className="w-4 h-4" />
-              {isUploading ? "Uploading…" : "Upload PDF"}
+              {isUploading ? "Uploading…" : "Upload Documents"}
             </button>
           </div>
           <input
             ref={fileInputRef}
             type="file"
-            accept=".pdf"
+            accept=".pdf,.doc,.docx,.txt,.rtf,.odt"
             multiple
             onChange={handleFileUpload}
             className="hidden"
@@ -194,8 +249,18 @@ const Library: React.FC = () => {
           <p className="text-xs text-muted-foreground mb-2">
             {isUploading ? "Upload in progress" : "Latest upload results"}
           </p>
+
+          {currentBatchIds.length > 0 && (
+            <div className="mb-3 space-y-1.5">
+              <Progress value={currentBatchProgress} className="h-2" />
+              <p className="text-[11px] text-muted-foreground">
+                {currentBatchCompletedCount}/{currentBatchIds.length} completed
+              </p>
+            </div>
+          )}
+
           <div className="max-h-28 overflow-auto space-y-1 scrollbar-thin">
-            {uploadStates.slice(0, 12).map((item) => (
+            {uploadStates.slice(0, 20).map((item) => (
               <div key={item.id} className="flex items-center justify-between gap-4 text-xs">
                 <span className="truncate text-foreground">{item.fileName}</span>
                 <span
@@ -207,7 +272,7 @@ const Library: React.FC = () => {
                         : "text-muted-foreground"
                   }
                 >
-                  {item.status === "uploading" ? `Uploading (try ${item.attempts}/3)` : item.status}
+                  {item.status === "uploading" ? `Uploading (try ${item.attempts}/${MAX_UPLOAD_ATTEMPTS})` : item.status}
                   {item.status === "failed" && item.error ? ` · ${item.error}` : ""}
                 </span>
               </div>
@@ -229,7 +294,7 @@ const Library: React.FC = () => {
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
             <BookMarked className="w-16 h-16 mb-4 opacity-25" />
             <p className="text-lg font-display">Your library is empty</p>
-            <p className="text-sm mt-1">Upload a PDF to get started</p>
+            <p className="text-sm mt-1">Upload documents to get started</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
@@ -258,6 +323,8 @@ const BookCard: React.FC<{
   // Generate a warm hue based on index for visual variety
   const hues = [24, 18, 30, 12, 36, 6];
   const hue = hues[index % hues.length];
+  const isPdf = book.fileName.toLowerCase().endsWith(".pdf");
+  const metadataText = isPdf ? `${book.pageCount} pages · ${book.chapters.length} chapters` : "Document file";
 
   return (
     <div
@@ -286,7 +353,7 @@ const BookCard: React.FC<{
               className="absolute left-0 top-0 bottom-0 w-2"
               style={{ backgroundColor: `hsl(${hue}, 40%, 40%)` }}
             />
-            <BookOpen className="w-10 h-10 text-white/60" />
+              {isPdf ? <BookOpen className="w-10 h-10 text-white/60" /> : <FileText className="w-10 h-10 text-white/60" />}
           </>
         )}
 
@@ -308,7 +375,7 @@ const BookCard: React.FC<{
           {book.title}
         </h3>
         <p className="text-xs text-muted-foreground mb-3">
-          {book.pageCount} pages · {book.chapters.length} chapters
+          {metadataText}
         </p>
         <button
           onClick={onRead}
