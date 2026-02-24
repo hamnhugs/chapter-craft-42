@@ -11,6 +11,7 @@ import {
   Flag,
   FlagOff,
   Bookmark,
+  FileText,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Chapter } from "@/types/library";
@@ -21,6 +22,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/b
 const PdfViewer: React.FC = () => {
   const { getActiveBook, addChapter, activeBookId, loadBookFile } = useApp();
   const book = getActiveBook();
+  const isPdfBook = book?.fileName.toLowerCase().endsWith(".pdf") ?? false;
 
   const [numPages, setNumPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState(1);
@@ -44,6 +46,11 @@ const PdfViewer: React.FC = () => {
   // Load PDF file from storage when book is selected
   useEffect(() => {
     if (!activeBookId) return;
+    if (!isPdfBook) {
+      setFileUrl("");
+      setLoading(false);
+      return;
+    }
     if (book?.fileData) {
       setFileUrl(book.fileData);
       setLoading(false);
@@ -57,7 +64,7 @@ const PdfViewer: React.FC = () => {
       setFileUrl("");
       setLoading(false);
     });
-  }, [activeBookId, book?.fileData, loadBookFile]);
+  }, [activeBookId, isPdfBook, book?.fileData, loadBookFile]);
 
   const onDocumentLoadSuccess = useCallback(({ numPages }: any) => {
     setNumPages(numPages);
@@ -132,6 +139,16 @@ const PdfViewer: React.FC = () => {
         <BookOpen className="w-16 h-16 mb-4 opacity-30" />
         <p className="text-lg font-display">No document selected</p>
         <p className="text-sm mt-1">Choose a book from your library to start reading</p>
+      </div>
+    );
+  }
+
+  if (!isPdfBook) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-muted-foreground animate-fade-in">
+        <FileText className="w-16 h-16 mb-4 opacity-30" />
+        <p className="text-lg font-display">Preview unavailable</p>
+        <p className="text-sm mt-1">This document is uploaded successfully, but reader preview supports PDF files only.</p>
       </div>
     );
   }

@@ -19,6 +19,24 @@ interface AppState {
 
 const AppContext = createContext<AppState | null>(null);
 
+const DEFAULT_STORAGE_EXTENSION = "pdf";
+
+const getFileExtension = (fileName: string) => {
+  const parts = fileName.toLowerCase().split(".");
+  return parts.length > 1 ? parts.pop() || DEFAULT_STORAGE_EXTENSION : DEFAULT_STORAGE_EXTENSION;
+};
+
+const getStoragePath = (userId: string, bookId: string, fileName: string) => {
+  return `${userId}/${bookId}.${getFileExtension(fileName)}`;
+};
+
+const getStoragePathsForBook = (userId: string, bookId: string, fileName: string) => {
+  const primaryPath = getStoragePath(userId, bookId, fileName);
+  const legacyPath = `${userId}/${bookId}.pdf`;
+
+  return primaryPath === legacyPath ? [primaryPath] : [primaryPath, legacyPath];
+};
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [books, setBooks] = useState<BookDocument[]>([]);
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
@@ -60,21 +78,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addBook = useCallback(async (book: BookDocument, sourceFile?: File) => {
     if (!user) throw new Error("You must be signed in to upload books");
 
-    const { data: existingRows, error: existingRowsError } = await supabase
+    const { data: existingRow, error: existingRowError } = await supabase
       .from("books")
       .select("id, file_name")
       .eq("user_id", user.id)
-      .limit(1000);
+      .ilike("file_name", book.fileName)
+      .limit(1)
+      .maybeSingle();
 
-    if (existingRowsError) {
-      console.error("Failed to look up existing book record:", existingRowsError);
-      throw existingRowsError;
+    if (existingRowError) {
+      console.error("Failed to look up existing book record:", existingRowError);
+      throw existingRowError;
     }
 
-    const normalizedFileName = book.fileName.trim().toLowerCase();
-    const existingBookId = existingRows?.find(
-      (row) => row.file_name?.trim().toLowerCase() === normalizedFileName,
-    )?.id as string | undefined;
+    const existingBookId = existingRow?.id as string | undefined;
     let finalBookId = existingBookId || book.id;
     let createdNewBook = false;
 
@@ -118,15 +135,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     try {
+      const uploadFileName = sourceFile?.name || book.fileName;
       const blob = sourceFile
         ? sourceFile
         : await (await fetch(book.fileData)).blob();
+      const uploadPath = getStoragePath(user.id, finalBookId, uploadFileName);
+      const uploadContentType = sourceFile?.type || (uploadFileName.toLowerCase().endsWith(".pdf")
+        ? "application/pdf"
+        : "application/octet-stream");
 
       const { error: uploadError } = await supabase.storage
         .from("book-pdfs")
-        .upload(`${user.id}/${finalBookId}.pdf`, blob, { contentType: "application/pdf", upsert: true });
+        .upload(uploadPath, blob, { contentType: uploadContentType, upsert: true });
 
       if (uploadError) throw uploadError;
+
+      if (existingRow?.file_name) {
+        const stalePaths = getStoragePathsForBook(user.id, finalBookId, existingRow.file_name)
+          .filter((path) => path !== uploadPath);
+
+        if (stalePaths.length > 0) {
+          await supabase.storage.from("book-pdfs").remove(stalePaths);
+        }
+      }
 
       const cachedFileUrl = sourceFile ? URL.createObjectURL(sourceFile) : book.fileData;
 
@@ -139,25 +170,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return prev.map((b) => (b.id === finalBookId ? { ...b, ...nextBook } : b));
       });
     } catch (err) {
-      console.error("Failed to upload PDF to storage:", err);
+      console.error("Failed to upload document to storage:", err);
 
       if (createdNewBook) {
         await supabase.from("books").delete().eq("id", finalBookId).eq("user_id", user.id);
         setBooks((prev) => prev.filter((b) => b.id !== finalBookId));
       }
 
-      throw err instanceof Error ? err : new Error("PDF upload failed");
+      throw err instanceof Error ? err : new Error("Document upload failed");
     }
   }, [user]);
 
   const removeBook = useCallback(async (id: string) => {
+    const existingBook = books.find((book) => book.id === id);
+
     if (user) {
-      await supabase.storage.from("book-pdfs").remove([`${user.id}/${id}.pdf`]);
+      const storagePaths = existingBook
+        ? getStoragePathsForBook(user.id, id, existingBook.fileName)
+        : [`${user.id}/${id}.pdf`];
+
+      await supabase.storage.from("book-pdfs").remove(Array.from(new Set(storagePaths)));
     }
+
     await supabase.from("books").delete().eq("id", id);
     setBooks((prev) => prev.filter((b) => b.id !== id));
     setActiveBookId((prev) => (prev === id ? null : prev));
-  }, [user]);
+  }, [user, books]);
 
   const setActiveBook = useCallback((id: string) => {
     setActiveBookId(id);
@@ -193,28 +231,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [books, activeBookId]);
 
   const loadBookFile = useCallback(async (bookId: string): Promise<string> => {
-    // Check if already loaded in state
     const existing = books.find((b) => b.id === bookId);
     if (existing?.fileData) return existing.fileData;
 
     if (!user) return "";
 
-    try {
-      const { data, error } = await supabase.storage
-        .from("book-pdfs")
-        .download(`${user.id}/${bookId}.pdf`);
+    const candidatePaths = existing
+      ? getStoragePathsForBook(user.id, bookId, existing.fileName)
+      : [`${user.id}/${bookId}.pdf`];
 
-      if (error || !data) {
-        console.error("Failed to download PDF:", error);
-        return "";
+    try {
+      for (const path of candidatePaths) {
+        const { data, error } = await supabase.storage
+          .from("book-pdfs")
+          .download(path);
+
+        if (error || !data) continue;
+
+        const url = URL.createObjectURL(data);
+
+        setBooks((prev) =>
+          prev.map((b) => (b.id === bookId ? { ...b, fileData: url } : b))
+        );
+
+        return url;
       }
 
-      const url = URL.createObjectURL(data);
-      // Cache in state
-      setBooks((prev) =>
-        prev.map((b) => (b.id === bookId ? { ...b, fileData: url } : b))
-      );
-      return url;
+      console.error("Failed to download document: no matching file found in storage");
+      return "";
     } catch (err) {
       console.error("Error loading book file:", err);
       return "";
