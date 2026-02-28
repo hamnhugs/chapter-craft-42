@@ -5,6 +5,7 @@ import ApiKeyManager from "@/components/ApiKeyManager";
 import { BookDocument } from "@/types/library";
 import { pdfjs } from "react-pdf";
 import { Progress } from "@/components/ui/progress";
+import { convertEpubToPdf } from "@/lib/epubToPdf";
 
 type UploadState = {
   id: string;
@@ -14,7 +15,7 @@ type UploadState = {
   error?: string;
 };
 
-const SUPPORTED_UPLOAD_EXTENSIONS = ["pdf", "doc", "docx", "txt", "rtf", "odt"] as const;
+const SUPPORTED_UPLOAD_EXTENSIONS = ["pdf", "doc", "docx", "txt", "rtf", "odt", "epub"] as const;
 const MAX_UPLOAD_ATTEMPTS = 3;
 const MAX_CONCURRENT_UPLOADS = 3;
 
@@ -122,12 +123,30 @@ const Library: React.FC = () => {
 
     setIsUploading(true);
 
-    const processQueueItem = async (item: { id: string; file: File }) => {
+  const processQueueItem = async (item: { id: string; file: File }) => {
+    const isEpub = item.file.name.toLowerCase().endsWith(".epub");
+    let fileToUpload = item.file;
+    let pageCount = 0;
+
+    // Convert EPUB to PDF before upload
+    if (isEpub) {
+      updateUploadState(item.id, { status: "uploading", attempts: 0, error: "Converting EPUB…" });
+      try {
+        const result = await convertEpubToPdf(item.file);
+        fileToUpload = result.file;
+        pageCount = result.pageCount;
+      } catch (error) {
+        updateUploadState(item.id, { status: "failed", attempts: 0, error: "EPUB conversion failed" });
+        return;
+      }
+    } else {
       const isPdf = item.file.name.toLowerCase().endsWith(".pdf");
-      const pageCount = isPdf ? await getPdfPageCount(item.file) : 0;
-      let attempt = 0;
-      let uploaded = false;
-      let lastError: unknown = null;
+      pageCount = isPdf ? await getPdfPageCount(item.file) : 0;
+    }
+
+    let attempt = 0;
+    let uploaded = false;
+    let lastError: unknown = null;
 
       while (attempt < MAX_UPLOAD_ATTEMPTS && !uploaded) {
         attempt += 1;
@@ -137,14 +156,14 @@ const Library: React.FC = () => {
           const newBook: BookDocument = {
             id: crypto.randomUUID(),
             title: getDisplayTitle(item.file.name),
-            fileName: item.file.name,
+            fileName: fileToUpload.name,
             fileData: "",
             pageCount,
             chapters: [],
             addedAt: Date.now(),
           };
 
-          await addBook(newBook, item.file);
+          await addBook(newBook, fileToUpload);
           updateUploadState(item.id, { status: "success", attempts: attempt, error: undefined });
           uploaded = true;
         } catch (error) {
@@ -236,7 +255,7 @@ const Library: React.FC = () => {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".pdf,.doc,.docx,.txt,.rtf,.odt"
+            accept=".pdf,.doc,.docx,.txt,.rtf,.odt,.epub"
             multiple
             onChange={handleFileUpload}
             className="hidden"
