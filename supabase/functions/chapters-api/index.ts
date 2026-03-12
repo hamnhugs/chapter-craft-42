@@ -40,9 +40,23 @@ Deno.serve(async (req) => {
       });
     }
 
+    const APP_URL = "https://chapter-craft-42.lovable.app";
+
     const url = new URL(req.url);
     const bookId = url.searchParams.get("book_id");
     const chapterId = url.searchParams.get("chapter_id");
+    const action = url.searchParams.get("action");
+
+    // GET /chapters-api?action=links — return useful app links
+    if (req.method === "GET" && action === "links") {
+      return new Response(JSON.stringify({
+        login_url: `${APP_URL}/auth`,
+        library_url: APP_URL,
+        signup_url: `${APP_URL}/auth`,
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     // PATCH /chapters-api?book_id=xxx — update book title and/or cover image
     if (req.method === "PATCH") {
