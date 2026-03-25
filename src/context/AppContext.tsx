@@ -6,11 +6,11 @@ import { useAuth } from "@/hooks/useAuth";
 interface AppState {
   books: BookDocument[];
   activeBookId: string | null;
-  activeTab: "library" | "viewer";
+  activeTab: "library" | "viewer" | "notes";
   addBook: (book: BookDocument, sourceFile?: File) => Promise<void>;
   removeBook: (id: string) => void;
   setActiveBook: (id: string) => void;
-  setActiveTab: (tab: "library" | "viewer") => void;
+  setActiveTab: (tab: "library" | "viewer" | "notes") => void;
   addChapter: (bookId: string, chapter: Chapter) => void;
   getActiveBook: () => BookDocument | undefined;
   loadBookFile: (bookId: string) => Promise<string>;
@@ -40,7 +40,7 @@ const getStoragePathsForBook = (userId: string, bookId: string, fileName: string
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [books, setBooks] = useState<BookDocument[]>([]);
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"library" | "viewer">("library");
+  const [activeTab, setActiveTab] = useState<"library" | "viewer" | "notes">("library");
   const { user, signOut } = useAuth();
 
   useEffect(() => {
