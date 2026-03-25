@@ -9,6 +9,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -18,88 +19,54 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Install Bubblewrap
-        run: npm install -g @bubblewrap/cli
-
-      - name: Init TWA project
+      - name: Generate signing keystore
         run: |
-          mkdir -p /tmp/twa-build && cd /tmp/twa-build
-          cat > twa-manifest.json << 'EOF'
-          {
-            "packageId": "com.bookworm.chaptercraft",
-            "host": "hamnhugs.github.io",
-            "startUrl": "/chapter-craft-42/",
-            "name": "BookWorm Studio",
-            "launcherName": "BookWorm",
-            "display": "standalone",
-            "themeColor": "#1a1a2e",
-            "navigationColor": "#1a1a2e",
-            "backgroundColor": "#1a1a2e",
-            "enableNotifications": false,
-            "version": {"code": 2, "name": "2.0.0"},
-            "iconUrl": "https://hamnhugs.github.io/chapter-craft-42/icon-512.png",
-            "maskableIconUrl": "https://hamnhugs.github.io/chapter-craft-42/icon-512.png",
-            "appVersionCode": 2,
-            "appVersionName": "2.0.0",
-            "shortcuts": [],
-            "generatorApp": "bubblewrap-cli",
-            "webManifestUrl": "https://hamnhugs.github.io/chapter-craft-42/manifest.json",
-            "fallbackType": "customtabs",
-            "features": {},
-            "alphaDependencies": {"enabled": false},
-            "enableSiteSettingsShortcut": true,
-            "isChromeOSOnly": false,
-            "isMetaQuest": false,
-            "fullScopeUrl": "https://hamnhugs.github.io/chapter-craft-42/",
-            "minSdkVersion": 21,
-            "orientation": "default",
-            "fingerprints": []
-          }
-          EOF
-          echo "n" | bubblewrap init --manifest https://hamnhugs.github.io/chapter-craft-42/manifest.json 2>&1 || true
-          ls -la
-
-      - name: Generate keystore
-        run: |
-          cd /tmp/twa-build
           keytool -genkeypair -v \
-            -keystore android.keystore \
-            -alias bookworm \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
+            -keystore android/android.keystore \
+            -alias android \
+            -keyalg RSA -keysize 2048 -validity 10000 \
             -storepass bookworm2026 \
             -keypass bookworm2026 \
             -dname "CN=BookWorm,OU=App,O=BookWorm,L=US,ST=US,C=US"
+          echo "Keystore created"
 
-      - name: Build APK
+      - name: Build release APK
+        working-directory: android
         run: |
-          cd /tmp/twa-build
           chmod +x gradlew
           ./gradlew assembleRelease \
-            -Pandroid.injected.signing.store.file=/tmp/twa-build/android.keystore \
+            -Pandroid.injected.signing.store.file=${{ github.workspace }}/android/android.keystore \
             -Pandroid.injected.signing.store.password=bookworm2026 \
-            -Pandroid.injected.signing.key.alias=bookworm \
+            -Pandroid.injected.signing.key.alias=android \
             -Pandroid.injected.signing.key.password=bookworm2026
 
-      - name: Locate APK
-        run: find /tmp/twa-build -name "*.apk" -exec echo "Found: {}" \;
+      - name: Find APK
+        run: |
+          find android -name "*.apk" | head -5
+          ls -lh android/app/build/outputs/apk/release/ 2>/dev/null || echo "checking other paths"
 
-      - name: Create Release and Upload APK
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BookWorm-APK
+          path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      - name: Create GitHub Release with APK
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: apk-v2.0
-          name: "BookWorm Studio v2.0 — Android APK"
+          name: "BookWorm Studio — Android App"
           body: |
-            ## 📚 BookWorm Studio — Android App
+            ## 📚 BookWorm Studio Android App
 
             **Install on your Android phone:**
             1. Tap the `.apk` file below to download
-            2. Open it on your device
-            3. If prompted, allow "Install from unknown sources"
-            4. Install and open BookWorm!
-          files: /tmp/twa-build/app/build/outputs/apk/release/*.apk
-          draft: false
-          prerelease: false
+            2. Open it on your Android device
+            3. If asked, allow "Install from unknown sources"
+            4. Install and enjoy BookWorm!
+
+            > Requires Android 5.0+ and Google Chrome
+          files: android/app/build/outputs/apk/release/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
