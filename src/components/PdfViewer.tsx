@@ -363,7 +363,7 @@ const PdfViewer: React.FC = () => {
       </div>
 
       {/* PDF content */}
-      <div ref={containerRef} className="flex-1 overflow-auto bg-viewer-bg flex justify-center py-6 scrollbar-thin">
+      <div ref={containerRef} className="flex-1 overflow-auto bg-viewer-bg flex justify-center py-6 scrollbar-thin" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
         <Document
           file={fileUrl}
           onLoadSuccess={onDocumentLoadSuccess}
