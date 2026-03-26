@@ -229,6 +229,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   }, [user]);
 
+  const updateChapter = useCallback(async (bookId: string, chapterId: string, name: string) => {
+    if (!user) return;
+    await supabase.from("chapters").update({ name }).eq("id", chapterId).eq("user_id", user.id);
+    setBooks((prev) =>
+      prev.map((b) =>
+        b.id === bookId
+          ? { ...b, chapters: b.chapters.map((c) => (c.id === chapterId ? { ...c, name } : c)) }
+          : b
+      )
+    );
+  }, [user]);
+
+  const removeChapter = useCallback(async (bookId: string, chapterId: string) => {
+    if (!user) return;
+    await supabase.from("chapters").delete().eq("id", chapterId).eq("user_id", user.id);
+    setBooks((prev) =>
+      prev.map((b) =>
+        b.id === bookId
+          ? { ...b, chapters: b.chapters.filter((c) => c.id !== chapterId) }
+          : b
+      )
+    );
+  }, [user]);
+
+  const updateBookTitle = useCallback(async (bookId: string, newTitle: string) => {
+    if (!user) return;
+    await supabase.from("books").update({ title: newTitle }).eq("id", bookId).eq("user_id", user.id);
+    setBooks((prev) =>
+      prev.map((b) => (b.id === bookId ? { ...b, title: newTitle } : b))
+    );
+  }, [user]);
+
   const getActiveBook = useCallback(() => {
     return books.find((b) => b.id === activeBookId);
   }, [books, activeBookId]);
