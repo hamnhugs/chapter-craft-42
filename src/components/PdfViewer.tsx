@@ -252,6 +252,20 @@ const PdfViewer: React.FC = () => {
 
         <div className="w-px h-6 bg-border" />
 
+        {/* Read aloud */}
+        <div className="flex items-center gap-1">
+          <button
+            onClick={readCurrentPage}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-body transition-colors ${isSpeaking ? "bg-accent text-accent-foreground" : "hover:bg-secondary"}`}
+            title={isSpeaking ? "Stop reading" : "Read this page aloud"}
+          >
+            {isSpeaking ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+            <span className="hidden sm:inline">{isSpeaking ? "Stop" : "Read"}</span>
+          </button>
+        </div>
+
+        <div className="w-px h-6 bg-border" />
+
         {/* Zoom */}
         <div className="flex items-center gap-1">
           <button onClick={() => zoom(-0.2)} className="p-1.5 rounded-md hover:bg-secondary transition-colors">
