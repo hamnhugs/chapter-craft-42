@@ -12,6 +12,9 @@ interface AppState {
   setActiveBook: (id: string) => void;
   setActiveTab: (tab: "library" | "viewer" | "notes") => void;
   addChapter: (bookId: string, chapter: Chapter) => void;
+  updateChapter: (bookId: string, chapterId: string, name: string) => void;
+  removeChapter: (bookId: string, chapterId: string) => void;
+  updateBookTitle: (bookId: string, newTitle: string) => void;
   getActiveBook: () => BookDocument | undefined;
   loadBookFile: (bookId: string) => Promise<string>;
   signOut: () => void;
