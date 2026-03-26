@@ -1,5 +1,5 @@
 import React, { useRef, useState, useMemo } from "react";
-import { Upload, BookOpen, Trash2, BookMarked, Key, ArrowUpDown, FileText } from "lucide-react";
+import { Upload, BookOpen, Trash2, BookMarked, Key, ArrowUpDown, FileText, Pencil } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import ApiKeyManager from "@/components/ApiKeyManager";
 import { BookDocument } from "@/types/library";
@@ -20,7 +20,7 @@ const MAX_UPLOAD_ATTEMPTS = 3;
 const MAX_CONCURRENT_UPLOADS = 3;
 
 const Library: React.FC = () => {
-  const { books, addBook, removeBook, setActiveBook } = useApp();
+  const { books, addBook, removeBook, setActiveBook, updateBookTitle } = useApp();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showApiKeys, setShowApiKeys] = useState(false);
   const [sortBy, setSortBy] = useState<"date" | "name">("date");
@@ -324,6 +324,7 @@ const Library: React.FC = () => {
                 index={i}
                 onRead={() => setActiveBook(book.id)}
                 onRemove={() => removeBook(book.id)}
+                onRename={(newTitle) => updateBookTitle(book.id, newTitle)}
               />
             ))}
           </div>
@@ -338,7 +339,10 @@ const BookCard: React.FC<{
   index: number;
   onRead: () => void;
   onRemove: () => void;
-}> = ({ book, index, onRead, onRemove }) => {
+  onRename: (newTitle: string) => void;
+}> = ({ book, index, onRead, onRemove, onRename }) => {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(book.title);
   // Generate a warm hue based on index for visual variety
   const hues = [24, 18, 30, 12, 36, 6];
   const hue = hues[index % hues.length];
@@ -390,9 +394,45 @@ const BookCard: React.FC<{
 
       {/* Info */}
       <div className="p-4">
-        <h3 className="font-display font-semibold text-sm leading-tight line-clamp-2 mb-1">
-          {book.title}
-        </h3>
+        {editing ? (
+          <input
+            className="w-full text-sm font-display font-semibold border border-border rounded px-2 py-1 mb-1 bg-transparent focus:outline-none focus:ring-1 focus:ring-ring"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && draft.trim()) {
+                onRename(draft.trim());
+                setEditing(false);
+              }
+              if (e.key === "Escape") {
+                setDraft(book.title);
+                setEditing(false);
+              }
+            }}
+            onBlur={() => {
+              if (draft.trim() && draft.trim() !== book.title) onRename(draft.trim());
+              setEditing(false);
+            }}
+          />
+        ) : (
+          <div className="flex items-start gap-1 mb-1">
+            <h3 className="font-display font-semibold text-sm leading-tight line-clamp-2 flex-1">
+              {book.title}
+            </h3>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setDraft(book.title);
+                setEditing(true);
+              }}
+              className="p-0.5 rounded hover:bg-secondary transition-colors shrink-0 mt-0.5"
+              title="Rename book"
+            >
+              <Pencil className="w-3 h-3 text-muted-foreground" />
+            </button>
+          </div>
+        )}
         <p className="text-xs text-muted-foreground mb-3">
           {metadataText}
         </p>
