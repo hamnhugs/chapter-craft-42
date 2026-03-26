@@ -12,15 +12,18 @@ import {
   FlagOff,
   Bookmark,
   FileText,
+  Settings2,
+  Pencil,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Chapter } from "@/types/library";
 import ChapterNameDialog from "@/components/ChapterNameDialog";
+import ChapterManageDialog from "@/components/ChapterManageDialog";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 const PdfViewer: React.FC = () => {
-  const { getActiveBook, addChapter, activeBookId, loadBookFile } = useApp();
+  const { getActiveBook, addChapter, updateChapter, removeChapter, updateBookTitle, activeBookId, loadBookFile } = useApp();
   const book = getActiveBook();
   const isPdfBook = book?.fileName.toLowerCase().endsWith(".pdf") ?? false;
 
@@ -34,6 +37,9 @@ const PdfViewer: React.FC = () => {
   });
   const [fileUrl, setFileUrl] = useState<string>("");
   const [loading, setLoading] = useState(false);
+  const [manageChaptersOpen, setManageChaptersOpen] = useState(false);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -223,7 +229,7 @@ const PdfViewer: React.FC = () => {
 
         <div className="w-px h-6 bg-border" />
 
-        {/* Chapter dropdown */}
+        {/* Chapter dropdown & manage */}
         <div className="flex items-center gap-1.5">
           <Bookmark className="w-3.5 h-3.5 text-muted-foreground" />
           <select value={selectedChapterId || ""} onChange={(e) => handleChapterSelect(e.target.value)} className="text-xs font-body bg-transparent border border-border rounded-md px-2 py-1.5 min-w-[160px] focus:outline-none focus:ring-1 focus:ring-ring">
@@ -232,6 +238,56 @@ const PdfViewer: React.FC = () => {
               <option key={ch.id} value={ch.id}>{ch.name}</option>
             ))}
           </select>
+          {book.chapters.length > 0 && (
+            <button
+              onClick={() => setManageChaptersOpen(true)}
+              className="p-1.5 rounded-md hover:bg-secondary transition-colors"
+              title="Manage chapters"
+            >
+              <Settings2 className="w-3.5 h-3.5 text-muted-foreground" />
+            </button>
+          )}
+        </div>
+
+        <div className="w-px h-6 bg-border" />
+
+        {/* Book title edit */}
+        <div className="flex items-center gap-1.5">
+          {editingTitle ? (
+            <div className="flex items-center gap-1">
+              <input
+                className="text-xs font-body border border-border rounded-md px-2 py-1.5 bg-transparent focus:outline-none focus:ring-1 focus:ring-ring min-w-[120px]"
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && titleDraft.trim()) {
+                    updateBookTitle(book.id, titleDraft.trim());
+                    setEditingTitle(false);
+                  }
+                  if (e.key === "Escape") setEditingTitle(false);
+                }}
+                onBlur={() => {
+                  if (titleDraft.trim() && titleDraft.trim() !== book.title) {
+                    updateBookTitle(book.id, titleDraft.trim());
+                  }
+                  setEditingTitle(false);
+                }}
+              />
+            </div>
+          ) : (
+            <button
+              onClick={() => {
+                setTitleDraft(book.title);
+                setEditingTitle(true);
+              }}
+              className="flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-body hover:bg-secondary transition-colors"
+              title="Edit book title"
+            >
+              <Pencil className="w-3 h-3 text-muted-foreground" />
+              <span className="text-muted-foreground">Rename</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -255,6 +311,15 @@ const PdfViewer: React.FC = () => {
         onCancel={() => {
           setNamingDialog({ open: false, endPage: 0, defaultName: "" });
         }}
+      />
+
+      {/* Chapter manage dialog */}
+      <ChapterManageDialog
+        open={manageChaptersOpen}
+        chapters={book.chapters}
+        onEdit={(chapterId, newName) => updateChapter(book.id, chapterId, newName)}
+        onDelete={(chapterId) => removeChapter(book.id, chapterId)}
+        onClose={() => setManageChaptersOpen(false)}
       />
     </div>
   );
