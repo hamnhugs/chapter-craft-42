@@ -14,6 +14,8 @@ import {
   FileText,
   Settings2,
   Pencil,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Chapter } from "@/types/library";
@@ -40,7 +42,62 @@ const PdfViewer: React.FC = () => {
   const [manageChaptersOpen, setManageChaptersOpen] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  // --- Read aloud ---
+  const readCurrentPage = useCallback(async () => {
+    if (!fileUrl) return;
+    if (isSpeaking) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+      return;
+    }
+    try {
+      const loadingTask = pdfjs.getDocument(fileUrl);
+      const pdf = await loadingTask.promise;
+      const page = await pdf.getPage(currentPage);
+      const content = await page.getTextContent();
+      const text = content.items.map((item: any) => item.str).join(" ");
+      if (!text.trim()) return;
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.onend = () => setIsSpeaking(false);
+      utterance.onerror = () => setIsSpeaking(false);
+      setIsSpeaking(true);
+      window.speechSynthesis.speak(utterance);
+    } catch (err) {
+      console.error("Read aloud failed:", err);
+    }
+  }, [fileUrl, currentPage, isSpeaking]);
+
+  // Stop speech on page change or unmount
+  useEffect(() => {
+    window.speechSynthesis.cancel();
+    setIsSpeaking(false);
+  }, [currentPage, activeBookId]);
+
+  // --- Swipe gestures ---
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    touchStartRef.current = { x: touch.clientX, y: touch.clientY };
+  }, []);
+
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (!touchStartRef.current) return;
+    const touch = e.changedTouches[0];
+    const dx = touch.clientX - touchStartRef.current.x;
+    const dy = touch.clientY - touchStartRef.current.y;
+    touchStartRef.current = null;
+    // Only trigger if horizontal swipe > 50px and more horizontal than vertical
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      if (dx < 0 && currentPage < numPages) {
+        setCurrentPage((p) => p + 1);
+      } else if (dx > 0 && currentPage > 1) {
+        setCurrentPage((p) => p - 1);
+      }
+    }
+  }, [currentPage, numPages]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -195,6 +252,20 @@ const PdfViewer: React.FC = () => {
 
         <div className="w-px h-6 bg-border" />
 
+        {/* Read aloud */}
+        <div className="flex items-center gap-1">
+          <button
+            onClick={readCurrentPage}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-body transition-colors ${isSpeaking ? "bg-accent text-accent-foreground" : "hover:bg-secondary"}`}
+            title={isSpeaking ? "Stop reading" : "Read this page aloud"}
+          >
+            {isSpeaking ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+            <span className="hidden sm:inline">{isSpeaking ? "Stop" : "Read"}</span>
+          </button>
+        </div>
+
+        <div className="w-px h-6 bg-border" />
+
         {/* Zoom */}
         <div className="flex items-center gap-1">
           <button onClick={() => zoom(-0.2)} className="p-1.5 rounded-md hover:bg-secondary transition-colors">
@@ -292,7 +363,7 @@ const PdfViewer: React.FC = () => {
       </div>
 
       {/* PDF content */}
-      <div ref={containerRef} className="flex-1 overflow-auto bg-viewer-bg flex justify-center py-6 scrollbar-thin">
+      <div ref={containerRef} className="flex-1 overflow-auto bg-viewer-bg flex justify-center py-6 scrollbar-thin" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
         <Document
           file={fileUrl}
           onLoadSuccess={onDocumentLoadSuccess}
