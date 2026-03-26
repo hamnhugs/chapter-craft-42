@@ -14,6 +14,8 @@ import {
   FileText,
   Settings2,
   Pencil,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Chapter } from "@/types/library";
