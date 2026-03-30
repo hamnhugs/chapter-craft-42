@@ -159,6 +159,87 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ─── BULK UPLOAD ENDPOINT ───
+    if (resource === "upload" && req.method === "POST") {
+      const contentType = req.headers.get("content-type") || "";
+      if (!contentType.includes("multipart/form-data")) {
+        return new Response(JSON.stringify({ error: "Content-Type must be multipart/form-data" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const formData = await req.formData();
+      const results: Array<{ file_name: string; book_id?: string; error?: string }> = [];
+
+      // Collect all file entries (supports multiple files)
+      const files: File[] = [];
+      for (const [_key, value] of formData.entries()) {
+        if (value instanceof File && value.size > 0) {
+          files.push(value);
+        }
+      }
+
+      if (files.length === 0) {
+        return new Response(JSON.stringify({ error: "No files provided. Send one or more file fields." }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      for (const file of files) {
+        try {
+          const fileName = file.name;
+          const title = fileName.replace(/\.[^/.]+$/, "");
+          const bookId = crypto.randomUUID();
+
+          // Create book record
+          const { error: insertError } = await supabase
+            .from("books")
+            .insert({
+              id: bookId,
+              title,
+              file_name: fileName,
+              page_count: 0,
+              user_id: keyOwnerId,
+            });
+
+          if (insertError) {
+            results.push({ file_name: fileName, error: insertError.message });
+            continue;
+          }
+
+          // Upload file to storage
+          const ext = fileName.toLowerCase().split(".").pop() || "pdf";
+          const storagePath = `${keyOwnerId}/${bookId}.${ext}`;
+
+          const { error: uploadError } = await supabase.storage
+            .from("book-pdfs")
+            .upload(storagePath, file, {
+              contentType: file.type || "application/octet-stream",
+              upsert: true,
+            });
+
+          if (uploadError) {
+            // Rollback: delete the book record
+            await supabase.from("books").delete().eq("id", bookId);
+            results.push({ file_name: fileName, error: uploadError.message });
+            continue;
+          }
+
+          results.push({ file_name: fileName, book_id: bookId });
+        } catch (e) {
+          results.push({ file_name: file.name, error: e.message });
+        }
+      }
+
+      const allOk = results.every((r) => !r.error);
+      return new Response(JSON.stringify({ uploaded: results }), {
+        status: allOk ? 201 : 207,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // ─── EXISTING ENDPOINTS ───
 
     // GET /chapters-api?action=links
