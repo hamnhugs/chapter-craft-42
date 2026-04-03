@@ -11,7 +11,7 @@ interface AppState {
   removeBook: (id: string) => void;
   setActiveBook: (id: string) => void;
   setActiveTab: (tab: "library" | "viewer" | "notes") => void;
-  addChapter: (bookId: string, chapter: Chapter) => void;
+  addChapter: (bookId: string, chapter: Chapter) => Promise<void>;
   updateChapter: (bookId: string, chapterId: string, name: string) => void;
   removeChapter: (bookId: string, chapterId: string) => void;
   updateBookTitle: (bookId: string, newTitle: string) => void;
@@ -206,8 +206,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const addChapter = useCallback(async (bookId: string, chapter: Chapter) => {
-    if (!user) return;
-    const { data } = await supabase
+    if (!user) throw new Error("You must be signed in to save chapters");
+
+    const { data, error } = await supabase
       .from("chapters")
       .insert({
         id: chapter.id,
@@ -221,7 +222,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .select()
       .single();
 
-    const finalChapter = data ? { ...chapter, id: data.id } : chapter;
+    if (error || !data) {
+      console.error("Failed to save chapter:", error);
+      throw error || new Error("Failed to save chapter");
+    }
+
+    const finalChapter = { ...chapter, id: data.id };
     setBooks((prev) =>
       prev.map((b) =>
         b.id === bookId ? { ...b, chapters: [...b.chapters, finalChapter] } : b

@@ -21,6 +21,7 @@ import { useApp } from "@/context/AppContext";
 import { Chapter } from "@/types/library";
 import ChapterNameDialog from "@/components/ChapterNameDialog";
 import ChapterManageDialog from "@/components/ChapterManageDialog";
+import { toast } from "sonner";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
@@ -43,6 +44,7 @@ const PdfViewer: React.FC = () => {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isSavingChapter, setIsSavingChapter] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
 
@@ -157,34 +159,38 @@ const PdfViewer: React.FC = () => {
   const handleChapterConfirm = async (name: string) => {
     if (chapterStart === null || !book) return;
     const endPage = namingDialog.endPage;
+    setIsSavingChapter(true);
 
-    setNamingDialog({ open: false, endPage: 0, defaultName: "" });
-
-    // Extract text
-    let textContent = "";
     try {
+      let textContent = "";
       const loadingTask = pdfjs.getDocument(fileUrl);
       const pdf = await loadingTask.promise;
+
       for (let i = chapterStart; i <= endPage; i++) {
         const page = await pdf.getPage(i);
         const content = await page.getTextContent();
         const pageText = content.items.map((item: any) => item.str).join(" ");
         textContent += pageText + "\n\n";
       }
+
+      const chapter: Chapter = {
+        id: crypto.randomUUID(),
+        name,
+        startPage: chapterStart,
+        endPage,
+        textContent,
+      };
+
+      await addChapter(book.id, chapter);
+      setNamingDialog({ open: false, endPage: 0, defaultName: "" });
+      setChapterStart(null);
+      toast.success("Chapter saved");
     } catch (err) {
-      console.error("Failed to extract text:", err);
+      console.error("Failed to save isolated chapter:", err);
+      toast.error("Failed to save chapter. Please try again.");
+    } finally {
+      setIsSavingChapter(false);
     }
-
-    const chapter: Chapter = {
-      id: crypto.randomUUID(),
-      name,
-      startPage: chapterStart,
-      endPage,
-      textContent,
-    };
-
-    addChapter(book.id, chapter);
-    setChapterStart(null);
   };
 
   const handleChapterSelect = (chapterId: string) => {
@@ -282,18 +288,18 @@ const PdfViewer: React.FC = () => {
         {/* Chapter isolation */}
         <div className="flex items-center gap-1">
           {chapterStart === null ? (
-            <button onClick={markChapterStart} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-body hover:bg-secondary transition-colors" title="Mark chapter start">
+            <button onClick={markChapterStart} disabled={isSavingChapter} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-body hover:bg-secondary disabled:opacity-50 transition-colors" title="Mark chapter start">
               <Flag className="w-3.5 h-3.5 text-accent" />
               <span>Start</span>
             </button>
           ) : (
             <>
               <span className="text-xs text-accent font-medium px-2">Started p.{chapterStart}</span>
-              <button onClick={markChapterEnd} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-body bg-accent text-accent-foreground hover:opacity-90 transition-colors" title="Mark chapter end">
+              <button onClick={markChapterEnd} disabled={isSavingChapter} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-body bg-accent text-accent-foreground hover:opacity-90 disabled:opacity-50 transition-colors" title="Mark chapter end">
                 <FlagOff className="w-3.5 h-3.5" />
                 <span>End</span>
               </button>
-              <button onClick={() => setChapterStart(null)} className="text-xs text-muted-foreground hover:text-foreground px-1">Cancel</button>
+              <button onClick={() => setChapterStart(null)} disabled={isSavingChapter} className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-50 px-1">Cancel</button>
             </>
           )}
         </div>
