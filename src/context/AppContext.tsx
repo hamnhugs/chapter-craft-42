@@ -46,6 +46,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [activeTab, setActiveTab] = useState<"library" | "viewer" | "notes">("library");
   const { user, signOut } = useAuth();
 
+  const getAuthenticatedUserId = useCallback(async () => {
+    if (user?.id) return user.id;
+
+    const { data, error } = await supabase.auth.getUser();
+
+    if (error) {
+      console.error("Failed to resolve authenticated user:", error);
+      throw error;
+    }
+
+    if (!data.user?.id) {
+      throw new Error("Your session expired. Please sign in again.");
+    }
+
+    return data.user.id;
+  }, [user?.id]);
+
   useEffect(() => {
     if (!user) return;
     const loadBooks = async () => {
@@ -206,7 +223,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const addChapter = useCallback(async (bookId: string, chapter: Chapter) => {
-    if (!user) throw new Error("You must be signed in to save chapters");
+    const userId = await getAuthenticatedUserId();
+
+    const { data: existingBook, error: existingBookError } = await supabase
+      .from("books")
+      .select("id")
+      .eq("id", bookId)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (existingBookError) {
+      console.error("Failed to verify book before saving chapter:", existingBookError);
+      throw existingBookError;
+    }
+
+    if (!existingBook) {
+      throw new Error("This book is no longer available in your library. Please reopen it and try again.");
+    }
 
     const { data, error } = await supabase
       .from("chapters")
@@ -217,7 +250,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         start_page: chapter.startPage,
         end_page: chapter.endPage,
         text_content: chapter.textContent,
-        user_id: user.id,
+        user_id: userId,
       })
       .select()
       .single();
@@ -233,7 +266,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         b.id === bookId ? { ...b, chapters: [...b.chapters, finalChapter] } : b
       )
     );
-  }, [user]);
+  }, [getAuthenticatedUserId]);
 
   const updateChapter = useCallback(async (bookId: string, chapterId: string, name: string) => {
     if (!user) return;
