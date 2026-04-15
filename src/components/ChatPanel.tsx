@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { MessageCircle, Send, Settings, BookOpen, ChevronDown, ChevronUp, Key, Loader2, Trash2 } from "lucide-react";
+import { MessageCircle, Send, Settings, Plus, X, Key, Loader2, Trash2 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,7 +13,9 @@ interface ChatMessage {
 }
 
 const OPENROUTER_STORAGE_KEY = "openrouter_api_key";
-const CHAT_MODEL = "google/gemini-2.5-flash";
+const SAVED_MODELS_KEY = "openrouter_saved_models";
+const SELECTED_MODEL_KEY = "openrouter_selected_model";
+const DEFAULT_MODEL = "google/gemini-2.5-flash";
 
 const ChatPanel: React.FC = () => {
   const { books, activeBookId } = useApp();
@@ -21,15 +23,25 @@ const ChatPanel: React.FC = () => {
   const [input, setInput] = useState("");
   const [apiKey, setApiKey] = useState(() => localStorage.getItem(OPENROUTER_STORAGE_KEY) || "");
   const [showSettings, setShowSettings] = useState(false);
-  const [showControls, setShowControls] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedBookId, setSelectedBookId] = useState<string | null>(activeBookId);
+  const [savedModels, setSavedModels] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem(SAVED_MODELS_KEY);
+      return stored ? JSON.parse(stored) : [DEFAULT_MODEL];
+    } catch { return [DEFAULT_MODEL]; }
+  });
+  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem(SELECTED_MODEL_KEY) || DEFAULT_MODEL);
+  const [newModelInput, setNewModelInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    if (activeBookId) setSelectedBookId(activeBookId);
-  }, [activeBookId]);
+    localStorage.setItem(SAVED_MODELS_KEY, JSON.stringify(savedModels));
+  }, [savedModels]);
+
+  useEffect(() => {
+    localStorage.setItem(SELECTED_MODEL_KEY, selectedModel);
+  }, [selectedModel]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -47,7 +59,31 @@ const ChatPanel: React.FC = () => {
     setShowSettings(false);
   };
 
-  const selectedBook = books.find((b) => b.id === selectedBookId);
+  const addModel = () => {
+    const model = newModelInput.trim();
+    if (!model) return;
+    if (savedModels.includes(model)) {
+      toast.error("Model already saved");
+      return;
+    }
+    setSavedModels((prev) => [...prev, model]);
+    setSelectedModel(model);
+    setNewModelInput("");
+    toast.success(`Model "${model}" added`);
+  };
+
+  const removeModel = (model: string) => {
+    if (savedModels.length <= 1) {
+      toast.error("You need at least one model");
+      return;
+    }
+    setSavedModels((prev) => prev.filter((m) => m !== model));
+    if (selectedModel === model) {
+      setSelectedModel(savedModels.find((m) => m !== model) || DEFAULT_MODEL);
+    }
+  };
+
+  const selectedBook = books.find((b) => b.id === activeBookId);
 
   const buildSystemPrompt = useCallback(() => {
     const parts: string[] = [
@@ -66,7 +102,7 @@ const ChatPanel: React.FC = () => {
 
     if (selectedBook) {
       parts.push("");
-      parts.push(`## Currently Selected Book: "${selectedBook.title}"`);
+      parts.push(`## Currently Active Book: "${selectedBook.title}"`);
       parts.push(`File: ${selectedBook.fileName} | Pages: ${selectedBook.pageCount}`);
 
       if (selectedBook.chapters.length > 0) {
@@ -75,7 +111,6 @@ const ChatPanel: React.FC = () => {
         selectedBook.chapters.forEach((ch) => {
           parts.push(`#### ${ch.name} (pages ${ch.startPage}–${ch.endPage})`);
           if (ch.textContent) {
-            // Truncate very long chapters to fit context window
             const text = ch.textContent.length > 12000 ? ch.textContent.slice(0, 12000) + "\n\n[...truncated]" : ch.textContent;
             parts.push(text);
           } else {
@@ -127,7 +162,7 @@ const ChatPanel: React.FC = () => {
           "X-Title": "Chapter Craft",
         },
         body: JSON.stringify({
-          model: CHAT_MODEL,
+          model: selectedModel,
           messages: [
             { role: "system", content: buildSystemPrompt() },
             ...updatedMessages.map((m) => ({ role: m.role, content: m.content })),
@@ -201,57 +236,31 @@ const ChatPanel: React.FC = () => {
     toast.success("Chat cleared");
   };
 
-  const controls = [
-    { command: "Summarize this chapter", desc: "Get a concise summary of the selected chapter" },
-    { command: "Summarize the whole book", desc: "Overview of all chapters in the book" },
-    { command: "Explain [passage]", desc: "Break down a difficult section" },
-    { command: "Compare chapters", desc: "Find themes and differences across chapters" },
-    { command: "Key themes", desc: "Identify main themes in the chapter/book" },
-    { command: "Generate flashcards", desc: "Create study flashcards from chapter content" },
-    { command: "Generate study notes", desc: "Create structured notes from the text" },
-    { command: "What happens on page X?", desc: "Ask about specific page content" },
-    { command: "List all chapters", desc: "Show all books and chapters in your library" },
-    { command: "Suggest further reading", desc: "Get recommendations based on the content" },
-  ];
-
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="border-b border-border bg-muted/30 px-4 py-3 flex items-center gap-3 flex-wrap">
         <MessageCircle className="w-5 h-5 text-primary" />
-        <span className="text-sm font-medium text-foreground">Chat with:</span>
+        <span className="text-sm font-medium text-foreground">Model:</span>
         <select
-          value={selectedBookId || ""}
-          onChange={(e) => setSelectedBookId(e.target.value || null)}
-          className="text-sm border border-input rounded-md px-2 py-1 bg-background text-foreground max-w-[250px] truncate"
+          value={selectedModel}
+          onChange={(e) => setSelectedModel(e.target.value)}
+          className="text-sm border border-input rounded-md px-2 py-1 bg-background text-foreground max-w-[280px] truncate"
         >
-          <option value="">All books (library overview)</option>
-          {books.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.title} ({b.chapters.length} ch.)
-            </option>
+          {savedModels.map((m) => (
+            <option key={m} value={m}>{m}</option>
           ))}
         </select>
 
         <div className="ml-auto flex gap-1">
           <Button
             size="sm"
-            variant={showControls ? "default" : "outline"}
-            onClick={() => setShowControls(!showControls)}
-            title="Show available commands"
-          >
-            <BookOpen className="w-3.5 h-3.5 mr-1" />
-            Controls
-            {showControls ? <ChevronUp className="w-3 h-3 ml-1" /> : <ChevronDown className="w-3 h-3 ml-1" />}
-          </Button>
-          <Button
-            size="sm"
             variant={showSettings ? "default" : "outline"}
             onClick={() => setShowSettings(!showSettings)}
-            title="API Key settings"
+            title="Settings"
           >
-            <Key className="w-3.5 h-3.5 mr-1" />
-            {apiKey ? "Key ✓" : "Set Key"}
+            <Settings className="w-3.5 h-3.5 mr-1" />
+            Settings
           </Button>
           {messages.length > 0 && (
             <Button size="sm" variant="ghost" onClick={clearChat} title="Clear chat">
@@ -263,62 +272,82 @@ const ChatPanel: React.FC = () => {
 
       {/* Settings panel */}
       {showSettings && (
-        <div className="border-b border-border bg-card px-4 py-3 space-y-2">
-          <p className="text-xs text-muted-foreground">
-            Enter your <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-primary underline">OpenRouter API key</a>. Your key is stored locally in your browser.
-          </p>
-          <div className="flex gap-2">
-            <Input
-              type="password"
-              placeholder="sk-or-v1-..."
-              defaultValue={apiKey}
-              className="text-sm font-mono"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") saveApiKey((e.target as HTMLInputElement).value);
-              }}
-              id="openrouter-key-input"
-            />
-            <Button
-              size="sm"
-              onClick={() => {
-                const el = document.getElementById("openrouter-key-input") as HTMLInputElement;
-                saveApiKey(el?.value || "");
-              }}
-            >
-              Save
-            </Button>
-            {apiKey && (
-              <Button size="sm" variant="destructive" onClick={() => saveApiKey("")}>
-                Remove
-              </Button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Controls panel */}
-      {showControls && (
-        <div className="border-b border-border bg-card px-4 py-3">
-          <p className="text-xs font-medium text-foreground mb-2">Available Commands & Prompts</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-            {controls.map((c) => (
-              <button
-                key={c.command}
-                onClick={() => {
-                  setInput(c.command);
-                  setShowControls(false);
-                  inputRef.current?.focus();
+        <div className="border-b border-border bg-card px-4 py-3 space-y-3">
+          {/* API Key */}
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium text-foreground">OpenRouter API Key</p>
+            <p className="text-xs text-muted-foreground">
+              Get your key from <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-primary underline">openrouter.ai/keys</a>. Stored locally in your browser.
+            </p>
+            <div className="flex gap-2">
+              <Input
+                type="password"
+                placeholder="sk-or-v1-..."
+                defaultValue={apiKey}
+                className="text-sm font-mono"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveApiKey((e.target as HTMLInputElement).value);
                 }}
-                className="text-left px-3 py-2 rounded-md border border-border hover:bg-muted/50 transition-colors"
+                id="openrouter-key-input"
+              />
+              <Button
+                size="sm"
+                onClick={() => {
+                  const el = document.getElementById("openrouter-key-input") as HTMLInputElement;
+                  saveApiKey(el?.value || "");
+                }}
               >
-                <span className="text-xs font-medium text-primary">{c.command}</span>
-                <span className="text-xs text-muted-foreground block">{c.desc}</span>
-              </button>
-            ))}
+                Save
+              </Button>
+              {apiKey && (
+                <Button size="sm" variant="destructive" onClick={() => saveApiKey("")}>
+                  Remove
+                </Button>
+              )}
+            </div>
           </div>
-          <p className="text-xs text-muted-foreground mt-2">
-            💡 The AI has access to your full library, all book metadata, and the text of all isolated chapters for the selected book. Ask anything!
-          </p>
+
+          {/* Saved Models */}
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium text-foreground">Saved Models</p>
+            <p className="text-xs text-muted-foreground">
+              Paste model names from <a href="https://openrouter.ai/models" target="_blank" rel="noopener noreferrer" className="text-primary underline">openrouter.ai/models</a> (e.g. <code className="text-xs bg-muted px-1 rounded">google/gemini-2.5-flash</code>)
+            </p>
+            <div className="flex gap-2">
+              <Input
+                type="text"
+                placeholder="provider/model-name"
+                value={newModelInput}
+                onChange={(e) => setNewModelInput(e.target.value)}
+                className="text-sm font-mono"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") addModel();
+                }}
+              />
+              <Button size="sm" onClick={addModel}>
+                <Plus className="w-3.5 h-3.5 mr-1" /> Add
+              </Button>
+            </div>
+            <div className="flex flex-wrap gap-1.5 mt-1.5">
+              {savedModels.map((m) => (
+                <span
+                  key={m}
+                  className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${
+                    m === selectedModel ? "border-primary bg-primary/10 text-primary" : "border-border bg-muted text-muted-foreground"
+                  }`}
+                >
+                  <button onClick={() => setSelectedModel(m)} className="hover:underline">{m}</button>
+                  <button
+                    onClick={() => removeModel(m)}
+                    className="hover:text-destructive ml-0.5"
+                    title="Remove model"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
@@ -330,7 +359,7 @@ const ChatPanel: React.FC = () => {
             <p className="text-sm text-center max-w-md">
               {selectedBook
                 ? `Ready to chat about "${selectedBook.title}". ${selectedBook.chapters.length > 0 ? `${selectedBook.chapters.length} chapter(s) loaded as context.` : "No chapters isolated yet — isolate chapters in the Reader tab for best results."}`
-                : "Select a book above, or ask about your whole library. Set your OpenRouter API key to get started."}
+                : "Select a book in the Reader tab, then come here to chat about it. Set your OpenRouter API key in Settings to get started."}
             </p>
             {!apiKey && (
               <Button size="sm" variant="outline" onClick={() => setShowSettings(true)}>
