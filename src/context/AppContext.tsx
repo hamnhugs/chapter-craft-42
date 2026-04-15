@@ -6,11 +6,11 @@ import { useAuth } from "@/hooks/useAuth";
 interface AppState {
   books: BookDocument[];
   activeBookId: string | null;
-  activeTab: "library" | "viewer" | "notes";
+  activeTab: "library" | "viewer" | "chat";
   addBook: (book: BookDocument, sourceFile?: File) => Promise<void>;
   removeBook: (id: string) => void;
   setActiveBook: (id: string) => void;
-  setActiveTab: (tab: "library" | "viewer" | "notes") => void;
+  setActiveTab: (tab: "library" | "viewer" | "chat") => void;
   addChapter: (bookId: string, chapter: Chapter) => Promise<void>;
   updateChapter: (bookId: string, chapterId: string, name: string) => void;
   removeChapter: (bookId: string, chapterId: string) => void;
@@ -43,7 +43,7 @@ const getStoragePathsForBook = (userId: string, bookId: string, fileName: string
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [books, setBooks] = useState<BookDocument[]>([]);
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"library" | "viewer" | "notes">("library");
+  const [activeTab, setActiveTab] = useState<"library" | "viewer" | "chat">("library");
   const { user, signOut } = useAuth();
 
   const getAuthenticatedUserId = useCallback(async () => {
