@@ -395,6 +395,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useApp = (): AppState => {
   const ctx = useContext(AppContext);
   if (!ctx) throw new Error("useApp must be used within AppProvider");
