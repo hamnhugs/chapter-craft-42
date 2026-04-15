@@ -31,20 +31,20 @@ const App = () => (
       <Toaster />
       <Sonner />
       <HashRouter>
-        <Routes>
-          <Route path="/auth" element={<AuthRoute />} />
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
-                <AppProvider>
+        <AppProvider>
+          <Routes>
+            <Route path="/auth" element={<AuthRoute />} />
+            <Route
+              path="/"
+              element={
+                <ProtectedRoute>
                   <Index />
-                </AppProvider>
-              </ProtectedRoute>
-            }
-          />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+                </ProtectedRoute>
+              }
+            />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </AppProvider>
       </HashRouter>
     </TooltipProvider>
   </QueryClientProvider>
