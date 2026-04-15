@@ -187,7 +187,12 @@ const PdfViewer: React.FC = () => {
       toast.success("Chapter saved");
     } catch (err) {
       console.error("Failed to save isolated chapter:", err);
-      toast.error("Failed to save chapter. Please try again.");
+      const errorMessage = err instanceof Error
+        ? err.message
+        : typeof err === "object" && err !== null && "message" in err && typeof err.message === "string"
+          ? err.message
+          : "Failed to save chapter. Please try again.";
+      toast.error(errorMessage);
     } finally {
       setIsSavingChapter(false);
     }
