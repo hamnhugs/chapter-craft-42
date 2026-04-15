@@ -1,9 +1,9 @@
 import React from "react";
-import { BookOpen, Library as LibraryIcon, LogOut, StickyNote } from "lucide-react";
+import { BookOpen, Library as LibraryIcon, LogOut, MessageCircle } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import PdfViewer from "@/components/PdfViewer";
 import Library from "@/components/Library";
-import NotesLibrary from "@/components/NotesLibrary";
+import ChatPanel from "@/components/ChatPanel";
 
 const Index: React.FC = () => {
   const { activeTab, setActiveTab, getActiveBook, signOut } = useApp();
@@ -26,10 +26,10 @@ const Index: React.FC = () => {
           label={activeBook ? activeBook.title : "Reader"}
         />
         <TabButton
-          active={activeTab === "notes"}
-          onClick={() => setActiveTab("notes")}
-          icon={<StickyNote className="w-4 h-4" />}
-          label="Notes"
+          active={activeTab === "chat"}
+          onClick={() => setActiveTab("chat")}
+          icon={<MessageCircle className="w-4 h-4" />}
+          label="Chat"
         />
         <div className="ml-auto">
           <button onClick={signOut} className="flex items-center gap-1.5 px-3 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors" title="Sign out">
@@ -41,7 +41,7 @@ const Index: React.FC = () => {
 
       {/* Content */}
       <div className="flex-1 overflow-hidden">
-        {activeTab === "library" ? <Library /> : activeTab === "notes" ? <NotesLibrary /> : <PdfViewer />}
+        {activeTab === "library" ? <Library /> : activeTab === "chat" ? <ChatPanel /> : <PdfViewer />}
       </div>
     </div>
   );
