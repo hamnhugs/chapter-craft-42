@@ -64,29 +64,61 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [user?.id]);
 
   useEffect(() => {
-    if (!user) return;
-    const loadBooks = async () => {
-      const { data } = await supabase
-        .from("books")
-        .select("id, title, file_name, page_count, cover_image_url, created_at, chapters(id, name, start_page, end_page, text_content)")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false });
+    if (!user) {
+      setBooks([]);
+      setActiveBookId(null);
+      return;
+    }
 
-      if (data) {
-        const dbBooks: BookDocument[] = data.map((b: any) => ({
+    const loadBooks = async () => {
+      const [{ data: bookRows, error: booksError }, { data: chapterRows, error: chaptersError }] = await Promise.all([
+        supabase
+          .from("books")
+          .select("id, title, file_name, page_count, cover_image_url, created_at")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("chapters")
+          .select("id, book_id, name, start_page, end_page, text_content, created_at")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: true }),
+      ]);
+
+      if (booksError) {
+        console.error("Failed to load books:", booksError);
+        return;
+      }
+
+      if (chaptersError) {
+        console.error("Failed to load chapters:", chaptersError);
+        return;
+      }
+
+      const chaptersByBookId = (chapterRows || []).reduce<Record<string, Chapter[]>>((acc, chapter: any) => {
+        if (!acc[chapter.book_id]) {
+          acc[chapter.book_id] = [];
+        }
+
+        acc[chapter.book_id].push({
+          id: chapter.id,
+          name: chapter.name,
+          startPage: chapter.start_page,
+          endPage: chapter.end_page,
+          textContent: chapter.text_content,
+        });
+
+        return acc;
+      }, {});
+
+      if (bookRows) {
+        const dbBooks: BookDocument[] = bookRows.map((b: any) => ({
           id: b.id,
           title: b.title,
           fileName: b.file_name,
           fileData: "",
           pageCount: b.page_count,
           coverImageUrl: b.cover_image_url || undefined,
-          chapters: (b.chapters || []).map((c: any) => ({
-            id: c.id,
-            name: c.name,
-            startPage: c.start_page,
-            endPage: c.end_page,
-            textContent: c.text_content,
-          })),
+          chapters: chaptersByBookId[b.id] || [],
           addedAt: new Date(b.created_at).getTime(),
         }));
         setBooks(dbBooks);
