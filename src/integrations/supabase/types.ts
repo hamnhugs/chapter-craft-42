@@ -112,6 +112,128 @@ export type Database = {
           },
         ]
       }
+      conversation_memory: {
+        Row: {
+          id: string
+          key_facts: Json
+          summary: string
+          total_conversations: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          key_facts?: Json
+          summary?: string
+          total_conversations?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          id?: string
+          key_facts?: Json
+          summary?: string
+          total_conversations?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      knowledge_entries: {
+        Row: {
+          confidence: number
+          content: string
+          created_at: string
+          entry_type: string
+          id: string
+          source_book_id: string | null
+          tags: string[]
+          title: string
+          updated_at: string
+          user_id: string
+          valid_from: string | null
+          valid_to: string | null
+        }
+        Insert: {
+          confidence?: number
+          content?: string
+          created_at?: string
+          entry_type?: string
+          id?: string
+          source_book_id?: string | null
+          tags?: string[]
+          title: string
+          updated_at?: string
+          user_id: string
+          valid_from?: string | null
+          valid_to?: string | null
+        }
+        Update: {
+          confidence?: number
+          content?: string
+          created_at?: string
+          entry_type?: string
+          id?: string
+          source_book_id?: string | null
+          tags?: string[]
+          title?: string
+          updated_at?: string
+          user_id?: string
+          valid_from?: string | null
+          valid_to?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "knowledge_entries_source_book_id_fkey"
+            columns: ["source_book_id"]
+            isOneToOne: false
+            referencedRelation: "books"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      memory_graph: {
+        Row: {
+          created_at: string
+          id: string
+          relationship: string
+          source_entry_id: string
+          target_entry_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          relationship?: string
+          source_entry_id: string
+          target_entry_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          relationship?: string
+          source_entry_id?: string
+          target_entry_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "memory_graph_source_entry_id_fkey"
+            columns: ["source_entry_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "memory_graph_target_entry_id_fkey"
+            columns: ["target_entry_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_entries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       notes: {
         Row: {
           book_id: string
