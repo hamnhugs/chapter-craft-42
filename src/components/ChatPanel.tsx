@@ -8,66 +8,41 @@ import ReactMarkdown from "react-markdown";
 import { fetchKnowledgeEntries, fetchConversationMemory, extractKnowledge } from "@/lib/knowledgeApi";
 import { DEEP_RESEARCH_SYSTEM_PROMPT, DEEP_RESEARCH_ADVANCED_PROMPT } from "@/lib/deepResearchPrompt";
 import { Loader2 } from "lucide-react";
+import { useChatSettings } from "@/hooks/useChatSettings";
 
 interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
 }
 
-const OPENROUTER_STORAGE_KEY = "openrouter_api_key";
-const SAVED_MODELS_KEY = "openrouter_saved_models";
-const SELECTED_MODEL_KEY = "openrouter_selected_model";
-const DEEP_RESEARCH_MODEL_KEY = "deep_research_model";
-const DEFAULT_MODEL = "google/gemini-2.5-flash";
-const DEFAULT_DEEP_RESEARCH_MODEL = "google/gemini-2.5-pro";
-
 const ChatPanel: React.FC = () => {
   const { books, activeBookId } = useApp();
+  const {
+    apiKey, savedModels, selectedModel, deepResearchModel, loaded,
+    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel,
+  } = useChatSettings();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem(OPENROUTER_STORAGE_KEY) || "");
   const [showSettings, setShowSettings] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [savedModels, setSavedModels] = useState<string[]>(() => {
-    try {
-      const stored = localStorage.getItem(SAVED_MODELS_KEY);
-      return stored ? JSON.parse(stored) : [DEFAULT_MODEL];
-    } catch { return [DEFAULT_MODEL]; }
-  });
-  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem(SELECTED_MODEL_KEY) || DEFAULT_MODEL);
   const [newModelInput, setNewModelInput] = useState("");
   const [extracting, setExtracting] = useState(false);
   const [deepResearch, setDeepResearch] = useState(false);
-  const [deepResearchModel, setDeepResearchModel] = useState(() => localStorage.getItem(DEEP_RESEARCH_MODEL_KEY) || DEFAULT_DEEP_RESEARCH_MODEL);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => { localStorage.setItem(SAVED_MODELS_KEY, JSON.stringify(savedModels)); }, [savedModels]);
-  useEffect(() => { localStorage.setItem(SELECTED_MODEL_KEY, selectedModel); }, [selectedModel]);
-  useEffect(() => { localStorage.setItem(DEEP_RESEARCH_MODEL_KEY, deepResearchModel); }, [deepResearchModel]);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-  const saveApiKey = (key: string) => {
-    setApiKey(key);
-    if (key) { localStorage.setItem(OPENROUTER_STORAGE_KEY, key); toast.success("OpenRouter API key saved"); }
-    else { localStorage.removeItem(OPENROUTER_STORAGE_KEY); toast.success("API key removed"); }
+  const handleSaveApiKey = (key: string) => {
+    saveApiKey(key);
     setShowSettings(false);
   };
 
-  const addModel = () => {
+  const handleAddModel = () => {
     const model = newModelInput.trim();
     if (!model) return;
-    if (savedModels.includes(model)) { toast.error("Model already saved"); return; }
-    setSavedModels((prev) => [...prev, model]);
-    setSelectedModel(model);
+    addModel(model);
     setNewModelInput("");
-    toast.success(`Model "${model}" added`);
-  };
-
-  const removeModel = (model: string) => {
-    if (savedModels.length <= 1) { toast.error("You need at least one model"); return; }
-    setSavedModels((prev) => prev.filter((m) => m !== model));
-    if (selectedModel === model) setSelectedModel(savedModels.find((m) => m !== model) || DEFAULT_MODEL);
   };
 
   const selectedBook = books.find((b) => b.id === activeBookId);
@@ -253,13 +228,13 @@ const ChatPanel: React.FC = () => {
                   className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 pr-10 focus:ring-1 focus:ring-primary/40 transition-all"
                   type="password" placeholder="sk-or-v1-..." defaultValue={apiKey}
                   id="openrouter-key-input"
-                  onKeyDown={(e) => { if (e.key === "Enter") saveApiKey((e.target as HTMLInputElement).value); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleSaveApiKey((e.target as HTMLInputElement).value); }}
                 />
                 <span className="material-symbols-outlined absolute right-3 top-2.5 text-on-surface-variant text-sm">key</span>
               </div>
               <div className="flex gap-2 mt-1">
-                <Button size="sm" onClick={() => { const el = document.getElementById("openrouter-key-input") as HTMLInputElement; saveApiKey(el?.value || ""); }}>Save</Button>
-                {apiKey && <Button size="sm" variant="destructive" onClick={() => saveApiKey("")}>Remove</Button>}
+                <Button size="sm" onClick={() => { const el = document.getElementById("openrouter-key-input") as HTMLInputElement; handleSaveApiKey(el?.value || ""); }}>Save</Button>
+                {apiKey && <Button size="sm" variant="destructive" onClick={() => handleSaveApiKey("")}>Remove</Button>}
               </div>
             </div>
             <div className="flex flex-col gap-1.5">
@@ -272,8 +247,8 @@ const ChatPanel: React.FC = () => {
                 {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
               </select>
               <div className="flex gap-2 mt-1">
-                <Input type="text" placeholder="provider/model-name" value={newModelInput} onChange={(e) => setNewModelInput(e.target.value)} className="text-sm font-mono bg-surface-container-high border-none" onKeyDown={(e) => { if (e.key === "Enter") addModel(); }} />
-                <Button size="sm" onClick={addModel}>Add</Button>
+                <Input type="text" placeholder="provider/model-name" value={newModelInput} onChange={(e) => setNewModelInput(e.target.value)} className="text-sm font-mono bg-surface-container-high border-none" onKeyDown={(e) => { if (e.key === "Enter") handleAddModel(); }} />
+                <Button size="sm" onClick={handleAddModel}>Add</Button>
               </div>
               <div className="flex flex-wrap gap-1.5 mt-1">
                 {savedModels.map((m) => (
