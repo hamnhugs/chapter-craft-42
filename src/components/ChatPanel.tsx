@@ -8,43 +8,29 @@ import ReactMarkdown from "react-markdown";
 import { fetchKnowledgeEntries, fetchConversationMemory, extractKnowledge } from "@/lib/knowledgeApi";
 import { DEEP_RESEARCH_SYSTEM_PROMPT, DEEP_RESEARCH_ADVANCED_PROMPT } from "@/lib/deepResearchPrompt";
 import { Loader2 } from "lucide-react";
+import { useChatSettings } from "@/hooks/useChatSettings";
 
 interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
 }
 
-const OPENROUTER_STORAGE_KEY = "openrouter_api_key";
-const SAVED_MODELS_KEY = "openrouter_saved_models";
-const SELECTED_MODEL_KEY = "openrouter_selected_model";
-const DEEP_RESEARCH_MODEL_KEY = "deep_research_model";
-const DEFAULT_MODEL = "google/gemini-2.5-flash";
-const DEFAULT_DEEP_RESEARCH_MODEL = "google/gemini-2.5-pro";
-
 const ChatPanel: React.FC = () => {
   const { books, activeBookId } = useApp();
+  const {
+    apiKey, savedModels, selectedModel, deepResearchModel, loaded,
+    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel,
+  } = useChatSettings();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem(OPENROUTER_STORAGE_KEY) || "");
   const [showSettings, setShowSettings] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [savedModels, setSavedModels] = useState<string[]>(() => {
-    try {
-      const stored = localStorage.getItem(SAVED_MODELS_KEY);
-      return stored ? JSON.parse(stored) : [DEFAULT_MODEL];
-    } catch { return [DEFAULT_MODEL]; }
-  });
-  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem(SELECTED_MODEL_KEY) || DEFAULT_MODEL);
   const [newModelInput, setNewModelInput] = useState("");
   const [extracting, setExtracting] = useState(false);
   const [deepResearch, setDeepResearch] = useState(false);
-  const [deepResearchModel, setDeepResearchModel] = useState(() => localStorage.getItem(DEEP_RESEARCH_MODEL_KEY) || DEFAULT_DEEP_RESEARCH_MODEL);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => { localStorage.setItem(SAVED_MODELS_KEY, JSON.stringify(savedModels)); }, [savedModels]);
-  useEffect(() => { localStorage.setItem(SELECTED_MODEL_KEY, selectedModel); }, [selectedModel]);
-  useEffect(() => { localStorage.setItem(DEEP_RESEARCH_MODEL_KEY, deepResearchModel); }, [deepResearchModel]);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
   const saveApiKey = (key: string) => {
