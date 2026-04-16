@@ -44,6 +44,7 @@ const ChatPanel: React.FC = () => {
 
   useEffect(() => { localStorage.setItem(SAVED_MODELS_KEY, JSON.stringify(savedModels)); }, [savedModels]);
   useEffect(() => { localStorage.setItem(SELECTED_MODEL_KEY, selectedModel); }, [selectedModel]);
+  useEffect(() => { localStorage.setItem(DEEP_RESEARCH_MODEL_KEY, deepResearchModel); }, [deepResearchModel]);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
   const saveApiKey = (key: string) => {
