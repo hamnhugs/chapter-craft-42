@@ -6,11 +6,11 @@ import { useAuth } from "@/hooks/useAuth";
 interface AppState {
   books: BookDocument[];
   activeBookId: string | null;
-  activeTab: "library" | "viewer" | "chat" | "wiki";
+  activeTab: "library" | "viewer" | "chat" | "wiki" | "voice";
   addBook: (book: BookDocument, sourceFile?: File) => Promise<void>;
   removeBook: (id: string) => void;
   setActiveBook: (id: string) => void;
-  setActiveTab: (tab: "library" | "viewer" | "chat" | "wiki") => void;
+  setActiveTab: (tab: "library" | "viewer" | "chat" | "wiki" | "voice") => void;
   addChapter: (bookId: string, chapter: Chapter) => Promise<void>;
   updateChapter: (bookId: string, chapterId: string, name: string) => void;
   removeChapter: (bookId: string, chapterId: string) => void;

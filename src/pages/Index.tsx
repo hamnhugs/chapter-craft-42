@@ -1,10 +1,11 @@
 import React from "react";
-import { BookOpen, Library as LibraryIcon, LogOut, MessageCircle, Brain } from "lucide-react";
+import { BookOpen, Library as LibraryIcon, LogOut, MessageCircle, Brain, Mic } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import PdfViewer from "@/components/PdfViewer";
 import Library from "@/components/Library";
 import ChatPanel from "@/components/ChatPanel";
 import WikiPanel from "@/components/WikiPanel";
+import VoiceChat from "@/components/VoiceChat";
 
 const Index: React.FC = () => {
   const { activeTab, setActiveTab, getActiveBook, signOut } = useApp();
