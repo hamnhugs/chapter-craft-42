@@ -174,26 +174,28 @@ const VoiceChat: React.FC = () => {
     if (!apiKey) { toast.error("Set your API key first"); setShowSettings(true); return; }
     stopSpeaking();
     const recognition = new SpeechRecognition();
-    recognition.continuous = true;
+    recognition.continuous = false;
     recognition.interimResults = true;
     recognition.lang = "en-US";
-    let finalTranscript = "";
-    let silenceTimer: ReturnType<typeof setTimeout> | null = null;
+    let sent = false;
     recognition.onresult = (event: any) => {
+      let finalTranscript = "";
       let interim = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) finalTranscript += event.results[i][0].transcript + " ";
+      for (let i = 0; i < event.results.length; i++) {
+        if (event.results[i].isFinal) finalTranscript += event.results[i][0].transcript;
         else interim += event.results[i][0].transcript;
       }
       setInterimTranscript(interim || finalTranscript);
-      if (silenceTimer) clearTimeout(silenceTimer);
-      silenceTimer = setTimeout(() => {
-        const text = (finalTranscript + interim).trim();
-        if (text) { recognition.stop(); setIsListening(false); setInterimTranscript(""); sendMessage(text); }
-      }, 2000);
+      if (finalTranscript.trim() && !sent) {
+        sent = true;
+        recognition.stop();
+        setIsListening(false);
+        setInterimTranscript("");
+        sendMessage(finalTranscript.trim());
+      }
     };
     recognition.onerror = (event: any) => { if (event.error !== "aborted") toast.error(`Mic error: ${event.error}`); setIsListening(false); setInterimTranscript(""); };
-    recognition.onend = () => { setIsListening(false); if (silenceTimer) clearTimeout(silenceTimer); const text = finalTranscript.trim(); if (text) { setInterimTranscript(""); sendMessage(text); } };
+    recognition.onend = () => { setIsListening(false); setInterimTranscript(""); };
     recognitionRef.current = recognition;
     recognition.start();
     setIsListening(true);
