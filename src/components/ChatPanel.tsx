@@ -6,6 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import { fetchKnowledgeEntries, fetchConversationMemory, extractKnowledge } from "@/lib/knowledgeApi";
+import { DEEP_RESEARCH_SYSTEM_PROMPT, DEEP_RESEARCH_ADVANCED_PROMPT } from "@/lib/deepResearchPrompt";
 import { Loader2 } from "lucide-react";
 
 interface ChatMessage {
@@ -34,6 +35,7 @@ const ChatPanel: React.FC = () => {
   const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem(SELECTED_MODEL_KEY) || DEFAULT_MODEL);
   const [newModelInput, setNewModelInput] = useState("");
   const [extracting, setExtracting] = useState(false);
+  const [deepResearch, setDeepResearch] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -122,9 +124,13 @@ const ChatPanel: React.FC = () => {
       }
     }
 
+    if (deepResearch) {
+      parts.push("", DEEP_RESEARCH_SYSTEM_PROMPT, DEEP_RESEARCH_ADVANCED_PROMPT);
+    }
+
     parts.push("", "Be concise but thorough. Use markdown formatting. Reference specific chapter names and page numbers when relevant.");
     return parts.join("\n");
-  }, [books, selectedBook]);
+  }, [books, selectedBook, deepResearch]);
 
   const handleSaveToWiki = async () => {
     if (messages.length < 2) { toast.error("Chat first before saving to wiki"); return; }
@@ -373,6 +379,9 @@ const ChatPanel: React.FC = () => {
           </div>
           <div className="flex justify-between items-center px-2">
             <div className="flex gap-4">
+              <button onClick={() => setDeepResearch(!deepResearch)} className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${deepResearch ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`}>
+                <span className="material-symbols-outlined text-sm" style={deepResearch ? { fontVariationSettings: "'FILL' 1" } : {}}>science</span> Deep Research {deepResearch ? "ON" : "OFF"}
+              </button>
               <button onClick={() => setShowSettings(!showSettings)} className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-1 hover:text-primary transition-colors">
                 <span className="material-symbols-outlined text-sm">tune</span> Settings
               </button>
