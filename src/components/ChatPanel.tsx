@@ -124,9 +124,13 @@ const ChatPanel: React.FC = () => {
       }
     }
 
+    if (deepResearch) {
+      parts.push("", DEEP_RESEARCH_SYSTEM_PROMPT, DEEP_RESEARCH_ADVANCED_PROMPT);
+    }
+
     parts.push("", "Be concise but thorough. Use markdown formatting. Reference specific chapter names and page numbers when relevant.");
     return parts.join("\n");
-  }, [books, selectedBook]);
+  }, [books, selectedBook, deepResearch]);
 
   const handleSaveToWiki = async () => {
     if (messages.length < 2) { toast.error("Chat first before saving to wiki"); return; }
