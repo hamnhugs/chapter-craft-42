@@ -228,13 +228,13 @@ const ChatPanel: React.FC = () => {
                   className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 pr-10 focus:ring-1 focus:ring-primary/40 transition-all"
                   type="password" placeholder="sk-or-v1-..." defaultValue={apiKey}
                   id="openrouter-key-input"
-                  onKeyDown={(e) => { if (e.key === "Enter") saveApiKey((e.target as HTMLInputElement).value); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleSaveApiKey((e.target as HTMLInputElement).value); }}
                 />
                 <span className="material-symbols-outlined absolute right-3 top-2.5 text-on-surface-variant text-sm">key</span>
               </div>
               <div className="flex gap-2 mt-1">
-                <Button size="sm" onClick={() => { const el = document.getElementById("openrouter-key-input") as HTMLInputElement; saveApiKey(el?.value || ""); }}>Save</Button>
-                {apiKey && <Button size="sm" variant="destructive" onClick={() => saveApiKey("")}>Remove</Button>}
+                <Button size="sm" onClick={() => { const el = document.getElementById("openrouter-key-input") as HTMLInputElement; handleSaveApiKey(el?.value || ""); }}>Save</Button>
+                {apiKey && <Button size="sm" variant="destructive" onClick={() => handleSaveApiKey("")}>Remove</Button>}
               </div>
             </div>
             <div className="flex flex-col gap-1.5">
@@ -247,8 +247,8 @@ const ChatPanel: React.FC = () => {
                 {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
               </select>
               <div className="flex gap-2 mt-1">
-                <Input type="text" placeholder="provider/model-name" value={newModelInput} onChange={(e) => setNewModelInput(e.target.value)} className="text-sm font-mono bg-surface-container-high border-none" onKeyDown={(e) => { if (e.key === "Enter") addModel(); }} />
-                <Button size="sm" onClick={addModel}>Add</Button>
+                <Input type="text" placeholder="provider/model-name" value={newModelInput} onChange={(e) => setNewModelInput(e.target.value)} className="text-sm font-mono bg-surface-container-high border-none" onKeyDown={(e) => { if (e.key === "Enter") handleAddModel(); }} />
+                <Button size="sm" onClick={handleAddModel}>Add</Button>
               </div>
               <div className="flex flex-wrap gap-1.5 mt-1">
                 {savedModels.map((m) => (
