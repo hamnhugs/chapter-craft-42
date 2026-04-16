@@ -1,5 +1,4 @@
 import React, { useRef, useState, useMemo } from "react";
-import { Upload, BookOpen, Trash2, BookMarked, Key, ArrowUpDown, FileText, Pencil } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import ApiKeyManager from "@/components/ApiKeyManager";
 import { BookDocument } from "@/types/library";
@@ -76,7 +75,6 @@ const Library: React.FC = () => {
     if (error && typeof error === "object" && "message" in error) {
       return String((error as { message: string }).message);
     }
-
     return "Upload failed";
   };
 
@@ -96,7 +94,6 @@ const Library: React.FC = () => {
         attempts: 0,
         error: "Unsupported file type",
       }));
-
       setUploadStates((prev) => [...skippedStates, ...prev].slice(0, 80));
     }
 
@@ -123,30 +120,29 @@ const Library: React.FC = () => {
 
     setIsUploading(true);
 
-  const processQueueItem = async (item: { id: string; file: File }) => {
-    const isEpub = item.file.name.toLowerCase().endsWith(".epub");
-    let fileToUpload = item.file;
-    let pageCount = 0;
+    const processQueueItem = async (item: { id: string; file: File }) => {
+      const isEpub = item.file.name.toLowerCase().endsWith(".epub");
+      let fileToUpload = item.file;
+      let pageCount = 0;
 
-    // Convert EPUB to PDF before upload
-    if (isEpub) {
-      updateUploadState(item.id, { status: "uploading", attempts: 0, error: "Converting EPUB…" });
-      try {
-        const result = await convertEpubToPdf(item.file);
-        fileToUpload = result.file;
-        pageCount = result.pageCount;
-      } catch (error) {
-        updateUploadState(item.id, { status: "failed", attempts: 0, error: "EPUB conversion failed" });
-        return;
+      if (isEpub) {
+        updateUploadState(item.id, { status: "uploading", attempts: 0, error: "Converting EPUB…" });
+        try {
+          const result = await convertEpubToPdf(item.file);
+          fileToUpload = result.file;
+          pageCount = result.pageCount;
+        } catch {
+          updateUploadState(item.id, { status: "failed", attempts: 0, error: "EPUB conversion failed" });
+          return;
+        }
+      } else {
+        const isPdf = item.file.name.toLowerCase().endsWith(".pdf");
+        pageCount = isPdf ? await getPdfPageCount(item.file) : 0;
       }
-    } else {
-      const isPdf = item.file.name.toLowerCase().endsWith(".pdf");
-      pageCount = isPdf ? await getPdfPageCount(item.file) : 0;
-    }
 
-    let attempt = 0;
-    let uploaded = false;
-    let lastError: unknown = null;
+      let attempt = 0;
+      let uploaded = false;
+      let lastError: unknown = null;
 
       while (attempt < MAX_UPLOAD_ATTEMPTS && !uploaded) {
         attempt += 1;
@@ -197,126 +193,145 @@ const Library: React.FC = () => {
     );
 
     setIsUploading(false);
-
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const dt = e.dataTransfer;
+    if (dt.files.length > 0) {
+      const input = fileInputRef.current;
+      if (input) {
+        const dataTransfer = new DataTransfer();
+        Array.from(dt.files).forEach(f => dataTransfer.items.add(f));
+        input.files = dataTransfer.files;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    }
+  };
+
   return (
-    <div className="h-full flex flex-col animate-fade-in">
-      {/* Header */}
-      <div className="px-6 py-5 border-b border-border bg-viewer-toolbar">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-2xl font-display font-semibold">Library</h2>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              {books.length} {books.length === 1 ? "document" : "documents"}
+    <div className="h-full flex flex-col animate-fade-in overflow-auto">
+      <main className="max-w-7xl mx-auto px-6 py-12 flex flex-col gap-12 w-full">
+        {/* Header Section */}
+        <section className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+          <div className="space-y-2">
+            <h1 className="font-headline text-5xl md:text-7xl font-bold tracking-tighter text-primary italic">
+              My Library
+            </h1>
+            <p className="text-on-surface-variant font-body max-w-md">
+              Your curated sanctuary of knowledge and thought.
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            {books.length > 0 && (
-              <button
-                onClick={() => {
-                  if (window.confirm(`Delete all ${books.length} books? This cannot be undone.`)) {
-                    books.forEach((book) => removeBook(book.id));
-                  }
-                }}
-                className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-destructive/50 text-sm font-medium text-destructive hover:bg-destructive hover:text-destructive-foreground transition-colors"
-                title="Delete All Books"
-              >
-                <Trash2 className="w-4 h-4" />
-                Delete All
-              </button>
-            )}
+          <div className="flex items-center gap-4">
             <button
               onClick={() => setSortBy((v) => (v === "date" ? "name" : "date"))}
-              className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-border text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-              title="Sort books"
+              className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all"
             >
-              <ArrowUpDown className="w-4 h-4" />
-              {sortBy === "date" ? "Date" : "Name"}
+              <span className="material-symbols-outlined text-xs">sort</span>
+              {sortBy === "date" ? "Recently Added" : "By Name"}
+              <span className="material-symbols-outlined text-xs">expand_more</span>
             </button>
             <button
               onClick={() => setShowApiKeys((v) => !v)}
-              className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-border text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-              title="Manage API Keys"
+              className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all"
             >
-              <Key className="w-4 h-4" />
+              <span className="material-symbols-outlined text-xs">key</span>
               API Keys
             </button>
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isUploading}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              <Upload className="w-4 h-4" />
-              {isUploading ? "Uploading…" : "Upload Documents"}
-            </button>
           </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf,.doc,.docx,.txt,.rtf,.odt,.epub"
-            multiple
-            onChange={handleFileUpload}
-            className="hidden"
-          />
-        </div>
-      </div>
+        </section>
 
-      {uploadStates.length > 0 && (
-        <div className="px-6 py-3 border-b border-border bg-card">
-          <p className="text-xs text-muted-foreground mb-2">
-            {isUploading ? "Upload in progress" : "Latest upload results"}
-          </p>
+        {/* API Key Manager */}
+        {showApiKeys && (
+          <div className="bg-surface-container-low rounded-2xl p-6 border border-outline-variant/10">
+            <ApiKeyManager />
+          </div>
+        )}
 
-          {currentBatchIds.length > 0 && (
-            <div className="mb-3 space-y-1.5">
-              <Progress value={currentBatchProgress} className="h-2" />
-              <p className="text-[11px] text-muted-foreground">
-                {currentBatchCompletedCount}/{currentBatchIds.length} completed
-              </p>
-            </div>
-          )}
-
-          <div className="max-h-28 overflow-auto space-y-1 scrollbar-thin">
-            {uploadStates.slice(0, 20).map((item) => (
-              <div key={item.id} className="flex items-center justify-between gap-4 text-xs">
-                <span className="truncate text-foreground">{item.fileName}</span>
-                <span
-                  className={
-                    item.status === "failed"
-                      ? "text-destructive"
-                      : item.status === "success"
-                        ? "text-primary"
-                        : "text-muted-foreground"
-                  }
-                >
-                  {item.status === "uploading" ? `Uploading (try ${item.attempts}/${MAX_UPLOAD_ATTEMPTS})` : item.status}
-                  {item.status === "failed" && item.error ? ` · ${item.error}` : ""}
+        {/* Upload Progress */}
+        {uploadStates.length > 0 && (
+          <div className="bg-surface-container-low rounded-xl p-6 flex flex-col gap-3 border border-outline-variant/5">
+            {currentBatchIds.length > 0 && (
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-primary-container/20 rounded-lg flex items-center justify-center">
+                  <span className="material-symbols-outlined text-primary-container">upload_file</span>
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-foreground">
+                    {isUploading ? "Uploading..." : "Upload complete"}
+                  </p>
+                  <div className="w-full max-w-xs">
+                    <Progress value={currentBatchProgress} className="h-2 mt-2" />
+                  </div>
+                </div>
+                <span className="text-xs font-bold text-primary-container uppercase tracking-widest">
+                  {currentBatchProgress}%
                 </span>
               </div>
-            ))}
+            )}
+            <div className="max-h-28 overflow-auto space-y-1 scrollbar-thin">
+              {uploadStates.slice(0, 20).map((item) => (
+                <div key={item.id} className="flex items-center justify-between gap-4 text-xs">
+                  <span className="truncate text-foreground">{item.fileName}</span>
+                  <span
+                    className={
+                      item.status === "failed"
+                        ? "text-destructive"
+                        : item.status === "success"
+                          ? "text-primary"
+                          : "text-muted-foreground"
+                    }
+                  >
+                    {item.status === "uploading" ? `Uploading (try ${item.attempts}/${MAX_UPLOAD_ATTEMPTS})` : item.status}
+                    {item.status === "failed" && item.error ? ` · ${item.error}` : ""}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* API Key Manager Panel */}
-      {showApiKeys && (
-        <div className="px-6 py-4 border-b border-border bg-card">
-          <ApiKeyManager />
+        {/* Upload Area */}
+        <div
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={handleDrop}
+          className="group relative bg-surface-container-low border-2 border-dashed border-outline-variant/30 rounded-2xl p-12 flex flex-col items-center justify-center text-center transition-all hover:border-primary/40 hover:bg-surface-container-high cursor-pointer"
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <div className="mb-4 w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+            <span className="material-symbols-outlined text-primary text-3xl">cloud_upload</span>
+          </div>
+          <h3 className="text-xl font-headline font-bold text-primary mb-1">
+            {isUploading ? "Uploading…" : "Drop PDF or EPUB"}
+          </h3>
+          <p className="text-on-surface-variant text-sm mb-6">Max file size 50MB. Supports PDF, EPUB, DOC, TXT.</p>
+          <button
+            className="px-8 py-3 bg-primary-container text-on-primary-container font-bold rounded-xl active:scale-95 transition-transform"
+            onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
+            disabled={isUploading}
+          >
+            Browse files
+          </button>
         </div>
-      )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,.doc,.docx,.txt,.rtf,.odt,.epub"
+          multiple
+          onChange={handleFileUpload}
+          className="hidden"
+        />
 
-      {/* Book grid */}
-      <div className="flex-1 overflow-auto p-6 scrollbar-thin">
+        {/* Book grid */}
         {books.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-            <BookMarked className="w-16 h-16 mb-4 opacity-25" />
-            <p className="text-lg font-display">Your library is empty</p>
+          <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant">
+            <span className="material-symbols-outlined text-6xl mb-4 opacity-25">library_books</span>
+            <p className="text-lg font-headline">Your library is empty</p>
             <p className="text-sm mt-1">Upload documents to get started</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {sortedBooks.map((book, i) => (
               <BookCard
                 key={book.id}
@@ -329,7 +344,7 @@ const Library: React.FC = () => {
             ))}
           </div>
         )}
-      </div>
+      </main>
     </div>
   );
 };
@@ -343,72 +358,48 @@ const BookCard: React.FC<{
 }> = ({ book, index, onRead, onRemove, onRename }) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(book.title);
-  // Generate a warm hue based on index for visual variety
-  const hues = [24, 18, 30, 12, 36, 6];
-  const hue = hues[index % hues.length];
   const isPdf = book.fileName.toLowerCase().endsWith(".pdf");
-  const metadataText = isPdf ? `${book.pageCount} pages · ${book.chapters.length} chapters` : "Document file";
+  const metadataText = isPdf ? `${book.pageCount} pages · ${book.chapters.length} chapters · PDF` : "Document file";
+
+  // Warm gradient hues
+  const hues = [35, 25, 40, 15, 45, 20];
+  const hue = hues[index % hues.length];
 
   return (
     <div
-      className="group relative bg-card border border-border rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-all duration-200 animate-slide-up"
+      className="group bg-surface-container-high rounded-2xl overflow-hidden flex flex-col transition-all hover:-translate-y-1 hover:shadow-2xl hover:shadow-black/40 animate-slide-up"
       style={{ animationDelay: `${index * 60}ms` }}
     >
-      {/* Book cover area */}
+      {/* Cover */}
       <div
-        className="h-40 flex items-center justify-center relative overflow-hidden"
+        className="aspect-[3/2] relative overflow-hidden bg-surface-container-highest flex items-center justify-center"
         style={{
           background: book.coverImageUrl
             ? undefined
-            : `linear-gradient(135deg, hsl(${hue}, 35%, 82%), hsl(${hue}, 25%, 72%))`,
+            : `linear-gradient(135deg, hsl(${hue}, 30%, 18%), hsl(${hue}, 25%, 12%))`,
         }}
       >
         {book.coverImageUrl ? (
-          <img
-            src={book.coverImageUrl}
-            alt={book.title}
-            className="absolute inset-0 w-full h-full object-cover"
-          />
+          <img src={book.coverImageUrl} alt={book.title} className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
         ) : (
-          <>
-            {/* Spine accent */}
-            <div
-              className="absolute left-0 top-0 bottom-0 w-2"
-              style={{ backgroundColor: `hsl(${hue}, 40%, 40%)` }}
-            />
-              {isPdf ? <BookOpen className="w-10 h-10 text-white/60" /> : <FileText className="w-10 h-10 text-white/60" />}
-          </>
+          <span className="material-symbols-outlined text-5xl text-primary/30">
+            {isPdf ? "auto_stories" : "description"}
+          </span>
         )}
-
-        {/* Remove button */}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove();
-          }}
-          className="absolute top-2 right-2 p-1.5 rounded-md bg-black/20 text-white/70 opacity-0 group-hover:opacity-100 hover:bg-black/40 transition-all"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
+        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-60" />
       </div>
 
       {/* Info */}
-      <div className="p-4">
+      <div className="p-6">
         {editing ? (
           <input
-            className="w-full text-sm font-display font-semibold border border-border rounded px-2 py-1 mb-1 bg-transparent focus:outline-none focus:ring-1 focus:ring-ring"
+            className="w-full text-xl font-headline font-bold bg-transparent border border-outline-variant rounded-lg px-2 py-1 mb-1 text-primary focus:outline-none focus:ring-1 focus:ring-primary/40"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             autoFocus
             onKeyDown={(e) => {
-              if (e.key === "Enter" && draft.trim()) {
-                onRename(draft.trim());
-                setEditing(false);
-              }
-              if (e.key === "Escape") {
-                setDraft(book.title);
-                setEditing(false);
-              }
+              if (e.key === "Enter" && draft.trim()) { onRename(draft.trim()); setEditing(false); }
+              if (e.key === "Escape") { setDraft(book.title); setEditing(false); }
             }}
             onBlur={() => {
               if (draft.trim() && draft.trim() !== book.title) onRename(draft.trim());
@@ -416,32 +407,30 @@ const BookCard: React.FC<{
             }}
           />
         ) : (
-          <div className="flex items-start gap-1 mb-1">
-            <h3 className="font-display font-semibold text-sm leading-tight line-clamp-2 flex-1">
-              {book.title}
-            </h3>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setDraft(book.title);
-                setEditing(true);
-              }}
-              className="p-0.5 rounded hover:bg-secondary transition-colors shrink-0 mt-0.5"
-              title="Rename book"
-            >
-              <Pencil className="w-3 h-3 text-muted-foreground" />
-            </button>
-          </div>
+          <h4
+            className="font-headline text-2xl font-bold text-primary mb-1 cursor-pointer hover:text-accent transition-colors line-clamp-2"
+            onClick={() => { setDraft(book.title); setEditing(true); }}
+          >
+            {book.title}
+          </h4>
         )}
-        <p className="text-xs text-muted-foreground mb-3">
+        <p className="text-on-surface-variant text-xs font-medium uppercase tracking-wider mb-6">
           {metadataText}
         </p>
-        <button
-          onClick={onRead}
-          className="w-full py-2 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity"
-        >
-          Read
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onRead}
+            className="flex-1 py-3 bg-primary/10 text-primary font-bold rounded-lg hover:bg-primary hover:text-on-primary-container transition-all active:scale-95"
+          >
+            Open
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onRemove(); }}
+            className="p-3 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-error-container/20 hover:text-destructive transition-all"
+          >
+            <span className="material-symbols-outlined text-xl">delete</span>
+          </button>
+        </div>
       </div>
     </div>
   );
