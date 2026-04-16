@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { MessageCircle, Send, Settings, Plus, X, Key, Loader2, Trash2, Brain } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,6 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import { fetchKnowledgeEntries, fetchConversationMemory, extractKnowledge } from "@/lib/knowledgeApi";
+import { Loader2 } from "lucide-react";
 
 interface ChatMessage {
   role: "user" | "assistant" | "system";
@@ -71,7 +71,6 @@ const ChatPanel: React.FC = () => {
       "You are an intelligent reading assistant for the Chapter Craft app with long-term memory. You help users understand, analyze, and discuss their books and chapters.",
     ];
 
-    // Inject memory context
     try {
       const [knowledgeEntries, conversationMemory] = await Promise.all([
         fetchKnowledgeEntries().catch(() => []),
@@ -95,11 +94,8 @@ const ChatPanel: React.FC = () => {
           parts.push(`- **${e.title}** (${e.entry_type}, ${Math.round(e.confidence * 100)}%): ${e.content.slice(0, 200)}`);
         });
       }
-    } catch {
-      // Memory unavailable, proceed without it
-    }
+    } catch { /* proceed without memory */ }
 
-    // Library context
     parts.push("", "## Available Library", `The user has ${books.length} book(s) in their library:`);
     books.forEach((book) => {
       parts.push(`- **${book.title}** (${book.pageCount} pages, ${book.chapters.length} chapter(s))`);
@@ -126,14 +122,7 @@ const ChatPanel: React.FC = () => {
       }
     }
 
-    parts.push("", "## Your Capabilities");
-    parts.push("- Summarize chapters or entire books");
-    parts.push("- Answer questions about chapter content using your memory and wiki knowledge");
-    parts.push("- Compare themes across chapters and books");
-    parts.push("- Reference knowledge from past conversations");
-    parts.push("- Help with research and analysis");
-    parts.push("", "Be concise but thorough. Use markdown formatting. Reference specific chapter names and page numbers when relevant. Build upon knowledge from past conversations.");
-
+    parts.push("", "Be concise but thorough. Use markdown formatting. Reference specific chapter names and page numbers when relevant.");
     return parts.join("\n");
   }, [books, selectedBook]);
 
@@ -186,9 +175,9 @@ const ChatPanel: React.FC = () => {
 
       if (!response.ok) {
         const errText = await response.text();
-        if (response.status === 401) throw new Error("Invalid API key. Check your OpenRouter key.");
-        if (response.status === 402) throw new Error("Insufficient credits on OpenRouter.");
-        if (response.status === 429) throw new Error("Rate limited. Try again in a moment.");
+        if (response.status === 401) throw new Error("Invalid API key.");
+        if (response.status === 402) throw new Error("Insufficient credits.");
+        if (response.status === 429) throw new Error("Rate limited. Try again.");
         throw new Error(`OpenRouter error (${response.status}): ${errText}`);
       }
 
@@ -243,127 +232,157 @@ const ChatPanel: React.FC = () => {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="border-b border-border bg-muted/30 px-4 py-3 flex items-center gap-3 flex-wrap">
-        <MessageCircle className="w-5 h-5 text-primary" />
-        <span className="text-sm font-medium text-foreground">Model:</span>
-        <select
-          value={selectedModel}
-          onChange={(e) => setSelectedModel(e.target.value)}
-          className="text-sm border border-input rounded-md px-2 py-1 bg-background text-foreground max-w-[280px] truncate"
-        >
-          {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
-        </select>
-
-        <div className="ml-auto flex gap-1">
-          {messages.length >= 2 && (
-            <Button size="sm" variant="outline" onClick={handleSaveToWiki} disabled={extracting}>
-              {extracting ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Brain className="w-3.5 h-3.5 mr-1" />}
-              Save to Wiki
-            </Button>
-          )}
-          <Button size="sm" variant={showSettings ? "default" : "outline"} onClick={() => setShowSettings(!showSettings)} title="Settings">
-            <Settings className="w-3.5 h-3.5 mr-1" />Settings
-          </Button>
-          {messages.length > 0 && (
-            <Button size="sm" variant="ghost" onClick={clearChat} title="Clear chat"><Trash2 className="w-3.5 h-3.5" /></Button>
-          )}
-        </div>
-      </div>
-
-      {/* Settings panel */}
+      {/* Settings bar */}
       {showSettings && (
-        <div className="border-b border-border bg-card px-4 py-3 space-y-3">
-          <div className="space-y-1.5">
-            <p className="text-xs font-medium text-foreground">OpenRouter API Key</p>
-            <p className="text-xs text-muted-foreground">
-              Get your key from <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-primary underline">openrouter.ai/keys</a>. Stored locally.
-            </p>
-            <div className="flex gap-2">
-              <Input
-                type="password" placeholder="sk-or-v1-..." defaultValue={apiKey}
-                className="text-sm font-mono"
-                onKeyDown={(e) => { if (e.key === "Enter") saveApiKey((e.target as HTMLInputElement).value); }}
-                id="openrouter-key-input"
-              />
-              <Button size="sm" onClick={() => { const el = document.getElementById("openrouter-key-input") as HTMLInputElement; saveApiKey(el?.value || ""); }}>Save</Button>
-              {apiKey && <Button size="sm" variant="destructive" onClick={() => saveApiKey("")}>Remove</Button>}
+        <div className="border-b border-outline-variant/10 bg-surface-container-low px-4 py-4 space-y-4">
+          <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-4 rounded-xl bg-surface-container-low">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">OpenRouter API Key</label>
+              <div className="relative">
+                <input
+                  className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 pr-10 focus:ring-1 focus:ring-primary/40 transition-all"
+                  type="password" placeholder="sk-or-v1-..." defaultValue={apiKey}
+                  id="openrouter-key-input"
+                  onKeyDown={(e) => { if (e.key === "Enter") saveApiKey((e.target as HTMLInputElement).value); }}
+                />
+                <span className="material-symbols-outlined absolute right-3 top-2.5 text-on-surface-variant text-sm">key</span>
+              </div>
+              <div className="flex gap-2 mt-1">
+                <Button size="sm" onClick={() => { const el = document.getElementById("openrouter-key-input") as HTMLInputElement; saveApiKey(el?.value || ""); }}>Save</Button>
+                {apiKey && <Button size="sm" variant="destructive" onClick={() => saveApiKey("")}>Remove</Button>}
+              </div>
             </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <p className="text-xs font-medium text-foreground">Saved Models</p>
-            <p className="text-xs text-muted-foreground">
-              Paste model names from <a href="https://openrouter.ai/models" target="_blank" rel="noopener noreferrer" className="text-primary underline">openrouter.ai/models</a>
-            </p>
-            <div className="flex gap-2">
-              <Input type="text" placeholder="provider/model-name" value={newModelInput} onChange={(e) => setNewModelInput(e.target.value)} className="text-sm font-mono" onKeyDown={(e) => { if (e.key === "Enter") addModel(); }} />
-              <Button size="sm" onClick={addModel}><Plus className="w-3.5 h-3.5 mr-1" /> Add</Button>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Active Model</label>
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40"
+              >
+                {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
+              </select>
+              <div className="flex gap-2 mt-1">
+                <Input type="text" placeholder="provider/model-name" value={newModelInput} onChange={(e) => setNewModelInput(e.target.value)} className="text-sm font-mono bg-surface-container-high border-none" onKeyDown={(e) => { if (e.key === "Enter") addModel(); }} />
+                <Button size="sm" onClick={addModel}>Add</Button>
+              </div>
+              <div className="flex flex-wrap gap-1.5 mt-1">
+                {savedModels.map((m) => (
+                  <span key={m} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md ${m === selectedModel ? "bg-primary-container/20 text-primary border border-primary-container/30" : "bg-surface-container-highest text-on-surface-variant"}`}>
+                    <button onClick={() => setSelectedModel(m)} className="hover:underline">{m}</button>
+                    <button onClick={() => removeModel(m)} className="hover:text-destructive ml-0.5 material-symbols-outlined text-xs">close</button>
+                  </span>
+                ))}
+              </div>
             </div>
-            <div className="flex flex-wrap gap-1.5 mt-1.5">
-              {savedModels.map((m) => (
-                <span key={m} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border ${m === selectedModel ? "border-primary bg-primary/10 text-primary" : "border-border bg-muted text-muted-foreground"}`}>
-                  <button onClick={() => setSelectedModel(m)} className="hover:underline">{m}</button>
-                  <button onClick={() => removeModel(m)} className="hover:text-destructive ml-0.5" title="Remove model"><X className="w-3 h-3" /></button>
-                </span>
-              ))}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Focus Context</label>
+              <div className="flex items-center gap-3 bg-surface-container-high rounded-lg py-2.5 px-4 border border-outline-variant/10">
+                <div className="w-2 h-2 rounded-full bg-primary-container shadow-[0_0_8px_rgba(255,191,0,0.4)]" />
+                <span className="text-sm font-headline italic text-primary">{selectedBook?.title || "No book selected"}</span>
+              </div>
             </div>
-          </div>
+          </section>
         </div>
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-auto p-4 space-y-4">
+      <div className="flex-1 overflow-auto px-4 py-6 space-y-6 hide-scrollbar">
         {messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-3">
-            <MessageCircle className="w-10 h-10" />
+          <div className="flex flex-col items-center justify-center h-full text-on-surface-variant gap-3">
+            <span className="material-symbols-outlined text-5xl text-primary-container">auto_stories</span>
+            <p className="font-headline font-bold text-lg text-foreground">The Librarian</p>
             <p className="text-sm text-center max-w-md">
               {selectedBook
-                ? `Ready to chat about "${selectedBook.title}". ${selectedBook.chapters.length > 0 ? `${selectedBook.chapters.length} chapter(s) loaded as context.` : "No chapters isolated yet."}`
+                ? `Ready to discuss "${selectedBook.title}". ${selectedBook.chapters.length > 0 ? `${selectedBook.chapters.length} chapter(s) loaded.` : "No chapters isolated yet."}`
                 : "Select a book in the Reader tab, then come here to chat about it."}
             </p>
-            <p className="text-xs text-center text-muted-foreground max-w-sm">
-              💡 Your chat now has long-term memory. Knowledge from past conversations is automatically injected as context. Use "Save to Wiki" to extract insights.
-            </p>
             {!apiKey && (
-              <Button size="sm" variant="outline" onClick={() => setShowSettings(true)}>
-                <Key className="w-3.5 h-3.5 mr-1" /> Set API Key
-              </Button>
+              <button onClick={() => setShowSettings(true)} className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-lg text-primary text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all">
+                <span className="material-symbols-outlined text-sm">key</span> Set API Key
+              </button>
             )}
           </div>
         )}
 
         {messages.map((msg, i) => (
-          <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-            <div className={`max-w-[85%] rounded-lg px-4 py-3 text-sm ${msg.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"}`}>
+          <div key={i} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"} max-w-[85%] ${msg.role === "user" ? "self-end" : ""}`}>
+            <div className="flex items-center gap-2 mb-2 mx-4">
+              {msg.role === "assistant" && <span className="material-symbols-outlined text-primary-container text-lg">auto_stories</span>}
+              <span className={`font-headline font-bold text-sm tracking-wide ${msg.role === "user" ? "text-primary" : "text-secondary"}`}>
+                {msg.role === "user" ? "You" : "The Librarian"}
+              </span>
+              {msg.role === "user" && <span className="material-symbols-outlined text-primary text-lg">person</span>}
+            </div>
+            <div className={`${msg.role === "user" ? "message-bubble-user bg-primary-container text-on-primary-container" : "message-bubble-ai bg-surface-container-high text-foreground border-l-2 border-primary-container/20"} p-5 shadow-sm leading-relaxed`}>
               {msg.role === "assistant" ? (
-                <div className="prose prose-sm dark:prose-invert max-w-none"><ReactMarkdown>{msg.content}</ReactMarkdown></div>
+                <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown>{msg.content}</ReactMarkdown></div>
               ) : (
-                <p className="whitespace-pre-wrap">{msg.content}</p>
+                <p className="whitespace-pre-wrap font-medium">{msg.content}</p>
               )}
             </div>
           </div>
         ))}
 
         {isLoading && messages[messages.length - 1]?.role !== "assistant" && (
-          <div className="flex justify-start">
-            <div className="bg-muted rounded-lg px-4 py-3"><Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /></div>
+          <div className="flex flex-col items-start max-w-[85%]">
+            <div className="flex items-center gap-2 mb-2 ml-4">
+              <span className="material-symbols-outlined text-primary-container text-lg">auto_stories</span>
+              <span className="font-headline font-bold text-sm text-secondary">The Librarian</span>
+            </div>
+            <div className="message-bubble-ai bg-surface-container-high p-5 shadow-sm flex items-center gap-2 italic text-on-surface-variant">
+              <div className="flex gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-primary-container animate-pulse" />
+                <span className="w-1.5 h-1.5 rounded-full bg-primary-container animate-pulse" style={{ animationDelay: "75ms" }} />
+                <span className="w-1.5 h-1.5 rounded-full bg-primary-container animate-pulse" style={{ animationDelay: "150ms" }} />
+              </div>
+              Consulting annotations...
+            </div>
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
-      <div className="border-t border-border bg-card px-4 py-3">
-        <div className="flex gap-2 items-end max-w-2xl mx-auto">
-          <Textarea
-            ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown}
-            placeholder={apiKey ? "Ask about your books..." : "Set your OpenRouter API key to start chatting"}
-            rows={1} className="text-sm resize-none min-h-[40px] max-h-[120px]" disabled={isLoading}
-          />
-          <Button onClick={sendMessage} disabled={isLoading || !input.trim()} size="icon" className="shrink-0">
-            {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-          </Button>
+      {/* Input Area */}
+      <div className="px-4 pb-4 pt-2">
+        <div className="bg-surface-container-low/90 backdrop-blur-xl p-3 rounded-2xl shadow-2xl border border-outline-variant/10 flex flex-col gap-3 max-w-4xl mx-auto">
+          <div className="flex items-end gap-3">
+            <div className="flex-grow relative">
+              <Textarea
+                ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown}
+                placeholder={apiKey ? "Ask about your books..." : "Set your OpenRouter API key to start chatting"}
+                rows={1} className="bg-surface-container-high border-none rounded-xl text-foreground py-3 px-4 pr-12 focus:ring-1 focus:ring-primary/40 resize-none min-h-[50px] max-h-[120px]" disabled={isLoading}
+              />
+              <button
+                onClick={sendMessage}
+                disabled={isLoading || !input.trim()}
+                className="absolute right-2 bottom-2 p-1.5 bg-primary-container text-on-primary-container rounded-lg hover:brightness-110 active:scale-90 transition-all disabled:opacity-50"
+              >
+                <span className="material-symbols-outlined text-lg">send</span>
+              </button>
+            </div>
+            {messages.length >= 2 && (
+              <button
+                onClick={handleSaveToWiki}
+                disabled={extracting}
+                className="h-[50px] px-5 bg-secondary-container text-on-secondary-container rounded-xl flex items-center gap-2 hover:bg-secondary-container/80 transition-all active:scale-95 border border-outline-variant/20 shrink-0"
+              >
+                {extracting ? <Loader2 className="w-4 h-4 animate-spin" /> : <span className="material-symbols-outlined text-lg">history_edu</span>}
+                <span className="text-sm font-semibold whitespace-nowrap">Save to Wiki</span>
+              </button>
+            )}
+          </div>
+          <div className="flex justify-between items-center px-2">
+            <div className="flex gap-4">
+              <button onClick={() => setShowSettings(!showSettings)} className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-1 hover:text-primary transition-colors">
+                <span className="material-symbols-outlined text-sm">tune</span> Settings
+              </button>
+              {messages.length > 0 && (
+                <button onClick={clearChat} className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-1 hover:text-primary transition-colors">
+                  <span className="material-symbols-outlined text-sm">delete</span> Clear
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>

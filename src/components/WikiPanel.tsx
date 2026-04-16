@@ -1,8 +1,4 @@
 import React, { useState, useEffect, useCallback } from "react";
-import {
-  BookOpen, Search, Trash2, Edit3, Save, X, Tag, Brain, AlertTriangle,
-  ChevronRight, Loader2, Zap, RefreshCw, ArrowRight, BarChart3,
-} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -16,17 +12,9 @@ import {
   deleteKnowledgeEntry, updateKnowledgeEntry,
   runLint, ingestBook,
 } from "@/lib/knowledgeApi";
+import { Loader2 } from "lucide-react";
 
-const ENTRY_TYPE_COLORS: Record<string, string> = {
-  concept: "bg-blue-500/10 text-blue-400 border-blue-500/30",
-  entity: "bg-green-500/10 text-green-400 border-green-500/30",
-  synthesis: "bg-purple-500/10 text-purple-400 border-purple-500/30",
-  fact: "bg-amber-500/10 text-amber-400 border-amber-500/30",
-  comparison: "bg-cyan-500/10 text-cyan-400 border-cyan-500/30",
-  summary: "bg-rose-500/10 text-rose-400 border-rose-500/30",
-};
-
-type WikiView = "entries" | "detail" | "lint" | "graph";
+type WikiView = "entries" | "detail" | "lint";
 
 const WikiPanel: React.FC = () => {
   const { books, activeBookId } = useApp();
@@ -70,8 +58,8 @@ const WikiPanel: React.FC = () => {
   });
 
   const getRelatedEntries = (entryId: string) => {
-    const relatedIds = new Set<string>();
     const relationships: { entry: KnowledgeEntry; relationship: string; direction: "from" | "to" }[] = [];
+    const relatedIds = new Set<string>();
     graph.forEach((edge) => {
       if (edge.source_entry_id === entryId) relatedIds.add(edge.target_entry_id);
       if (edge.target_entry_id === entryId) relatedIds.add(edge.source_entry_id);
@@ -80,11 +68,7 @@ const WikiPanel: React.FC = () => {
       const entry = entries.find((e) => e.id === id);
       if (entry) {
         const edge = graph.find(g => (g.source_entry_id === entryId && g.target_entry_id === id) || (g.target_entry_id === entryId && g.source_entry_id === id));
-        relationships.push({
-          entry,
-          relationship: edge?.relationship || "relates_to",
-          direction: edge?.source_entry_id === entryId ? "to" : "from",
-        });
+        relationships.push({ entry, relationship: edge?.relationship || "relates_to", direction: edge?.source_entry_id === entryId ? "to" : "from" });
       }
     });
     return relationships;
@@ -113,28 +97,19 @@ const WikiPanel: React.FC = () => {
 
   const handleLint = async () => {
     setLintLoading(true);
-    try {
-      const result = await runLint();
-      setLintResult(result);
-      setView("lint");
-    } catch (err: any) { toast.error(err.message); } finally { setLintLoading(false); }
+    try { const result = await runLint(); setLintResult(result); setView("lint"); }
+    catch (err: any) { toast.error(err.message); }
+    finally { setLintLoading(false); }
   };
 
   const handleIngest = async (bookId: string) => {
     setIngestLoading(true);
-    try {
-      const result = await ingestBook(bookId);
-      toast.success(`Extracted ${result.entries_created} entries from book`);
-      loadData();
-    } catch (err: any) { toast.error(err.message); } finally { setIngestLoading(false); }
+    try { const result = await ingestBook(bookId); toast.success(`Extracted ${result.entries_created} entries`); loadData(); }
+    catch (err: any) { toast.error(err.message); }
+    finally { setIngestLoading(false); }
   };
 
-  const openDetail = (entry: KnowledgeEntry) => {
-    setSelectedEntry(entry);
-    setView("detail");
-    setEditing(false);
-  };
-
+  const openDetail = (entry: KnowledgeEntry) => { setSelectedEntry(entry); setView("detail"); setEditing(false); };
   const startEdit = () => {
     if (!selectedEntry) return;
     setEditTitle(selectedEntry.title);
@@ -145,222 +120,190 @@ const WikiPanel: React.FC = () => {
 
   const entryTypes = ["all", "concept", "entity", "synthesis", "fact", "comparison", "summary"];
 
-  // === RENDER ===
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="border-b border-border bg-muted/30 px-4 py-3 flex items-center gap-3 flex-wrap">
-        <Brain className="w-5 h-5 text-primary" />
-        <span className="text-sm font-medium text-foreground">Knowledge Wiki</span>
-        <Badge variant="secondary" className="text-xs">{entries.length} entries</Badge>
+    <div className="flex flex-col h-full overflow-auto">
+      <main className="max-w-7xl mx-auto px-6 py-12 pb-32 w-full">
+        {/* Header */}
+        <section className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
+          <div className="space-y-2">
+            <div className="flex items-center gap-3 mb-1">
+              <span className="px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded text-[10px] font-bold tracking-widest uppercase">Knowledge Base</span>
+              <span className="text-on-surface-variant text-sm font-medium">{entries.length} entries indexed</span>
+            </div>
+            <h2 className="font-headline font-bold text-5xl md:text-6xl text-primary tracking-tight">Knowledge Wiki</h2>
+            <p className="text-on-surface-variant max-w-xl text-lg italic font-headline">"The sum of all acquired insights, meticulously categorized."</p>
+          </div>
+          <div className="flex gap-3">
+            {view !== "entries" && (
+              <button onClick={() => { setView("entries"); setSelectedEntry(null); }} className="flex items-center gap-2 px-4 py-3 bg-surface-container-high text-foreground rounded-xl text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all">
+                <span className="material-symbols-outlined text-sm">arrow_back</span> Back
+              </button>
+            )}
+            <button onClick={handleLint} disabled={lintLoading || entries.length === 0} className="flex items-center gap-2 bg-primary-container text-on-primary-container px-6 py-3 rounded-xl font-bold active:scale-95 transition-transform shadow-lg disabled:opacity-50">
+              {lintLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <span className="material-symbols-outlined text-xl">health_and_safety</span>}
+              <span>Health Check</span>
+            </button>
+            <button onClick={loadData} disabled={loading} className="p-3 bg-surface-container-high rounded-xl border border-outline-variant/10 hover:bg-surface-container-highest transition-all">
+              <span className={`material-symbols-outlined ${loading ? "animate-spin" : ""}`}>refresh</span>
+            </button>
+          </div>
+        </section>
 
-        <div className="ml-auto flex gap-1.5">
-          {view !== "entries" && (
-            <Button size="sm" variant="ghost" onClick={() => { setView("entries"); setSelectedEntry(null); }}>
-              ← Back
-            </Button>
-          )}
-          <Button size="sm" variant="outline" onClick={handleLint} disabled={lintLoading || entries.length === 0}>
-            {lintLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <BarChart3 className="w-3.5 h-3.5 mr-1" />}
-            Health Check
-          </Button>
-          <Button size="sm" variant="outline" onClick={loadData} disabled={loading}>
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-          </Button>
-        </div>
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 overflow-auto p-4">
         {loading && entries.length === 0 ? (
-          <div className="flex items-center justify-center h-full">
-            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="w-8 h-8 animate-spin text-on-surface-variant" />
           </div>
         ) : view === "entries" ? (
-          <div className="space-y-4">
-            {/* Search & filter */}
-            <div className="flex gap-2 flex-wrap">
-              <div className="flex-1 min-w-[200px]">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search knowledge..."
-                    className="pl-9 text-sm"
-                  />
-                </div>
-              </div>
-              <div className="flex gap-1 flex-wrap">
-                {entryTypes.map((type) => (
-                  <Button
-                    key={type}
-                    size="sm"
-                    variant={filterType === type ? "default" : "outline"}
-                    onClick={() => setFilterType(type)}
-                    className="text-xs capitalize"
-                  >
-                    {type}
-                  </Button>
-                ))}
-              </div>
+          <>
+            {/* Search */}
+            <div className="mb-8 relative">
+              <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
+              <input
+                value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-surface-container-low border-none rounded-xl py-5 pl-14 pr-6 focus:ring-1 focus:ring-primary/40 placeholder:text-on-surface-variant/50 text-foreground text-lg transition-all shadow-inner"
+                placeholder="Search concepts, entities, or relations..."
+              />
+            </div>
+
+            {/* Filter pills */}
+            <div className="flex items-center gap-3 mb-6 overflow-x-auto pb-2 hide-scrollbar">
+              {entryTypes.map((type) => (
+                <button
+                  key={type}
+                  onClick={() => setFilterType(type)}
+                  className={`px-4 py-2 rounded-full text-xs font-bold transition-colors capitalize ${
+                    filterType === type
+                      ? "bg-secondary-container text-on-secondary-container ring-1 ring-primary/20"
+                      : "hover:bg-surface-container-high text-on-surface-variant"
+                  }`}
+                >
+                  {type === "all" ? "All Entries" : type}
+                </button>
+              ))}
             </div>
 
             {/* Book ingest */}
-            {books.length > 0 && (
-              <div className="bg-muted/50 rounded-lg p-3 space-y-2">
-                <p className="text-xs font-medium text-foreground">Ingest Book Knowledge</p>
+            {books.filter(b => b.chapters.length > 0).length > 0 && (
+              <div className="bg-surface-container-low rounded-xl p-4 mb-6 border border-outline-variant/5">
+                <p className="text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-3">Ingest Book Knowledge</p>
                 <div className="flex gap-2 flex-wrap">
                   {books.filter(b => b.chapters.length > 0).map((book) => (
-                    <Button
-                      key={book.id}
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleIngest(book.id)}
-                      disabled={ingestLoading}
-                      className="text-xs"
-                    >
-                      {ingestLoading ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Zap className="w-3 h-3 mr-1" />}
+                    <button key={book.id} onClick={() => handleIngest(book.id)} disabled={ingestLoading}
+                      className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-lg text-sm text-foreground border border-outline-variant/10 hover:bg-surface-container-highest transition-all disabled:opacity-50">
+                      {ingestLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <span className="material-symbols-outlined text-sm">bolt</span>}
                       {book.title}
-                    </Button>
+                    </button>
                   ))}
                 </div>
-                {books.filter(b => b.chapters.length === 0).length > 0 && (
-                  <p className="text-xs text-muted-foreground">
-                    Books without chapters: {books.filter(b => b.chapters.length === 0).map(b => b.title).join(", ")}
-                    — isolate chapters first to ingest.
-                  </p>
-                )}
               </div>
             )}
 
-            {/* Entries list */}
+            {/* Entry cards */}
             {filteredEntries.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground gap-3">
-                <Brain className="w-10 h-10" />
+              <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant gap-3">
+                <span className="material-symbols-outlined text-5xl">menu_book</span>
                 <p className="text-sm text-center">
-                  {entries.length === 0
-                    ? "Your knowledge wiki is empty. Chat about your books or use 'Ingest Book Knowledge' to start building it."
-                    : "No entries match your search."}
+                  {entries.length === 0 ? "Your wiki is empty. Chat about your books or ingest chapters." : "No entries match your search."}
                 </p>
               </div>
             ) : (
-              <div className="grid gap-2">
+              <div className="space-y-4">
                 {filteredEntries.map((entry) => {
-                  const book = books.find((b) => b.id === entry.source_book_id);
                   const relCount = graph.filter(g => g.source_entry_id === entry.id || g.target_entry_id === entry.id).length;
                   return (
                     <button
-                      key={entry.id}
-                      onClick={() => openDetail(entry)}
-                      className="text-left w-full border border-border rounded-lg p-3 hover:bg-muted/50 transition-colors group"
+                      key={entry.id} onClick={() => openDetail(entry)}
+                      className="group w-full text-left bg-surface-container-high rounded-xl p-8 hover:shadow-2xl transition-all duration-300 border-l-2 border-transparent hover:border-primary-container"
                     >
-                      <div className="flex items-start gap-3">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className={`text-xs px-1.5 py-0.5 rounded border ${ENTRY_TYPE_COLORS[entry.entry_type] || "bg-muted text-muted-foreground"}`}>
-                              {entry.entry_type}
-                            </span>
-                            <h3 className="text-sm font-medium text-foreground truncate">{entry.title}</h3>
-                          </div>
-                          <p className="text-xs text-muted-foreground line-clamp-2">{entry.content.slice(0, 150)}</p>
-                          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                            {entry.tags.slice(0, 3).map((tag) => (
-                              <span key={tag} className="text-xs bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
-                                {tag}
-                              </span>
-                            ))}
-                            {book && (
-                              <span className="text-xs text-muted-foreground flex items-center gap-1">
-                                <BookOpen className="w-3 h-3" />{book.title}
-                              </span>
-                            )}
+                      <div className="flex justify-between items-start mb-4">
+                        <div>
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="text-[10px] font-bold uppercase text-primary tracking-widest">Type: {entry.entry_type}</span>
+                            <span className="text-outline-variant">•</span>
+                            <span className="text-[10px] font-bold uppercase text-secondary tracking-widest">Confidence: {Math.round(entry.confidence * 100)}%</span>
                             {relCount > 0 && (
-                              <span className="text-xs text-muted-foreground">{relCount} link{relCount !== 1 ? "s" : ""}</span>
+                              <>
+                                <span className="text-outline-variant">•</span>
+                                <span className="text-[10px] font-bold uppercase text-on-surface-variant tracking-widest">{relCount} links</span>
+                              </>
                             )}
-                            <span className="text-xs text-muted-foreground ml-auto">
-                              {Math.round(entry.confidence * 100)}% confidence
-                            </span>
                           </div>
+                          <h4 className="font-headline font-bold text-2xl md:text-3xl text-foreground group-hover:text-primary transition-colors">{entry.title}</h4>
                         </div>
-                        <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity mt-1" />
+                        <span className="material-symbols-outlined text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity">chevron_right</span>
+                      </div>
+                      <p className="text-on-surface-variant mb-4 line-clamp-2 leading-relaxed">{entry.content.slice(0, 200)}</p>
+                      <div className="flex flex-wrap gap-2">
+                        {entry.tags.slice(0, 4).map((tag) => (
+                          <span key={tag} className="bg-surface-container-highest px-3 py-1 rounded text-[10px] font-bold text-secondary uppercase tracking-wider">{tag}</span>
+                        ))}
                       </div>
                     </button>
                   );
                 })}
               </div>
             )}
-          </div>
+          </>
         ) : view === "detail" && selectedEntry ? (
-          <div className="max-w-2xl mx-auto space-y-4">
+          <div className="max-w-3xl mx-auto space-y-6">
             {editing ? (
               <>
-                <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} className="text-lg font-medium" />
-                <Textarea value={editContent} onChange={(e) => setEditContent(e.target.value)} rows={8} className="text-sm font-mono" />
-                <Input value={editTags} onChange={(e) => setEditTags(e.target.value)} placeholder="tag1, tag2, tag3" className="text-sm" />
+                <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} className="text-2xl font-headline font-bold bg-surface-container-high border-none" />
+                <Textarea value={editContent} onChange={(e) => setEditContent(e.target.value)} rows={10} className="text-sm font-mono bg-surface-container-high border-none" />
+                <Input value={editTags} onChange={(e) => setEditTags(e.target.value)} placeholder="tag1, tag2, tag3" className="text-sm bg-surface-container-high border-none" />
                 <div className="flex gap-2">
-                  <Button size="sm" onClick={handleSaveEdit}><Save className="w-3.5 h-3.5 mr-1" />Save</Button>
-                  <Button size="sm" variant="ghost" onClick={() => setEditing(false)}><X className="w-3.5 h-3.5 mr-1" />Cancel</Button>
+                  <Button size="sm" onClick={handleSaveEdit}>Save</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button>
                 </div>
               </>
             ) : (
               <>
                 <div className="flex items-start justify-between">
                   <div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className={`text-xs px-2 py-0.5 rounded border ${ENTRY_TYPE_COLORS[selectedEntry.entry_type] || ""}`}>
-                        {selectedEntry.entry_type}
-                      </span>
-                      <span className="text-xs text-muted-foreground">{Math.round(selectedEntry.confidence * 100)}% confidence</span>
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-[10px] font-bold uppercase text-primary tracking-widest">Type: {selectedEntry.entry_type}</span>
+                      <span className="text-outline-variant">•</span>
+                      <span className="text-[10px] font-bold uppercase text-secondary tracking-widest">{Math.round(selectedEntry.confidence * 100)}% confidence</span>
                     </div>
-                    <h2 className="text-xl font-semibold text-foreground">{selectedEntry.title}</h2>
+                    <h2 className="font-headline font-bold text-4xl text-foreground">{selectedEntry.title}</h2>
                   </div>
-                  <div className="flex gap-1">
-                    <Button size="sm" variant="ghost" onClick={startEdit}><Edit3 className="w-3.5 h-3.5" /></Button>
-                    <Button size="sm" variant="ghost" className="text-destructive" onClick={() => handleDelete(selectedEntry.id)}><Trash2 className="w-3.5 h-3.5" /></Button>
+                  <div className="flex gap-2">
+                    <button onClick={startEdit} className="p-2 hover:bg-surface-container-high rounded-lg transition-colors">
+                      <span className="material-symbols-outlined text-on-surface-variant">edit</span>
+                    </button>
+                    <button onClick={() => handleDelete(selectedEntry.id)} className="p-2 hover:bg-error-container/20 rounded-lg transition-colors">
+                      <span className="material-symbols-outlined text-destructive">delete</span>
+                    </button>
                   </div>
                 </div>
-
-                <div className="prose prose-sm dark:prose-invert max-w-none">
-                  <ReactMarkdown>{selectedEntry.content}</ReactMarkdown>
-                </div>
-
+                <div className="prose prose-lg prose-invert max-w-none"><ReactMarkdown>{selectedEntry.content}</ReactMarkdown></div>
                 {selectedEntry.tags.length > 0 && (
-                  <div className="flex gap-1.5 flex-wrap">
+                  <div className="flex gap-2 flex-wrap">
                     {selectedEntry.tags.map((tag) => (
-                      <Badge key={tag} variant="secondary" className="text-xs"><Tag className="w-3 h-3 mr-1" />{tag}</Badge>
+                      <span key={tag} className="bg-surface-container-highest px-3 py-1 rounded text-[10px] font-bold text-secondary uppercase tracking-wider">{tag}</span>
                     ))}
                   </div>
                 )}
-
-                {/* Related entries */}
                 {(() => {
                   const related = getRelatedEntries(selectedEntry.id);
                   if (related.length === 0) return null;
                   return (
-                    <div className="border-t border-border pt-4 mt-4">
-                      <h3 className="text-sm font-medium text-foreground mb-2">Connected Knowledge</h3>
-                      <div className="grid gap-2">
-                        {related.map(({ entry, relationship, direction }) => (
-                          <button
-                            key={entry.id}
-                            onClick={() => openDetail(entry)}
-                            className="flex items-center gap-2 p-2 rounded border border-border hover:bg-muted/50 text-left"
-                          >
-                            <ArrowRight className={`w-3.5 h-3.5 text-muted-foreground ${direction === "from" ? "rotate-180" : ""}`} />
-                            <span className="text-xs text-muted-foreground">{relationship.replace("_", " ")}</span>
-                            <span className="text-sm text-foreground">{entry.title}</span>
-                            <span className={`text-xs px-1.5 py-0.5 rounded border ml-auto ${ENTRY_TYPE_COLORS[entry.entry_type] || ""}`}>
-                              {entry.entry_type}
-                            </span>
+                    <div className="border-t border-outline-variant/10 pt-6">
+                      <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface-variant mb-4">Connected Knowledge</h3>
+                      <div className="space-y-2">
+                        {related.map(({ entry, relationship }) => (
+                          <button key={entry.id} onClick={() => openDetail(entry)} className="w-full text-left p-4 rounded-xl bg-surface-container-high hover:bg-surface-container-highest border border-outline-variant/10 transition-all flex items-center gap-3">
+                            <span className="material-symbols-outlined text-on-surface-variant text-sm">link</span>
+                            <span className="text-xs text-on-surface-variant">{relationship.replace("_", " ")}</span>
+                            <span className="text-sm font-medium text-foreground">{entry.title}</span>
+                            <span className="text-[10px] font-bold uppercase text-primary tracking-widest ml-auto">{entry.entry_type}</span>
                           </button>
                         ))}
                       </div>
                     </div>
                   );
                 })()}
-
-                <div className="text-xs text-muted-foreground border-t border-border pt-3 mt-4">
+                <div className="text-xs text-on-surface-variant/60 border-t border-outline-variant/10 pt-4">
                   Created {new Date(selectedEntry.created_at).toLocaleDateString()} · Updated {new Date(selectedEntry.updated_at).toLocaleDateString()}
                   {selectedEntry.source_book_id && (() => {
                     const book = books.find(b => b.id === selectedEntry.source_book_id);
@@ -371,48 +314,43 @@ const WikiPanel: React.FC = () => {
             )}
           </div>
         ) : view === "lint" && lintResult ? (
-          <div className="max-w-2xl mx-auto space-y-4">
+          <div className="max-w-3xl mx-auto space-y-6">
             {/* Health score */}
-            <div className="bg-muted/50 rounded-lg p-4 text-center">
-              <div className="text-3xl font-bold text-foreground mb-1">{lintResult.health_score}/100</div>
-              <p className="text-sm text-muted-foreground">Knowledge Health Score</p>
-              <div className="flex justify-center gap-4 mt-3 text-xs text-muted-foreground">
+            <div className="bg-surface-container-high rounded-xl p-8 text-center relative overflow-hidden">
+              <div className="absolute -right-4 -top-4 w-24 h-24 bg-primary/5 rounded-full blur-2xl" />
+              <div className="text-5xl font-bold font-headline text-primary mb-2">{lintResult.health_score}/100</div>
+              <p className="text-on-surface-variant">Knowledge Health Score</p>
+              <div className="w-full max-w-xs mx-auto h-3 bg-surface-container-highest rounded-full mt-4 overflow-hidden">
+                <div className="h-full bg-gradient-to-r from-primary to-primary-fixed-dim rounded-full" style={{ width: `${lintResult.health_score}%` }} />
+              </div>
+              <div className="flex justify-center gap-6 mt-4 text-xs text-on-surface-variant">
                 <span>{lintResult.stats.total_entries} entries</span>
                 <span>{lintResult.stats.total_relationships} links</span>
                 <span>{lintResult.stats.orphan_count} orphans</span>
-                <span>{Math.round((lintResult.stats.avg_confidence || 0) * 100)}% avg confidence</span>
               </div>
             </div>
 
-            {/* Issues */}
             {lintResult.issues.length > 0 && (
-              <div className="space-y-2">
-                <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
-                  <AlertTriangle className="w-4 h-4 text-amber-400" />Issues ({lintResult.issues.length})
-                </h3>
+              <div className="space-y-3">
+                <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface-variant">Issues ({lintResult.issues.length})</h3>
                 {lintResult.issues.map((issue, i) => (
-                  <div key={i} className={`border rounded-lg p-3 ${issue.severity === "high" ? "border-destructive/50 bg-destructive/5" : issue.severity === "medium" ? "border-amber-500/50 bg-amber-500/5" : "border-border bg-muted/30"}`}>
-                    <div className="flex items-center gap-2 mb-1">
-                      <Badge variant={issue.severity === "high" ? "destructive" : "secondary"} className="text-xs">{issue.severity}</Badge>
-                      <span className="text-xs text-muted-foreground capitalize">{issue.type.replace("_", " ")}</span>
+                  <div key={i} className={`flex items-start gap-4 p-4 rounded-xl ${issue.severity === "high" ? "bg-error-container/20 border-l-4 border-destructive" : "bg-surface-container-highest/50"}`}>
+                    <span className="material-symbols-outlined text-destructive">warning</span>
+                    <div>
+                      <p className="text-sm font-bold text-foreground">{issue.description}</p>
+                      {issue.suggested_fix && <p className="text-xs text-on-surface-variant mt-1">💡 {issue.suggested_fix}</p>}
                     </div>
-                    <p className="text-sm text-foreground">{issue.description}</p>
-                    {issue.suggested_fix && <p className="text-xs text-muted-foreground mt-1">💡 {issue.suggested_fix}</p>}
                   </div>
                 ))}
               </div>
             )}
 
-            {/* Suggestions */}
             {lintResult.suggestions.length > 0 && (
-              <div className="space-y-2">
-                <h3 className="text-sm font-medium text-foreground">Suggestions ({lintResult.suggestions.length})</h3>
+              <div className="space-y-3">
+                <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface-variant">Suggestions ({lintResult.suggestions.length})</h3>
                 {lintResult.suggestions.map((s, i) => (
-                  <div key={i} className="border border-border rounded-lg p-3 bg-primary/5">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Badge variant="secondary" className="text-xs">{s.priority}</Badge>
-                      <span className="text-xs text-muted-foreground capitalize">{s.type.replace("_", " ")}</span>
-                    </div>
+                  <div key={i} className="p-4 rounded-xl bg-surface-container-high border border-outline-variant/10">
+                    <Badge variant="secondary" className="text-xs mb-2">{s.priority}</Badge>
                     <p className="text-sm text-foreground">{s.description}</p>
                   </div>
                 ))}
@@ -420,15 +358,11 @@ const WikiPanel: React.FC = () => {
             )}
 
             {lintResult.issues.length === 0 && lintResult.suggestions.length === 0 && (
-              <p className="text-center text-muted-foreground text-sm py-8">Your knowledge base looks healthy! 🎉</p>
+              <p className="text-center text-on-surface-variant py-8">Your knowledge base looks healthy! 🎉</p>
             )}
           </div>
-        ) : (
-          <div className="flex items-center justify-center h-full text-muted-foreground">
-            <p className="text-sm">Select a view</p>
-          </div>
-        )}
-      </div>
+        ) : null}
+      </main>
     </div>
   );
 };
