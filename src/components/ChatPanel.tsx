@@ -174,7 +174,7 @@ const ChatPanel: React.FC = () => {
           "X-Title": "Chapter Craft",
         },
         body: JSON.stringify({
-          model: selectedModel,
+          model: deepResearch ? deepResearchModel : selectedModel,
           messages: [
             { role: "system", content: systemPrompt },
             ...updatedMessages.map((m) => ({ role: m.role, content: m.content })),
