@@ -2,3 +2,12 @@ project_id = "ktzaysdkdkocqhewwtnn"
 
 [functions.chapters-api]
 verify_jwt = false
+
+[functions.knowledge-extract]
+verify_jwt = false
+
+[functions.knowledge-lint]
+verify_jwt = false
+
+[functions.knowledge-ingest]
+verify_jwt = false
