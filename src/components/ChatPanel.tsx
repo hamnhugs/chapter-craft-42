@@ -17,7 +17,9 @@ interface ChatMessage {
 const OPENROUTER_STORAGE_KEY = "openrouter_api_key";
 const SAVED_MODELS_KEY = "openrouter_saved_models";
 const SELECTED_MODEL_KEY = "openrouter_selected_model";
+const DEEP_RESEARCH_MODEL_KEY = "deep_research_model";
 const DEFAULT_MODEL = "google/gemini-2.5-flash";
+const DEFAULT_DEEP_RESEARCH_MODEL = "google/gemini-2.5-pro";
 
 const ChatPanel: React.FC = () => {
   const { books, activeBookId } = useApp();
@@ -36,11 +38,13 @@ const ChatPanel: React.FC = () => {
   const [newModelInput, setNewModelInput] = useState("");
   const [extracting, setExtracting] = useState(false);
   const [deepResearch, setDeepResearch] = useState(false);
+  const [deepResearchModel, setDeepResearchModel] = useState(() => localStorage.getItem(DEEP_RESEARCH_MODEL_KEY) || DEFAULT_DEEP_RESEARCH_MODEL);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => { localStorage.setItem(SAVED_MODELS_KEY, JSON.stringify(savedModels)); }, [savedModels]);
   useEffect(() => { localStorage.setItem(SELECTED_MODEL_KEY, selectedModel); }, [selectedModel]);
+  useEffect(() => { localStorage.setItem(DEEP_RESEARCH_MODEL_KEY, deepResearchModel); }, [deepResearchModel]);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
   const saveApiKey = (key: string) => {
@@ -170,7 +174,7 @@ const ChatPanel: React.FC = () => {
           "X-Title": "Chapter Craft",
         },
         body: JSON.stringify({
-          model: selectedModel,
+          model: deepResearch ? deepResearchModel : selectedModel,
           messages: [
             { role: "system", content: systemPrompt },
             ...updatedMessages.map((m) => ({ role: m.role, content: m.content })),
@@ -286,6 +290,21 @@ const ChatPanel: React.FC = () => {
                 <div className="w-2 h-2 rounded-full bg-primary-container shadow-[0_0_8px_rgba(255,191,0,0.4)]" />
                 <span className="text-sm font-headline italic text-primary">{selectedBook?.title || "No book selected"}</span>
               </div>
+            </div>
+          </section>
+          <section className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-4 rounded-xl bg-surface-container-low">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
+                <span className="material-symbols-outlined text-xs align-middle mr-1">science</span>Deep Research Model
+              </label>
+              <select
+                value={deepResearchModel}
+                onChange={(e) => setDeepResearchModel(e.target.value)}
+                className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40"
+              >
+                {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
+              </select>
+              <p className="text-[10px] text-on-surface-variant px-1">Used when Deep Research is ON. Pick a strong reasoning model for best results.</p>
             </div>
           </section>
         </div>
