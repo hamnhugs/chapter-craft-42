@@ -38,6 +38,7 @@ const ChatPanel: React.FC = () => {
   const [newModelInput, setNewModelInput] = useState("");
   const [extracting, setExtracting] = useState(false);
   const [deepResearch, setDeepResearch] = useState(false);
+  const [deepResearchModel, setDeepResearchModel] = useState(() => localStorage.getItem(DEEP_RESEARCH_MODEL_KEY) || DEFAULT_DEEP_RESEARCH_MODEL);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
