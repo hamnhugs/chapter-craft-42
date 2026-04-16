@@ -43,7 +43,7 @@ const getStoragePathsForBook = (userId: string, bookId: string, fileName: string
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [books, setBooks] = useState<BookDocument[]>([]);
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"library" | "viewer" | "chat" | "wiki">("library");
+  const [activeTab, setActiveTab] = useState<"library" | "viewer" | "chat" | "wiki" | "voice">("library");
   const { user, signOut } = useAuth();
 
   const getAuthenticatedUserId = useCallback(async () => {
