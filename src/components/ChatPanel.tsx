@@ -33,27 +33,16 @@ const ChatPanel: React.FC = () => {
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-  const saveApiKey = (key: string) => {
-    setApiKey(key);
-    if (key) { localStorage.setItem(OPENROUTER_STORAGE_KEY, key); toast.success("OpenRouter API key saved"); }
-    else { localStorage.removeItem(OPENROUTER_STORAGE_KEY); toast.success("API key removed"); }
+  const handleSaveApiKey = (key: string) => {
+    saveApiKey(key);
     setShowSettings(false);
   };
 
-  const addModel = () => {
+  const handleAddModel = () => {
     const model = newModelInput.trim();
     if (!model) return;
-    if (savedModels.includes(model)) { toast.error("Model already saved"); return; }
-    setSavedModels((prev) => [...prev, model]);
-    setSelectedModel(model);
+    addModel(model);
     setNewModelInput("");
-    toast.success(`Model "${model}" added`);
-  };
-
-  const removeModel = (model: string) => {
-    if (savedModels.length <= 1) { toast.error("You need at least one model"); return; }
-    setSavedModels((prev) => prev.filter((m) => m !== model));
-    if (selectedModel === model) setSelectedModel(savedModels.find((m) => m !== model) || DEFAULT_MODEL);
   };
 
   const selectedBook = books.find((b) => b.id === activeBookId);
