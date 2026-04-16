@@ -17,7 +17,9 @@ interface ChatMessage {
 const OPENROUTER_STORAGE_KEY = "openrouter_api_key";
 const SAVED_MODELS_KEY = "openrouter_saved_models";
 const SELECTED_MODEL_KEY = "openrouter_selected_model";
+const DEEP_RESEARCH_MODEL_KEY = "deep_research_model";
 const DEFAULT_MODEL = "google/gemini-2.5-flash";
+const DEFAULT_DEEP_RESEARCH_MODEL = "google/gemini-2.5-pro";
 
 const ChatPanel: React.FC = () => {
   const { books, activeBookId } = useApp();
