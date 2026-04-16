@@ -1,10 +1,11 @@
 import React from "react";
-import { BookOpen, Library as LibraryIcon, LogOut, MessageCircle, Brain } from "lucide-react";
+import { BookOpen, Library as LibraryIcon, LogOut, MessageCircle, Brain, Mic } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import PdfViewer from "@/components/PdfViewer";
 import Library from "@/components/Library";
 import ChatPanel from "@/components/ChatPanel";
 import WikiPanel from "@/components/WikiPanel";
+import VoiceChat from "@/components/VoiceChat";
 
 const Index: React.FC = () => {
   const { activeTab, setActiveTab, getActiveBook, signOut } = useApp();
@@ -38,6 +39,12 @@ const Index: React.FC = () => {
           icon={<Brain className="w-4 h-4" />}
           label="Wiki"
         />
+        <TabButton
+          active={activeTab === "voice"}
+          onClick={() => setActiveTab("voice")}
+          icon={<Mic className="w-4 h-4" />}
+          label="Voice"
+        />
         <div className="ml-auto">
           <button onClick={signOut} className="flex items-center gap-1.5 px-3 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors" title="Sign out">
             <LogOut className="w-3.5 h-3.5" />
@@ -48,7 +55,7 @@ const Index: React.FC = () => {
 
       {/* Content */}
       <div className="flex-1 overflow-hidden">
-        {activeTab === "library" ? <Library /> : activeTab === "chat" ? <ChatPanel /> : activeTab === "wiki" ? <WikiPanel /> : <PdfViewer />}
+        {activeTab === "library" ? <Library /> : activeTab === "chat" ? <ChatPanel /> : activeTab === "wiki" ? <WikiPanel /> : activeTab === "voice" ? <VoiceChat /> : <PdfViewer />}
       </div>
     </div>
   );
