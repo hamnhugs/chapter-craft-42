@@ -449,11 +449,11 @@ const VoiceChat: React.FC = () => {
       {/* Notes panel toggle */}
       <button
         onClick={() => setNotesPanelOpen((v) => !v)}
-        className="absolute top-3 right-3 z-30 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-container-high text-on-surface-variant hover:text-primary text-xs font-medium shadow-sm"
+        className="absolute top-3 right-3 z-30 flex items-center gap-1.5 px-4 py-2 rounded-full bg-primary-container text-on-primary-container hover:bg-primary-container/90 text-sm font-semibold shadow-md"
         title="Voice notes"
       >
-        <StickyNote className="w-3.5 h-3.5" />
-        <span className="hidden sm:inline">Notes</span>
+        <StickyNote className="w-4 h-4" />
+        Notes
       </button>
       {/* Settings */}
       {showSettings && (
@@ -493,7 +493,21 @@ const VoiceChat: React.FC = () => {
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-auto px-4 py-6 space-y-6 hide-scrollbar">
+      <div ref={messagesContainerRef} className="flex-1 overflow-auto px-4 py-6 space-y-6 hide-scrollbar">
+        {selectionCapture && (
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              saveBubbleToNotes(selectionCapture.text);
+              setSelectionCapture(null);
+              window.getSelection()?.removeAllRanges();
+            }}
+            className="fixed z-[60] px-3 py-2 rounded-full bg-primary-container text-on-primary-container text-xs font-semibold shadow-lg flex items-center gap-1.5"
+            style={{ top: selectionCapture.top, left: selectionCapture.left }}
+          >
+            <BookmarkPlus className="w-3.5 h-3.5" /> Save selection
+          </button>
+        )}
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-on-surface-variant gap-4">
             <div className="w-24 h-24 rounded-full bg-primary-container/10 flex items-center justify-center">
