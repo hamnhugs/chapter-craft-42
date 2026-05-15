@@ -31,6 +31,32 @@ const VoiceChat: React.FC = () => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [ttsEnabled, setTtsEnabled] = useState(() => localStorage.getItem(VOICE_ENABLED_KEY) !== "false");
   const [handsFree, setHandsFree] = useState(() => localStorage.getItem(HANDS_FREE_KEY) === "true");
+  const [notesPanelOpen, setNotesPanelOpen] = useState(() => localStorage.getItem(NOTES_PANEL_OPEN_KEY) === "true");
+  useEffect(() => { localStorage.setItem(NOTES_PANEL_OPEN_KEY, String(notesPanelOpen)); }, [notesPanelOpen]);
+
+  // Long-press to save chat bubble as a voice note
+  const longPressTimer = useRef<number | null>(null);
+  const longPressFiredRef = useRef(false);
+  const startLongPress = (text: string) => {
+    longPressFiredRef.current = false;
+    if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
+    longPressTimer.current = window.setTimeout(() => {
+      longPressFiredRef.current = true;
+      const note = appendVoiceNote(text);
+      if (note) {
+        try { (navigator as any).vibrate?.(30); } catch {}
+        toast.success("Saved to voice notes");
+        setNotesPanelOpen(true);
+      }
+    }, 500);
+  };
+  const cancelLongPress = () => {
+    if (longPressTimer.current) { window.clearTimeout(longPressTimer.current); longPressTimer.current = null; }
+  };
+  const saveBubbleToNotes = (text: string) => {
+    const note = appendVoiceNote(text);
+    if (note) { toast.success("Saved to voice notes"); setNotesPanelOpen(true); }
+  };
   const [interimTranscript, setInterimTranscript] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [extracting, setExtracting] = useState(false);
