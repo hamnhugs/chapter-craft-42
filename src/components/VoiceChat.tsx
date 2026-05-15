@@ -600,6 +600,8 @@ const VoiceChat: React.FC = () => {
           {handsFree && !isListening && !isLoading && !isSpeaking && " — say something"}
         </p>
       </div>
+      </div>
+      <VoiceNotesPanel open={notesPanelOpen} onClose={() => setNotesPanelOpen(false)} />
     </div>
   );
 };
