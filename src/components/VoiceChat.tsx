@@ -484,13 +484,29 @@ const VoiceChat: React.FC = () => {
         )}
 
         {messages.map((msg, i) => (
-          <div key={i} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"} max-w-[85%] ${msg.role === "user" ? "self-end" : ""}`}>
-            <div className={`${msg.role === "user" ? "message-bubble-user bg-primary-container text-on-primary-container" : "message-bubble-ai bg-surface-container-high text-foreground border-l-2 border-primary-container/20"} p-5 shadow-sm leading-relaxed`}>
+          <div key={i} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"} max-w-[85%] ${msg.role === "user" ? "self-end" : ""} group`}>
+            <div
+              className={`relative ${msg.role === "user" ? "message-bubble-user bg-primary-container text-on-primary-container" : "message-bubble-ai bg-surface-container-high text-foreground border-l-2 border-primary-container/20"} p-5 shadow-sm leading-relaxed select-text`}
+              style={{ WebkitTouchCallout: "none" } as React.CSSProperties}
+              onTouchStart={() => startLongPress(msg.content)}
+              onTouchEnd={(e) => { if (longPressFiredRef.current) { e.preventDefault(); } cancelLongPress(); }}
+              onTouchMove={cancelLongPress}
+              onTouchCancel={cancelLongPress}
+              onContextMenu={(e) => { if (longPressFiredRef.current) e.preventDefault(); }}
+            >
               {msg.role === "assistant" ? (
                 <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown>{msg.content}</ReactMarkdown></div>
               ) : (
                 <p className="whitespace-pre-wrap font-medium">{msg.content}</p>
               )}
+              <button
+                onClick={() => saveBubbleToNotes(msg.content)}
+                className="hidden md:flex absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 transition-opacity items-center justify-center w-7 h-7 rounded-full bg-surface-container-highest text-on-surface-variant hover:text-primary shadow-md"
+                title="Save to voice notes"
+                aria-label="Save to voice notes"
+              >
+                <BookmarkPlus className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
         ))}
