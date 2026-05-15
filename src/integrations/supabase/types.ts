@@ -112,6 +112,33 @@ export type Database = {
           },
         ]
       }
+      chat_messages: {
+        Row: {
+          book_id: string | null
+          content: string
+          created_at: string
+          id: string
+          role: string
+          user_id: string
+        }
+        Insert: {
+          book_id?: string | null
+          content?: string
+          created_at?: string
+          id?: string
+          role: string
+          user_id: string
+        }
+        Update: {
+          book_id?: string | null
+          content?: string
+          created_at?: string
+          id?: string
+          role?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       conversation_memory: {
         Row: {
           id: string
@@ -145,8 +172,13 @@ export type Database = {
           content: string
           created_at: string
           entry_type: string
+          folder: string
           id: string
+          is_index: boolean
+          maturity: string
+          pending_changes: Json
           source_book_id: string | null
+          subject: string | null
           tags: string[]
           title: string
           updated_at: string
@@ -159,8 +191,13 @@ export type Database = {
           content?: string
           created_at?: string
           entry_type?: string
+          folder?: string
           id?: string
+          is_index?: boolean
+          maturity?: string
+          pending_changes?: Json
           source_book_id?: string | null
+          subject?: string | null
           tags?: string[]
           title: string
           updated_at?: string
@@ -173,8 +210,13 @@ export type Database = {
           content?: string
           created_at?: string
           entry_type?: string
+          folder?: string
           id?: string
+          is_index?: boolean
+          maturity?: string
+          pending_changes?: Json
           source_book_id?: string | null
+          subject?: string | null
           tags?: string[]
           title?: string
           updated_at?: string
@@ -272,9 +314,38 @@ export type Database = {
           },
         ]
       }
+      subject_progress: {
+        Row: {
+          id: string
+          ingest_count: number
+          interleave_unlocked_at: string | null
+          started_at: string
+          subject: string
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          ingest_count?: number
+          interleave_unlocked_at?: string | null
+          started_at?: string
+          subject: string
+          user_id: string
+        }
+        Update: {
+          id?: string
+          ingest_count?: number
+          interleave_unlocked_at?: string | null
+          started_at?: string
+          subject?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_settings: {
         Row: {
+          burplexity_api_token: string | null
           created_at: string
+          custom_system_prompt: string | null
           deep_research_model: string | null
           id: string
           openrouter_api_key: string | null
@@ -284,7 +355,9 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          burplexity_api_token?: string | null
           created_at?: string
+          custom_system_prompt?: string | null
           deep_research_model?: string | null
           id?: string
           openrouter_api_key?: string | null
@@ -294,7 +367,9 @@ export type Database = {
           user_id: string
         }
         Update: {
+          burplexity_api_token?: string | null
           created_at?: string
+          custom_system_prompt?: string | null
           deep_research_model?: string | null
           id?: string
           openrouter_api_key?: string | null
@@ -304,6 +379,77 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      wiki_log: {
+        Row: {
+          created_at: string
+          details: Json
+          entry_id: string | null
+          id: string
+          operation: string
+          summary: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          details?: Json
+          entry_id?: string | null
+          id?: string
+          operation: string
+          summary?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          details?: Json
+          entry_id?: string | null
+          id?: string
+          operation?: string
+          summary?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      wiki_questions: {
+        Row: {
+          answer: string
+          created_at: string
+          entry_id: string
+          id: string
+          last_reviewed_at: string | null
+          question: string
+          times_reviewed: number
+          user_id: string
+        }
+        Insert: {
+          answer?: string
+          created_at?: string
+          entry_id: string
+          id?: string
+          last_reviewed_at?: string | null
+          question: string
+          times_reviewed?: number
+          user_id: string
+        }
+        Update: {
+          answer?: string
+          created_at?: string
+          entry_id?: string
+          id?: string
+          last_reviewed_at?: string | null
+          question?: string
+          times_reviewed?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wiki_questions_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_entries"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
