@@ -5,7 +5,8 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import { fetchKnowledgeEntries, fetchConversationMemory, extractKnowledge } from "@/lib/knowledgeApi";
-import { Loader2 } from "lucide-react";
+import { Loader2, StickyNote, BookmarkPlus } from "lucide-react";
+import VoiceNotesPanel, { appendVoiceNote } from "./VoiceNotesPanel";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -18,6 +19,7 @@ const SELECTED_MODEL_KEY = "openrouter_selected_model";
 const DEFAULT_MODEL = "google/gemini-2.5-flash";
 const VOICE_ENABLED_KEY = "voice_tts_enabled";
 const HANDS_FREE_KEY = "voice_hands_free";
+const NOTES_PANEL_OPEN_KEY = "voice_notes_panel_open";
 
 const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
@@ -29,6 +31,32 @@ const VoiceChat: React.FC = () => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [ttsEnabled, setTtsEnabled] = useState(() => localStorage.getItem(VOICE_ENABLED_KEY) !== "false");
   const [handsFree, setHandsFree] = useState(() => localStorage.getItem(HANDS_FREE_KEY) === "true");
+  const [notesPanelOpen, setNotesPanelOpen] = useState(() => localStorage.getItem(NOTES_PANEL_OPEN_KEY) === "true");
+  useEffect(() => { localStorage.setItem(NOTES_PANEL_OPEN_KEY, String(notesPanelOpen)); }, [notesPanelOpen]);
+
+  // Long-press to save chat bubble as a voice note
+  const longPressTimer = useRef<number | null>(null);
+  const longPressFiredRef = useRef(false);
+  const startLongPress = (text: string) => {
+    longPressFiredRef.current = false;
+    if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
+    longPressTimer.current = window.setTimeout(() => {
+      longPressFiredRef.current = true;
+      const note = appendVoiceNote(text);
+      if (note) {
+        try { (navigator as any).vibrate?.(30); } catch {}
+        toast.success("Saved to voice notes");
+        setNotesPanelOpen(true);
+      }
+    }, 500);
+  };
+  const cancelLongPress = () => {
+    if (longPressTimer.current) { window.clearTimeout(longPressTimer.current); longPressTimer.current = null; }
+  };
+  const saveBubbleToNotes = (text: string) => {
+    const note = appendVoiceNote(text);
+    if (note) { toast.success("Saved to voice notes"); setNotesPanelOpen(true); }
+  };
   const [interimTranscript, setInterimTranscript] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [extracting, setExtracting] = useState(false);
@@ -387,7 +415,17 @@ const VoiceChat: React.FC = () => {
     : "Tap to talk";
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full overflow-hidden">
+      <div className="flex-1 flex flex-col min-w-0 relative">
+      {/* Notes panel toggle */}
+      <button
+        onClick={() => setNotesPanelOpen((v) => !v)}
+        className="absolute top-3 right-3 z-30 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-container-high text-on-surface-variant hover:text-primary text-xs font-medium shadow-sm"
+        title="Voice notes"
+      >
+        <StickyNote className="w-3.5 h-3.5" />
+        <span className="hidden sm:inline">Notes</span>
+      </button>
       {/* Settings */}
       {showSettings && (
         <div className="border-b border-outline-variant/10 bg-surface-container-low px-4 py-4">
@@ -446,13 +484,29 @@ const VoiceChat: React.FC = () => {
         )}
 
         {messages.map((msg, i) => (
-          <div key={i} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"} max-w-[85%] ${msg.role === "user" ? "self-end" : ""}`}>
-            <div className={`${msg.role === "user" ? "message-bubble-user bg-primary-container text-on-primary-container" : "message-bubble-ai bg-surface-container-high text-foreground border-l-2 border-primary-container/20"} p-5 shadow-sm leading-relaxed`}>
+          <div key={i} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"} max-w-[85%] ${msg.role === "user" ? "self-end" : ""} group`}>
+            <div
+              className={`relative ${msg.role === "user" ? "message-bubble-user bg-primary-container text-on-primary-container" : "message-bubble-ai bg-surface-container-high text-foreground border-l-2 border-primary-container/20"} p-5 shadow-sm leading-relaxed select-text`}
+              style={{ WebkitTouchCallout: "none" } as React.CSSProperties}
+              onTouchStart={() => startLongPress(msg.content)}
+              onTouchEnd={(e) => { if (longPressFiredRef.current) { e.preventDefault(); } cancelLongPress(); }}
+              onTouchMove={cancelLongPress}
+              onTouchCancel={cancelLongPress}
+              onContextMenu={(e) => { if (longPressFiredRef.current) e.preventDefault(); }}
+            >
               {msg.role === "assistant" ? (
                 <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown>{msg.content}</ReactMarkdown></div>
               ) : (
                 <p className="whitespace-pre-wrap font-medium">{msg.content}</p>
               )}
+              <button
+                onClick={() => saveBubbleToNotes(msg.content)}
+                className="hidden md:flex absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 transition-opacity items-center justify-center w-7 h-7 rounded-full bg-surface-container-highest text-on-surface-variant hover:text-primary shadow-md"
+                title="Save to voice notes"
+                aria-label="Save to voice notes"
+              >
+                <BookmarkPlus className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
         ))}
@@ -546,6 +600,8 @@ const VoiceChat: React.FC = () => {
           {handsFree && !isListening && !isLoading && !isSpeaking && " — say something"}
         </p>
       </div>
+      </div>
+      <VoiceNotesPanel open={notesPanelOpen} onClose={() => setNotesPanelOpen(false)} />
     </div>
   );
 };
