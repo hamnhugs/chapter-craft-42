@@ -415,7 +415,17 @@ const VoiceChat: React.FC = () => {
     : "Tap to talk";
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full overflow-hidden">
+      <div className="flex-1 flex flex-col min-w-0 relative">
+      {/* Notes panel toggle */}
+      <button
+        onClick={() => setNotesPanelOpen((v) => !v)}
+        className="absolute top-3 right-3 z-30 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-container-high text-on-surface-variant hover:text-primary text-xs font-medium shadow-sm"
+        title="Voice notes"
+      >
+        <StickyNote className="w-3.5 h-3.5" />
+        <span className="hidden sm:inline">Notes</span>
+      </button>
       {/* Settings */}
       {showSettings && (
         <div className="border-b border-outline-variant/10 bg-surface-container-low px-4 py-4">
