@@ -19,6 +19,7 @@ const SELECTED_MODEL_KEY = "openrouter_selected_model";
 const DEFAULT_MODEL = "google/gemini-2.5-flash";
 const VOICE_ENABLED_KEY = "voice_tts_enabled";
 const HANDS_FREE_KEY = "voice_hands_free";
+const NOTES_PANEL_OPEN_KEY = "voice_notes_panel_open";
 
 const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
