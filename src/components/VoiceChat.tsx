@@ -33,6 +33,7 @@ const VoiceChat: React.FC = () => {
   const [handsFree, setHandsFree] = useState(() => localStorage.getItem(HANDS_FREE_KEY) === "true");
   const [notesPanelOpen, setNotesPanelOpen] = useState(() => localStorage.getItem(NOTES_PANEL_OPEN_KEY) === "true");
   useEffect(() => { localStorage.setItem(NOTES_PANEL_OPEN_KEY, String(notesPanelOpen)); }, [notesPanelOpen]);
+  const [selectionCapture, setSelectionCapture] = useState<{ text: string; top: number; left: number } | null>(null);
 
   // Long-press to save chat bubble as a voice note
   const longPressTimer = useRef<number | null>(null);
@@ -72,6 +73,7 @@ const VoiceChat: React.FC = () => {
   const recognitionRef = useRef<any>(null);
   const synthRef = useRef(window.speechSynthesis);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   // Refs synced with state so async callbacks (recognition.onend, utterance.onend) see fresh values
