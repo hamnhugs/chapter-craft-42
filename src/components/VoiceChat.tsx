@@ -33,6 +33,7 @@ const VoiceChat: React.FC = () => {
   const [handsFree, setHandsFree] = useState(() => localStorage.getItem(HANDS_FREE_KEY) === "true");
   const [notesPanelOpen, setNotesPanelOpen] = useState(() => localStorage.getItem(NOTES_PANEL_OPEN_KEY) === "true");
   useEffect(() => { localStorage.setItem(NOTES_PANEL_OPEN_KEY, String(notesPanelOpen)); }, [notesPanelOpen]);
+  const [selectionCapture, setSelectionCapture] = useState<{ text: string; top: number; left: number } | null>(null);
 
   // Long-press to save chat bubble as a voice note
   const longPressTimer = useRef<number | null>(null);
@@ -72,6 +73,7 @@ const VoiceChat: React.FC = () => {
   const recognitionRef = useRef<any>(null);
   const synthRef = useRef(window.speechSynthesis);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   // Refs synced with state so async callbacks (recognition.onend, utterance.onend) see fresh values
@@ -92,6 +94,33 @@ const VoiceChat: React.FC = () => {
   useEffect(() => { localStorage.setItem(SELECTED_MODEL_KEY, selectedModel); }, [selectedModel]);
   useEffect(() => { localStorage.setItem(VOICE_ENABLED_KEY, String(ttsEnabled)); }, [ttsEnabled]);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+  useEffect(() => {
+    const onSelectionChange = () => {
+      const selection = window.getSelection();
+      const text = selection?.toString().trim() || "";
+      const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+      const container = messagesContainerRef.current;
+
+      if (!text || !range || !container?.contains(range.commonAncestorContainer)) {
+        setSelectionCapture(null);
+        return;
+      }
+
+      const rect = range.getBoundingClientRect();
+      setSelectionCapture({
+        text,
+        top: Math.max(88, rect.top - 42),
+        left: Math.min(window.innerWidth - 190, Math.max(12, rect.left + rect.width / 2 - 95)),
+      });
+    };
+
+    document.addEventListener("selectionchange", onSelectionChange);
+    window.addEventListener("resize", onSelectionChange);
+    return () => {
+      document.removeEventListener("selectionchange", onSelectionChange);
+      window.removeEventListener("resize", onSelectionChange);
+    };
+  }, []);
   useEffect(() => {
     return () => {
       stoppedByUserRef.current = true;
@@ -420,11 +449,11 @@ const VoiceChat: React.FC = () => {
       {/* Notes panel toggle */}
       <button
         onClick={() => setNotesPanelOpen((v) => !v)}
-        className="absolute top-3 right-3 z-30 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-container-high text-on-surface-variant hover:text-primary text-xs font-medium shadow-sm"
+        className="absolute top-3 right-3 z-30 flex items-center gap-1.5 px-4 py-2 rounded-full bg-primary-container text-on-primary-container hover:bg-primary-container/90 text-sm font-semibold shadow-md"
         title="Voice notes"
       >
-        <StickyNote className="w-3.5 h-3.5" />
-        <span className="hidden sm:inline">Notes</span>
+        <StickyNote className="w-4 h-4" />
+        Notes
       </button>
       {/* Settings */}
       {showSettings && (
@@ -464,7 +493,21 @@ const VoiceChat: React.FC = () => {
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-auto px-4 py-6 space-y-6 hide-scrollbar">
+      <div ref={messagesContainerRef} className="flex-1 overflow-auto px-4 py-6 space-y-6 hide-scrollbar">
+        {selectionCapture && (
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              saveBubbleToNotes(selectionCapture.text);
+              setSelectionCapture(null);
+              window.getSelection()?.removeAllRanges();
+            }}
+            className="fixed z-[60] px-3 py-2 rounded-full bg-primary-container text-on-primary-container text-xs font-semibold shadow-lg flex items-center gap-1.5"
+            style={{ top: selectionCapture.top, left: selectionCapture.left }}
+          >
+            <BookmarkPlus className="w-3.5 h-3.5" /> Save selection
+          </button>
+        )}
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-on-surface-variant gap-4">
             <div className="w-24 h-24 rounded-full bg-primary-container/10 flex items-center justify-center">
@@ -544,6 +587,16 @@ const VoiceChat: React.FC = () => {
           {/* TTS toggle */}
           <button onClick={() => { setTtsEnabled(!ttsEnabled); if (ttsEnabled) stopSpeaking(); }} className={`p-3 rounded-full transition-all ${ttsEnabled ? "bg-primary-container/20 text-primary" : "bg-surface-container-high text-on-surface-variant"}`} title={ttsEnabled ? "Voice replies on" : "Voice replies off"}>
             <span className="material-symbols-outlined">{ttsEnabled ? "volume_up" : "volume_off"}</span>
+          </button>
+
+          {/* Notes toggle */}
+          <button
+            onClick={() => setNotesPanelOpen((v) => !v)}
+            className={`px-4 py-3 rounded-full transition-all flex items-center gap-2 text-sm font-medium ${notesPanelOpen ? "bg-primary-container text-on-primary-container shadow-md" : "bg-surface-container-high text-on-surface-variant hover:text-primary"}`}
+            title="Voice notes"
+          >
+            <StickyNote className="w-4 h-4" />
+            Notes
           </button>
 
           {/* Hands-free toggle */}
