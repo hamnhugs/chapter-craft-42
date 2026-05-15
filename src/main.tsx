@@ -25,7 +25,7 @@ if ("serviceWorker" in navigator) {
     // Production: load the kill-switch SW so previously-cached devices recover.
     window.addEventListener("load", () => {
       navigator.serviceWorker
-        .register("/chapter-craft-42/sw.js")
+        .register("sw.js")
         .catch((err) => console.warn("SW registration failed:", err));
     });
   }
