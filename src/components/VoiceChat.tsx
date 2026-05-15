@@ -589,6 +589,16 @@ const VoiceChat: React.FC = () => {
             <span className="material-symbols-outlined">{ttsEnabled ? "volume_up" : "volume_off"}</span>
           </button>
 
+          {/* Notes toggle */}
+          <button
+            onClick={() => setNotesPanelOpen((v) => !v)}
+            className={`px-4 py-3 rounded-full transition-all flex items-center gap-2 text-sm font-medium ${notesPanelOpen ? "bg-primary-container text-on-primary-container shadow-md" : "bg-surface-container-high text-on-surface-variant hover:text-primary"}`}
+            title="Voice notes"
+          >
+            <StickyNote className="w-4 h-4" />
+            Notes
+          </button>
+
           {/* Hands-free toggle */}
           <button
             onClick={toggleHandsFree}
