@@ -95,6 +95,33 @@ const VoiceChat: React.FC = () => {
   useEffect(() => { localStorage.setItem(VOICE_ENABLED_KEY, String(ttsEnabled)); }, [ttsEnabled]);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
   useEffect(() => {
+    const onSelectionChange = () => {
+      const selection = window.getSelection();
+      const text = selection?.toString().trim() || "";
+      const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+      const container = messagesContainerRef.current;
+
+      if (!text || !range || !container?.contains(range.commonAncestorContainer)) {
+        setSelectionCapture(null);
+        return;
+      }
+
+      const rect = range.getBoundingClientRect();
+      setSelectionCapture({
+        text,
+        top: Math.max(88, rect.top - 42),
+        left: Math.min(window.innerWidth - 190, Math.max(12, rect.left + rect.width / 2 - 95)),
+      });
+    };
+
+    document.addEventListener("selectionchange", onSelectionChange);
+    window.addEventListener("resize", onSelectionChange);
+    return () => {
+      document.removeEventListener("selectionchange", onSelectionChange);
+      window.removeEventListener("resize", onSelectionChange);
+    };
+  }, []);
+  useEffect(() => {
     return () => {
       stoppedByUserRef.current = true;
       try { recognitionRef.current?.stop(); } catch {}
