@@ -5,7 +5,8 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import { fetchKnowledgeEntries, fetchConversationMemory, extractKnowledge } from "@/lib/knowledgeApi";
-import { Loader2 } from "lucide-react";
+import { Loader2, StickyNote, BookmarkPlus } from "lucide-react";
+import VoiceNotesPanel, { appendVoiceNote } from "./VoiceNotesPanel";
 
 interface ChatMessage {
   role: "user" | "assistant";
