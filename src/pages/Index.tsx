@@ -5,12 +5,14 @@ import Library from "@/components/Library";
 import ChatPanel from "@/components/ChatPanel";
 import WikiPanel from "@/components/WikiPanel";
 import VoiceChat from "@/components/VoiceChat";
+import VideoTranscript from "@/components/VideoTranscript";
 
 const tabs = [
   { id: "library" as const, icon: "library_books", label: "Library" },
   { id: "viewer" as const, icon: "auto_stories", label: "Reader" },
   { id: "chat" as const, icon: "forum", label: "Chat" },
   { id: "wiki" as const, icon: "menu_book", label: "Wiki" },
+  { id: "video" as const, icon: "smart_display", label: "Video" },
   { id: "voice" as const, icon: "settings_voice", label: "Voice" },
 ];
 
@@ -60,6 +62,8 @@ const Index: React.FC = () => {
           <ChatPanel />
         ) : activeTab === "wiki" ? (
           <WikiPanel />
+        ) : activeTab === "video" ? (
+          <VideoTranscript />
         ) : activeTab === "voice" ? (
           <VoiceChat />
         ) : (
