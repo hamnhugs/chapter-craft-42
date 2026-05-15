@@ -380,6 +380,51 @@ export type Database = {
         }
         Relationships: []
       }
+      video_jobs: {
+        Row: {
+          created_at: string
+          error: string | null
+          id: string
+          metadata: Json | null
+          pdf_url: string | null
+          status: string
+          title: string | null
+          transcript: string | null
+          updated_at: string
+          user_id: string
+          video_url: string
+          word_count: number | null
+        }
+        Insert: {
+          created_at?: string
+          error?: string | null
+          id: string
+          metadata?: Json | null
+          pdf_url?: string | null
+          status?: string
+          title?: string | null
+          transcript?: string | null
+          updated_at?: string
+          user_id: string
+          video_url: string
+          word_count?: number | null
+        }
+        Update: {
+          created_at?: string
+          error?: string | null
+          id?: string
+          metadata?: Json | null
+          pdf_url?: string | null
+          status?: string
+          title?: string | null
+          transcript?: string | null
+          updated_at?: string
+          user_id?: string
+          video_url?: string
+          word_count?: number | null
+        }
+        Relationships: []
+      }
       wiki_log: {
         Row: {
           created_at: string
