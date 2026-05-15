@@ -30,9 +30,10 @@ const VideoTranscript: React.FC = () => {
       .order("created_at", { ascending: false })
       .then(({ data }) => {
         if (data) {
-          setJobs(data as VideoJob[]);
+          const typedJobs = data as unknown as VideoJob[];
+          setJobs(typedJobs);
           // Resume polling for any pending/processing jobs
-          data.forEach((job: VideoJob) => {
+          typedJobs.forEach((job: VideoJob) => {
             if (job.status === "pending" || job.status === "processing") {
               startPolling(job.id);
             }
