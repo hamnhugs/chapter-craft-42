@@ -1,27 +1,24 @@
-Make Voice tab hands-free and give it richer Wiki access.
+## Voice Notes side panel
 
-## What changes
+Add a collapsible **Voice Notes** panel to the Voice tab with a simple list of notes you can append, edit, and delete. Notes are captured from chat messages.
 
-1. Hands-free conversation mode
-   - Add a "Hands-free" toggle next to the existing mic/TTS controls.
-   - When ON: start mic once, keep it open continuously. After the user finishes a sentence, send to the model. While the assistant speaks, mic pauses to avoid echo. As soon as TTS finishes, mic auto-resumes — no button press needed.
-   - When OFF: current push-to-talk behavior stays exactly as it is today.
-   - A clear status pill ("Listening", "Thinking", "Speaking", "Paused") so it's obvious what the app is doing.
-   - Auto-recover from common interruptions (no-speech timeouts, transient mic errors) with silent restart; only surface a toast if the mic truly fails.
+### Behavior
 
-2. Stronger Wiki brain for the voice agent
-   - Voice agent already pulls wiki entries; expand it so the agent always sees the full wiki (not capped at 20) and prioritizes entries related to the active book + recent conversation topics.
-   - Include conversation memory summary + key facts (already partially wired) and make sure the system prompt clearly tells the model: "Use the Wiki entries below as your primary knowledge source; cite them by title when relevant."
-   - After each voice exchange, optionally auto-extract new knowledge into the wiki (toggle, default OFF, so we don't surprise the user).
+- A **toggle button** in the Voice tab header expands/collapses a side panel (slides in from the right on desktop, slides up as a sheet on mobile).
+- Panel shows a scrollable list of notes (newest on top). Each note has: text, timestamp, edit, and delete buttons.
+- A **"+ Add note"** button at the top lets you type a note manually.
+- **Capture from chat:**
+  - **Desktop:** small "Save to notes" icon appears on each chat bubble on hover.
+  - **Mobile:** **press-and-hold (~500ms)** on any chat bubble appends that bubble's text as a new note, with a brief haptic + toast confirmation ("Saved to notes").
+- Notes persist in **localStorage** (per browser, instant, no backend setup). Clear-all button at the bottom of the panel.
+- Panel state (open/closed) is remembered between sessions.
 
-3. Small UX safeguards
-   - Stop hands-free mode automatically if the tab is hidden / user navigates away.
-   - One-tap "Stop" pill that fully ends hands-free mode and silences TTS.
-   - Persist the hands-free preference in localStorage.
+### Files touched
 
-## Files touched
-- `src/components/VoiceChat.tsx` — only file. All logic lives here today; no backend changes required since wiki access already uses `fetchKnowledgeEntries` / `fetchConversationMemory`.
+- `src/components/VoiceChat.tsx` — add panel UI, toggle button, long-press handler on message bubbles, hover save button, note CRUD against localStorage.
+- No backend, no migrations, no other components affected.
 
-## Out of scope
-- No backend/edge function changes.
-- No swap of speech engine (keeps Web Speech API). Browser support note stays the same (Chrome/Edge).
+### Out of scope
+
+- Syncing notes across devices or to the existing Notes Library (kept separate so the Voice scratchpad stays fast and private).
+- Editing inside chat bubbles, or formatting/markdown in notes (plain text only).
