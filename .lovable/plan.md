@@ -1,26 +1,23 @@
-## Goal
-Make voice notes sync across devices for the same account. Today they only live in `localStorage`.
+## Problems found
 
-## Approach
-Reuse the existing `notes` table (already RLS-protected per `user_id`). Voice notes are stored with `book_id = NULL` and `title = 'Voice Note'` so they don't mix with the per-book Notes Library.
+In `src/components/VoiceChat.tsx` the previous fix overcorrected and now drops or mangles real speech:
 
-## Database
-- Migration: make `public.notes.book_id` nullable (`ALTER COLUMN ... DROP NOT NULL`). RLS, columns, and existing book-scoped notes unchanged.
-- Enable realtime on `public.notes` (`REPLICA IDENTITY FULL` + add to `supabase_realtime` publication) so a note added on one device appears on the other.
+1. **Push-to-talk loses the tail of long sentences.** In non-hands-free mode, the first `isFinal=true` result triggers `flushPendingTranscript` immediately (and stops recognition). Chrome routinely splits one spoken sentence into 2–3 final chunks, so only the first chunk reaches the model — the rest is discarded. This is the main "not transcribing correctly" symptom.
+2. **Legitimate repeated words get dropped.** `if (!buf.endsWith(newFinal)) ...` and the `lastFinalSegmentRef` skip throw away segments when the user actually says the same word/phrase twice (common in speech: "yes yes", "wait wait", "no, no I meant…").
+3. **2.5 s send-dedupe drops valid short re-sends.** If the user says "next" or "yes" twice in a row, the second one is silently swallowed.
+4. **Loop bound is correct**, but the manual segment-skip on top of `event.resultIndex` is redundant and causes #2.
 
-## Frontend (`src/components/VoiceNotesPanel.tsx` only)
-- Replace `localStorage` storage with Supabase `notes` table queries scoped to `user_id = auth.uid()` AND `book_id IS NULL`.
-- `loadVoiceNotes()` → async fetch from Supabase, ordered by `created_at desc`.
-- `appendVoiceNote(text)` → insert row `{ user_id, book_id: null, title: 'Voice Note', content: text }`.
-- Edit / delete / clear-all → corresponding Supabase update/delete calls (scoped to current user, `book_id IS NULL`).
-- Subscribe to realtime `postgres_changes` on `notes` filtered by current user; refresh list on any insert/update/delete so two open devices stay in sync.
-- One-time migration: on first load, if `localStorage` key `voice_notes_v1` exists, push those notes into Supabase, then clear the key.
-- Preserve all existing UI: header, count, add button + textarea, edit/cancel/save, delete, clear-all confirm, panel slide-in, long-press-to-save flow from `VoiceChat` (the exported `appendVoiceNote` keeps the same signature).
+## Fix (scoped, no feature removal)
+
+Edit `src/components/VoiceChat.tsx` only:
+
+1. **Unify debounce across both modes.** After any new final result, set a single idle timer (~700 ms) that flushes when speech pauses. Applies to push-to-talk **and** hands-free. No more immediate flush on first final → fixes truncation.
+2. **Trust `event.resultIndex`** to know what's new. Remove `lastFinalSegmentRef` echo skip and remove the `endsWith` append guard. Always append new finals with a single space.
+3. **Remove the 2.5 s same-text send guard.** With (1) in place, Chrome echoes don't reach `flushPendingTranscript` separately, so the guard only causes false drops. Keep the fresh-recognition-per-session restart already in place (that was the real anti-duplication win).
+4. **Keep everything else untouched:** mic button, hands-free toggle, TTS toggle + post-TTS restart delay (400–600 ms), Deep Research, settings, model picker, notes panel, long-press save, save-to-wiki, clear conversation, shared `ChatContext`, system prompt builder.
 
 ## Out of scope
-- No changes to `NotesLibrary` (book-scoped notes), `VoiceChat`, chat, wiki, or anything else.
-- No new tables, no auth changes.
+No backend changes, no edge functions, no UI restructure, no swap to ElevenLabs / external STT, no Hermes route changes, no removal of any voice feature.
 
 ## Files
-- New migration (book_id nullable + realtime on `notes`)
-- `src/components/VoiceNotesPanel.tsx`
+- `src/components/VoiceChat.tsx` (only)

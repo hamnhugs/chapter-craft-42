@@ -208,17 +208,10 @@ const VoiceChat: React.FC = () => {
   const flushPendingTranscript = useCallback(() => {
     const text = finalBufferRef.current.trim();
     finalBufferRef.current = "";
-    lastFinalSegmentRef.current = "";
     if (sendTimerRef.current) { window.clearTimeout(sendTimerRef.current); sendTimerRef.current = null; }
     if (!text) return;
-    // Dedupe: drop if identical to the last sent text within 2.5s (Chrome echo).
-    const now = Date.now();
-    if (text === lastSentTextRef.current && now - lastSentAtRef.current < 2500) {
-      setInterimTranscript("");
-      return;
-    }
     lastSentTextRef.current = text;
-    lastSentAtRef.current = now;
+    lastSentAtRef.current = Date.now();
     setInterimTranscript("");
     try { recognitionRef.current?.stop(); } catch {}
     submitRef.current(text);
