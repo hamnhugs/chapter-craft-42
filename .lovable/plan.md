@@ -1,23 +1,40 @@
-## Problems found
+## Goal
+Let the user collapse the Voice page bottom controls downward to reclaim screen space, with a polished animation that feels great on both desktop and mobile. Nothing existing is removed.
 
-In `src/components/VoiceChat.tsx` the previous fix overcorrected and now drops or mangles real speech:
+## Changes (all in `src/components/VoiceChat.tsx`)
 
-1. **Push-to-talk loses the tail of long sentences.** In non-hands-free mode, the first `isFinal=true` result triggers `flushPendingTranscript` immediately (and stops recognition). Chrome routinely splits one spoken sentence into 2–3 final chunks, so only the first chunk reaches the model — the rest is discarded. This is the main "not transcribing correctly" symptom.
-2. **Legitimate repeated words get dropped.** `if (!buf.endsWith(newFinal)) ...` and the `lastFinalSegmentRef` skip throw away segments when the user actually says the same word/phrase twice (common in speech: "yes yes", "wait wait", "no, no I meant…").
-3. **2.5 s send-dedupe drops valid short re-sends.** If the user says "next" or "yes" twice in a row, the second one is silently swallowed.
-4. **Loop bound is correct**, but the manual segment-skip on top of `event.resultIndex` is redundant and causes #2.
+1. **State**
+   - Add `const [controlsCollapsed, setControlsCollapsed] = useState(false);`
+   - Persist preference in `localStorage` (`voice_controls_collapsed`) so it sticks across sessions.
 
-## Fix (scoped, no feature removal)
+2. **Collapse handle (always visible)**
+   - Add a slim, centered grab-handle bar above the controls panel:
+     - Small pill (`w-12 h-1.5 rounded-full bg-on-surface-variant/30`) inside a tappable header row (`h-7`, full width, centered).
+     - Click toggles `controlsCollapsed`.
+     - `aria-expanded`, `aria-controls`, and a chevron icon (`expand_more` / `expand_less`) that rotates 180° via `transition-transform duration-300`.
+     - Tooltip: "Hide controls" / "Show controls".
 
-Edit `src/components/VoiceChat.tsx` only:
+3. **Animated collapse**
+   - Wrap the existing controls block (the flex row of buttons + status `<p>`) in a container that animates:
+     - `grid-template-rows` trick for smooth height animation without measuring: outer `<div className="grid transition-[grid-template-rows,opacity] duration-300 ease-out" style={{ gridTemplateRows: collapsed ? '0fr' : '1fr', opacity: collapsed ? 0 : 1 }}>` with inner `<div className="overflow-hidden">…controls…</div>`.
+     - Adds `translate-y` + `opacity` on inner content for a soft downward slide-out feel (`transition-transform duration-300`, `translate-y-2` when collapsed).
+   - When collapsed, panel shows only the handle row → minimal footprint, more room for messages.
 
-1. **Unify debounce across both modes.** After any new final result, set a single idle timer (~700 ms) that flushes when speech pauses. Applies to push-to-talk **and** hands-free. No more immediate flush on first final → fixes truncation.
-2. **Trust `event.resultIndex`** to know what's new. Remove `lastFinalSegmentRef` echo skip and remove the `endsWith` append guard. Always append new finals with a single space.
-3. **Remove the 2.5 s same-text send guard.** With (1) in place, Chrome echoes don't reach `flushPendingTranscript` separately, so the guard only causes false drops. Keep the fresh-recognition-per-session restart already in place (that was the real anti-duplication win).
-4. **Keep everything else untouched:** mic button, hands-free toggle, TTS toggle + post-TTS restart delay (400–600 ms), Deep Research, settings, model picker, notes panel, long-press save, save-to-wiki, clear conversation, shared `ChatContext`, system prompt builder.
+4. **Collapsed mini-bar (preserves access)**
+   - When collapsed, render a compact inline row beside the handle: just the **mic button** (smaller, `w-12 h-12`) so the user can still talk without expanding. This keeps the core feature one tap away.
+   - All other controls remain reachable by tapping the handle to expand.
+
+5. **Mobile polish**
+   - Increase handle hit area on touch (`py-3` on the header) so it's easy to grab.
+   - Add a subtle swipe-down gesture on the handle row using `onTouchStart`/`onTouchEnd` (delta > 30px down collapses, up expands). Falls back to tap.
+   - Respect `prefers-reduced-motion`: disable the transform/opacity transition when set (use `motion-safe:` Tailwind variants).
+
+6. **Interim transcript bar**
+   - Keep it above the controls panel; unaffected by collapse.
 
 ## Out of scope
-No backend changes, no edge functions, no UI restructure, no swap to ElevenLabs / external STT, no Hermes route changes, no removal of any voice feature.
+- No changes to mic logic, STT, TTS, hands-free, notes panel, settings, deep research, save-to-wiki, clear chat, or any backend.
+- No restructuring of the messages area.
 
-## Files
-- `src/components/VoiceChat.tsx` (only)
+## Verification
+- Toggle collapse on desktop and mobile viewports; confirm smooth animation, persisted state, mic still works when collapsed, all controls return when expanded.
