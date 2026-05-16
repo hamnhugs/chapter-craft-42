@@ -56,6 +56,16 @@ const WikiPanel: React.FC = () => {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // Human-in-the-loop: respond to "Review" clicks from the global ConflictNotifier
+  useEffect(() => {
+    const handler = () => {
+      setView("conflicts");
+      loadData();
+    };
+    window.addEventListener("open-conflicts", handler);
+    return () => window.removeEventListener("open-conflicts", handler);
+  }, [loadData]);
+
   const filteredEntries = entries.filter((e) => {
     if (filterType !== "all" && e.entry_type !== filterType) return false;
     if (searchQuery) {

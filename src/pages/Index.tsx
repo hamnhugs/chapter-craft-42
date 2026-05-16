@@ -8,6 +8,7 @@ import VoiceChat from "@/components/VoiceChat";
 import AutoChapterize from "@/components/AutoChapterize";
 import VideoTranscript from "@/components/VideoTranscript";
 import ThemeSwitcher from "@/components/ThemeSwitcher";
+import ConflictNotifier from "@/components/ConflictNotifier";
 import StripeBar from "@/components/fruit-stripe/StripeBar";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { useTheme } from "@/context/ThemeContext";
@@ -61,6 +62,7 @@ const Index: React.FC = () => {
         </nav>
 
         <div className="flex items-center gap-2">
+          <ConflictNotifier />
           <ThemeSwitcher />
           <button
             onClick={signOut}
