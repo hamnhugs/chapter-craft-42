@@ -96,13 +96,26 @@ const VoiceChat: React.FC = () => {
   const isLoadingRef = useRef(false);
   const isSpeakingRef = useRef(false);
   const isListeningRef = useRef(false);
-  const finalBufferRef = useRef("");
+  // Map of recognition result index -> finalized transcript chunk.
+  // Using a map prevents duplication when Chrome re-emits or revises finals.
+  const finalChunksRef = useRef<Map<number, string>>(new Map());
+  const submittingRef = useRef(false);
   const sendTimerRef = useRef<number | null>(null);
   const stoppedByUserRef = useRef(false);
   const lastSpokenIndexRef = useRef<number>(-1);
   const lastFinalSegmentRef = useRef<string>("");
   const lastSentTextRef = useRef<string>("");
   const lastSentAtRef = useRef<number>(0);
+
+  const buildStableTranscript = () => {
+    const entries = Array.from(finalChunksRef.current.entries()).sort((a, b) => a[0] - b[0]);
+    return entries.map(([, v]) => v).join(" ").replace(/\s+/g, " ").trim();
+  };
+  const resetTranscriptBuffers = () => {
+    finalChunksRef.current = new Map();
+    submittingRef.current = false;
+    if (sendTimerRef.current) { window.clearTimeout(sendTimerRef.current); sendTimerRef.current = null; }
+  };
 
   useEffect(() => { handsFreeRef.current = handsFree; localStorage.setItem(HANDS_FREE_KEY, String(handsFree)); }, [handsFree]);
   useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
@@ -226,10 +239,12 @@ const VoiceChat: React.FC = () => {
   useEffect(() => { submitRef.current = submit; }, [submit]);
 
   const flushPendingTranscript = useCallback(() => {
-    const text = finalBufferRef.current.trim();
-    finalBufferRef.current = "";
+    if (submittingRef.current) return;
+    const text = buildStableTranscript();
     if (sendTimerRef.current) { window.clearTimeout(sendTimerRef.current); sendTimerRef.current = null; }
     if (!text) return;
+    submittingRef.current = true;
+    finalChunksRef.current = new Map();
     lastSentTextRef.current = text;
     lastSentAtRef.current = Date.now();
     setInterimTranscript("");
@@ -249,23 +264,25 @@ const VoiceChat: React.FC = () => {
 
     recognition.onresult = (event: any) => {
       let interim = "";
-      let newFinal = "";
+      let sawNewFinal = false;
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const res = event.results[i];
-        const t = String(res[0].transcript || "");
-        if (res.isFinal) newFinal += (newFinal ? " " : "") + t.trim();
-        else interim += t;
+        const t = String(res[0].transcript || "").trim();
+        if (res.isFinal) {
+          // Set/replace by index — re-emits of the same index do not duplicate.
+          const prev = finalChunksRef.current.get(i);
+          if (prev !== t) {
+            finalChunksRef.current.set(i, t);
+            sawNewFinal = true;
+          }
+        } else {
+          interim += (interim ? " " : "") + t;
+        }
       }
-      if (newFinal) {
-        const buf = finalBufferRef.current.trim();
-        finalBufferRef.current = (buf ? buf + " " : "") + newFinal;
-      }
-      setInterimTranscript((finalBufferRef.current + " " + interim).trim());
+      const stable = buildStableTranscript();
+      setInterimTranscript((stable + (interim ? " " + interim : "")).replace(/\s+/g, " ").trim());
 
-      // Unified debounce: wait for ~700ms of silence after the last final
-      // before submitting. Works for both push-to-talk and hands-free so
-      // Chrome's multi-chunk finals are concatenated instead of truncated.
-      if (newFinal) {
+      if (sawNewFinal) {
         if (sendTimerRef.current) window.clearTimeout(sendTimerRef.current);
         sendTimerRef.current = window.setTimeout(() => flushPendingTranscript(), 700);
       }
@@ -284,16 +301,14 @@ const VoiceChat: React.FC = () => {
     recognition.onend = () => {
       setIsListening(false);
       if (handsFreeRef.current && !stoppedByUserRef.current && !isLoadingRef.current && !isSpeakingRef.current) {
-        const buf = finalBufferRef.current.trim();
-        if (buf) flushPendingTranscript();
+        const stable = buildStableTranscript();
+        if (stable && !submittingRef.current) flushPendingTranscript();
         else {
-          finalBufferRef.current = "";
           window.setTimeout(() => safeStartListening(), 250);
         }
       } else {
-        // Push-to-talk: if user released mic with text pending, send it.
-        const buf = finalBufferRef.current.trim();
-        if (!handsFreeRef.current && buf && !stoppedByUserRef.current) {
+        const stable = buildStableTranscript();
+        if (!handsFreeRef.current && stable && !stoppedByUserRef.current && !submittingRef.current) {
           flushPendingTranscript();
         } else {
           setInterimTranscript("");
@@ -309,6 +324,7 @@ const VoiceChat: React.FC = () => {
     if (isListeningRef.current || isLoadingRef.current || isSpeakingRef.current) return;
     if (stoppedByUserRef.current) return;
     try { recognitionRef.current?.stop(); } catch {}
+    resetTranscriptBuffers();
     const recognition = buildRecognition();
     recognitionRef.current = recognition;
     try { recognition.start(); } catch { /* ignore */ }
@@ -319,7 +335,7 @@ const VoiceChat: React.FC = () => {
     if (!apiKey) { toast.error("Set your API key first"); setShowSettings(true); return; }
     stopSpeaking();
     stoppedByUserRef.current = false;
-    finalBufferRef.current = "";
+    resetTranscriptBuffers();
     lastFinalSegmentRef.current = "";
     setInterimTranscript("");
     const recognition = buildRecognition();
@@ -329,8 +345,7 @@ const VoiceChat: React.FC = () => {
 
   const stopListening = () => {
     stoppedByUserRef.current = true;
-    if (sendTimerRef.current) { window.clearTimeout(sendTimerRef.current); sendTimerRef.current = null; }
-    finalBufferRef.current = "";
+    resetTranscriptBuffers();
     lastFinalSegmentRef.current = "";
     try { recognitionRef.current?.stop(); } catch {}
     setIsListening(false);
