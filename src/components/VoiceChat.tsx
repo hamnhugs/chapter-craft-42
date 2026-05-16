@@ -61,12 +61,16 @@ const VoiceChat: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [extracting, setExtracting] = useState(false);
 
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem(OPENROUTER_STORAGE_KEY) || "");
-  const [savedModels, setSavedModels] = useState<string[]>(() => {
-    try { const stored = localStorage.getItem(SAVED_MODELS_KEY); return stored ? JSON.parse(stored) : [DEFAULT_MODEL]; }
-    catch { return [DEFAULT_MODEL]; }
-  });
-  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem(SELECTED_MODEL_KEY) || DEFAULT_MODEL);
+  const {
+    apiKey,
+    savedModels,
+    selectedModel,
+    loaded: settingsLoaded,
+    saveApiKey: persistApiKey,
+    setSelectedModel,
+    addModel: addModelToSettings,
+    removeModel: removeModelFromSettings,
+  } = useChatSettings();
   const [newModelInput, setNewModelInput] = useState("");
 
   const recognitionRef = useRef<any>(null);
