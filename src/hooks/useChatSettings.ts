@@ -86,6 +86,7 @@ export function useChatSettings() {
         wiki_model: next.wikiModel || null,
         custom_system_prompt: next.customSystemPrompt || "",
         burplexity_api_token: next.burplexityApiToken || "",
+        inworld_api_key: next.inworldApiKey || "",
       };
       const { error } = await supabase
         .from("user_settings")
