@@ -91,10 +91,10 @@ const VoiceNotesPanel: React.FC<Props> = ({ open, onClose }) => {
 
   return (
     <>
-      {/* Mobile overlay */}
+      {/* Backdrop overlay */}
       {open && (
         <div
-          className="md:hidden fixed inset-0 bg-black/40 z-40"
+          className="fixed inset-0 bg-black/40 z-40"
           onClick={onClose}
           aria-hidden
         />
@@ -102,10 +102,10 @@ const VoiceNotesPanel: React.FC<Props> = ({ open, onClose }) => {
 
       <aside
         className={`${open ? "translate-x-0" : "translate-x-full"}
-          fixed md:relative top-0 right-0 h-full z-50 md:z-auto
-          w-[88vw] sm:w-96 md:w-80 lg:w-96 shrink-0
+          fixed top-0 right-0 h-full z-50
+          w-[88vw] sm:w-96 md:w-[28rem] lg:w-[32rem]
           bg-surface-container-low border-l border-outline-variant/20
-          shadow-xl md:shadow-none
+          shadow-xl
           transition-transform duration-300 ease-out
           flex flex-col`}
         aria-hidden={!open}
