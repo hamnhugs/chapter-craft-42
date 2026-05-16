@@ -565,6 +565,20 @@ const VoiceChat: React.FC = () => {
               ) : (
                 <p className="whitespace-pre-wrap font-medium">{msg.content}</p>
               )}
+              {msg.content && (() => {
+                const bid = `voice-${msg.id || i}`;
+                const playing = bubbleSpeakingId === bid;
+                return (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); replayBubble(bid, msg.content); }}
+                    title={playing ? "Stop reading" : "Read aloud"}
+                    aria-label={playing ? "Stop reading" : "Read aloud"}
+                    className={`absolute top-1/2 -translate-y-1/2 ${msg.role === "user" ? "-left-3" : "-right-3"} w-7 h-7 rounded-full bg-surface-container-highest border border-outline-variant/20 shadow-sm flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-all opacity-80`}
+                  >
+                    <span className="material-symbols-outlined text-base">{playing ? "stop_circle" : "volume_up"}</span>
+                  </button>
+                );
+              })()}
               <button
                 onClick={() => saveBubbleToNotes(msg.content)}
                 className="hidden md:flex absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 transition-opacity items-center justify-center w-7 h-7 rounded-full bg-surface-container-highest text-on-surface-variant hover:text-primary shadow-md"
