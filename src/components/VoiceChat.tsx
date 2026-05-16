@@ -8,9 +8,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import { extractKnowledge } from "@/lib/knowledgeApi";
-import { Loader2, StickyNote, BookmarkPlus } from "lucide-react";
+import { Loader2, StickyNote, BookmarkPlus, X } from "lucide-react";
 import VoiceNotesPanel, { appendVoiceNote } from "./VoiceNotesPanel";
 import { useChatSettings } from "@/hooks/useChatSettings";
+import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerClose } from "@/components/ui/drawer";
 import { speak as ttsSpeak, stopSpeaking as ttsStop, subscribeSpeaking as ttsSubscribe, getSpeakingId as ttsGetId } from "@/lib/speak";
 
 const LEGACY_OPENROUTER_STORAGE_KEY = "openrouter_api_key";
