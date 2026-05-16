@@ -223,7 +223,7 @@ const VoiceChat: React.FC = () => {
     synthRef.current.cancel();
     const clean = text.replace(/[#*_`~\[\]()>|]/g, "").replace(/\n+/g, ". ");
     const utterance = new SpeechSynthesisUtterance(clean);
-    utterance.rate = 1.05;
+    utterance.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
     utterance.onstart = () => setIsSpeaking(true);
     utterance.onend = () => {
       setIsSpeaking(false);
@@ -239,7 +239,7 @@ const VoiceChat: React.FC = () => {
     };
     synthRef.current.speak(utterance);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ttsEnabled]);
+  }, [ttsEnabled, ttsRate]);
 
   const stopSpeaking = () => { synthRef.current.cancel(); setIsSpeaking(false); };
 
