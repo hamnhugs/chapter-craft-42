@@ -5,6 +5,7 @@
 //
 // Proxies to VPS-hosted VideoCaptionEngine at PORT 8000.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { PDFDocument, StandardFonts, rgb } from "npm:pdf-lib@1.17.1";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -70,39 +71,43 @@ Deno.serve(async (req) => {
 
       const { data: job } = await supabase
         .from("video_jobs")
-        .select("id, pdf_url")
+        .select("id, transcript, title, video_url, metadata")
         .eq("id", jobId)
         .eq("user_id", user.id)
         .single();
 
       if (!job) return json({ error: "Job not found" }, 404);
 
-      const basename = (job.pdf_url || "").split("/").filter(Boolean).pop() || "";
-      const candidates = [
-        `${VIDEO_ENGINE_URL}/video/${jobId}/pdf`,
-        `${VIDEO_ENGINE_URL}/video/${jobId}/download`,
-        basename ? `${VIDEO_ENGINE_URL}/files/${basename}` : "",
-        basename ? `${VIDEO_ENGINE_URL}/static/${basename}` : "",
-        basename ? `${VIDEO_ENGINE_URL}/video-output/${basename}` : "",
-      ].filter(Boolean);
-
-      for (const u of candidates) {
+      // Try stored transcript; fall back to refetching from engine
+      let transcript = job.transcript as string | null;
+      let title = (job.title as string | null) || "";
+      if (!transcript) {
         try {
-          const r = await fetch(u);
+          const r = await fetch(`${VIDEO_ENGINE_URL}/video/${jobId}`);
           if (r.ok) {
-            return new Response(r.body, {
-              status: 200,
-              headers: {
-                ...corsHeaders,
-                "Content-Type": "application/pdf",
-                "Content-Disposition": `attachment; filename="transcript-${jobId}.pdf"`,
-                "Cache-Control": "private, max-age=0",
-              },
-            });
+            const eng = await r.json();
+            transcript = eng.transcript || null;
+            title = title || eng?.metadata?.title || "";
           }
-        } catch { /* try next */ }
+        } catch { /* ignore */ }
       }
-      return json({ error: "PDF not retrievable from engine" }, 502);
+
+      if (!transcript) {
+        return json({ error: "Transcript not available yet — try again in a moment." }, 404);
+      }
+
+      title = title || job.video_url || "Video transcript";
+      const pdfBytes = await buildPdf(title, transcript);
+
+      return new Response(pdfBytes, {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/pdf",
+          "Content-Disposition": `attachment; filename="transcript-${jobId}.pdf"`,
+          "Cache-Control": "private, max-age=0",
+        },
+      });
     }
 
     // ── GET /status/{job_id} ────────────────────────────────────────────────
@@ -132,10 +137,12 @@ Deno.serve(async (req) => {
       const engineStatus = await statusRes.json();
 
       if (engineStatus.status === "completed" && engineStatus.url) {
-        // Update video_jobs
+        // Update video_jobs (persist transcript for on-demand PDF generation)
         await supabase.from("video_jobs").update({
           status: "completed",
           pdf_url: engineStatus.url,
+          transcript: engineStatus.transcript || null,
+          title: (engineStatus.metadata && engineStatus.metadata.title) || null,
           metadata: engineStatus.metadata || null,
           word_count: engineStatus.word_count || 0,
           error: null,
@@ -200,4 +207,68 @@ function json(b: unknown, status = 200) {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+// Generate a simple multi-page PDF from a title + transcript text.
+async function buildPdf(title: string, transcript: string): Promise<Uint8Array> {
+  // Strip characters WinAnsi can't encode (pdf-lib StandardFonts limitation)
+  const sanitize = (s: string) =>
+    s.replace(/[\u2018\u2019]/g, "'")
+     .replace(/[\u201C\u201D]/g, '"')
+     .replace(/[\u2013\u2014]/g, "-")
+     .replace(/\u2026/g, "...")
+     .replace(/[^\x09\x0A\x0D\x20-\x7E\xA0-\xFF]/g, "");
+
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+
+  const pageW = 595.28, pageH = 841.89; // A4
+  const margin = 50;
+  const maxW = pageW - margin * 2;
+  const bodySize = 11;
+  const lineH = 15;
+
+  const wrap = (text: string, size: number, f = font): string[] => {
+    const out: string[] = [];
+    for (const para of text.split(/\r?\n/)) {
+      if (!para) { out.push(""); continue; }
+      const words = para.split(/\s+/);
+      let line = "";
+      for (const w of words) {
+        const test = line ? line + " " + w : w;
+        if (f.widthOfTextAtSize(test, size) > maxW && line) {
+          out.push(line);
+          line = w;
+        } else {
+          line = test;
+        }
+      }
+      if (line) out.push(line);
+    }
+    return out;
+  };
+
+  let page = doc.addPage([pageW, pageH]);
+  let y = pageH - margin;
+
+  // Title
+  const titleLines = wrap(sanitize(title), 16, bold);
+  for (const l of titleLines) {
+    page.drawText(l, { x: margin, y: y - 16, size: 16, font: bold, color: rgb(0.1, 0.1, 0.1) });
+    y -= 20;
+  }
+  y -= 10;
+
+  const lines = wrap(sanitize(transcript), bodySize);
+  for (const line of lines) {
+    if (y - lineH < margin) {
+      page = doc.addPage([pageW, pageH]);
+      y = pageH - margin;
+    }
+    page.drawText(line, { x: margin, y: y - bodySize, size: bodySize, font, color: rgb(0.15, 0.15, 0.15) });
+    y -= lineH;
+  }
+
+  return await doc.save();
 }
