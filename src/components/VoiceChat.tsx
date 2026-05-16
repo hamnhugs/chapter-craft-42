@@ -31,7 +31,7 @@ const VoiceChat: React.FC = () => {
   const [notesPanelOpen, setNotesPanelOpen] = useState(() => localStorage.getItem(NOTES_PANEL_OPEN_KEY) === "true");
   useEffect(() => { localStorage.setItem(NOTES_PANEL_OPEN_KEY, String(notesPanelOpen)); }, [notesPanelOpen]);
   const [selectionCapture, setSelectionCapture] = useState<{ text: string; top: number; left: number } | null>(null);
-  const [textInput, setTextInput] = useState("");
+  
 
   // Long-press to save chat bubble as a voice note
   const longPressTimer = useRef<number | null>(null);
