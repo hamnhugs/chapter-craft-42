@@ -11,7 +11,7 @@ interface AppState {
   removeBook: (id: string) => void;
   setActiveBook: (id: string) => void;
   setActiveBookSilent: (id: string) => void;
-  setActiveTab: (tab: "library" | "viewer" | "chat" | "wiki" | "video" | "voice") => void;
+  setActiveTab: (tab: "library" | "viewer" | "chat" | "wiki" | "video" | "voice" | "chapterize") => void;
   addChapter: (bookId: string, chapter: Chapter) => Promise<void>;
   updateChapter: (bookId: string, chapterId: string, name: string) => void;
   removeChapter: (bookId: string, chapterId: string) => void;
