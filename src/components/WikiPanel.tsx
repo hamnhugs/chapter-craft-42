@@ -135,7 +135,15 @@ const WikiPanel: React.FC = () => {
     setReindexing(true);
     try {
       const res = await reindexEmbeddings(true);
-      toast.success(`Embedded ${res.updated}/${res.total} entries${res.failed ? ` (${res.failed} failed)` : ""}`);
+      if (!res || res.total === 0) {
+        toast.success("All entries already have embeddings.");
+      } else if (res.updated === 0 && res.failed > 0) {
+        toast.error(`Reindex failed — embedding service unavailable (${res.failed} entries).`);
+      } else if (res.failed > 0) {
+        toast.warning(`Embedded ${res.updated}/${res.total} entries · ${res.failed} failed.`);
+      } else {
+        toast.success(`Embedded ${res.updated}/${res.total} entries.`);
+      }
     } catch (err: any) { toast.error(err.message || "Reindex failed"); }
     finally { setReindexing(false); }
   };
