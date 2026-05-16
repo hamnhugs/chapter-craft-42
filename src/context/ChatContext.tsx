@@ -174,6 +174,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         deepResearch,
         voiceMode: opts?.voiceMode,
         latestUserQuery: trimmed,
+        customSystemPrompt,
       });
 
       const assistantEvents: ToolEvent[] = [];
