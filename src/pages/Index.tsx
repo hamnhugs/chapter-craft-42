@@ -62,6 +62,7 @@ const Index: React.FC = () => {
         </nav>
 
         <div className="flex items-center gap-2">
+          <ConflictNotifier />
           <ThemeSwitcher />
           <button
             onClick={signOut}
