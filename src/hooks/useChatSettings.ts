@@ -29,6 +29,7 @@ const defaults: ChatSettings = {
   autoReadReplies: false,
   wikiModel: "",
   customSystemPrompt: "",
+  burplexityApiToken: "",
 };
 
 export function useChatSettings() {
