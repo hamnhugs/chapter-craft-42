@@ -9,8 +9,9 @@ export interface ThemeDef {
   description: string;
   swatch: [string, string, string]; // 3 hex preview colors for the dropdown
   fonts?: {
-    headline: string; // CSS font-family value
+    headline: string; // CSS font-family value (UI headings)
     body: string;
+    display?: string; // optional wordmark/hero font; falls back to headline
     googleFontsHref?: string; // <link href=...> to load
   };
   // HSL strings (e.g. "38 100% 83%") for CSS variables
@@ -113,47 +114,55 @@ export const THEMES: ThemeDef[] = [
   {
     id: "fruit-stripe",
     name: "Fruit Stripe",
-    description: "Paper white & ink black, mid-century rainbow accents.",
-    swatch: ["#FBFAF6", "#E63946", "#FFD23F"],
+    description: "Paper white & ink black with mid-century rainbow accents.",
+    swatch: ["#FBFAF6", "#E63946", "#F4C95D"],
     fonts: {
-      headline: "'DM Serif Display', Georgia, serif",
+      headline: "'Inter Tight', 'Inter', system-ui, sans-serif",
       body: "'Inter', system-ui, sans-serif",
+      display: "'DM Serif Display', Georgia, serif",
       googleFontsHref:
-        "https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap",
+        "https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Inter:wght@300;400;500;600;700&family=Inter+Tight:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap",
     },
     tokens: {
-      "--background": "45 35% 98%",
+      // Paper White #FBFAF6
+      "--background": "48 33% 97%",
+      // Ink Black #111111
       "--foreground": "0 0% 7%",
       "--card": "0 0% 100%",
       "--card-foreground": "0 0% 7%",
       "--popover": "0 0% 100%",
       "--popover-foreground": "0 0% 7%",
-      "--primary": "354 78% 56%",
+      // Cherry Red #E63946
+      "--primary": "355 78% 56%",
       "--primary-foreground": "0 0% 100%",
-      "--secondary": "45 35% 92%",
+      // Stripe Gray #E8E6DF
+      "--secondary": "45 17% 89%",
       "--secondary-foreground": "0 0% 7%",
-      "--muted": "45 25% 94%",
-      "--muted-foreground": "0 0% 35%",
-      "--accent": "48 100% 62%",
+      "--muted": "45 17% 92%",
+      // Soft Charcoal #2A2A2A
+      "--muted-foreground": "0 0% 16%",
+      // Lemon Yellow #F4C95D
+      "--accent": "44 86% 66%",
       "--accent-foreground": "0 0% 7%",
-      "--destructive": "354 78% 56%",
+      "--destructive": "355 78% 56%",
       "--destructive-foreground": "0 0% 100%",
+      // Ink Black borders
       "--border": "0 0% 7%",
       "--input": "0 0% 100%",
-      "--ring": "354 78% 56%",
+      "--ring": "355 78% 56%",
       "--surface-container-lowest": "0 0% 100%",
-      "--surface-container-low": "45 35% 98%",
-      "--surface-container": "45 35% 96%",
-      "--surface-container-high": "45 35% 92%",
-      "--surface-container-highest": "45 25% 88%",
+      "--surface-container-low": "48 33% 97%",
+      "--surface-container": "45 17% 95%",
+      "--surface-container-high": "45 17% 92%",
+      "--surface-container-highest": "45 17% 89%",
       "--outline": "0 0% 7%",
-      "--outline-variant": "0 0% 60%",
-      "--on-surface-variant": "0 0% 25%",
-      "--primary-container": "354 78% 56%",
+      "--outline-variant": "0 0% 16%",
+      "--on-surface-variant": "0 0% 16%",
+      "--primary-container": "355 78% 56%",
       "--on-primary-container": "0 0% 100%",
-      "--viewer-bg": "45 35% 98%",
+      "--viewer-bg": "48 33% 97%",
       "--toolbar-bg": "0 0% 100%",
-      "--book-spine": "354 78% 56%",
+      "--book-spine": "355 78% 56%",
     },
   },
 ];
