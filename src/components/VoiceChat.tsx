@@ -156,7 +156,7 @@ const VoiceChat: React.FC = () => {
   const speak = useCallback((text: string) => {
     if (!ttsEnabled) {
       if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), 600);
+        window.setTimeout(() => safeStartListening(), 400);
       }
       return;
     }
