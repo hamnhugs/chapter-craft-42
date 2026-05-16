@@ -279,6 +279,29 @@
   background: var(--fs-paper) !important;
   border-top: 1px solid var(--fs-ink);
 }
+[data-theme="fruit-stripe"] [data-mobile-nav] button { color: var(--fs-charcoal); }
+[data-theme="fruit-stripe"] [data-mobile-nav] button.bg-accent {
+  background: var(--fs-cherry) !important;
+  color: #fff !important;
+  border: 1px solid var(--fs-ink);
+  box-shadow: 0 2px 0 0 var(--fs-ink);
+}
+[data-theme="fruit-stripe"] [data-app-header] nav button.text-secondary {
+  color: var(--fs-charcoal) !important;
+}
+
+/* Book card placeholders — paper diagonal stripe pattern */
+[data-theme="fruit-stripe"] [data-book-card] [data-book-cover-placeholder] {
+  background: repeating-linear-gradient(135deg,
+    var(--fs-paper) 0 14px,
+    var(--fs-stripe-gray) 14px 28px) !important;
+  border-bottom: 1px solid var(--fs-ink);
+}
+[data-theme="fruit-stripe"] [data-book-card] [data-book-cover-placeholder] .material-symbols-outlined {
+  color: var(--fs-ink) !important;
+  opacity: 0.55;
+}
+[data-theme="fruit-stripe"] [data-book-card] [data-book-cover-overlay] { display: none; }
 
 /* Chat bubbles — Melon left edge (AI), Cherry right edge (user) */
 [data-theme="fruit-stripe"] .message-bubble-ai {

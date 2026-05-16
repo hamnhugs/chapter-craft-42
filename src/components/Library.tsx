@@ -367,11 +367,13 @@ const BookCard: React.FC<{
 
   return (
     <div
+      data-book-card
       className="group bg-surface-container-high rounded-2xl overflow-hidden flex flex-col transition-all hover:-translate-y-1 hover:shadow-2xl hover:shadow-black/40 animate-slide-up"
       style={{ animationDelay: `${index * 60}ms` }}
     >
       {/* Cover */}
       <div
+        data-book-cover-placeholder={book.coverImageUrl ? undefined : ""}
         className="aspect-[3/2] relative overflow-hidden bg-surface-container-highest flex items-center justify-center"
         style={{
           background: book.coverImageUrl
@@ -386,7 +388,7 @@ const BookCard: React.FC<{
             {isPdf ? "auto_stories" : "description"}
           </span>
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-60" />
+        <div data-book-cover-overlay className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-60" />
       </div>
 
       {/* Info */}
