@@ -208,3 +208,67 @@ function json(b: unknown, status = 200) {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }
+
+// Generate a simple multi-page PDF from a title + transcript text.
+async function buildPdf(title: string, transcript: string): Promise<Uint8Array> {
+  // Strip characters WinAnsi can't encode (pdf-lib StandardFonts limitation)
+  const sanitize = (s: string) =>
+    s.replace(/[\u2018\u2019]/g, "'")
+     .replace(/[\u201C\u201D]/g, '"')
+     .replace(/[\u2013\u2014]/g, "-")
+     .replace(/\u2026/g, "...")
+     .replace(/[^\x09\x0A\x0D\x20-\x7E\xA0-\xFF]/g, "");
+
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+
+  const pageW = 595.28, pageH = 841.89; // A4
+  const margin = 50;
+  const maxW = pageW - margin * 2;
+  const bodySize = 11;
+  const lineH = 15;
+
+  const wrap = (text: string, size: number, f = font): string[] => {
+    const out: string[] = [];
+    for (const para of text.split(/\r?\n/)) {
+      if (!para) { out.push(""); continue; }
+      const words = para.split(/\s+/);
+      let line = "";
+      for (const w of words) {
+        const test = line ? line + " " + w : w;
+        if (f.widthOfTextAtSize(test, size) > maxW && line) {
+          out.push(line);
+          line = w;
+        } else {
+          line = test;
+        }
+      }
+      if (line) out.push(line);
+    }
+    return out;
+  };
+
+  let page = doc.addPage([pageW, pageH]);
+  let y = pageH - margin;
+
+  // Title
+  const titleLines = wrap(sanitize(title), 16, bold);
+  for (const l of titleLines) {
+    page.drawText(l, { x: margin, y: y - 16, size: 16, font: bold, color: rgb(0.1, 0.1, 0.1) });
+    y -= 20;
+  }
+  y -= 10;
+
+  const lines = wrap(sanitize(transcript), bodySize);
+  for (const line of lines) {
+    if (y - lineH < margin) {
+      page = doc.addPage([pageW, pageH]);
+      y = pageH - margin;
+    }
+    page.drawText(line, { x: margin, y: y - bodySize, size: bodySize, font, color: rgb(0.15, 0.15, 0.15) });
+    y -= lineH;
+  }
+
+  return await doc.save();
+}
