@@ -93,9 +93,19 @@ const VoiceChat: React.FC = () => {
   useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
   useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
 
-  useEffect(() => { localStorage.setItem(SAVED_MODELS_KEY, JSON.stringify(savedModels)); }, [savedModels]);
-  useEffect(() => { localStorage.setItem(SELECTED_MODEL_KEY, selectedModel); }, [selectedModel]);
   useEffect(() => { localStorage.setItem(VOICE_ENABLED_KEY, String(ttsEnabled)); }, [ttsEnabled]);
+
+  // One-time migration: if account has no key yet but this device has a legacy localStorage key, adopt it.
+  const migratedRef = useRef(false);
+  useEffect(() => {
+    if (!settingsLoaded || migratedRef.current) return;
+    migratedRef.current = true;
+    const legacy = localStorage.getItem(LEGACY_OPENROUTER_STORAGE_KEY);
+    if (legacy && !apiKey) {
+      persistApiKey(legacy);
+    }
+    if (legacy) localStorage.removeItem(LEGACY_OPENROUTER_STORAGE_KEY);
+  }, [settingsLoaded, apiKey, persistApiKey]);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
   useEffect(() => {
     const onSelectionChange = () => {
