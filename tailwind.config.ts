@@ -14,10 +14,10 @@ export default {
     },
     extend: {
       fontFamily: {
-        headline: ['"Newsreader"', 'Georgia', 'serif'],
-        display: ['"Newsreader"', 'Georgia', 'serif'],
-        body: ['Inter', 'system-ui', 'sans-serif'],
-        label: ['Inter', 'system-ui', 'sans-serif'],
+        headline: ['var(--font-headline)', '"Newsreader"', 'Georgia', 'serif'],
+        display: ['var(--font-headline)', '"Newsreader"', 'Georgia', 'serif'],
+        body: ['var(--font-body)', 'Inter', 'system-ui', 'sans-serif'],
+        label: ['var(--font-body)', 'Inter', 'system-ui', 'sans-serif'],
       },
       colors: {
         border: "hsl(var(--border))",
