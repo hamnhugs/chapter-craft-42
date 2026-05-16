@@ -1,47 +1,60 @@
-# Mobile-friendly Voice settings
+## Goal
 
-## Problem
+Right now, when you ask the assistant (chat or voice) to "search online", it only calls `search_wiki` — there is no real web search tool, so it never goes to the internet. We'll add a proper **web search tool** that calls your Burplexity project's `bot-ask` endpoint and is selectable separately from the wiki search and from Deep Research.
 
-In `src/components/VoiceChat.tsx`, the settings panel (lines 464–526) is rendered as an inline `<div>` shoved between the toolbar and the messages list. On mobile (647px viewport):
-- No close button — the only way to dismiss is to scroll back up and tap the gear icon again.
-- It pushes the chat content out of view.
-- Inputs and the model list overflow horizontally on narrow widths.
-- No safe-area padding, no drag affordance, no backdrop.
+## What changes
 
-## Solution: bottom-sheet pattern (2026 best practice)
+### 1. New `web_search` tool (Burplexity-backed)
 
-Modern mobile settings UIs use a **bottom sheet** with: drag handle, sticky header with title + close (X), scrollable body, safe-area inset padding, swipe-down-to-dismiss, and a scrim/backdrop. On desktop, the same content stays as a side panel or modal.
+Add a new OpenRouter "function" tool exposed to the assistant in `src/lib/chatTools.ts`:
 
-The project already ships `vaul` via `src/components/ui/drawer.tsx`, which is the standard React bottom-sheet primitive (used by shadcn). We'll reuse it.
+- **Name:** `web_search`
+- **Description (what the model sees):** *"Live web search via Burplexity. Use this when the user asks to search online, look something up, or wants current info. Returns a concise answer + citations. Prefer this over `search_wiki` for anything time-sensitive or not stored locally."*
+- **Args:** `{ query: string }`
+- **Implementation:** POST to Burplexity's public endpoint:
+  - URL: `https://personal-perplex-link.lovable.app/functions/v1/bot-ask` (Burplexity's Supabase functions host)
+  - Headers: `x-api-key: pp_…` (your Burplexity bot token), `Content-Type: application/json`
+  - Body: `{ query, save_to_wiki: false }`
+  - Returns: short summary + first 3–5 citations (title + url) to the model.
 
-### Changes to `src/components/VoiceChat.tsx`
+### 2. Store the Burplexity API key
 
-1. **Replace the inline `{showSettings && (...)}` block** with a `<Drawer open={showSettings} onOpenChange={setShowSettings}>`:
-   - `DrawerContent` already provides the drag handle (the small pill at the top) and swipe-to-close via vaul.
-   - Wrap with a `DrawerHeader` containing:
-     - `DrawerTitle`: "Settings"
-     - A `DrawerClose` button rendered as an icon button (X) in the top-right — explicit close affordance, large 44×44 hit target.
-   - Body: keep the existing three sections (API key, Model, Deep Research, Custom Instructions) but inside a scrollable container with `max-h-[85vh] overflow-y-auto pb-[env(safe-area-inset-bottom)]`.
-   - On desktop (≥`md`), the drawer still works but we cap width: add `md:max-w-2xl md:mx-auto` to `DrawerContent`.
+A new field in user settings: **Burplexity API Key** (`pp_…`).
 
-2. **Responsive grid tweaks** inside the sheet:
-   - Change the API-key/model grid from `grid-cols-1 lg:grid-cols-2` to single column on mobile (already is) but reduce padding (`p-3` instead of `p-4`) and ensure `min-w-0` so long model strings wrap.
-   - Make the model chip list use `flex-wrap` + `break-all` to prevent overflow.
+- Add `burplexity_api_key TEXT` column to `user_settings` (migration).
+- Extend `useChatSettings.ts` with `burplexityApiKey` + `setBurplexityApiKey`.
+- Add an input for it in both the Chat settings drawer and Voice settings drawer, right under the OpenRouter key, with help text linking to the Burplexity API Keys page.
 
-3. **Escape-key + backdrop dismiss** come for free from vaul.
+If the key is missing, `web_search` returns a friendly error and the assistant tells you to add it in Settings — no crash.
 
-4. **No behavior change** to the rest of the Voice page; the gear button still toggles `showSettings`.
+### 3. Quick vs. Deep — keep them separate
 
-## Technical notes
+- **Quick search = `web_search` tool** (single Burplexity call, fast, ~3-8 s). Always available.
+- **Deep Research toggle** stays exactly as it is — it switches the *chat model* to your deep-research model. Unchanged.
 
-- Import the existing primitives:
-  `import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerClose } from "@/components/ui/drawer";`
-- Close button: `<DrawerClose asChild><Button variant="ghost" size="icon" aria-label="Close settings"><X className="h-5 w-5" /></Button></DrawerClose>`, positioned absolute top-right inside the header.
-- The drag handle in `drawer.tsx` is already rendered automatically.
-- Keep all existing state (`promptDraft`, `apiKey`, `selectedModel`, etc.) untouched — only the wrapper changes.
-- No CSS/token changes; the sheet uses `bg-background` which already matches the editorial theme.
+### 4. Fix the "it only searches the wiki" behavior
+
+Update the system prompt builder (`src/lib/buildChatSystemPrompt.ts`) so the assistant clearly knows:
+
+> - `search_wiki` → search the user's saved knowledge.
+> - `web_search` → search the **live internet** via Burplexity. Use this whenever the user says "search", "look up", "what's the latest", "online", etc.
+> - You may call both in the same turn when useful.
+
+This is the actual fix for "voice mode search only hits the wiki" — the model now has a real internet tool and is told to use it.
+
+### 5. Streaming while search runs
+
+Keep current streaming behavior in `ChatContext.tsx`. We show a tool event chip in the UI the moment `web_search` is dispatched (`"Searching the web…"`), so you see it's working. The assistant's spoken/streamed reply resumes as soon as Burplexity returns. No long blocking spinner.
 
 ## Out of scope
 
-- Chat tab settings panel (already has its own close fix from previous turn).
-- No changes to the actual settings fields or persistence.
+- No change to Deep Research model behavior.
+- No change to wiki / RAG retrieval.
+- No new edge function in this project — we call Burplexity directly from `executeChatTool` (browser fetch, same as OpenRouter calls today).
+
+## Technical notes
+
+- Burplexity endpoint is public (CORS open in its function) and authenticates via the `pp_` token, so this works as a direct browser fetch.
+- Token is per-user and stored in `user_settings` (RLS already scoped to `auth.uid()`).
+- Migration: `ALTER TABLE public.user_settings ADD COLUMN IF NOT EXISTS burplexity_api_key text;`
+- `web_search` result sent back to the model is trimmed to ~4 KB (answer + top 5 `{title,url,snippet}`).

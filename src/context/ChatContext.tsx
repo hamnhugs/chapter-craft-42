@@ -38,7 +38,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { user } = useAuth();
   const { books, activeBookId, addChapter, updateChapter, removeChapter, setActiveBookSilent } = useApp();
 
-  const { apiKey, selectedModel, deepResearchModel, customSystemPrompt } = useChatSettings();
+  const { apiKey, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken } = useChatSettings();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -306,6 +306,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               addChapter,
               updateChapter,
               removeChapter,
+              burplexityApiToken,
             });
             assistantEvents.push(event);
             updateAssistant();
@@ -353,7 +354,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
       }
     },
-    [apiKey, books, activeBookId, deepResearch, selectedModel, deepResearchModel, customSystemPrompt, messages, persistMessage, addChapter, updateChapter, removeChapter, setActiveBookSilent]
+    [apiKey, books, activeBookId, deepResearch, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken, messages, persistMessage, addChapter, updateChapter, removeChapter, setActiveBookSilent]
   );
 
 
