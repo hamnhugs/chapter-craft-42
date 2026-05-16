@@ -116,6 +116,7 @@ export function useChatSettings() {
     setSelectedModel: (m: string) => update({ selectedModel: m }),
     setDeepResearchModel: (m: string) => update({ deepResearchModel: m }),
     setTtsRate: (r: number) => update({ ttsRate: Math.min(2, Math.max(0.5, r)) }),
+    setAutoReadReplies: (v: boolean) => update({ autoReadReplies: v }),
     addModel,
     removeModel,
     setNewModelInput: undefined, // handled in component
