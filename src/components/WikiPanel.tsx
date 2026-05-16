@@ -38,6 +38,8 @@ const WikiPanel: React.FC = () => {
   const [ingestLoading, setIngestLoading] = useState(false);
   const [conflicts, setConflicts] = useState<KnowledgeConflict[]>([]);
   const [reindexing, setReindexing] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const { savedModels, wikiModel, setWikiModel, apiKey: openrouterKey } = useChatSettings();
 
   const loadData = useCallback(async () => {
     setLoading(true);
