@@ -59,6 +59,26 @@ const VoiceChat: React.FC = () => {
   const [interimTranscript, setInterimTranscript] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [extracting, setExtracting] = useState(false);
+  const [controlsCollapsed, setControlsCollapsed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("voice_controls_collapsed") === "1";
+  });
+  useEffect(() => {
+    localStorage.setItem("voice_controls_collapsed", controlsCollapsed ? "1" : "0");
+  }, [controlsCollapsed]);
+  const touchStartYRef = useRef<number | null>(null);
+  const handleHandleTouchStart = (e: React.TouchEvent) => {
+    touchStartYRef.current = e.touches[0]?.clientY ?? null;
+  };
+  const handleHandleTouchEnd = (e: React.TouchEvent) => {
+    const start = touchStartYRef.current;
+    touchStartYRef.current = null;
+    if (start == null) return;
+    const end = e.changedTouches[0]?.clientY ?? start;
+    const dy = end - start;
+    if (dy > 30) setControlsCollapsed(true);
+    else if (dy < -30) setControlsCollapsed(false);
+  };
 
   const {
     apiKey, savedModels, selectedModel, deepResearchModel, loaded: settingsLoaded,
