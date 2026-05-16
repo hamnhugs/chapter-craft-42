@@ -533,79 +533,140 @@ const VoiceChat: React.FC = () => {
       )}
 
       {/* Controls */}
-      <div className="bg-surface-container-low px-4 py-4">
-        <div className="flex items-center justify-center gap-3 flex-wrap">
-          <button onClick={() => setShowSettings(!showSettings)} className="p-3 rounded-full bg-surface-container-high text-on-surface-variant hover:text-primary transition-colors" title="Settings">
-            <span className="material-symbols-outlined">tune</span>
-          </button>
-
-          <button onClick={() => { setTtsEnabled(!ttsEnabled); if (ttsEnabled) stopSpeaking(); }} className={`p-3 rounded-full transition-all ${ttsEnabled ? "bg-primary-container/20 text-primary" : "bg-surface-container-high text-on-surface-variant"}`} title={ttsEnabled ? "Voice replies on" : "Voice replies off"}>
-            <span className="material-symbols-outlined">{ttsEnabled ? "volume_up" : "volume_off"}</span>
-          </button>
-
-          <button
-            onClick={() => setDeepResearch(!deepResearch)}
-            className={`px-3 py-3 rounded-full transition-all flex items-center gap-1.5 text-xs font-semibold ${deepResearch ? "bg-primary-container text-on-primary-container shadow-md" : "bg-surface-container-high text-on-surface-variant hover:text-primary"}`}
-            title="Deep Research"
-          >
-            <span className="material-symbols-outlined text-base" style={deepResearch ? { fontVariationSettings: "'FILL' 1" } : {}}>science</span>
-            Deep Research {deepResearch ? "ON" : "OFF"}
-          </button>
-
-          <button
-            onClick={() => setNotesPanelOpen((v) => !v)}
-            className={`px-4 py-3 rounded-full transition-all flex items-center gap-2 text-sm font-medium ${notesPanelOpen ? "bg-primary-container text-on-primary-container shadow-md" : "bg-surface-container-high text-on-surface-variant hover:text-primary"}`}
-            title="Voice notes"
-          >
-            <StickyNote className="w-4 h-4" />
-            Notes
-          </button>
-
-          <button
-            onClick={toggleHandsFree}
-            className={`px-4 py-3 rounded-full transition-all flex items-center gap-2 text-sm font-medium ${handsFree ? "bg-primary-container text-on-primary-container shadow-md" : "bg-surface-container-high text-on-surface-variant hover:text-primary"}`}
-            title="Hands-free conversation"
-          >
-            <span className="material-symbols-outlined text-base">all_inclusive</span>
-            {handsFree ? "Hands-free on" : "Hands-free"}
-          </button>
-
-          <button
-            onClick={isListening ? stopListening : startListening}
-            disabled={isLoading}
-            className={`w-20 h-20 rounded-full flex items-center justify-center transition-all shadow-lg ${
-              isListening
-                ? "bg-destructive text-destructive-foreground animate-pulse scale-110"
-                : isLoading
-                ? "bg-surface-container-highest text-on-surface-variant cursor-not-allowed"
-                : "bg-primary-container text-on-primary-container hover:scale-105 active:scale-95"
-            }`}
-          >
-            {isLoading ? (
-              <Loader2 className="w-8 h-8 animate-spin" />
-            ) : (
-              <span className="material-symbols-outlined text-4xl" style={isListening ? { fontVariationSettings: "'FILL' 1" } : undefined}>
-                {isListening ? "mic_off" : "mic"}
-              </span>
-            )}
-          </button>
-
-          {messages.length >= 2 && (
-            <button onClick={handleSaveToWiki} disabled={extracting} className="p-3 rounded-full bg-secondary-container text-on-secondary-container hover:bg-secondary-container/80 transition-all disabled:opacity-50" title="Save chat to Wiki">
-              {extracting ? <Loader2 className="w-5 h-5 animate-spin" /> : <span className="material-symbols-outlined">history_edu</span>}
+      <div className="bg-surface-container-low">
+        {/* Collapse handle */}
+        <div
+          className="flex items-center justify-center gap-2 px-4 py-2 cursor-pointer select-none border-t border-outline-variant/10"
+          role="button"
+          tabIndex={0}
+          aria-expanded={!controlsCollapsed}
+          aria-controls="voice-controls-panel"
+          title={controlsCollapsed ? "Show controls" : "Hide controls"}
+          onClick={() => setControlsCollapsed((v) => !v)}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setControlsCollapsed((v) => !v); } }}
+          onTouchStart={handleHandleTouchStart}
+          onTouchEnd={handleHandleTouchEnd}
+        >
+          <div className="flex-1 flex justify-center">
+            <span className={`block h-1.5 w-12 rounded-full bg-on-surface-variant/30 transition-all duration-300 ${controlsCollapsed ? "opacity-60" : "opacity-100"}`} />
+          </div>
+          {controlsCollapsed && (
+            <button
+              onClick={(e) => { e.stopPropagation(); isListening ? stopListening() : startListening(); }}
+              disabled={isLoading}
+              aria-label={isListening ? "Stop listening" : "Start listening"}
+              className={`absolute right-4 w-11 h-11 rounded-full flex items-center justify-center shadow-md transition-all ${
+                isListening
+                  ? "bg-destructive text-destructive-foreground animate-pulse"
+                  : isLoading
+                  ? "bg-surface-container-highest text-on-surface-variant cursor-not-allowed"
+                  : "bg-primary-container text-on-primary-container active:scale-95"
+              }`}
+              style={{ position: "absolute" }}
+            >
+              {isLoading ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <span className="material-symbols-outlined text-2xl" style={isListening ? { fontVariationSettings: "'FILL' 1" } : undefined}>
+                  {isListening ? "mic_off" : "mic"}
+                </span>
+              )}
             </button>
           )}
-
-          {messages.length > 0 && (
-            <button onClick={handleClear} className="p-3 rounded-full bg-surface-container-high text-on-surface-variant hover:text-destructive transition-colors" title="Clear chat">
-              <span className="material-symbols-outlined">delete</span>
-            </button>
-          )}
+          <span
+            className={`material-symbols-outlined absolute left-4 text-on-surface-variant transition-transform duration-300 ${controlsCollapsed ? "rotate-0" : "rotate-180"}`}
+            style={{ position: "absolute" }}
+          >
+            expand_less
+          </span>
         </div>
-        <p className="text-xs text-on-surface-variant text-center mt-3">
-          {statusLabel}
-          {handsFree && !isListening && !isLoading && !isSpeaking && " — say something"}
-        </p>
+
+        {/* Animated collapsible panel */}
+        <div
+          id="voice-controls-panel"
+          className="grid motion-safe:transition-[grid-template-rows,opacity] motion-safe:duration-300 ease-out"
+          style={{ gridTemplateRows: controlsCollapsed ? "0fr" : "1fr", opacity: controlsCollapsed ? 0 : 1 }}
+          aria-hidden={controlsCollapsed}
+        >
+          <div className="overflow-hidden min-h-0">
+            <div
+              className={`px-4 pb-4 pt-1 motion-safe:transition-transform motion-safe:duration-300 ease-out ${controlsCollapsed ? "translate-y-2" : "translate-y-0"}`}
+            >
+              <div className="flex items-center justify-center gap-3 flex-wrap">
+                <button onClick={() => setShowSettings(!showSettings)} className="p-3 rounded-full bg-surface-container-high text-on-surface-variant hover:text-primary transition-colors" title="Settings">
+                  <span className="material-symbols-outlined">tune</span>
+                </button>
+
+                <button onClick={() => { setTtsEnabled(!ttsEnabled); if (ttsEnabled) stopSpeaking(); }} className={`p-3 rounded-full transition-all ${ttsEnabled ? "bg-primary-container/20 text-primary" : "bg-surface-container-high text-on-surface-variant"}`} title={ttsEnabled ? "Voice replies on" : "Voice replies off"}>
+                  <span className="material-symbols-outlined">{ttsEnabled ? "volume_up" : "volume_off"}</span>
+                </button>
+
+                <button
+                  onClick={() => setDeepResearch(!deepResearch)}
+                  className={`px-3 py-3 rounded-full transition-all flex items-center gap-1.5 text-xs font-semibold ${deepResearch ? "bg-primary-container text-on-primary-container shadow-md" : "bg-surface-container-high text-on-surface-variant hover:text-primary"}`}
+                  title="Deep Research"
+                >
+                  <span className="material-symbols-outlined text-base" style={deepResearch ? { fontVariationSettings: "'FILL' 1" } : {}}>science</span>
+                  Deep Research {deepResearch ? "ON" : "OFF"}
+                </button>
+
+                <button
+                  onClick={() => setNotesPanelOpen((v) => !v)}
+                  className={`px-4 py-3 rounded-full transition-all flex items-center gap-2 text-sm font-medium ${notesPanelOpen ? "bg-primary-container text-on-primary-container shadow-md" : "bg-surface-container-high text-on-surface-variant hover:text-primary"}`}
+                  title="Voice notes"
+                >
+                  <StickyNote className="w-4 h-4" />
+                  Notes
+                </button>
+
+                <button
+                  onClick={toggleHandsFree}
+                  className={`px-4 py-3 rounded-full transition-all flex items-center gap-2 text-sm font-medium ${handsFree ? "bg-primary-container text-on-primary-container shadow-md" : "bg-surface-container-high text-on-surface-variant hover:text-primary"}`}
+                  title="Hands-free conversation"
+                >
+                  <span className="material-symbols-outlined text-base">all_inclusive</span>
+                  {handsFree ? "Hands-free on" : "Hands-free"}
+                </button>
+
+                <button
+                  onClick={isListening ? stopListening : startListening}
+                  disabled={isLoading}
+                  className={`w-20 h-20 rounded-full flex items-center justify-center transition-all shadow-lg ${
+                    isListening
+                      ? "bg-destructive text-destructive-foreground animate-pulse scale-110"
+                      : isLoading
+                      ? "bg-surface-container-highest text-on-surface-variant cursor-not-allowed"
+                      : "bg-primary-container text-on-primary-container hover:scale-105 active:scale-95"
+                  }`}
+                >
+                  {isLoading ? (
+                    <Loader2 className="w-8 h-8 animate-spin" />
+                  ) : (
+                    <span className="material-symbols-outlined text-4xl" style={isListening ? { fontVariationSettings: "'FILL' 1" } : undefined}>
+                      {isListening ? "mic_off" : "mic"}
+                    </span>
+                  )}
+                </button>
+
+                {messages.length >= 2 && (
+                  <button onClick={handleSaveToWiki} disabled={extracting} className="p-3 rounded-full bg-secondary-container text-on-secondary-container hover:bg-secondary-container/80 transition-all disabled:opacity-50" title="Save chat to Wiki">
+                    {extracting ? <Loader2 className="w-5 h-5 animate-spin" /> : <span className="material-symbols-outlined">history_edu</span>}
+                  </button>
+                )}
+
+                {messages.length > 0 && (
+                  <button onClick={handleClear} className="p-3 rounded-full bg-surface-container-high text-on-surface-variant hover:text-destructive transition-colors" title="Clear chat">
+                    <span className="material-symbols-outlined">delete</span>
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-on-surface-variant text-center mt-3">
+                {statusLabel}
+                {handsFree && !isListening && !isLoading && !isSpeaking && " — say something"}
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
       </div>
       <VoiceNotesPanel open={notesPanelOpen} onClose={() => setNotesPanelOpen(false)} />
