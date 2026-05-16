@@ -139,6 +139,39 @@ export type Database = {
         }
         Relationships: []
       }
+      consolidation_queue: {
+        Row: {
+          created_at: string
+          entry_id: string | null
+          id: string
+          pending_data: Json | null
+          priority: number
+          processed_at: string | null
+          reason: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          entry_id?: string | null
+          id?: string
+          pending_data?: Json | null
+          priority?: number
+          processed_at?: string | null
+          reason: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          entry_id?: string | null
+          id?: string
+          pending_data?: Json | null
+          priority?: number
+          processed_at?: string | null
+          reason?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       conversation_memory: {
         Row: {
           id: string
@@ -162,6 +195,36 @@ export type Database = {
           summary?: string
           total_conversations?: number
           updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      episodic_log: {
+        Row: {
+          created_at: string
+          entry_count: number
+          id: string
+          key_facts: Json
+          session_id: string
+          summary: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          entry_count?: number
+          id?: string
+          key_facts?: Json
+          session_id: string
+          summary?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          entry_count?: number
+          id?: string
+          key_facts?: Json
+          session_id?: string
+          summary?: string | null
           user_id?: string
         }
         Relationships: []
@@ -439,6 +502,7 @@ export type Database = {
           custom_system_prompt: string | null
           deep_research_model: string | null
           id: string
+          is_recording_mode: boolean
           openrouter_api_key: string | null
           saved_models: Json | null
           selected_model: string | null
@@ -454,6 +518,7 @@ export type Database = {
           custom_system_prompt?: string | null
           deep_research_model?: string | null
           id?: string
+          is_recording_mode?: boolean
           openrouter_api_key?: string | null
           saved_models?: Json | null
           selected_model?: string | null
@@ -469,6 +534,7 @@ export type Database = {
           custom_system_prompt?: string | null
           deep_research_model?: string | null
           id?: string
+          is_recording_mode?: boolean
           openrouter_api_key?: string | null
           saved_models?: Json | null
           selected_model?: string | null
