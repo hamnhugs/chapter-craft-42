@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { useApp } from "@/context/AppContext";
 import PdfViewer from "@/components/PdfViewer";
 import Library from "@/components/Library";
@@ -6,6 +6,9 @@ import ChatPanel from "@/components/ChatPanel";
 import WikiPanel from "@/components/WikiPanel";
 import VoiceChat from "@/components/VoiceChat";
 import VideoTranscript from "@/components/VideoTranscript";
+import ThemeSwitcher from "@/components/ThemeSwitcher";
+import StripeBar from "@/components/fruit-stripe/StripeBar";
+import { useTheme } from "@/context/ThemeContext";
 
 const tabs = [
   { id: "library" as const, icon: "library_books", label: "Library" },
@@ -19,26 +22,13 @@ const tabs = [
 const Index: React.FC = () => {
   const { activeTab, setActiveTab, getActiveBook, signOut } = useApp();
   const activeBook = getActiveBook();
-
-  const [theme, setTheme] = useState<"dark" | "light">(() => {
-    if (typeof window === "undefined") return "dark";
-    return (localStorage.getItem("cc-theme") as "dark" | "light") || "dark";
-  });
-
-  useEffect(() => {
-    const root = document.documentElement;
-    if (theme === "dark") root.classList.add("dark");
-    else root.classList.remove("dark");
-    try { localStorage.setItem("cc-theme", theme); } catch {}
-  }, [theme]);
-
-  const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
-
+  const { themeId } = useTheme();
+  const isFruitStripe = themeId === "fruit-stripe";
 
   return (
     <div className="flex flex-col h-screen bg-background">
       {/* Top App Bar */}
-      <header className="sticky top-0 w-full flex items-center justify-between px-6 py-4 bg-background/80 backdrop-blur-xl z-50 shadow-[0px_4px_20px_rgba(0,0,0,0.04),0px_10px_40px_rgba(0,0,0,0.08)]">
+      <header data-app-header className="sticky top-0 w-full flex items-center justify-between px-6 py-4 bg-background/80 backdrop-blur-xl z-50 shadow-[0px_4px_20px_rgba(0,0,0,0.04),0px_10px_40px_rgba(0,0,0,0.08)]">
         <div className="flex items-center gap-3">
           <span className="material-symbols-outlined text-accent text-2xl">menu_book</span>
           <span className="font-headline font-bold text-3xl tracking-tight text-primary">Chapter Craft</span>
@@ -62,16 +52,7 @@ const Index: React.FC = () => {
         </nav>
 
         <div className="flex items-center gap-2">
-          <button
-            onClick={toggleTheme}
-            aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-            className="text-primary hover:bg-primary/10 transition-all duration-200 p-2 rounded-lg active:scale-95"
-          >
-            <span className="material-symbols-outlined text-xl">
-              {theme === "dark" ? "light_mode" : "dark_mode"}
-            </span>
-          </button>
+          <ThemeSwitcher />
           <button
             onClick={signOut}
             className="text-primary hover:bg-primary/10 transition-all duration-200 px-4 py-2 rounded-lg font-body font-medium text-sm active:scale-95"
@@ -80,6 +61,7 @@ const Index: React.FC = () => {
           </button>
         </div>
       </header>
+      {isFruitStripe && <StripeBar thickness={4} />}
 
       {/* Content */}
       <div className="flex-1 overflow-hidden pb-20 md:pb-0">
