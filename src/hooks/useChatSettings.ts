@@ -18,6 +18,7 @@ interface ChatSettings {
   wikiModel: string; // "" = use default Gemini gateway
   customSystemPrompt: string;
   burplexityApiToken: string;
+  inworldApiKey: string;
 }
 
 const defaults: ChatSettings = {
@@ -30,6 +31,7 @@ const defaults: ChatSettings = {
   wikiModel: "",
   customSystemPrompt: "",
   burplexityApiToken: "",
+  inworldApiKey: "",
 };
 
 export function useChatSettings() {
@@ -61,6 +63,7 @@ export function useChatSettings() {
           wikiModel: (data as any).wiki_model || "",
           customSystemPrompt: (data as any).custom_system_prompt || "",
           burplexityApiToken: (data as any).burplexity_api_token || "",
+          inworldApiKey: (data as any).inworld_api_key || "",
         });
       }
       setLoaded(true);
@@ -83,6 +86,7 @@ export function useChatSettings() {
         wiki_model: next.wikiModel || null,
         custom_system_prompt: next.customSystemPrompt || "",
         burplexity_api_token: next.burplexityApiToken || "",
+        inworld_api_key: next.inworldApiKey || "",
       };
       const { error } = await supabase
         .from("user_settings")
@@ -140,6 +144,7 @@ export function useChatSettings() {
     setWikiModel: (m: string) => update({ wikiModel: m }),
     setCustomSystemPrompt: (p: string) => update({ customSystemPrompt: p }),
     setBurplexityApiToken: (t: string) => update({ burplexityApiToken: t.trim() }),
+    setInworldApiKey: (k: string) => update({ inworldApiKey: k.trim() }),
     addModel,
     removeModel,
     setNewModelInput: undefined, // handled in component

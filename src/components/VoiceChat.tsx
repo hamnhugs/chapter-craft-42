@@ -47,8 +47,7 @@ const VoiceChat: React.FC = () => {
   const [voiceQuickSearchModel, setVoiceQuickSearchModel] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_MODEL_KEY) || "");
   const [pendingSearchCount, setPendingSearchCount] = useState(0);
 
-  // Inworld TTS state
-  const [inworldApiKey, setInworldApiKeyState] = useState(() => localStorage.getItem(INWORLD_API_KEY_KEY) || "");
+  // Inworld TTS state (API key now lives in useChatSettings -> Supabase)
   const [inworldVoiceId, setInworldVoiceIdState] = useState(() => localStorage.getItem(INWORLD_VOICE_ID_KEY) || "");
   const [inworldEnabled, setInworldEnabled] = useState(() => localStorage.getItem(INWORLD_ENABLED_KEY) === "true");
   const [inworldVoices, setInworldVoices] = useState<InworldVoice[]>([]);
@@ -109,10 +108,10 @@ const VoiceChat: React.FC = () => {
   };
 
   const {
-    apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, customSystemPrompt, burplexityApiToken, loaded: settingsLoaded,
-    saveApiKey: persistApiKey, setSelectedModel, setDeepResearchModel, setCustomSystemPrompt, setBurplexityApiToken,
+    apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, customSystemPrompt, burplexityApiToken, inworldApiKey, loaded: settingsLoaded,
+    saveApiKey: persistApiKey, setSelectedModel, setDeepResearchModel, setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey,
     addModel: addModelToSettings, removeModel: removeModelFromSettings,
-  } = useChatSettings();
+  } = useChatSettings() as any;
   const [newModelInput, setNewModelInput] = useState("");
   const [promptDraft, setPromptDraft] = useState("");
   useEffect(() => { setPromptDraft(customSystemPrompt || ""); }, [customSystemPrompt, showSettings]);
@@ -186,28 +185,32 @@ const VoiceChat: React.FC = () => {
   useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
   useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
   useEffect(() => { localStorage.setItem(VOICE_ENABLED_KEY, String(ttsEnabled)); }, [ttsEnabled]);
-  useEffect(() => { localStorage.setItem(INWORLD_API_KEY_KEY, inworldApiKey); }, [inworldApiKey]);
   useEffect(() => { localStorage.setItem(INWORLD_VOICE_ID_KEY, inworldVoiceId); }, [inworldVoiceId]);
   useEffect(() => { localStorage.setItem(INWORLD_ENABLED_KEY, String(inworldEnabled)); }, [inworldEnabled]);
 
-  // Load Inworld voices on mount if key is already stored
+  // One-time migration: localStorage -> account-synced setting
+  const migratedRef = useRef(false);
+  useEffect(() => {
+    if (!settingsLoaded || migratedRef.current) return;
+    migratedRef.current = true;
+    const legacyOR = localStorage.getItem(LEGACY_OPENROUTER_STORAGE_KEY);
+    if (legacyOR && !apiKey) persistApiKey(legacyOR);
+    if (legacyOR) localStorage.removeItem(LEGACY_OPENROUTER_STORAGE_KEY);
+    const legacyInworld = localStorage.getItem(INWORLD_API_KEY_KEY);
+    if (legacyInworld && !inworldApiKey) setInworldApiKey(legacyInworld);
+    if (legacyInworld) localStorage.removeItem(INWORLD_API_KEY_KEY);
+  }, [settingsLoaded, apiKey, persistApiKey, inworldApiKey, setInworldApiKey]);
+
+  // Load Inworld voices once the key is known
   const inworldVoiceLoadedRef = useRef(false);
   useEffect(() => {
     if (!inworldVoiceLoadedRef.current && inworldApiKey) {
       inworldVoiceLoadedRef.current = true;
       loadInworldVoices(inworldApiKey);
     }
-  }, [inworldApiKey, loadInworldVoices]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inworldApiKey]);
 
-  // One-time migration: localStorage key -> account-synced setting
-  const migratedRef = useRef(false);
-  useEffect(() => {
-    if (!settingsLoaded || migratedRef.current) return;
-    migratedRef.current = true;
-    const legacy = localStorage.getItem(LEGACY_OPENROUTER_STORAGE_KEY);
-    if (legacy && !apiKey) persistApiKey(legacy);
-    if (legacy) localStorage.removeItem(LEGACY_OPENROUTER_STORAGE_KEY);
-  }, [settingsLoaded, apiKey, persistApiKey]);
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
@@ -275,7 +278,7 @@ const VoiceChat: React.FC = () => {
   }, [inworldVoiceId]);
 
   const saveInworldKey = (key: string) => {
-    setInworldApiKeyState(key.trim());
+    setInworldApiKey(key.trim());
     if (key.trim()) loadInworldVoices(key.trim());
   };
   const addModel = () => { const m = newModelInput.trim(); if (!m) return; addModelToSettings(m); setNewModelInput(""); };
@@ -658,7 +661,7 @@ const VoiceChat: React.FC = () => {
                       Save & Load Voices
                     </Button>
                     {inworldApiKey && (
-                      <Button size="sm" variant="destructive" onClick={() => { setInworldApiKeyState(""); setInworldEnabled(false); setInworldVoices([]); }}>
+                      <Button size="sm" variant="destructive" onClick={() => { setInworldApiKey(""); setInworldEnabled(false); setInworldVoices([]); }}>
                         Remove
                       </Button>
                     )}
