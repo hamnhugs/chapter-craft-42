@@ -50,6 +50,7 @@ export function useChatSettings() {
           ttsRate: typeof (data as any).tts_rate === "number" && (data as any).tts_rate > 0
             ? (data as any).tts_rate
             : DEFAULT_TTS_RATE,
+          autoReadReplies: !!(data as any).auto_read_replies,
         });
       }
       setLoaded(true);
