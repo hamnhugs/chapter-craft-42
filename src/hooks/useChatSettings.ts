@@ -13,6 +13,7 @@ interface ChatSettings {
   selectedModel: string;
   deepResearchModel: string;
   ttsRate: number;
+  autoReadReplies: boolean;
 }
 
 const defaults: ChatSettings = {
@@ -21,6 +22,7 @@ const defaults: ChatSettings = {
   selectedModel: DEFAULT_MODEL,
   deepResearchModel: DEFAULT_DEEP_RESEARCH_MODEL,
   ttsRate: DEFAULT_TTS_RATE,
+  autoReadReplies: false,
 };
 
 export function useChatSettings() {
