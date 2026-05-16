@@ -6,6 +6,7 @@ import { useChatSettings } from "@/hooks/useChatSettings";
 import { buildChatSystemPrompt } from "@/lib/buildChatSystemPrompt";
 import { CHAT_TOOL_DEFINITIONS, executeChatTool, ToolEvent } from "@/lib/chatTools";
 import { toast } from "sonner";
+import { isEmbeddingModel } from "@/lib/utils";
 
 export interface ChatMessage {
   id?: string;
