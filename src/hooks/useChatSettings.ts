@@ -14,6 +14,7 @@ interface ChatSettings {
   deepResearchModel: string;
   ttsRate: number;
   autoReadReplies: boolean;
+  wikiModel: string; // "" = use default Gemini gateway
 }
 
 const defaults: ChatSettings = {
@@ -23,6 +24,7 @@ const defaults: ChatSettings = {
   deepResearchModel: DEFAULT_DEEP_RESEARCH_MODEL,
   ttsRate: DEFAULT_TTS_RATE,
   autoReadReplies: false,
+  wikiModel: "",
 };
 
 export function useChatSettings() {
