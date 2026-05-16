@@ -197,7 +197,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (isEmbeddingModel(model)) {
         const msg = `"${model}" is an embedding model — pick a chat model in Settings (it's only valid for Wiki reindex).`;
         toast.error(msg);
-        setMessages((prev) => [...prev, { role: "assistant", content: `❌ ${msg}`, toolEvents: [] }]);
+        assistantText = `❌ ${msg}`;
+        updateAssistant();
         setIsLoading(false);
         return;
       }
