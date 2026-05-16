@@ -22,6 +22,10 @@ const tabs = [
   { id: "voice" as const, icon: "settings_voice", label: "Voice" },
 ];
 
+const PRIMARY_IDS = ["library", "viewer", "chapterize", "chat"] as const;
+const primaryTabs = PRIMARY_IDS.map((id) => tabs.find((t) => t.id === id)!);
+const moreTabs = tabs.filter((t) => !PRIMARY_IDS.includes(t.id as any));
+
 const Index: React.FC = () => {
   const { activeTab, setActiveTab, getActiveBook, signOut } = useApp();
   const activeBook = getActiveBook();
