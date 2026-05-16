@@ -28,6 +28,8 @@ const moreTabs = tabs.filter((t) => !PRIMARY_IDS.includes(t.id as any));
 
 const Index: React.FC = () => {
   const { activeTab, setActiveTab, getActiveBook, signOut } = useApp();
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreActive = moreTabs.some((t) => t.id === activeTab);
   const activeBook = getActiveBook();
   const { themeId } = useTheme();
   const isFruitStripe = themeId === "fruit-stripe";
