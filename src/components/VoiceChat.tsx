@@ -81,7 +81,7 @@ const VoiceChat: React.FC = () => {
   };
 
   const {
-    apiKey, savedModels, selectedModel, deepResearchModel, loaded: settingsLoaded,
+    apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, loaded: settingsLoaded,
     saveApiKey: persistApiKey, setSelectedModel, setDeepResearchModel,
     addModel: addModelToSettings, removeModel: removeModelFromSettings,
   } = useChatSettings();
