@@ -84,8 +84,8 @@ const VoiceChat: React.FC = () => {
   };
 
   const {
-    apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, customSystemPrompt, loaded: settingsLoaded,
-    saveApiKey: persistApiKey, setSelectedModel, setDeepResearchModel, setCustomSystemPrompt,
+    apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, customSystemPrompt, burplexityApiToken, loaded: settingsLoaded,
+    saveApiKey: persistApiKey, setSelectedModel, setDeepResearchModel, setCustomSystemPrompt, setBurplexityApiToken,
     addModel: addModelToSettings, removeModel: removeModelFromSettings,
   } = useChatSettings();
   const [newModelInput, setNewModelInput] = useState("");
