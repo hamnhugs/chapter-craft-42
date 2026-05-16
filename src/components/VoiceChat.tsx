@@ -3,7 +3,7 @@ import { useApp } from "@/context/AppContext";
 import { useChat } from "@/context/ChatContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import { extractKnowledge } from "@/lib/knowledgeApi";
@@ -31,7 +31,7 @@ const VoiceChat: React.FC = () => {
   const [notesPanelOpen, setNotesPanelOpen] = useState(() => localStorage.getItem(NOTES_PANEL_OPEN_KEY) === "true");
   useEffect(() => { localStorage.setItem(NOTES_PANEL_OPEN_KEY, String(notesPanelOpen)); }, [notesPanelOpen]);
   const [selectionCapture, setSelectionCapture] = useState<{ text: string; top: number; left: number } | null>(null);
-  const [textInput, setTextInput] = useState("");
+  
 
   // Long-press to save chat bubble as a voice note
   const longPressTimer = useRef<number | null>(null);
@@ -367,13 +367,6 @@ const VoiceChat: React.FC = () => {
 
   const handleClear = () => { stopSpeaking(); clearChat(); };
 
-  const handleSendText = async () => {
-    const text = textInput.trim();
-    if (!text) return;
-    setTextInput("");
-    await submit(text);
-  };
-
   const statusLabel = isListening
     ? "Listening…"
     : isLoading
@@ -382,7 +375,7 @@ const VoiceChat: React.FC = () => {
     ? "Speaking…"
     : handsFree
     ? "Hands-free paused"
-    : "Tap to talk or type below";
+    : "Tap to talk";
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -533,28 +526,6 @@ const VoiceChat: React.FC = () => {
           <p className="text-sm text-on-surface-variant italic">🎙️ {interimTranscript}</p>
         </div>
       )}
-
-      {/* Text input row */}
-      <div className="border-t border-outline-variant/10 bg-surface-container-low px-4 pt-3">
-        <div className="flex items-end gap-2 max-w-3xl mx-auto">
-          <Textarea
-            value={textInput}
-            onChange={(e) => setTextInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendText(); } }}
-            placeholder={apiKey ? "Type a message instead of speaking…" : "Set your OpenRouter API key to start"}
-            rows={1}
-            className="flex-1 bg-surface-container-high border-none rounded-xl text-foreground py-2.5 px-4 focus:ring-1 focus:ring-primary/40 resize-none min-h-[44px] max-h-[120px]"
-            disabled={isLoading}
-          />
-          <Button
-            onClick={handleSendText}
-            disabled={isLoading || !textInput.trim()}
-            className="h-[44px] px-4 bg-primary-container text-on-primary-container hover:brightness-110"
-          >
-            <span className="material-symbols-outlined">send</span>
-          </Button>
-        </div>
-      </div>
 
       {/* Controls */}
       <div className="bg-surface-container-low px-4 py-4">
