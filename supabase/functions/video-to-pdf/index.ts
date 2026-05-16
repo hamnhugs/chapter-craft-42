@@ -97,7 +97,7 @@ Deno.serve(async (req) => {
       }
 
       title = title || job.video_url || "Video transcript";
-      const pdfBytes = await buildPdf(title, transcript);
+      const { bytes: pdfBytes } = await buildPdf(title, transcript);
 
       return new Response(pdfBytes, {
         status: 200,
