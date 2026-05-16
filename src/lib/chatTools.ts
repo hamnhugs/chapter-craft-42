@@ -79,6 +79,21 @@ export const CHAT_TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "web_search",
+      description:
+        "Live web search via the user's Burplexity instance. Use this whenever the user asks to search the internet, look something up online, or wants current/time-sensitive info. Returns a synthesized answer plus citation URLs. Prefer this over search_wiki for anything not stored locally.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Natural-language search query." },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "isolate_chapter",
       description:
         "Create a new chapter in a book by specifying its page range. The chapter text is empty unless extracted separately.",
