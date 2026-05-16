@@ -400,6 +400,7 @@ export type Database = {
       }
       user_settings: {
         Row: {
+          auto_read_replies: boolean
           burplexity_api_token: string | null
           created_at: string
           custom_system_prompt: string | null
@@ -413,6 +414,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          auto_read_replies?: boolean
           burplexity_api_token?: string | null
           created_at?: string
           custom_system_prompt?: string | null
@@ -426,6 +428,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          auto_read_replies?: boolean
           burplexity_api_token?: string | null
           created_at?: string
           custom_system_prompt?: string | null

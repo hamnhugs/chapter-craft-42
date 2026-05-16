@@ -1,21 +1,29 @@
-## Problem
+## Feature
 
-In the Chat tab, when Settings is open on mobile, the lower section (Deep Research model + Voice Playback Speed slider) is cut off behind the message area / input bar / bottom nav. The settings panel renders inline and isn't independently scrollable, so users can't reach the TTS speed control.
+Add an "Auto-read assistant replies" toggle in the Chat tab settings. When ON, every new assistant message is automatically read aloud using the existing TTS engine and the current Voice Playback Speed.
 
-## Fix (frontend-only, ChatPanel.tsx)
+## Changes
 
-Make the settings panel a self-contained, vertically-scrollable region on mobile, and tighten its mobile layout so more fits on screen before scrolling is needed.
+1. **Database** — add `auto_read_replies boolean not null default false` to `user_settings`.
 
-1. **Scrollable container** — wrap the settings panel in a `max-h-[60vh] overflow-y-auto overscroll-contain` region on mobile (uncapped on `md+`). Keep the existing `border-b` and background.
-2. **Sticky mini-header inside the panel** — small "Settings" title with a close (✕) button pinned to the top of the scroll area, so users always see how to dismiss it without scrolling back up.
-3. **Mobile spacing pass** — reduce vertical padding on mobile (`py-3` instead of `py-4`), collapse the nested `p-4` rounded sections to `p-3` on mobile, and ensure the two `grid` sections stack cleanly (already `grid-cols-1` by default).
-4. **Safe-area padding** — add `pb-[env(safe-area-inset-bottom)]` to the scroll container so the last control (TTS slider) clears the bottom nav on iOS.
-5. **Keep desktop unchanged** — all overrides use `md:` breakpoints to preserve the current desktop layout.
+2. **`src/hooks/useChatSettings.ts`**
+   - Add `autoReadReplies: boolean` to `ChatSettings` (default `false`).
+   - Load / save it alongside the other settings (`auto_read_replies` column).
+   - Expose `setAutoReadReplies(v: boolean)`.
 
-No business logic, no state changes, no new dependencies — purely layout/CSS adjustments in `src/components/ChatPanel.tsx`.
+3. **`src/components/ChatPanel.tsx`**
+   - In the settings panel, add a new toggle row right above the Voice Playback Speed slider: label "Auto-read assistant replies", small helper text "Reads each new reply aloud using the speed below."
+   - Use a shadcn `Switch` (already in the stack) for consistent styling.
+   - Add an effect: when `autoReadReplies` is ON and a new assistant message appears (detect last message role transitioning to "assistant" with a stable id not yet read), call `speak(msg.content, { id, rate: ttsRate })`. Guard against:
+     - duplicate reads of the same message id (track a `lastSpokenIdRef`),
+     - empty/streaming-in-progress content (only trigger when message is final — `!msg.streaming` if available, else when content length stops growing across renders; in this codebase messages appear finalized when added, so trigger on append).
+   - When the toggle is turned OFF mid-playback, call `stopSpeaking()`.
+
+4. **No changes to existing manual read-aloud buttons** — they continue to work as today.
 
 ## Verification
 
-- Open Chat tab → tap settings → confirm TTS speed slider is reachable by scrolling within the panel.
-- Confirm desktop layout (md+) is visually unchanged.
-- Confirm input bar and bottom nav still work while settings is open.
+- Toggle ON → send a chat message → assistant reply is read aloud automatically at the configured speed.
+- Toggle OFF mid-read → playback stops.
+- Refresh page → setting persists.
+- Manual ▶ on older messages still works.
