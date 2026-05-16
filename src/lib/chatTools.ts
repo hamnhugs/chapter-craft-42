@@ -240,8 +240,45 @@ export async function executeChatTool(
           snippet: (e.content || "").slice(0, 400),
         }));
         return { result: entries, event: { name, summary: `Searched wiki for "${q}" — ${entries.length} hit(s)`, ok: true } };
+      case "web_search": {
+        const q = String(args.query || "").trim();
+        if (!q) return { result: { error: "Empty query" }, event: { name, summary: "Empty query", ok: false } };
+        const token = (deps.burplexityApiToken || "").trim();
+        if (!token) {
+          return {
+            result: { error: "Burplexity API token not configured. Ask the user to paste a pp_… token in Settings → Burplexity API Token." },
+            event: { name, summary: "Burplexity token missing — add it in Settings", ok: false },
+          };
+        }
+        try {
+          const r = await fetch(BURPLEXITY_BOT_ASK_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-api-key": token },
+            body: JSON.stringify({ query: q, save_to_wiki: false }),
+          });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) {
+            const msg = j?.error || `HTTP ${r.status}`;
+            return {
+              result: { error: `Burplexity search failed: ${msg}` },
+              event: { name, summary: `Web search failed: ${msg}`, ok: false },
+            };
+          }
+          const answer = String(j.answer || "").slice(0, 3500);
+          const citations = Array.isArray(j.citations)
+            ? j.citations.slice(0, 5).map((c: any) => ({ title: c.title, url: c.url, snippet: (c.snippet || "").slice(0, 240) }))
+            : [];
+          return {
+            result: { answer, citations },
+            event: { name, summary: `Searched the web for "${q}" — ${citations.length} source(s)`, ok: true },
+          };
+        } catch (e: any) {
+          return {
+            result: { error: `Web search error: ${e?.message || "network failure"}` },
+            event: { name, summary: `Web search failed: ${e?.message || "network"}`, ok: false },
+          };
+        }
       }
-      case "isolate_chapter": {
         const book = deps.books.find((b) => b.id === args.book_id);
         if (!book) return { result: { error: "Book not found" }, event: { name, summary: "Book not found", ok: false } };
         const sp = Number(args.start_page);
