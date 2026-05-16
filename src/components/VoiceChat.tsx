@@ -83,11 +83,20 @@ const VoiceChat: React.FC = () => {
   };
 
   const {
-    apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, loaded: settingsLoaded,
-    saveApiKey: persistApiKey, setSelectedModel, setDeepResearchModel,
+    apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, customSystemPrompt, loaded: settingsLoaded,
+    saveApiKey: persistApiKey, setSelectedModel, setDeepResearchModel, setCustomSystemPrompt,
     addModel: addModelToSettings, removeModel: removeModelFromSettings,
   } = useChatSettings();
   const [newModelInput, setNewModelInput] = useState("");
+  const [promptDraft, setPromptDraft] = useState("");
+  useEffect(() => { setPromptDraft(customSystemPrompt || ""); }, [customSystemPrompt, showSettings]);
+  const [bubbleSpeakingId, setBubbleSpeakingId] = useState<string | null>(ttsGetId());
+  useEffect(() => ttsSubscribe(setBubbleSpeakingId), []);
+  useEffect(() => () => ttsStop(), []);
+  const replayBubble = (id: string, text: string) => {
+    if (bubbleSpeakingId === id) { ttsStop(); return; }
+    ttsSpeak(text, { id, rate: ttsRate });
+  };
 
   const recognitionRef = useRef<any>(null);
   const synthRef = useRef(window.speechSynthesis);
