@@ -17,8 +17,8 @@ import { isEmbeddingModel } from "@/lib/utils";
 const ChatPanel: React.FC = () => {
   const { books, activeBookId } = useApp();
   const {
-    apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, autoReadReplies, loaded,
-    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setTtsRate, setAutoReadReplies,
+    apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, autoReadReplies, customSystemPrompt, loaded,
+    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setTtsRate, setAutoReadReplies, setCustomSystemPrompt,
   } = useChatSettings();
   const { messages, isLoading, deepResearch, setDeepResearch, sendMessage, clearChat } = useChat();
   const [input, setInput] = useState("");
