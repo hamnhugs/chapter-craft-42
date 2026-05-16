@@ -134,8 +134,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "books", filter: `user_id=eq.${user.id}` },
-        (payload) => {
+        async (payload) => {
           const b: any = payload.new;
+          const { data: chapterRows } = await supabase
+            .from("chapters")
+            .select("id, name, start_page, end_page, text_content")
+            .eq("book_id", b.id)
+            .eq("user_id", b.user_id)
+            .order("created_at", { ascending: true });
+          const chapters: Chapter[] = (chapterRows || []).map((c: any) => ({
+            id: c.id,
+            name: c.name,
+            startPage: c.start_page,
+            endPage: c.end_page,
+            textContent: c.text_content,
+          }));
           setBooks((prev) => {
             if (prev.some((x) => x.id === b.id)) return prev;
             const newBook: BookDocument = {
@@ -145,7 +158,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               fileData: "",
               pageCount: b.page_count ?? 0,
               coverImageUrl: b.cover_image_url || undefined,
-              chapters: [],
+              chapters,
               addedAt: new Date(b.created_at).getTime(),
             };
             return [newBook, ...prev];

@@ -14,6 +14,7 @@ const PdfViewer: React.FC = () => {
   const { getActiveBook, addChapter, updateChapter, removeChapter, updateBookTitle, activeBookId, loadBookFile } = useApp();
   const book = getActiveBook();
   const isPdfBook = book?.fileName.toLowerCase().endsWith(".pdf") ?? false;
+  const isHtmlBook = book?.fileName.toLowerCase().endsWith(".html") ?? false;
 
   const [numPages, setNumPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState(1);
@@ -24,21 +25,33 @@ const PdfViewer: React.FC = () => {
     open: false, endPage: 0, defaultName: "",
   });
   const [fileUrl, setFileUrl] = useState<string>("");
+  const [htmlContent, setHtmlContent] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [manageChaptersOpen, setManageChaptersOpen] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isSavingChapter, setIsSavingChapter] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
 
   // --- Read aloud ---
   const readCurrentPage = useCallback(async () => {
-    if (!fileUrl) return;
     if (isSpeaking) {
       window.speechSynthesis.cancel();
       setIsSpeaking(false);
       return;
     }
+    if (isHtmlBook) {
+      const text = htmlContent.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      if (!text) return;
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.onend = () => setIsSpeaking(false);
+      utterance.onerror = () => setIsSpeaking(false);
+      setIsSpeaking(true);
+      window.speechSynthesis.speak(utterance);
+      return;
+    }
+    if (!fileUrl) return;
     try {
       const loadingTask = pdfjs.getDocument(fileUrl);
       const pdf = await loadingTask.promise;
@@ -54,14 +67,14 @@ const PdfViewer: React.FC = () => {
     } catch (err) {
       console.error("Read aloud failed:", err);
     }
-  }, [fileUrl, currentPage, isSpeaking]);
+  }, [fileUrl, currentPage, isSpeaking, isHtmlBook, htmlContent]);
 
   useEffect(() => {
     window.speechSynthesis.cancel();
     setIsSpeaking(false);
   }, [currentPage, activeBookId]);
 
-  // --- Swipe gestures ---
+  // --- Swipe gestures (PDF only) ---
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     const touch = e.touches[0];
     touchStartRef.current = { x: touch.clientX, y: touch.clientY };
@@ -79,20 +92,51 @@ const PdfViewer: React.FC = () => {
     }
   }, [currentPage, numPages]);
 
+  // Reset on book change
   useEffect(() => {
     setCurrentPage(1);
     setChapterStart(null);
     setSelectedChapterId(null);
     setFileUrl("");
+    setHtmlContent("");
   }, [activeBookId]);
 
+  // Load file
   useEffect(() => {
     if (!activeBookId) return;
-    if (!isPdfBook) { setFileUrl(""); setLoading(false); return; }
+
+    if (!isPdfBook && !isHtmlBook) {
+      setFileUrl("");
+      setHtmlContent("");
+      setLoading(false);
+      return;
+    }
+
+    if (isHtmlBook) {
+      setLoading(true);
+      const loadHtml = async (objectUrl: string) => {
+        try {
+          const res = await fetch(objectUrl);
+          setHtmlContent(await res.text());
+        } catch {
+          setHtmlContent("");
+        }
+        setLoading(false);
+      };
+      if (book?.fileData) { loadHtml(book.fileData); return; }
+      loadBookFile(activeBookId)
+        .then((url) => { if (url) loadHtml(url); else { setHtmlContent(""); setLoading(false); } })
+        .catch(() => { setHtmlContent(""); setLoading(false); });
+      return;
+    }
+
+    // PDF path
     if (book?.fileData) { setFileUrl(book.fileData); setLoading(false); return; }
     setLoading(true);
-    loadBookFile(activeBookId).then((url) => { setFileUrl(url); setLoading(false); }).catch(() => { setFileUrl(""); setLoading(false); });
-  }, [activeBookId, isPdfBook, book?.fileData, loadBookFile]);
+    loadBookFile(activeBookId)
+      .then((url) => { setFileUrl(url); setLoading(false); })
+      .catch(() => { setFileUrl(""); setLoading(false); });
+  }, [activeBookId, isPdfBook, isHtmlBook, book?.fileData, loadBookFile]);
 
   const onDocumentLoadSuccess = useCallback(({ numPages }: any) => { setNumPages(numPages); }, []);
   const goToPage = (page: number) => { if (page >= 1 && page <= numPages) setCurrentPage(page); };
@@ -138,7 +182,17 @@ const PdfViewer: React.FC = () => {
   const handleChapterSelect = (chapterId: string) => {
     if (!book) return;
     const chapter = book.chapters.find((c) => c.id === chapterId);
-    if (chapter) { setCurrentPage(chapter.startPage); setSelectedChapterId(chapterId); }
+    if (!chapter) return;
+    setSelectedChapterId(chapterId);
+    if (isHtmlBook) {
+      const iframe = iframeRef.current;
+      if (iframe?.contentWindow) {
+        const el = iframe.contentWindow.document.getElementById(`section-${chapter.startPage}`);
+        el?.scrollIntoView({ behavior: "smooth" });
+      }
+      return;
+    }
+    setCurrentPage(chapter.startPage);
   };
 
   if (!book) {
@@ -151,12 +205,12 @@ const PdfViewer: React.FC = () => {
     );
   }
 
-  if (!isPdfBook) {
+  if (!isPdfBook && !isHtmlBook) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-on-surface-variant animate-fade-in">
         <span className="material-symbols-outlined text-6xl mb-4 opacity-30">description</span>
         <p className="text-lg font-headline">Preview unavailable</p>
-        <p className="text-sm mt-1">Reader preview supports PDF files only.</p>
+        <p className="text-sm mt-1">Reader supports PDF and HTML files.</p>
       </div>
     );
   }
@@ -170,7 +224,17 @@ const PdfViewer: React.FC = () => {
     );
   }
 
-  if (!fileUrl) {
+  if (isHtmlBook && !htmlContent) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-on-surface-variant animate-fade-in">
+        <span className="material-symbols-outlined text-6xl mb-4 opacity-30">article</span>
+        <p className="text-lg font-headline">HTML file not found</p>
+        <p className="text-sm mt-1">Please re-upload this file.</p>
+      </div>
+    );
+  }
+
+  if (!isHtmlBook && !fileUrl) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-on-surface-variant animate-fade-in">
         <span className="material-symbols-outlined text-6xl mb-4 opacity-30">auto_stories</span>
@@ -182,19 +246,21 @@ const PdfViewer: React.FC = () => {
 
   return (
     <div className="flex flex-col h-full animate-fade-in">
-      {/* Primary Toolbar: Pagination */}
-      <div className="flex items-center justify-between px-4 h-14 bg-surface-container-low">
-        <button onClick={() => goToPage(currentPage - 1)} disabled={currentPage <= 1} className="p-2 hover:bg-surface-container-high rounded-full transition-colors disabled:opacity-30">
-          <span className="material-symbols-outlined text-primary">arrow_back</span>
-        </button>
-        <div className="flex flex-col items-center">
-          <span className="font-label text-[10px] uppercase tracking-[0.2em] text-on-surface-variant">Current Progress</span>
-          <span className="font-headline font-bold text-lg text-primary italic">Page {currentPage} of {numPages}</span>
+      {/* Pagination toolbar — PDF only */}
+      {!isHtmlBook && (
+        <div className="flex items-center justify-between px-4 h-14 bg-surface-container-low">
+          <button onClick={() => goToPage(currentPage - 1)} disabled={currentPage <= 1} className="p-2 hover:bg-surface-container-high rounded-full transition-colors disabled:opacity-30">
+            <span className="material-symbols-outlined text-primary">arrow_back</span>
+          </button>
+          <div className="flex flex-col items-center">
+            <span className="font-label text-[10px] uppercase tracking-[0.2em] text-on-surface-variant">Current Progress</span>
+            <span className="font-headline font-bold text-lg text-primary italic">Page {currentPage} of {numPages}</span>
+          </div>
+          <button onClick={() => goToPage(currentPage + 1)} disabled={currentPage >= numPages} className="p-2 hover:bg-surface-container-high rounded-full transition-colors disabled:opacity-30">
+            <span className="material-symbols-outlined text-primary">arrow_forward</span>
+          </button>
         </div>
-        <button onClick={() => goToPage(currentPage + 1)} disabled={currentPage >= numPages} className="p-2 hover:bg-surface-container-high rounded-full transition-colors disabled:opacity-30">
-          <span className="material-symbols-outlined text-primary">arrow_forward</span>
-        </button>
-      </div>
+      )}
 
       {/* Secondary Toolbar */}
       <div className="flex items-center justify-between px-6 py-3 bg-surface-container-high overflow-x-auto hide-scrollbar gap-4 border-t border-outline-variant/10">
@@ -211,45 +277,49 @@ const PdfViewer: React.FC = () => {
           <span className="font-label text-sm font-semibold">{isSpeaking ? "Stop" : "Read Aloud"}</span>
         </button>
 
-        {/* Zoom */}
-        <div className="flex items-center bg-surface-container-highest px-3 py-1.5 rounded-full gap-4 shrink-0">
-          <button onClick={() => zoom(-0.2)} className="material-symbols-outlined text-secondary hover:text-primary transition-colors">remove</button>
-          <span className="font-label text-sm font-bold text-foreground w-10 text-center">{Math.round(scale * 100)}%</span>
-          <button onClick={() => zoom(0.2)} className="material-symbols-outlined text-secondary hover:text-primary transition-colors">add</button>
-        </div>
+        {/* Zoom — PDF only */}
+        {!isHtmlBook && (
+          <div className="flex items-center bg-surface-container-highest px-3 py-1.5 rounded-full gap-4 shrink-0">
+            <button onClick={() => zoom(-0.2)} className="material-symbols-outlined text-secondary hover:text-primary transition-colors">remove</button>
+            <span className="font-label text-sm font-bold text-foreground w-10 text-center">{Math.round(scale * 100)}%</span>
+            <button onClick={() => zoom(0.2)} className="material-symbols-outlined text-secondary hover:text-primary transition-colors">add</button>
+          </div>
+        )}
 
-        {/* Chapter Isolation */}
-        <div className="flex items-center gap-2 shrink-0">
-          {chapterStart === null ? (
-            <button
-              onClick={markChapterStart}
-              disabled={isSavingChapter}
-              className="flex items-center gap-2 px-5 py-2 bg-primary-container text-on-primary-container rounded-lg shadow-sm font-bold text-sm active:scale-95 transition-all disabled:opacity-50"
-            >
-              <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>bolt</span>
-              <span>Chapter Isolation</span>
-            </button>
-          ) : (
-            <>
-              <span className="text-xs text-accent font-bold px-2">Started p.{chapterStart}</span>
+        {/* Chapter Isolation — PDF only */}
+        {!isHtmlBook && (
+          <div className="flex items-center gap-2 shrink-0">
+            {chapterStart === null ? (
               <button
-                onClick={markChapterEnd}
+                onClick={markChapterStart}
                 disabled={isSavingChapter}
-                className="flex items-center gap-2 px-4 py-2 bg-accent text-on-primary-container rounded-lg font-bold text-sm active:scale-95 transition-all disabled:opacity-50"
+                className="flex items-center gap-2 px-5 py-2 bg-primary-container text-on-primary-container rounded-lg shadow-sm font-bold text-sm active:scale-95 transition-all disabled:opacity-50"
               >
-                <span className="material-symbols-outlined">flag</span>
-                End
+                <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>bolt</span>
+                <span>Chapter Isolation</span>
               </button>
-              <button
-                onClick={() => setChapterStart(null)}
-                disabled={isSavingChapter}
-                className="text-xs text-on-surface-variant hover:text-foreground disabled:opacity-50 px-2"
-              >
-                Cancel
-              </button>
-            </>
-          )}
-        </div>
+            ) : (
+              <>
+                <span className="text-xs text-accent font-bold px-2">Started p.{chapterStart}</span>
+                <button
+                  onClick={markChapterEnd}
+                  disabled={isSavingChapter}
+                  className="flex items-center gap-2 px-4 py-2 bg-accent text-on-primary-container rounded-lg font-bold text-sm active:scale-95 transition-all disabled:opacity-50"
+                >
+                  <span className="material-symbols-outlined">flag</span>
+                  End
+                </button>
+                <button
+                  onClick={() => setChapterStart(null)}
+                  disabled={isSavingChapter}
+                  className="text-xs text-on-surface-variant hover:text-foreground disabled:opacity-50 px-2"
+                >
+                  Cancel
+                </button>
+              </>
+            )}
+          </div>
+        )}
 
         {/* Chapter select */}
         {book.chapters.length > 0 && (
@@ -260,7 +330,7 @@ const PdfViewer: React.FC = () => {
               onChange={(e) => handleChapterSelect(e.target.value)}
               className="text-xs font-body bg-surface-container-highest border-none rounded-lg px-3 py-2 text-foreground focus:ring-1 focus:ring-primary/40"
             >
-              <option value="">Jump to chapter…</option>
+              <option value="">{isHtmlBook ? "Jump to section…" : "Jump to chapter…"}</option>
               {book.chapters.map((ch) => (
                 <option key={ch.id} value={ch.id}>{ch.name}</option>
               ))}
@@ -275,20 +345,30 @@ const PdfViewer: React.FC = () => {
         )}
       </div>
 
-      {/* PDF content */}
-      <div ref={containerRef} className="flex-1 overflow-auto bg-background flex justify-center py-6 scrollbar-thin" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
-        <Document
-          file={fileUrl}
-          onLoadSuccess={onDocumentLoadSuccess}
-          loading={<div className="flex items-center justify-center py-20"><div className="animate-pulse text-on-surface-variant text-sm">Loading document…</div></div>}
-          error={<div className="text-destructive text-sm text-center py-20">Failed to load the document.</div>}
-        >
-          <Page pageNumber={currentPage} scale={scale} renderTextLayer={true} renderAnnotationLayer={true} />
-        </Document>
-      </div>
+      {/* Document content */}
+      {isHtmlBook ? (
+        <iframe
+          ref={iframeRef}
+          srcDoc={htmlContent}
+          sandbox="allow-same-origin"
+          className="flex-1 w-full border-0 bg-background"
+          title={book.title}
+        />
+      ) : (
+        <div ref={containerRef} className="flex-1 overflow-auto bg-background flex justify-center py-6 scrollbar-thin" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+          <Document
+            file={fileUrl}
+            onLoadSuccess={onDocumentLoadSuccess}
+            loading={<div className="flex items-center justify-center py-20"><div className="animate-pulse text-on-surface-variant text-sm">Loading document…</div></div>}
+            error={<div className="text-destructive text-sm text-center py-20">Failed to load the document.</div>}
+          >
+            <Page pageNumber={currentPage} scale={scale} renderTextLayer={true} renderAnnotationLayer={true} />
+          </Document>
+        </div>
+      )}
 
-      {/* Floating chapter info */}
-      {book.chapters.length > 0 && selectedChapterId && (() => {
+      {/* Floating chapter info — PDF only */}
+      {!isHtmlBook && book.chapters.length > 0 && selectedChapterId && (() => {
         const ch = book.chapters.find(c => c.id === selectedChapterId);
         if (!ch) return null;
         return (

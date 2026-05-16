@@ -263,7 +263,7 @@ const VideoTranscript: React.FC = () => {
                     const objUrl = URL.createObjectURL(blob);
                     const a = document.createElement("a");
                     a.href = objUrl;
-                    a.download = `transcript-${job.id}.pdf`;
+                    a.download = `transcript-${job.id}.html`;
                     document.body.appendChild(a);
                     a.click();
                     a.remove();
@@ -274,8 +274,8 @@ const VideoTranscript: React.FC = () => {
                 }}
                 className="inline-flex items-center gap-1 text-accent text-sm font-medium hover:underline self-start"
               >
-                <span className="material-symbols-outlined text-base">picture_as_pdf</span>
-                Download Transcript PDF
+                <span className="material-symbols-outlined text-base">article</span>
+                Download Transcript HTML
               </button>
             )}
           </div>

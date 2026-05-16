@@ -1,12 +1,11 @@
-// Video caption extraction & PDF generation edge function.
+// Video caption extraction & HTML generation edge function.
 // Routes:
-//   POST /video-to-pdf/submit  -> Submit video URL for caption extraction
-//   GET  /video-to-pdf/status/{job_id} -> Poll job status
-//   GET  /video-to-pdf/download/{job_id} -> On-demand PDF download
+//   POST /video-to-pdf/submit        -> Submit video URL for caption extraction
+//   GET  /video-to-pdf/status/{id}   -> Poll job status
+//   GET  /video-to-pdf/download/{id} -> On-demand HTML transcript download
 //
 // Proxies to VPS-hosted VideoCaptionEngine at PORT 8000.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import { PDFDocument, StandardFonts, rgb } from "npm:pdf-lib@1.17.1";
 import { resolveWikiLlm } from "../_shared/wiki-llm.ts";
 
 const corsHeaders = {
@@ -56,12 +55,11 @@ Deno.serve(async (req) => {
 
       const { job_id, status, message } = await submitRes.json();
 
-      // Persist job reference in Supabase (store formatting preference in metadata)
       await supabase.from("video_jobs").insert({
         id: job_id,
         user_id: user.id,
         video_url: videoUrl,
-        status: status,
+        status,
         metadata: { format_for_chapterize: !!formatForChapterize },
       });
 
@@ -81,7 +79,6 @@ Deno.serve(async (req) => {
 
       if (!job) return json({ error: "Job not found" }, 404);
 
-      // Try stored transcript; fall back to refetching from engine
       let transcript = job.transcript as string | null;
       let title = (job.title as string | null) || "";
       if (!transcript) {
@@ -99,15 +96,15 @@ Deno.serve(async (req) => {
         return json({ error: "Transcript not available yet — try again in a moment." }, 404);
       }
 
-      title = title || job.video_url || "Video transcript";
-      const { bytes: pdfBytes } = await buildPdf(title, transcript);
+      title = title || (job.video_url as string) || "Video Transcript";
+      const htmlContent = buildHtml(title, transcript);
 
-      return new Response(pdfBytes, {
+      return new Response(htmlContent, {
         status: 200,
         headers: {
           ...corsHeaders,
-          "Content-Type": "application/pdf",
-          "Content-Disposition": `attachment; filename="transcript-${jobId}.pdf"`,
+          "Content-Type": "text/html; charset=utf-8",
+          "Content-Disposition": `attachment; filename="transcript-${jobId}.html"`,
           "Cache-Control": "private, max-age=0",
         },
       });
@@ -140,16 +137,37 @@ Deno.serve(async (req) => {
       const engineStatus = await statusRes.json();
 
       if (engineStatus.status === "completed" && engineStatus.url) {
-        // Merge stored preferences (e.g. format_for_chapterize) with engine-returned metadata
+        // Guard: already processed — return cached data without re-running anything
+        if (job.status === "completed") {
+          return json({
+            status: "completed",
+            url: job.pdf_url || engineStatus.url,
+            word_count: job.word_count || 0,
+            metadata: job.metadata || null,
+          });
+        }
+
         const storedMeta = (job.metadata as Record<string, unknown>) || {};
         const mergedMetadata = { ...storedMeta, ...(engineStatus.metadata || {}) };
         const formatForChapterize = !!storedMeta.format_for_chapterize;
 
-        // Update video_jobs — persist transcript + title for on-demand PDF, merge metadata
+        // Step 1: Format transcript first, before saving anything
+        let finalTranscript = (engineStatus.transcript as string) || "";
+        let formattedSuccessfully = false;
+        if (formatForChapterize && finalTranscript) {
+          try {
+            finalTranscript = await formatTranscriptForChapterization(supabase, user.id, finalTranscript);
+            formattedSuccessfully = true;
+          } catch (e) {
+            console.error("Transcript formatting failed, using raw:", e);
+          }
+        }
+
+        // Step 2: Persist to video_jobs with formatted transcript + merged metadata
         await supabase.from("video_jobs").update({
           status: "completed",
           pdf_url: engineStatus.url,
-          transcript: engineStatus.transcript || null,
+          transcript: finalTranscript || null,
           title: (engineStatus.metadata && engineStatus.metadata.title) || null,
           metadata: mergedMetadata,
           word_count: engineStatus.word_count || 0,
@@ -157,60 +175,49 @@ Deno.serve(async (req) => {
           updated_at: new Date().toISOString(),
         }).eq("id", jobId);
 
-        // Auto-save to wiki library — deduped by source_url
-        const { data: existing } = await supabase
-          .from("wiki_entries")
-          .select("id")
-          .eq("user_id", user.id)
-          .eq("source_url", job.video_url)
-          .maybeSingle();
+        const meta = engineStatus.metadata || {};
+        const docTitle = (meta.title as string) || (job.video_url as string) || "Video Transcript";
+        const channel = (meta.channel as string) || "Unknown";
+        const durationSecs = meta.duration_seconds as number | undefined;
+        const duration = durationSecs
+          ? `${Math.floor(durationSecs / 60)}m ${Math.round(durationSecs % 60)}s`
+          : "";
 
-        if (!existing && engineStatus.transcript) {
-          const meta = engineStatus.metadata || {};
-          const title = meta.title || job.video_url;
-          const channel = meta.channel || "Unknown";
-          const duration = meta.duration_seconds
-            ? `${Math.floor(meta.duration_seconds / 60)}m ${Math.round(meta.duration_seconds % 60)}s`
-            : "";
+        // Step 3: Auto-save to wiki (deduped by source_url)
+        if (finalTranscript) {
+          const { data: existingWiki } = await supabase
+            .from("wiki_entries")
+            .select("id")
+            .eq("user_id", user.id)
+            .eq("source_url", job.video_url)
+            .maybeSingle();
 
-          // Optionally format the transcript for easier chapterization
-          let finalTranscript = engineStatus.transcript;
-          let formattedSuccessfully = false;
-          if (formatForChapterize) {
-            try {
-              finalTranscript = await formatTranscriptForChapterization(supabase, user.id, engineStatus.transcript);
-              formattedSuccessfully = true;
-            } catch (e) {
-              console.error("Transcript formatting failed, using raw:", e);
-            }
+          if (!existingWiki) {
+            const pdfLink = engineStatus.url
+              ? `**[Download Transcript](${engineStatus.url})**\n\n---\n\n`
+              : "";
+            const tags = formattedSuccessfully
+              ? ["video", "transcript", "chapterized"]
+              : ["video", "transcript"];
+
+            await supabase.from("wiki_entries").insert({
+              user_id: user.id,
+              title: docTitle,
+              content: pdfLink + finalTranscript,
+              summary: `Video transcript — ${channel}${duration ? ` · ${duration}` : ""}`,
+              subject: "Video Transcript",
+              kind: "video",
+              maturity: "note",
+              tags,
+              source_url: job.video_url,
+            });
           }
-
-          const pdfLink = engineStatus.url
-            ? `**[Download Transcript PDF](${engineStatus.url})**\n\n---\n\n`
-            : "";
-          const content = pdfLink + finalTranscript;
-          const summary = `Video transcript — ${channel}${duration ? ` · ${duration}` : ""}`;
-          const tags = formattedSuccessfully
-            ? ["video", "transcript", "chapterized"]
-            : ["video", "transcript"];
-
-          await supabase.from("wiki_entries").insert({
-            user_id: user.id,
-            title: title,
-            content: content,
-            summary: summary,
-            subject: "Video Transcript",
-            kind: "video",
-            maturity: "note",
-            tags,
-            source_url: job.video_url,
-          });
         }
 
-        // Auto-save PDF to user's PDF library (books table + book-pdfs bucket)
-        if (engineStatus.transcript) {
+        // Step 4: Auto-save HTML book to library (deduped by file_name)
+        if (finalTranscript) {
           try {
-            const fileName = `video-${jobId}.pdf`;
+            const fileName = `video-${jobId}.html`;
             const { data: existingBook } = await supabase
               .from("books")
               .select("id")
@@ -219,34 +226,48 @@ Deno.serve(async (req) => {
               .maybeSingle();
 
             if (!existingBook) {
-              const meta = engineStatus.metadata || {};
-              const title = meta.title || job.video_url || "Video transcript";
-              const { bytes, pageCount } = await buildPdf(title, engineStatus.transcript);
+              const htmlContent = buildHtml(docTitle, finalTranscript);
+              const htmlBytes = new TextEncoder().encode(htmlContent);
               const bookId = crypto.randomUUID();
-              const path = `${user.id}/${bookId}.pdf`;
+              const storagePath = `${user.id}/${bookId}.html`;
 
               const { error: upErr } = await supabase.storage
                 .from("book-pdfs")
-                .upload(path, bytes, { contentType: "application/pdf", upsert: true });
+                .upload(storagePath, htmlBytes, { contentType: "text/html; charset=utf-8", upsert: true });
 
               if (upErr) {
-                console.error("library upload failed:", upErr);
+                console.error("HTML library upload failed:", upErr);
               } else {
-                const { error: insErr } = await supabase.from("books").insert({
-                  id: bookId,
-                  user_id: user.id,
-                  title,
-                  file_name: fileName,
-                  page_count: pageCount,
-                });
+                const { data: bookRow, error: insErr } = await supabase
+                  .from("books")
+                  .insert({ id: bookId, user_id: user.id, title: docTitle, file_name: fileName, page_count: 0 })
+                  .select("id")
+                  .single();
+
                 if (insErr) {
-                  console.error("library insert failed:", insErr);
-                  await supabase.storage.from("book-pdfs").remove([path]);
+                  console.error("HTML library insert failed:", insErr);
+                  await supabase.storage.from("book-pdfs").remove([storagePath]);
+                } else if (bookRow) {
+                  // Auto-create chapters from <h2> headings
+                  const sections = extractHtmlSections(htmlContent);
+                  await Promise.all(
+                    sections.map((section, i) =>
+                      supabase.from("chapters").insert({
+                        id: crypto.randomUUID(),
+                        book_id: bookRow.id,
+                        user_id: user.id,
+                        name: section.title,
+                        start_page: i + 1,
+                        end_page: i + 1,
+                        text_content: section.textContent,
+                      })
+                    )
+                  );
                 }
               }
             }
           } catch (libErr) {
-            console.error("library auto-save error:", libErr);
+            console.error("HTML library auto-save error:", libErr);
           }
         }
       } else if (engineStatus.status === "failed") {
@@ -266,6 +287,8 @@ Deno.serve(async (req) => {
     return json({ error: e instanceof Error ? e.message : "Unknown error" }, 500);
   }
 });
+
+// ── Transcript formatting ────────────────────────────────────────────────────
 
 async function formatTranscriptForChapterization(
   supabase: ReturnType<typeof createClient>,
@@ -305,10 +328,7 @@ Output format:
       model: llm.model,
       messages: [
         { role: "system", content: systemPrompt },
-        {
-          role: "user",
-          content: `Format this video transcript for chapterization:\n\n${transcript}`,
-        },
+        { role: "user", content: `Format this video transcript for chapterization:\n\n${transcript}` },
       ],
       max_tokens: 12000,
       temperature: 0.2,
@@ -326,74 +346,147 @@ Output format:
   return formatted;
 }
 
+// ── HTML generation ──────────────────────────────────────────────────────────
+
+function buildHtml(title: string, transcript: string): string {
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  type Section = { id: string; title: string; rawLines: string[] };
+  const lines = transcript.split(/\r?\n/);
+  const sections: Section[] = [];
+  let current: Section | null = null;
+  const preambleLines: string[] = [];
+
+  for (const line of lines) {
+    const h2 = line.match(/^##\s+(.+)/);
+    if (h2) {
+      if (current) sections.push(current);
+      current = { id: `section-${sections.length + 1}`, title: h2[1].trim(), rawLines: [] };
+    } else if (current) {
+      current.rawLines.push(line);
+    } else {
+      preambleLines.push(line);
+    }
+  }
+  if (current) sections.push(current);
+
+  const isTocSection = (s: Section) => /^table of contents/i.test(s.title);
+  const contentSections = sections.filter((s) => !isTocSection(s));
+
+  let tocHtml = "";
+  if (contentSections.length > 1) {
+    const items = contentSections
+      .map((s) => `      <li><a href="#${s.id}">${esc(s.title)}</a></li>`)
+      .join("\n");
+    tocHtml = `<nav class="toc">\n    <p class="toc-label">Contents</p>\n    <ol>\n${items}\n    </ol>\n  </nav>`;
+  }
+
+  const sectionsHtml = contentSections
+    .map(
+      (s) =>
+        `<section id="${s.id}">\n    <h2>${esc(s.title)}</h2>\n    ${linesToBodyHtml(s.rawLines)}\n  </section>`,
+    )
+    .join("\n\n  ");
+
+  const preambleHtml = preambleLines.length > 0 ? linesToBodyHtml(preambleLines) : "";
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${esc(title)}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-size: 16px;
+      line-height: 1.75;
+      color: #1c1c1e;
+      background: #f9f9f7;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem 5rem;
+    }
+    @media (prefers-color-scheme: dark) {
+      body { background: #111; color: #e8e8e0; }
+      a { color: #7eb8f7; }
+      .toc { background: #1c1c1e; border-color: #2c2c2e; }
+      h2 { border-color: #2c2c2e; }
+      hr { border-color: #2c2c2e; }
+    }
+    h1 { font-size: 2rem; font-weight: 700; line-height: 1.2; margin-bottom: 1.5rem; }
+    h2 { font-size: 1.25rem; font-weight: 700; margin-top: 0; padding-bottom: 0.4rem; border-bottom: 1px solid #e5e5e3; }
+    p { margin: 0.8rem 0; }
+    a { color: #2563eb; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    hr { border: none; border-top: 1px solid #e5e5e3; margin: 2rem 0; }
+    section { margin-top: 2.5rem; }
+    .toc { background: #f3f3f1; border: 1px solid #e5e5e3; border-radius: 10px; padding: 1.2rem 1.5rem; margin: 1.5rem 0 2rem; }
+    .toc-label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #888; margin-bottom: 0.6rem; }
+    .toc ol { padding-left: 1.2rem; }
+    .toc li { margin: 0.3rem 0; font-size: 0.95rem; }
+  </style>
+</head>
+<body>
+  <h1>${esc(title)}</h1>
+  ${tocHtml}
+  ${preambleHtml}
+  ${sectionsHtml}
+</body>
+</html>`;
+}
+
+function linesToBodyHtml(lines: string[]): string {
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const applyInline = (s: string) =>
+    esc(s)
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*(.+?)\*/g, "<em>$1</em>");
+
+  const paras: string[] = [];
+  let buf: string[] = [];
+
+  const flush = () => {
+    if (buf.length === 0) return;
+    paras.push(`<p>${applyInline(buf.join(" "))}</p>`);
+    buf = [];
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed === "") {
+      flush();
+    } else if (trimmed === "---") {
+      flush();
+      paras.push("<hr>");
+    } else {
+      buf.push(trimmed);
+    }
+  }
+  flush();
+  return paras.join("\n    ");
+}
+
+function extractHtmlSections(html: string): Array<{ title: string; textContent: string }> {
+  const sections: Array<{ title: string; textContent: string }> = [];
+  const re = /<section[^>]*>\s*<h2[^>]*>([\s\S]*?)<\/h2>([\s\S]*?)<\/section>/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const title = m[1].replace(/<[^>]+>/g, "").trim();
+    const body = m[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    if (title) sections.push({ title, textContent: body });
+  }
+  return sections;
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
 function json(b: unknown, status = 200) {
   return new Response(JSON.stringify(b), {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
-}
-
-// Generate a simple multi-page PDF from a title + transcript text.
-async function buildPdf(title: string, transcript: string): Promise<{ bytes: Uint8Array; pageCount: number }> {
-  // Strip characters WinAnsi can't encode (pdf-lib StandardFonts limitation)
-  const sanitize = (s: string) =>
-    s.replace(/['']/g, "'")
-     .replace(/[""]/g, '"')
-     .replace(/[–—]/g, "-")
-     .replace(/…/g, "...")
-     .replace(/[^\x09\x0A\x0D\x20-\x7E\xA0-\xFF]/g, "");
-
-  const doc = await PDFDocument.create();
-  const font = await doc.embedFont(StandardFonts.Helvetica);
-  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
-
-  const pageW = 595.28, pageH = 841.89; // A4
-  const margin = 50;
-  const maxW = pageW - margin * 2;
-  const bodySize = 11;
-  const lineH = 15;
-
-  const wrap = (text: string, size: number, f = font): string[] => {
-    const out: string[] = [];
-    for (const para of text.split(/\r?\n/)) {
-      if (!para) { out.push(""); continue; }
-      const words = para.split(/\s+/);
-      let line = "";
-      for (const w of words) {
-        const test = line ? line + " " + w : w;
-        if (f.widthOfTextAtSize(test, size) > maxW && line) {
-          out.push(line);
-          line = w;
-        } else {
-          line = test;
-        }
-      }
-      if (line) out.push(line);
-    }
-    return out;
-  };
-
-  let page = doc.addPage([pageW, pageH]);
-  let y = pageH - margin;
-
-  // Title
-  const titleLines = wrap(sanitize(title), 16, bold);
-  for (const l of titleLines) {
-    page.drawText(l, { x: margin, y: y - 16, size: 16, font: bold, color: rgb(0.1, 0.1, 0.1) });
-    y -= 20;
-  }
-  y -= 10;
-
-  const lines = wrap(sanitize(transcript), bodySize);
-  for (const line of lines) {
-    if (y - lineH < margin) {
-      page = doc.addPage([pageW, pageH]);
-      y = pageH - margin;
-    }
-    page.drawText(line, { x: margin, y: y - bodySize, size: bodySize, font, color: rgb(0.15, 0.15, 0.15) });
-    y -= lineH;
-  }
-
-  const bytes = await doc.save();
-  return { bytes, pageCount: doc.getPageCount() };
 }

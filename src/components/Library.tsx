@@ -14,7 +14,7 @@ type UploadState = {
   error?: string;
 };
 
-const SUPPORTED_UPLOAD_EXTENSIONS = ["pdf", "doc", "docx", "txt", "rtf", "odt", "epub"] as const;
+const SUPPORTED_UPLOAD_EXTENSIONS = ["pdf", "doc", "docx", "txt", "rtf", "odt", "epub", "html"] as const;
 const MAX_UPLOAD_ATTEMPTS = 3;
 const MAX_CONCURRENT_UPLOADS = 3;
 
@@ -305,7 +305,7 @@ const Library: React.FC = () => {
           <h3 className="text-xl font-headline font-bold text-primary mb-1">
             {isUploading ? "Uploading…" : "Drop PDF or EPUB"}
           </h3>
-          <p className="text-on-surface-variant text-sm mb-6">Max file size 50MB. Supports PDF, EPUB, DOC, TXT.</p>
+          <p className="text-on-surface-variant text-sm mb-6">Max file size 50MB. Supports PDF, EPUB, HTML, DOC, TXT.</p>
           <button
             className="px-8 py-3 bg-primary-container text-on-primary-container font-bold rounded-xl active:scale-95 transition-transform"
             onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
@@ -317,7 +317,7 @@ const Library: React.FC = () => {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".pdf,.doc,.docx,.txt,.rtf,.odt,.epub"
+          accept=".pdf,.doc,.docx,.txt,.rtf,.odt,.epub,.html"
           multiple
           onChange={handleFileUpload}
           className="hidden"
@@ -359,7 +359,12 @@ const BookCard: React.FC<{
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(book.title);
   const isPdf = book.fileName.toLowerCase().endsWith(".pdf");
-  const metadataText = isPdf ? `${book.pageCount} pages · ${book.chapters.length} chapters · PDF` : "Document file";
+  const isHtml = book.fileName.toLowerCase().endsWith(".html");
+  const metadataText = isPdf
+    ? `${book.pageCount} pages · ${book.chapters.length} chapters · PDF`
+    : isHtml
+    ? `${book.chapters.length > 0 ? `${book.chapters.length} sections · ` : ""}HTML`
+    : "Document file";
 
   // Warm gradient hues
   const hues = [35, 25, 40, 15, 45, 20];
@@ -385,7 +390,7 @@ const BookCard: React.FC<{
           <img src={book.coverImageUrl} alt={book.title} className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
         ) : (
           <span className="material-symbols-outlined text-5xl text-primary/30">
-            {isPdf ? "auto_stories" : "description"}
+            {isPdf ? "auto_stories" : isHtml ? "article" : "description"}
           </span>
         )}
         <div data-book-cover-overlay className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-60" />
