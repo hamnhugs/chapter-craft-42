@@ -535,20 +535,77 @@ const WikiPanel: React.FC = () => {
                 <span>{lintResult.stats.total_relationships} links</span>
                 <span>{lintResult.stats.orphan_count} orphans</span>
               </div>
+              <div className="mt-4">
+                <Button size="sm" variant="outline" onClick={handleLint} disabled={lintLoading}>
+                  {lintLoading ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <span className="material-symbols-outlined text-sm mr-1">refresh</span>}
+                  Re-run
+                </Button>
+              </div>
             </div>
 
             {lintResult.issues.length > 0 && (
               <div className="space-y-3">
                 <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface-variant">Issues ({lintResult.issues.length})</h3>
-                {lintResult.issues.map((issue, i) => (
-                  <div key={i} className={`flex items-start gap-4 p-4 rounded-xl ${issue.severity === "high" ? "bg-error-container/20 border-l-4 border-destructive" : "bg-surface-container-highest/50"}`}>
-                    <span className="material-symbols-outlined text-destructive">warning</span>
-                    <div>
-                      <p className="text-sm font-bold text-foreground">{issue.description}</p>
-                      {issue.suggested_fix && <p className="text-xs text-on-surface-variant mt-1">💡 {issue.suggested_fix}</p>}
+                {lintResult.issues.map((issue, i) => {
+                  const affected = (issue.affected_entries || []).flatMap((title) => {
+                    const e = entries.find(
+                      (en) =>
+                        en.title.toLowerCase() === title.toLowerCase() ||
+                        en.title.toLowerCase().includes(title.toLowerCase()) ||
+                        title.toLowerCase().includes(en.title.toLowerCase()),
+                    );
+                    return e ? [e] : [];
+                  });
+                  return (
+                    <div key={i} className={`p-4 rounded-xl ${issue.severity === "high" ? "bg-error-container/20 border-l-4 border-destructive" : "bg-surface-container-highest/50"}`}>
+                      <div className="flex items-start gap-3">
+                        <span className="material-symbols-outlined text-destructive mt-0.5">warning</span>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <Badge variant="outline" className="text-[10px] uppercase">{issue.type.replace("_", " ")}</Badge>
+                            <span className={`text-[10px] font-bold uppercase ${issue.severity === "high" ? "text-destructive" : "text-on-surface-variant"}`}>{issue.severity}</span>
+                          </div>
+                          <p className="text-sm font-bold text-foreground">{issue.description}</p>
+                          {issue.suggested_fix && <p className="text-xs text-on-surface-variant mt-1">💡 {issue.suggested_fix}</p>}
+                          {affected.length > 0 && (
+                            <div className="flex flex-wrap gap-2 mt-3">
+                              {affected.map((entry) => (
+                                <button
+                                  key={entry.id}
+                                  onClick={() => openDetail(entry)}
+                                  className="text-xs px-2.5 py-1.5 bg-surface-container-high rounded-lg border border-outline-variant/20 hover:bg-surface-container-highest transition-all flex items-center gap-1.5 font-medium"
+                                >
+                                  <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>open_in_new</span>
+                                  {entry.title}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          <div className="flex gap-2 mt-3 flex-wrap">
+                            {issue.type === "orphan" && (
+                              <Button size="sm" variant="outline" onClick={handleSleepCycle} disabled={sleepCycleRunning}>
+                                {sleepCycleRunning ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <span className="material-symbols-outlined text-sm mr-1">bedtime</span>}
+                                Fix: Sleep Cycle
+                              </Button>
+                            )}
+                            {issue.type === "duplicate" && affected.length >= 2 && (
+                              <Button size="sm" variant="destructive" onClick={() => handleDelete(affected[affected.length - 1].id)}>
+                                <span className="material-symbols-outlined text-sm mr-1">delete</span>
+                                Delete Duplicate
+                              </Button>
+                            )}
+                            {issue.type === "stale" && affected.map((entry) => (
+                              <Button key={entry.id} size="sm" variant="destructive" onClick={() => handleDelete(entry.id)}>
+                                <span className="material-symbols-outlined text-sm mr-1">delete</span>
+                                Delete "{entry.title}"
+                              </Button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
@@ -557,8 +614,18 @@ const WikiPanel: React.FC = () => {
                 <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface-variant">Suggestions ({lintResult.suggestions.length})</h3>
                 {lintResult.suggestions.map((s, i) => (
                   <div key={i} className="p-4 rounded-xl bg-surface-container-high border border-outline-variant/10">
-                    <Badge variant="secondary" className="text-xs mb-2">{s.priority}</Badge>
-                    <p className="text-sm text-foreground">{s.description}</p>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1">
+                        <Badge variant="secondary" className="text-xs mb-2">{s.priority}</Badge>
+                        <p className="text-sm text-foreground">{s.description}</p>
+                      </div>
+                      {(s.type === "add_relationship" || s.type === "merge_entries") && (
+                        <Button size="sm" variant="outline" onClick={handleSleepCycle} disabled={sleepCycleRunning} className="shrink-0">
+                          {sleepCycleRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <span className="material-symbols-outlined text-sm">bedtime</span>}
+                          Sleep Cycle
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
