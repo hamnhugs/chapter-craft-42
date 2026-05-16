@@ -73,8 +73,21 @@ const ChatPanel: React.FC = () => {
     <div className="flex flex-col h-full">
       {/* Settings bar */}
       {showSettings && (
-        <div className="border-b border-outline-variant/10 bg-surface-container-low px-4 py-4 space-y-4">
-          <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-4 rounded-xl bg-surface-container-low">
+        <div
+          className="border-b border-outline-variant/10 bg-surface-container-low px-4 py-3 md:py-4 space-y-4 max-h-[60vh] md:max-h-none overflow-y-auto md:overflow-visible overscroll-contain"
+          style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 0.75rem)" }}
+        >
+          <div className="sticky top-0 -mx-4 -mt-3 px-4 py-2 bg-surface-container-low/95 backdrop-blur-sm flex items-center justify-between z-10 md:hidden">
+            <span className="text-xs font-semibold uppercase tracking-widest text-on-surface-variant">Settings</span>
+            <button
+              onClick={() => setShowSettings(false)}
+              aria-label="Close settings"
+              className="inline-flex items-center justify-center h-8 w-8 rounded-lg text-on-surface-variant hover:bg-surface-container-high active:scale-95 transition-all"
+            >
+              <span className="material-symbols-outlined text-[20px]">close</span>
+            </button>
+          </div>
+          <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-3 md:p-4 rounded-xl bg-surface-container-low">
             <div className="flex flex-col gap-1.5">
               <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">OpenRouter API Key</label>
               <div className="relative">
@@ -121,7 +134,7 @@ const ChatPanel: React.FC = () => {
               </div>
             </div>
           </section>
-          <section className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-4 rounded-xl bg-surface-container-low">
+          <section className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-3 md:p-4 rounded-xl bg-surface-container-low">
             <div className="flex flex-col gap-1.5">
               <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
                 <span className="material-symbols-outlined text-xs align-middle mr-1">science</span>Deep Research Model
