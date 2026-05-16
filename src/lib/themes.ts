@@ -1,0 +1,165 @@
+// Theme registry. Each theme defines HSL token overrides applied to :root
+// via the ThemeProvider, plus optional fonts loaded from Google Fonts.
+
+export type ThemeId = "amber-editorial" | "dexters-lab" | "fruit-stripe";
+
+export interface ThemeDef {
+  id: ThemeId;
+  name: string;
+  description: string;
+  swatch: [string, string, string]; // 3 hex preview colors for the dropdown
+  fonts?: {
+    headline: string; // CSS font-family value
+    body: string;
+    googleFontsHref?: string; // <link href=...> to load
+  };
+  // HSL strings (e.g. "38 100% 83%") for CSS variables
+  tokens: Record<string, string>;
+}
+
+export const THEMES: ThemeDef[] = [
+  {
+    id: "amber-editorial",
+    name: "Amber Editorial",
+    description: "Warm cream & amber on charcoal. Default reading aesthetic.",
+    swatch: ["#131313", "#ffe2ab", "#ffb800"],
+    fonts: {
+      headline: "'Newsreader', Georgia, serif",
+      body: "'Inter', system-ui, sans-serif",
+      googleFontsHref:
+        "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;0,6..72,800;1,6..72,400;1,6..72,600;1,6..72,700&display=swap",
+    },
+    tokens: {
+      "--background": "0 0% 7.5%",
+      "--foreground": "20 4% 89%",
+      "--card": "0 0% 16.5%",
+      "--card-foreground": "20 4% 89%",
+      "--popover": "0 0% 12.5%",
+      "--popover-foreground": "20 4% 89%",
+      "--primary": "38 100% 83%",
+      "--primary-foreground": "30 100% 13%",
+      "--secondary": "58 22% 71%",
+      "--secondary-foreground": "60 33% 8%",
+      "--muted": "0 0% 16.5%",
+      "--muted-foreground": "36 18% 67%",
+      "--accent": "43 100% 50%",
+      "--accent-foreground": "30 100% 13%",
+      "--destructive": "6 75% 84%",
+      "--destructive-foreground": "0 100% 2%",
+      "--border": "30 15% 20%",
+      "--input": "0 0% 16.5%",
+      "--ring": "43 100% 50%",
+      "--surface-container-lowest": "0 0% 5.5%",
+      "--surface-container-low": "0 0% 11%",
+      "--surface-container": "0 0% 12.5%",
+      "--surface-container-high": "0 0% 16.5%",
+      "--surface-container-highest": "0 0% 20.8%",
+      "--outline": "30 15% 54%",
+      "--outline-variant": "30 20% 25.5%",
+      "--on-surface-variant": "36 18% 74%",
+      "--primary-container": "43 100% 50%",
+      "--on-primary-container": "30 100% 21.5%",
+      "--viewer-bg": "0 0% 7.5%",
+      "--toolbar-bg": "0 0% 11%",
+      "--book-spine": "43 100% 50%",
+    },
+  },
+  {
+    id: "dexters-lab",
+    name: "Dexter's Laboratory",
+    description: "Burnt red lab walls, neon orange & CRT teal. Bungee headlines.",
+    swatch: ["#4a1a14", "#f76a2b", "#62c7d3"],
+    fonts: {
+      headline: "'Bungee', 'Space Grotesk', sans-serif",
+      body: "'Space Grotesk', system-ui, sans-serif",
+      googleFontsHref:
+        "https://fonts.googleapis.com/css2?family=Bungee&family=Space+Grotesk:wght@300;400;500;600;700&display=swap",
+    },
+    tokens: {
+      "--background": "0 55% 12%",
+      "--foreground": "40 30% 92%",
+      "--card": "15 18% 16%",
+      "--card-foreground": "40 30% 92%",
+      "--popover": "15 18% 14%",
+      "--popover-foreground": "40 30% 92%",
+      "--primary": "15 95% 55%",
+      "--primary-foreground": "0 0% 100%",
+      "--secondary": "188 55% 64%",
+      "--secondary-foreground": "0 55% 12%",
+      "--muted": "15 18% 20%",
+      "--muted-foreground": "40 18% 70%",
+      "--accent": "15 95% 55%",
+      "--accent-foreground": "0 0% 100%",
+      "--destructive": "0 80% 55%",
+      "--destructive-foreground": "0 0% 100%",
+      "--border": "15 18% 24%",
+      "--input": "15 18% 18%",
+      "--ring": "15 95% 55%",
+      "--surface-container-lowest": "0 55% 8%",
+      "--surface-container-low": "15 18% 14%",
+      "--surface-container": "15 18% 16%",
+      "--surface-container-high": "15 18% 20%",
+      "--surface-container-highest": "15 18% 24%",
+      "--outline": "15 18% 40%",
+      "--outline-variant": "15 18% 28%",
+      "--on-surface-variant": "40 18% 78%",
+      "--primary-container": "15 95% 55%",
+      "--on-primary-container": "0 0% 100%",
+      "--viewer-bg": "0 55% 12%",
+      "--toolbar-bg": "15 18% 14%",
+      "--book-spine": "15 95% 55%",
+    },
+  },
+  {
+    id: "fruit-stripe",
+    name: "Fruit Stripe",
+    description: "Paper white & ink black, mid-century rainbow accents.",
+    swatch: ["#FBFAF6", "#E63946", "#FFD23F"],
+    fonts: {
+      headline: "'DM Serif Display', Georgia, serif",
+      body: "'Inter', system-ui, sans-serif",
+      googleFontsHref:
+        "https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap",
+    },
+    tokens: {
+      "--background": "45 35% 98%",
+      "--foreground": "0 0% 7%",
+      "--card": "0 0% 100%",
+      "--card-foreground": "0 0% 7%",
+      "--popover": "0 0% 100%",
+      "--popover-foreground": "0 0% 7%",
+      "--primary": "354 78% 56%",
+      "--primary-foreground": "0 0% 100%",
+      "--secondary": "45 35% 92%",
+      "--secondary-foreground": "0 0% 7%",
+      "--muted": "45 25% 94%",
+      "--muted-foreground": "0 0% 35%",
+      "--accent": "48 100% 62%",
+      "--accent-foreground": "0 0% 7%",
+      "--destructive": "354 78% 56%",
+      "--destructive-foreground": "0 0% 100%",
+      "--border": "0 0% 7%",
+      "--input": "0 0% 100%",
+      "--ring": "354 78% 56%",
+      "--surface-container-lowest": "0 0% 100%",
+      "--surface-container-low": "45 35% 98%",
+      "--surface-container": "45 35% 96%",
+      "--surface-container-high": "45 35% 92%",
+      "--surface-container-highest": "45 25% 88%",
+      "--outline": "0 0% 7%",
+      "--outline-variant": "0 0% 60%",
+      "--on-surface-variant": "0 0% 25%",
+      "--primary-container": "354 78% 56%",
+      "--on-primary-container": "0 0% 100%",
+      "--viewer-bg": "45 35% 98%",
+      "--toolbar-bg": "0 0% 100%",
+      "--book-spine": "354 78% 56%",
+    },
+  },
+];
+
+export const DEFAULT_THEME: ThemeId = "amber-editorial";
+
+export function getTheme(id: ThemeId): ThemeDef {
+  return THEMES.find((t) => t.id === id) ?? THEMES[0];
+}
