@@ -59,6 +59,9 @@ const AutoChapterize: React.FC = () => {
   const [toPage, setToPage] = useState<number | "">("");
   const [granularity, setGranularity] = useState<"top" | "all">("top");
   const [minPages, setMinPages] = useState<number>(2);
+  // Tiny-papers options
+  const [pagesPerChapter, setPagesPerChapter] = useState<number>(1);
+  const [tinyPrefix, setTinyPrefix] = useState<string>("Paper");
 
   useEffect(() => {
     if (loaded && selectedModel) setModel(selectedModel);
