@@ -491,6 +491,18 @@ const VoiceChat: React.FC = () => {
                 </div>
               </div>
               <div className="flex flex-col gap-1.5 min-w-0">
+                <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Burplexity API Token <span className="text-on-surface-variant/60 normal-case tracking-normal">(web search)</span></label>
+                <div className="relative">
+                  <input className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 pr-10 focus:ring-1 focus:ring-primary/40" type="password" placeholder="pp_..." defaultValue={burplexityApiToken} id="voice-burplexity-input" onKeyDown={(e) => { if (e.key === "Enter") { setBurplexityApiToken((e.target as HTMLInputElement).value); toast.success("Burplexity token saved"); } }} />
+                  <span className="material-symbols-outlined absolute right-3 top-2.5 text-on-surface-variant text-sm">travel_explore</span>
+                </div>
+                <div className="flex gap-2 mt-1">
+                  <Button size="sm" onClick={() => { const el = document.getElementById("voice-burplexity-input") as HTMLInputElement; setBurplexityApiToken(el?.value || ""); toast.success(el?.value ? "Burplexity token saved" : "Burplexity token removed"); }}>Save</Button>
+                  {burplexityApiToken && <Button size="sm" variant="destructive" onClick={() => setBurplexityApiToken("")}>Remove</Button>}
+                </div>
+                <p className="text-[10px] text-on-surface-variant px-1">Enables the live <code>web_search</code> tool used by the assistant.</p>
+              </div>
+              <div className="flex flex-col gap-1.5 min-w-0">
                 <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Model</label>
                 <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40">
                   {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
