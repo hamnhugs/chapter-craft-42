@@ -478,7 +478,97 @@ const AutoChapterize: React.FC = () => {
     }
   };
 
-  const run = () => (mode === "toc" ? runToc() : runPaper());
+  const runTiny = async () => {
+    if (!book) return;
+    setError(null);
+    setDetected([]);
+
+    try {
+      setPhase("loading-pdf");
+      setProgress("Loading book…");
+      const fileUrl = await loadBookFile(book.id);
+      if (!fileUrl) throw new Error("Could not load this book's file from storage.");
+      const pdf = await pdfjsLib.getDocument({ url: fileUrl }).promise;
+      const totalPages = pdf.numPages;
+
+      const startP = Math.max(1, typeof fromPage === "number" ? fromPage : 1);
+      const endP = Math.min(totalPages, typeof toPage === "number" ? toPage : totalPages);
+      if (endP < startP) throw new Error("To-page must be ≥ From-page.");
+
+      const step = Math.max(1, Math.min(5, pagesPerChapter || 1));
+      const prefix = (tinyPrefix || "Paper").trim() || "Paper";
+
+      setPhase("detecting");
+      const rows: Detected[] = [];
+      let idx = 0;
+      for (let p = startP; p <= endP; p += step) {
+        idx += 1;
+        const chunkEnd = Math.min(endP, p + step - 1);
+        setProgress(`Reading page ${p}/${endP}…`);
+
+        let title = "";
+        try {
+          const page = await pdf.getPage(p);
+          const tc = await page.getTextContent();
+          // Reconstruct lines using y-position
+          const items = (tc.items as any[])
+            .filter((it) => typeof it.str === "string" && it.str.trim().length > 0)
+            .map((it) => ({ str: it.str.trim(), y: it.transform?.[5] ?? 0 }));
+          items.sort((a, b) => b.y - a.y);
+          const grouped: string[] = [];
+          let currentY: number | null = null;
+          let currentLine: string[] = [];
+          for (const it of items) {
+            if (currentY === null || Math.abs(it.y - currentY) < 3) {
+              currentLine.push(it.str);
+              currentY = currentY ?? it.y;
+            } else {
+              if (currentLine.length) grouped.push(currentLine.join(" "));
+              currentLine = [it.str];
+              currentY = it.y;
+            }
+          }
+          if (currentLine.length) grouped.push(currentLine.join(" "));
+
+          for (const raw of grouped) {
+            const line = raw.replace(/\s+/g, " ").trim();
+            if (line.length < 4) continue;
+            if (/^\d+$/.test(line)) continue; // page number
+            if (/^page\s+\d+/i.test(line)) continue;
+            title = line.slice(0, 120);
+            break;
+          }
+        } catch {
+          // ignore page extraction failures
+        }
+
+        if (!title) title = `${prefix} ${idx} (p. ${p})`;
+
+        rows.push({
+          title,
+          startPage: p,
+          endPage: chunkEnd,
+          source: "tiny",
+          selected: true,
+        });
+      }
+
+      if (rows.length === 0) throw new Error("No pages in the chosen range.");
+
+      setDetected(rows);
+      setPhase("preview");
+      setProgress("");
+      toast.success(`Detected ${rows.length} tiny paper${rows.length === 1 ? "" : "s"}`);
+    } catch (e: any) {
+      console.error(e);
+      setError(e?.message || "Detection failed");
+      setPhase("idle");
+      setProgress("");
+      toast.error(e?.message || "Detection failed");
+    }
+  };
+
+  const run = () => (mode === "toc" ? runToc() : mode === "paper" ? runPaper() : runTiny());
 
   const updateRow = (i: number, patch: Partial<Detected>) => {
     setDetected((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
