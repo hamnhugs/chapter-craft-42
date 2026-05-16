@@ -15,6 +15,7 @@ import { speak, stopSpeaking, subscribeSpeaking, getSpeakingId } from "@/lib/spe
 import { isEmbeddingModel } from "@/lib/utils";
 import { useDictation } from "@/hooks/useDictation";
 import PromptLibrary from "@/components/PromptLibrary";
+import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL } from "@/lib/chatTools";
 
 const ChatPanel: React.FC = () => {
   const { books, activeBookId } = useApp();
@@ -22,11 +23,13 @@ const ChatPanel: React.FC = () => {
     apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, autoReadReplies, customSystemPrompt, burplexityApiToken, loaded,
     saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setTtsRate, setAutoReadReplies, setCustomSystemPrompt, setBurplexityApiToken,
   } = useChatSettings();
-  const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, clearChat } = useChat();
+  const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, injectDisplayMessage, clearChat } = useChat();
   const [input, setInput] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [newModelInput, setNewModelInput] = useState("");
   const [extracting, setExtracting] = useState(false);
+  const [deepSearching, setDeepSearching] = useState(false);
+  const [digesting, setDigesting] = useState(false);
   const [speakingId, setSpeakingId] = useState<string | null>(getSpeakingId());
   const [promptDraft, setPromptDraft] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -139,6 +142,48 @@ const ChatPanel: React.FC = () => {
       toast.error(err.message || "Failed to extract knowledge");
     } finally {
       setExtracting(false);
+    }
+  };
+
+  const handleDeepWebSearch = async () => {
+    const query = input.trim();
+    if (!query) { toast.error("Type a query first"); return; }
+    if (!burplexityApiToken) { toast.error("Set your Burplexity token in Settings"); return; }
+    setDeepSearching(true);
+    try {
+      const r = await fetch(BURPLEXITY_BOT_ASK_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": burplexityApiToken },
+        body: JSON.stringify({ query, save_to_wiki: false }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { toast.error(j?.error || "Deep search failed"); return; }
+      let md = `🔬 **Deep Research Results for:** "${query}"\n\n`;
+      if (j.answer) md += `${j.answer}\n\n`;
+      if (Array.isArray(j.citations) && j.citations.length) {
+        md += "**Sources:**\n";
+        j.citations.forEach((c: any, i: number) => {
+          md += `**${i + 1}. ${c.title}**\n${c.url}\n`;
+          if (c.snippet) md += `${c.snippet}\n`;
+          md += "\n";
+        });
+      }
+      injectDisplayMessage(md);
+      setInput("");
+    } finally {
+      setDeepSearching(false);
+    }
+  };
+
+  const handleDigestHistory = async () => {
+    if (messages.length < 2) { toast.error("Nothing to digest yet"); return; }
+    setDigesting(true);
+    try {
+      await sendMessage(
+        "Please give me a concise digest of our conversation so far: key topics covered, any decisions or conclusions reached, important insights, and open questions remaining."
+      );
+    } finally {
+      setDigesting(false);
     }
   };
 
@@ -424,10 +469,30 @@ const ChatPanel: React.FC = () => {
             )}
           </div>
           <div className="flex justify-between items-center px-2">
-            <div className="flex gap-4">
+            <div className="flex gap-4 flex-wrap">
               <button onClick={() => setChatDeepResearch(!chatDeepResearch)} className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${chatDeepResearch ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`}>
                 <span className="material-symbols-outlined text-sm" style={chatDeepResearch ? { fontVariationSettings: "'FILL' 1" } : {}}>science</span> Deep Research {chatDeepResearch ? "ON" : "OFF"}
               </button>
+              {burplexityApiToken && (
+                <button
+                  onClick={handleDeepWebSearch}
+                  disabled={deepSearching || !input.trim() || isLoading}
+                  className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-1 hover:text-primary transition-colors disabled:opacity-40"
+                  title="Run a deep web search with the current input"
+                >
+                  {deepSearching ? <Loader2 className="w-3 h-3 animate-spin" /> : <span className="material-symbols-outlined text-sm">travel_explore</span>} Deep Search
+                </button>
+              )}
+              {messages.length >= 2 && (
+                <button
+                  onClick={handleDigestHistory}
+                  disabled={digesting || isLoading}
+                  className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-1 hover:text-primary transition-colors disabled:opacity-40"
+                  title="Summarize this conversation"
+                >
+                  {digesting ? <Loader2 className="w-3 h-3 animate-spin" /> : <span className="material-symbols-outlined text-sm">summarize</span>} Digest
+                </button>
+              )}
               <button id="chat-settings-toggle" onClick={() => setShowSettings(!showSettings)} className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-1 hover:text-primary transition-colors">
                 <span className="material-symbols-outlined text-sm">tune</span> Settings
               </button>

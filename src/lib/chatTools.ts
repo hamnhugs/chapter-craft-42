@@ -11,7 +11,8 @@ export interface ToolDeps {
   burplexityApiToken?: string;
 }
 
-const BURPLEXITY_BOT_ASK_URL = "https://tmagmbmitnvcwubxcwoc.supabase.co/functions/v1/bot-ask";
+export const BURPLEXITY_BOT_ASK_URL = "https://tmagmbmitnvcwubxcwoc.supabase.co/functions/v1/bot-ask";
+const BURPLEXITY_QUICK_SEARCH_URL = "https://tmagmbmitnvcwubxcwoc.supabase.co/functions/v1/bot-search-quick";
 
 export const CHAT_TOOL_DEFINITIONS = [
   {
@@ -323,5 +324,58 @@ export async function executeChatTool(
       result: { error: e?.message || "Tool failed" },
       event: { name, summary: `${name} failed: ${e?.message || "error"}`, ok: false },
     };
+  }
+}
+
+export async function executeQuickSearch(
+  query: string,
+  token: string
+): Promise<{
+  citations: Array<{ title: string; url: string; snippet: string }>;
+  answer?: string;
+  elapsed_ms?: number;
+  backend?: string;
+  error?: string;
+}> {
+  try {
+    const r = await fetch(BURPLEXITY_QUICK_SEARCH_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": token },
+      body: JSON.stringify({ query, max_results: 8, include_snippets: true }),
+    });
+    if (r.status === 404) {
+      // Fallback to bot-ask with 15 s timeout
+      const controller = new AbortController();
+      const tid = setTimeout(() => controller.abort(), 15000);
+      try {
+        const fb = await fetch(BURPLEXITY_BOT_ASK_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-api-key": token },
+          body: JSON.stringify({ query, save_to_wiki: false }),
+          signal: controller.signal,
+        });
+        clearTimeout(tid);
+        const j = await fb.json().catch(() => ({}));
+        if (!fb.ok) return { citations: [], error: j?.error || `HTTP ${fb.status}` };
+        return {
+          citations: Array.isArray(j.citations) ? j.citations : [],
+          answer: j.answer || "",
+          backend: "bot-ask",
+        };
+      } catch {
+        clearTimeout(tid);
+        return { citations: [], error: "timeout" };
+      }
+    }
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return { citations: [], error: j?.error || `HTTP ${r.status}` };
+    return {
+      citations: Array.isArray(j.citations) ? j.citations : [],
+      answer: j.answer || "",
+      elapsed_ms: j.elapsed_ms,
+      backend: j.backend,
+    };
+  } catch (e: any) {
+    return { citations: [], error: e?.message || "network failure" };
   }
 }

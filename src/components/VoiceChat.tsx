@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useApp } from "@/context/AppContext";
 import { useChat } from "@/context/ChatContext";
+import { executeQuickSearch } from "@/lib/chatTools";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -19,13 +20,18 @@ const LEGACY_OPENROUTER_STORAGE_KEY = "openrouter_api_key";
 const VOICE_ENABLED_KEY = "voice_tts_enabled";
 const HANDS_FREE_KEY = "voice_hands_free";
 const NOTES_PANEL_OPEN_KEY = "voice_notes_panel_open";
+const VOICE_QUICK_SEARCH_KEY = "voice_quick_search";
+const VOICE_QUICK_SEARCH_MODEL_KEY = "voice_quick_search_model";
+
+const SEARCH_INTENT_RE =
+  /\b(search|look up|look for|find|google|what is|what are|who is|who are|tell me about|research|check online|latest|current|news about)\b/i;
 
 const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
 const VoiceChat: React.FC = () => {
   const { books, activeBookId } = useApp();
   const {
-    messages, isLoading, voiceDeepResearch, setVoiceDeepResearch, sendMessage, clearChat,
+    messages, isLoading, voiceDeepResearch, setVoiceDeepResearch, sendMessage, injectDisplayMessage, clearChat,
   } = useChat();
 
   const [isListening, setIsListening] = useState(false);
@@ -33,7 +39,12 @@ const VoiceChat: React.FC = () => {
   const [ttsEnabled, setTtsEnabled] = useState(() => localStorage.getItem(VOICE_ENABLED_KEY) !== "false");
   const [handsFree, setHandsFree] = useState(() => localStorage.getItem(HANDS_FREE_KEY) === "true");
   const [notesPanelOpen, setNotesPanelOpen] = useState(() => localStorage.getItem(NOTES_PANEL_OPEN_KEY) === "true");
+  const [voiceQuickSearch, setVoiceQuickSearch] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_KEY) === "true");
+  const [voiceQuickSearchModel, setVoiceQuickSearchModel] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_MODEL_KEY) || "");
+  const [pendingSearchCount, setPendingSearchCount] = useState(0);
   useEffect(() => { localStorage.setItem(NOTES_PANEL_OPEN_KEY, String(notesPanelOpen)); }, [notesPanelOpen]);
+  useEffect(() => { localStorage.setItem(VOICE_QUICK_SEARCH_KEY, String(voiceQuickSearch)); }, [voiceQuickSearch]);
+  useEffect(() => { localStorage.setItem(VOICE_QUICK_SEARCH_MODEL_KEY, voiceQuickSearchModel); }, [voiceQuickSearchModel]);
   const [selectionCapture, setSelectionCapture] = useState<{ text: string; top: number; left: number } | null>(null);
   
 
@@ -260,6 +271,9 @@ const VoiceChat: React.FC = () => {
     if (!text.trim()) return;
     if (!apiKey) { toast.error("Set your OpenRouter API key first"); setShowSettings(true); return; }
     try {
+      if (voiceQuickSearch && burplexityApiToken && SEARCH_INTENT_RE.test(text)) {
+        runBackgroundSearch(text); // intentionally not awaited
+      }
       // Remember the next assistant message index so we can speak it when it arrives.
       lastSpokenIndexRef.current = messages.length; // assistant will land after the user msg
       const reply = await sendMessage(text, { voiceMode: true });
@@ -273,7 +287,7 @@ const VoiceChat: React.FC = () => {
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiKey, messages.length, sendMessage, speak]);
+  }, [apiKey, messages.length, sendMessage, speak, voiceQuickSearch, burplexityApiToken, runBackgroundSearch]);
 
   const submitRef = useRef(submit);
   useEffect(() => { submitRef.current = submit; }, [submit]);
@@ -413,6 +427,28 @@ const VoiceChat: React.FC = () => {
     if (msg) toast(msg);
   };
 
+  const runBackgroundSearch = useCallback(async (query: string) => {
+    if (!burplexityApiToken) return;
+    setPendingSearchCount((c) => c + 1);
+    try {
+      const result = await executeQuickSearch(query, burplexityApiToken);
+      if (result.error || !result.citations.length) return;
+      let md = `🔍 **Search Results for:** "${query}"\n\n`;
+      result.citations.forEach((c, i) => {
+        md += `**${i + 1}. ${c.title}**\n${c.url}\n`;
+        if (c.snippet) md += `${c.snippet}\n`;
+        md += "\n";
+      });
+      if (result.elapsed_ms) {
+        md += `_Completed in ${result.elapsed_ms}ms${result.backend ? ` via ${result.backend}` : ""}_`;
+      }
+      injectDisplayMessage(md);
+      if (ttsEnabled) ttsSpeak("Search results are ready", { rate: ttsRate });
+    } finally {
+      setPendingSearchCount((c) => c - 1);
+    }
+  }, [burplexityApiToken, injectDisplayMessage, ttsEnabled, ttsRate]);
+
   const toggleHandsFree = () => {
     if (handsFree) {
       stopHandsFree();
@@ -447,6 +483,8 @@ const VoiceChat: React.FC = () => {
     ? "Thinking…"
     : isSpeaking
     ? "Speaking…"
+    : pendingSearchCount > 0
+    ? `🔍 Searching… (${pendingSearchCount})`
     : handsFree
     ? "Hands-free paused"
     : "Tap to talk";
@@ -529,6 +567,32 @@ const VoiceChat: React.FC = () => {
                   {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
                 </select>
                 <p className="text-[10px] text-on-surface-variant px-1">Used when Deep Research is ON.</p>
+              </div>
+              <div className="flex flex-col gap-1.5 min-w-0">
+                <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
+                  <span className="material-symbols-outlined text-xs align-middle mr-1">travel_explore</span>Background Quick Search
+                </label>
+                <div className="flex items-center justify-between gap-3 bg-surface-container-high rounded-lg py-2.5 px-4">
+                  <span className="text-sm text-primary">{voiceQuickSearch ? "On" : "Off"}</span>
+                  <button
+                    onClick={() => setVoiceQuickSearch(!voiceQuickSearch)}
+                    disabled={!burplexityApiToken}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none disabled:opacity-40 ${voiceQuickSearch ? "bg-primary-container" : "bg-surface-container-highest"}`}
+                    aria-checked={voiceQuickSearch}
+                    role="switch"
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${voiceQuickSearch ? "translate-x-6" : "translate-x-1"}`} />
+                  </button>
+                </div>
+                <p className="text-[10px] text-on-surface-variant px-1">
+                  {burplexityApiToken ? "Searches run in background; results interrupt conversation when ready." : "Requires a Burplexity API token above."}
+                </p>
+              </div>
+              <div className="flex flex-col gap-1.5 min-w-0">
+                <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Quick Search Model <span className="text-on-surface-variant/60 normal-case tracking-normal">(lightweight preferred)</span></label>
+                <select value={voiceQuickSearchModel || selectedModel} onChange={(e) => setVoiceQuickSearchModel(e.target.value)} className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40">
+                  {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
+                </select>
               </div>
             </section>
             <PromptLibrary scopeHint="voice" />
@@ -759,13 +823,14 @@ const VoiceChat: React.FC = () => {
                   </button>
 
                   <button
-                    onClick={() => setVoiceDeepResearch(!voiceDeepResearch)}
-                    aria-pressed={voiceDeepResearch}
-                    className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-2 sm:px-3 py-2.5 rounded-2xl sm:rounded-full transition-all text-xs sm:text-sm font-medium ${voiceDeepResearch ? "bg-primary-container text-on-primary-container shadow-md" : "bg-surface-container-high text-on-surface-variant hover:text-primary"}`}
-                    title="Deep Research"
+                    onClick={() => setVoiceQuickSearch(!voiceQuickSearch)}
+                    aria-pressed={voiceQuickSearch}
+                    disabled={!burplexityApiToken}
+                    className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-2 sm:px-3 py-2.5 rounded-2xl sm:rounded-full transition-all text-xs sm:text-sm font-medium disabled:opacity-40 ${voiceQuickSearch ? "bg-primary-container text-on-primary-container shadow-md" : "bg-surface-container-high text-on-surface-variant hover:text-primary"}`}
+                    title={burplexityApiToken ? "Background Quick Search" : "Set Burplexity token in Settings to enable"}
                   >
-                    <span className="material-symbols-outlined text-lg sm:text-base" style={voiceDeepResearch ? { fontVariationSettings: "'FILL' 1" } : {}}>science</span>
-                    <span className="leading-none">{voiceDeepResearch ? "Deep On" : "Deep Res"}</span>
+                    <span className="material-symbols-outlined text-lg sm:text-base" style={voiceQuickSearch ? { fontVariationSettings: "'FILL' 1" } : {}}>travel_explore</span>
+                    <span className="leading-none">{voiceQuickSearch ? "Search" : "Search"}</span>
                   </button>
 
                   <button

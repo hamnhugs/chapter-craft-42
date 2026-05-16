@@ -14,6 +14,7 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   toolEvents?: ToolEvent[];
+  displayOnly?: boolean;
 }
 
 interface SendOpts {
@@ -33,6 +34,7 @@ interface ChatContextValue {
   voiceDeepResearch: boolean;
   setVoiceDeepResearch: (v: boolean) => void;
   sendMessage: (text: string, opts?: SendOpts) => Promise<string>;
+  injectDisplayMessage: (content: string) => void;
   clearChat: () => Promise<void>;
   abort: () => void;
 }
@@ -187,7 +189,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       setIsLoading(true);
 
-      const baseHistory = [...messages, userMsg].map((m) => ({ role: m.role, content: m.content }));
+      const baseHistory = [...messages, userMsg]
+        .filter((m) => !m.displayOnly)
+        .map((m) => ({ role: m.role, content: m.content }));
 
       const isVoice = !!opts?.voiceMode;
       const deepResearch = isVoice ? voiceDeepResearch : chatDeepResearch;
@@ -384,6 +388,13 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
 
 
+  const injectDisplayMessage = useCallback((content: string) => {
+    setMessages((prev) => [
+      ...prev,
+      { id: `inject-${Date.now()}`, role: "assistant", content, displayOnly: true },
+    ]);
+  }, []);
+
   return (
     <ChatContext.Provider
       value={{
@@ -396,6 +407,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         voiceDeepResearch,
         setVoiceDeepResearch,
         sendMessage,
+        injectDisplayMessage,
         clearChat,
         abort,
       }}
