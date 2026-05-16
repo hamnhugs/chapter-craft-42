@@ -1,29 +1,43 @@
-## Feature
+## What "Reindex" is supposed to do
 
-Add an "Auto-read assistant replies" toggle in the Chat tab settings. When ON, every new assistant message is automatically read aloud using the existing TTS engine and the current Voice Playback Speed.
+The Reindex button rebuilds the **vector embeddings** for your knowledge entries. Embeddings are the numeric fingerprints the app uses to:
 
-## Changes
+- Find semantically related entries during chat ("Graph-aware retrieval"),
+- Detect contradictions during ingest,
+- Power the hybrid + semantic search in the Wiki.
 
-1. **Database** — add `auto_read_replies boolean not null default false` to `user_settings`.
+Right now it appears to do nothing because the embedding API call is **failing silently with a 404**.
 
-2. **`src/hooks/useChatSettings.ts`**
-   - Add `autoReadReplies: boolean` to `ChatSettings` (default `false`).
-   - Load / save it alongside the other settings (`auto_read_replies` column).
-   - Expose `setAutoReadReplies(v: boolean)`.
+## Root cause (confirmed from edge logs)
 
-3. **`src/components/ChatPanel.tsx`**
-   - In the settings panel, add a new toggle row right above the Voice Playback Speed slider: label "Auto-read assistant replies", small helper text "Reads each new reply aloud using the speed below."
-   - Use a shadcn `Switch` (already in the stack) for consistent styling.
-   - Add an effect: when `autoReadReplies` is ON and a new assistant message appears (detect last message role transitioning to "assistant" with a stable id not yet read), call `speak(msg.content, { id, rate: ttsRate })`. Guard against:
-     - duplicate reads of the same message id (track a `lastSpokenIdRef`),
-     - empty/streaming-in-progress content (only trigger when message is final — `!msg.streaming` if available, else when content length stops growing across renders; in this codebase messages appear finalized when added, so trigger on append).
-   - When the toggle is turned OFF mid-playback, call `stopSpeaking()`.
+```
+embedBatch failed: 404
+"models/text-embedding-004 is not found for API version v1beta,
+ or is not supported for embedContent."
+```
 
-4. **No changes to existing manual read-aloud buttons** — they continue to work as today.
+The `knowledge-embed` function calls Google's `v1beta/models/text-embedding-004:embedContent` directly, but the key/endpoint combination is rejecting that model name. Every batch returns `null`, so the function responds with `{updated: 0, failed: N}` — the toast pops but says effectively nothing useful, so it looks like a dead button.
+
+## Fix
+
+1. **Switch embeddings to the Lovable AI Gateway** (OpenAI-compatible `/v1/embeddings`), which already authenticates with `LOVABLE_API_KEY` and works reliably for `google/text-embedding-004` (768 dims — matches the existing `embedding vector(768)` column, no migration needed).
+   - Update `supabase/functions/_shared/embed.ts`:
+     - `embedOne`, `embedQuery`, `embedBatch` → POST to `https://ai.gateway.lovable.dev/v1/embeddings` with `{ model: "google/text-embedding-004", input: [...] }` and `Authorization: Bearer ${LOVABLE_API_KEY}`.
+     - Keep the direct Google REST call as a fallback if the Gateway returns 4xx/5xx (so a future Gateway hiccup still produces embeddings).
+   - Keep `EMBEDDING_DIMS = 768` and `EMBEDDING_MODEL_ID = "google/text-embedding-004"`.
+
+2. **Make the Reindex UX honest and actionable** in `WikiPanel.tsx`:
+   - Distinguish 3 outcomes in the toast:
+     - `total === 0` → "All entries already have embeddings."
+     - `updated > 0` → "Embedded N entries · M failed" (warning if any failed).
+     - `updated === 0 && failed > 0` → "Reindex failed — embedding service unavailable" (error).
+   - Show a small status line under the button: "X / Y entries embedded" computed from a quick count query on mount and after reindex, so users can see whether anything actually needs reindexing.
+   - Add an inline "Re-embed all (force)" option in a dropdown next to Reindex for power users — passes `{all_missing: true, force: true}`.
+
+3. **Deploy `knowledge-embed`** after the fix and trigger one Reindex to backfill all current entries.
 
 ## Verification
 
-- Toggle ON → send a chat message → assistant reply is read aloud automatically at the configured speed.
-- Toggle OFF mid-read → playback stops.
-- Refresh page → setting persists.
-- Manual ▶ on older messages still works.
+- Click Reindex → toast shows actual numbers; edge function logs show 200s.
+- Open Conflicts / chat with a question — graph-aware retrieval now has vectors to work with.
+- Status line under the button updates from "0 / N" to "N / N".
