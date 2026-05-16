@@ -80,6 +80,9 @@ const VoiceChat: React.FC = () => {
   const sendTimerRef = useRef<number | null>(null);
   const stoppedByUserRef = useRef(false);
   const lastSpokenIndexRef = useRef<number>(-1);
+  const lastFinalSegmentRef = useRef<string>("");
+  const lastSentTextRef = useRef<string>("");
+  const lastSentAtRef = useRef<number>(0);
 
   useEffect(() => { handsFreeRef.current = handsFree; localStorage.setItem(HANDS_FREE_KEY, String(handsFree)); }, [handsFree]);
   useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
