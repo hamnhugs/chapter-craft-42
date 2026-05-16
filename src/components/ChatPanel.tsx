@@ -175,6 +175,16 @@ const ChatPanel: React.FC = () => {
               <p className="text-[10px] text-on-surface-variant px-1">Used when Deep Research is ON. Pick a strong reasoning model for best results.</p>
             </div>
             <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
+                <span className="material-symbols-outlined text-xs align-middle mr-1">record_voice_over</span>Auto-read replies
+              </label>
+              <div className="flex items-center justify-between gap-3 bg-surface-container-high rounded-lg py-3 px-4 border border-outline-variant/10">
+                <span className="text-sm text-primary">{autoReadReplies ? "On — replies will be read aloud" : "Off"}</span>
+                <Switch checked={autoReadReplies} onCheckedChange={setAutoReadReplies} aria-label="Auto-read assistant replies" />
+              </div>
+              <p className="text-[10px] text-on-surface-variant px-1">Reads each new assistant reply aloud using the playback speed below.</p>
+            </div>
+            <div className="flex flex-col gap-1.5">
               <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center justify-between">
                 <span><span className="material-symbols-outlined text-xs align-middle mr-1">volume_up</span>Voice Playback Speed</span>
                 <span className="text-primary normal-case tracking-normal">{ttsRate.toFixed(2)}×</span>
