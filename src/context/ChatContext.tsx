@@ -306,6 +306,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               addChapter,
               updateChapter,
               removeChapter,
+              burplexityApiToken,
             });
             assistantEvents.push(event);
             updateAssistant();
