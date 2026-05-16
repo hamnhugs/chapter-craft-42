@@ -160,9 +160,19 @@ Already extracted titles (avoid duplicates): ${existingTitles.join(", ") || "(no
     const extracted = JSON.parse(toolCall.function.arguments);
     const savedEntries: any[] = [];
 
-    for (const entry of extracted.entries || []) {
-      if (existingTitles.includes(entry.title.toLowerCase())) continue;
+    // Atomicity split
+    const rawCandidates: Candidate[] = (extracted.entries || [])
+      .filter((e: any) => !existingTitles.includes(e.title.toLowerCase()))
+      .map((e: any) => ({
+        title: e.title,
+        content: e.content,
+        entry_type: e.entry_type || "concept",
+        tags: e.tags || [],
+        confidence: typeof e.confidence === "number" ? e.confidence : 0.8,
+      }));
+    const { candidates: atomicAdds, splits } = await atomicitySplit(rawCandidates);
 
+    for (const entry of atomicAdds) {
       const { data: inserted, error } = await supabase
         .from("knowledge_entries")
         .insert({
@@ -177,31 +187,43 @@ Already extracted titles (avoid duplicates): ${existingTitles.join(", ") || "(no
         .select("id")
         .single();
 
-      if (!error && inserted) {
-        savedEntries.push({ ...entry, id: inserted.id });
-      }
+      if (error || !inserted) { console.error("ingest insert failed:", error?.message); continue; }
+      const vec = await embedAndStore(supabase, inserted.id, user.id, entry.title, entry.content);
+      savedEntries.push({ ...entry, id: inserted.id, embedding: vec });
     }
 
-    // Create relationships between new entries
-    for (const entry of savedEntries) {
-      if (!entry.relationships) continue;
+    // LLM-asserted relationships from the original extraction (preserve when present)
+    const VALID_RELS = new Set(["contradicts","refutes","supports","extends","derived_from","prerequisite","relates_to","mentions"]);
+    for (const entry of extracted.entries || []) {
+      const sourceSaved = savedEntries.find((s: any) => s.title.toLowerCase() === (entry.title || "").toLowerCase());
+      if (!sourceSaved || !entry.relationships) continue;
       for (const rel of entry.relationships) {
-        const target = savedEntries.find(e => e.title.toLowerCase() === rel.target_title.toLowerCase());
-        if (target && target.id !== entry.id) {
+        if (!VALID_RELS.has(rel.relationship)) continue;
+        const target = savedEntries.find((e: any) => e.title.toLowerCase() === rel.target_title.toLowerCase());
+        if (target && target.id !== sourceSaved.id) {
           await supabase.from("memory_graph").upsert({
             user_id: user.id,
-            source_entry_id: entry.id,
+            source_entry_id: sourceSaved.id,
             target_entry_id: target.id,
             relationship: rel.relationship,
+            created_by: "ingest",
           }, { onConflict: "source_entry_id,target_entry_id,relationship" });
         }
       }
     }
 
+    // Conflict probe across whole library
+    const conflictCount = await probeAndLinkConflicts(
+      supabase, user.id,
+      savedEntries.map((e) => ({ id: e.id, title: e.title, content: e.content, embedding: e.embedding })),
+    );
+
     return new Response(JSON.stringify({
       entries_created: savedEntries.length,
       book_summary: extracted.book_summary,
       entries: savedEntries.map(e => ({ title: e.title, type: e.entry_type })),
+      splits,
+      conflicts: conflictCount,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     console.error("knowledge-ingest error:", e);
