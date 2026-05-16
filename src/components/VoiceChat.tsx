@@ -15,6 +15,7 @@ import { useChatSettings } from "@/hooks/useChatSettings";
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerClose } from "@/components/ui/drawer";
 import { speak as ttsSpeak, stopSpeaking as ttsStop, subscribeSpeaking as ttsSubscribe, getSpeakingId as ttsGetId } from "@/lib/speak";
 import PromptLibrary from "@/components/PromptLibrary";
+import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
 
 const LEGACY_OPENROUTER_STORAGE_KEY = "openrouter_api_key";
 const VOICE_ENABLED_KEY = "voice_tts_enabled";
@@ -22,6 +23,9 @@ const HANDS_FREE_KEY = "voice_hands_free";
 const NOTES_PANEL_OPEN_KEY = "voice_notes_panel_open";
 const VOICE_QUICK_SEARCH_KEY = "voice_quick_search";
 const VOICE_QUICK_SEARCH_MODEL_KEY = "voice_quick_search_model";
+const INWORLD_API_KEY_KEY = "inworld_api_key";
+const INWORLD_VOICE_ID_KEY = "inworld_voice_id";
+const INWORLD_ENABLED_KEY = "inworld_tts_enabled";
 
 const SEARCH_INTENT_RE =
   /\b(search|look up|look for|find|google|what is|what are|who is|who are|tell me about|research|check online|latest|current|news about)\b/i;
@@ -42,6 +46,15 @@ const VoiceChat: React.FC = () => {
   const [voiceQuickSearch, setVoiceQuickSearch] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_KEY) === "true");
   const [voiceQuickSearchModel, setVoiceQuickSearchModel] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_MODEL_KEY) || "");
   const [pendingSearchCount, setPendingSearchCount] = useState(0);
+
+  // Inworld TTS state
+  const [inworldApiKey, setInworldApiKeyState] = useState(() => localStorage.getItem(INWORLD_API_KEY_KEY) || "");
+  const [inworldVoiceId, setInworldVoiceIdState] = useState(() => localStorage.getItem(INWORLD_VOICE_ID_KEY) || "");
+  const [inworldEnabled, setInworldEnabled] = useState(() => localStorage.getItem(INWORLD_ENABLED_KEY) === "true");
+  const [inworldVoices, setInworldVoices] = useState<InworldVoice[]>([]);
+  const [loadingVoices, setLoadingVoices] = useState(false);
+  const inworldAudioRef = useRef<HTMLAudioElement | null>(null);
+
   useEffect(() => { localStorage.setItem(NOTES_PANEL_OPEN_KEY, String(notesPanelOpen)); }, [notesPanelOpen]);
   useEffect(() => { localStorage.setItem(VOICE_QUICK_SEARCH_KEY, String(voiceQuickSearch)); }, [voiceQuickSearch]);
   useEffect(() => { localStorage.setItem(VOICE_QUICK_SEARCH_MODEL_KEY, voiceQuickSearchModel); }, [voiceQuickSearchModel]);
@@ -173,6 +186,18 @@ const VoiceChat: React.FC = () => {
   useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
   useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
   useEffect(() => { localStorage.setItem(VOICE_ENABLED_KEY, String(ttsEnabled)); }, [ttsEnabled]);
+  useEffect(() => { localStorage.setItem(INWORLD_API_KEY_KEY, inworldApiKey); }, [inworldApiKey]);
+  useEffect(() => { localStorage.setItem(INWORLD_VOICE_ID_KEY, inworldVoiceId); }, [inworldVoiceId]);
+  useEffect(() => { localStorage.setItem(INWORLD_ENABLED_KEY, String(inworldEnabled)); }, [inworldEnabled]);
+
+  // Load Inworld voices on mount if key is already stored
+  const inworldVoiceLoadedRef = useRef(false);
+  useEffect(() => {
+    if (!inworldVoiceLoadedRef.current && inworldApiKey) {
+      inworldVoiceLoadedRef.current = true;
+      loadInworldVoices(inworldApiKey);
+    }
+  }, [inworldApiKey, loadInworldVoices]);
 
   // One-time migration: localStorage key -> account-synced setting
   const migratedRef = useRef(false);
@@ -232,6 +257,27 @@ const VoiceChat: React.FC = () => {
   }, []);
 
   const saveApiKey = (key: string) => { persistApiKey(key); setShowSettings(false); };
+
+  const loadInworldVoices = useCallback(async (key: string) => {
+    if (!key.trim()) return;
+    setLoadingVoices(true);
+    try {
+      const voices = await fetchInworldVoices(key.trim());
+      setInworldVoices(voices);
+      if (voices.length > 0 && !inworldVoiceId) {
+        setInworldVoiceIdState(voices[0].voice_id);
+      }
+    } catch (err: any) {
+      toast.error(`Could not load Inworld voices: ${err.message}`);
+    } finally {
+      setLoadingVoices(false);
+    }
+  }, [inworldVoiceId]);
+
+  const saveInworldKey = (key: string) => {
+    setInworldApiKeyState(key.trim());
+    if (key.trim()) loadInworldVoices(key.trim());
+  };
   const addModel = () => { const m = newModelInput.trim(); if (!m) return; addModelToSettings(m); setNewModelInput(""); };
   const removeModel = (m: string) => removeModelFromSettings(m);
 
@@ -244,28 +290,65 @@ const VoiceChat: React.FC = () => {
       }
       return;
     }
+
+    const onEnd = () => {
+      setIsSpeaking(false);
+      if (handsFreeRef.current && !stoppedByUserRef.current) {
+        window.setTimeout(() => safeStartListening(), 450);
+      }
+    };
+
+    if (inworldEnabled && inworldApiKey && inworldVoiceId) {
+      synthRef.current.cancel();
+      setIsSpeaking(true);
+      synthesizeSpeech(text, inworldApiKey, inworldVoiceId)
+        .then((buffer) => {
+          const blob = new Blob([buffer], { type: "audio/mpeg" });
+          const url = URL.createObjectURL(blob);
+          if (inworldAudioRef.current) {
+            inworldAudioRef.current.pause();
+            inworldAudioRef.current.src = "";
+          }
+          const audio = new Audio(url);
+          inworldAudioRef.current = audio;
+          audio.onended = () => { URL.revokeObjectURL(url); onEnd(); };
+          audio.onerror = () => { URL.revokeObjectURL(url); onEnd(); };
+          audio.play().catch(() => onEnd());
+        })
+        .catch((err) => {
+          console.error("Inworld TTS error:", err);
+          toast.error("Inworld voice failed — using browser TTS");
+          // Fall back to browser TTS
+          const clean = text.replace(/[#*_`~[\]()>|]/g, "").replace(/\n+/g, ". ");
+          const utterance = new SpeechSynthesisUtterance(clean);
+          utterance.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
+          utterance.onend = onEnd;
+          utterance.onerror = onEnd;
+          synthRef.current.speak(utterance);
+        });
+      return;
+    }
+
     synthRef.current.cancel();
-    const clean = text.replace(/[#*_`~\[\]()>|]/g, "").replace(/\n+/g, ". ");
+    const clean = text.replace(/[#*_`~[\]()>|]/g, "").replace(/\n+/g, ". ");
     const utterance = new SpeechSynthesisUtterance(clean);
     utterance.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
     utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => {
-      setIsSpeaking(false);
-      if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), 450);
-      }
-    };
-    utterance.onerror = () => {
-      setIsSpeaking(false);
-      if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), 450);
-      }
-    };
+    utterance.onend = onEnd;
+    utterance.onerror = onEnd;
     synthRef.current.speak(utterance);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ttsEnabled, ttsRate]);
+  }, [ttsEnabled, ttsRate, inworldEnabled, inworldApiKey, inworldVoiceId]);
 
-  const stopSpeaking = () => { synthRef.current.cancel(); setIsSpeaking(false); };
+  const stopSpeaking = () => {
+    synthRef.current.cancel();
+    if (inworldAudioRef.current) {
+      inworldAudioRef.current.pause();
+      inworldAudioRef.current.src = "";
+      inworldAudioRef.current = null;
+    }
+    setIsSpeaking(false);
+  };
 
   const runBackgroundSearch = useCallback(async (query: string) => {
     if (!burplexityApiToken) return;
@@ -541,6 +624,76 @@ const VoiceChat: React.FC = () => {
                 </div>
                 <p className="text-[10px] text-on-surface-variant px-1">Enables the live <code>web_search</code> tool used by the assistant.</p>
               </div>
+              <div className="flex flex-col gap-1.5 min-w-0 col-span-1 lg:col-span-2">
+                <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center gap-1">
+                  <span className="material-symbols-outlined text-xs align-middle">record_voice_over</span>Inworld Voice (TTS Upgrade)
+                </label>
+                <div className="flex items-center justify-between gap-3 bg-surface-container-high rounded-lg py-2.5 px-4">
+                  <span className="text-sm text-primary">{inworldEnabled ? "Inworld TTS on" : "Browser TTS"}</span>
+                  <button
+                    onClick={() => setInworldEnabled(!inworldEnabled)}
+                    disabled={!inworldApiKey || !inworldVoiceId}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none disabled:opacity-40 ${inworldEnabled ? "bg-primary-container" : "bg-surface-container-highest"}`}
+                    aria-checked={inworldEnabled}
+                    role="switch"
+                    title={!inworldApiKey ? "Enter an Inworld API key first" : !inworldVoiceId ? "Select a voice first" : ""}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${inworldEnabled ? "translate-x-6" : "translate-x-1"}`} />
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
+                  <div className="relative">
+                    <input
+                      className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 pr-10 focus:ring-1 focus:ring-primary/40"
+                      type="password"
+                      placeholder="Inworld API key…"
+                      defaultValue={inworldApiKey}
+                      id="inworld-key-input"
+                      onKeyDown={(e) => { if (e.key === "Enter") saveInworldKey((e.target as HTMLInputElement).value); }}
+                    />
+                    <span className="material-symbols-outlined absolute right-3 top-2.5 text-on-surface-variant text-sm">key</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={() => { const el = document.getElementById("inworld-key-input") as HTMLInputElement; saveInworldKey(el?.value || ""); }}>
+                      Save & Load Voices
+                    </Button>
+                    {inworldApiKey && (
+                      <Button size="sm" variant="destructive" onClick={() => { setInworldApiKeyState(""); setInworldEnabled(false); setInworldVoices([]); }}>
+                        Remove
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                {inworldApiKey && (
+                  <div className="flex items-center gap-2 mt-1">
+                    {loadingVoices ? (
+                      <div className="flex items-center gap-2 text-xs text-on-surface-variant">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading voices…
+                      </div>
+                    ) : inworldVoices.length > 0 ? (
+                      <select
+                        value={inworldVoiceId}
+                        onChange={(e) => setInworldVoiceIdState(e.target.value)}
+                        className="flex-1 bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40"
+                      >
+                        {inworldVoices.map((v) => (
+                          <option key={v.voice_id} value={v.voice_id}>
+                            {v.name}{v.tags?.length ? ` (${v.tags.join(", ")})` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={() => loadInworldVoices(inworldApiKey)}>
+                        Retry loading voices
+                      </Button>
+                    )}
+                  </div>
+                )}
+                <p className="text-[10px] text-on-surface-variant px-1">
+                  When enabled, AI replies are spoken using an Inworld character voice instead of the browser&apos;s built-in TTS.
+                </p>
+              </div>
+
               <div className="flex flex-col gap-1.5 min-w-0">
                 <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Model</label>
                 <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40">
