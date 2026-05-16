@@ -9,6 +9,7 @@
   :root {
     --font-headline: 'Newsreader', Georgia, serif;
     --font-body: 'Inter', system-ui, sans-serif;
+    --font-display: 'Newsreader', Georgia, serif;
     --background: 0 0% 7.5%;
 
     --foreground: 20 4% 89%;
@@ -146,4 +147,177 @@
 
 .react-pdf__Page__annotations {
   margin: 0 auto;
+}
+
+/* =====================================================================
+   FRUIT STRIPE THEME — scoped overrides per PRD (chapter_craft_prd.md)
+   Paper White canvas, Ink Black structure, mid-century rainbow accents.
+   ===================================================================== */
+:root[data-theme="fruit-stripe"] {
+  --fs-paper: #FBFAF6;
+  --fs-ink: #111111;
+  --fs-charcoal: #2A2A2A;
+  --fs-stripe-gray: #E8E6DF;
+  --fs-cherry: #E63946;
+  --fs-orange: #F4844D;
+  --fs-lemon: #F4C95D;
+  --fs-lime: #6BBF59;
+  --fs-melon: #EE7B9E;
+  --fs-rainbow: linear-gradient(90deg,
+    var(--fs-cherry) 0 20%,
+    var(--fs-orange) 20% 40%,
+    var(--fs-lemon)  40% 60%,
+    var(--fs-lime)   60% 80%,
+    var(--fs-melon)  80% 100%);
+}
+
+/* Reading prose — PRD: 1.65 line-height, 68ch max */
+[data-theme="fruit-stripe"] .prose,
+[data-theme="fruit-stripe"] .reader-prose {
+  line-height: 1.65;
+  max-width: 68ch;
+}
+
+/* Selection — Lemon Yellow */
+[data-theme="fruit-stripe"] ::selection {
+  background: var(--fs-lemon);
+  color: var(--fs-ink);
+}
+
+/* Focus ring — Cherry Red, 2px */
+[data-theme="fruit-stripe"] *:focus-visible {
+  outline: 2px solid var(--fs-cherry) !important;
+  outline-offset: 2px;
+}
+
+/* Scrollbar — ink-black thumb on paper-white track */
+[data-theme="fruit-stripe"] ::-webkit-scrollbar { width: 10px; height: 10px; }
+[data-theme="fruit-stripe"] ::-webkit-scrollbar-track { background: var(--fs-paper); }
+[data-theme="fruit-stripe"] ::-webkit-scrollbar-thumb {
+  background: var(--fs-ink);
+  border: 2px solid var(--fs-paper);
+  border-radius: 6px;
+}
+[data-theme="fruit-stripe"] ::-webkit-scrollbar-thumb:hover { background: var(--fs-cherry); }
+
+/* Printed-Sticker cards — 12px radius, 1px ink border, 0 2px 0 #111 shadow */
+[data-theme="fruit-stripe"] .bg-card,
+[data-theme="fruit-stripe"] [data-sticker],
+[data-theme="fruit-stripe"] .surface-container,
+[data-theme="fruit-stripe"] .bg-surface-container,
+[data-theme="fruit-stripe"] .bg-surface-container-low,
+[data-theme="fruit-stripe"] .bg-surface-container-high {
+  border-radius: 12px;
+  border: 1px solid var(--fs-ink);
+  box-shadow: 0 2px 0 0 var(--fs-ink);
+}
+
+/* Dialogs / popovers / dropdowns — heavier sticker shadow */
+[data-theme="fruit-stripe"] [role="dialog"],
+[data-theme="fruit-stripe"] [role="menu"],
+[data-theme="fruit-stripe"] [data-radix-popper-content-wrapper] > * {
+  border-radius: 12px !important;
+  border: 1px solid var(--fs-ink) !important;
+  box-shadow: 0 4px 0 0 var(--fs-ink) !important;
+  background: #fff !important;
+}
+
+/* Buttons — sticker shadow + press-down */
+[data-theme="fruit-stripe"] button:not([data-no-sticker]):not([role="tab"]):not([role="menuitem"]) {
+  border-radius: 10px;
+  transition: transform 80ms ease, box-shadow 80ms ease;
+}
+[data-theme="fruit-stripe"] button.bg-primary,
+[data-theme="fruit-stripe"] button.bg-destructive,
+[data-theme="fruit-stripe"] button.bg-accent,
+[data-theme="fruit-stripe"] button[data-sticker-btn] {
+  border: 1px solid var(--fs-ink);
+  box-shadow: 0 2px 0 0 var(--fs-ink);
+}
+[data-theme="fruit-stripe"] button.bg-primary:active,
+[data-theme="fruit-stripe"] button.bg-destructive:active,
+[data-theme="fruit-stripe"] button.bg-accent:active,
+[data-theme="fruit-stripe"] button[data-sticker-btn]:active {
+  transform: translateY(2px);
+  box-shadow: 0 0 0 0 var(--fs-ink);
+}
+
+/* Inputs / textareas — crisp 1px ink border */
+[data-theme="fruit-stripe"] input,
+[data-theme="fruit-stripe"] textarea,
+[data-theme="fruit-stripe"] select {
+  border: 1px solid var(--fs-ink) !important;
+  border-radius: 8px;
+  background: #fff;
+}
+
+/* Top app header — 1px ink bottom border (Stripe Bar is rendered separately) */
+[data-theme="fruit-stripe"] [data-app-header] {
+  background: var(--fs-paper) !important;
+  border-bottom: 1px solid var(--fs-ink);
+  box-shadow: none !important;
+}
+
+/* Active nav tab — replace amber underline with the Stripe Bar */
+[data-theme="fruit-stripe"] [data-app-header] nav button.text-accent,
+[data-theme="fruit-stripe"] [data-app-header] nav button[aria-current="page"] {
+  border-bottom-color: transparent !important;
+  position: relative;
+}
+[data-theme="fruit-stripe"] [data-app-header] nav button.text-accent::after,
+[data-theme="fruit-stripe"] [data-app-header] nav button[aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: -6px;
+  height: 4px;
+  background: var(--fs-rainbow);
+  transform: skewX(-12deg);
+}
+
+/* Mobile bottom nav — ink top border */
+[data-theme="fruit-stripe"] [data-mobile-nav] {
+  background: var(--fs-paper) !important;
+  border-top: 1px solid var(--fs-ink);
+}
+
+/* Chat bubbles — Melon left edge (AI), Cherry right edge (user) */
+[data-theme="fruit-stripe"] .message-bubble-ai {
+  border-left: 3px solid var(--fs-melon);
+}
+[data-theme="fruit-stripe"] .message-bubble-user {
+  border-right: 3px solid var(--fs-cherry);
+}
+
+/* Loading progress — rainbow diagonal stripes */
+[data-theme="fruit-stripe"] [role="progressbar"] > * {
+  background-image: var(--fs-rainbow) !important;
+  background-size: 200% 100%;
+  animation: fs-progress 2s linear infinite;
+}
+@keyframes fs-progress {
+  from { background-position: 0% 0; }
+  to { background-position: 200% 0; }
+}
+
+/* Wordmark — use DM Serif Display via --font-display */
+[data-theme="fruit-stripe"] .font-display,
+[data-theme="fruit-stripe"] [data-wordmark] {
+  font-family: var(--font-display) !important;
+  letter-spacing: -0.01em;
+}
+
+/* Soften book cards' hover into rainbow reveal */
+[data-theme="fruit-stripe"] [data-book-card] {
+  position: relative;
+  overflow: hidden;
+}
+[data-theme="fruit-stripe"] [data-book-card]::after {
+  content: "";
+  position: absolute; left: 0; right: 0; bottom: 0; height: 4px;
+  background: var(--fs-rainbow);
+  transform: translateY(4px) skewX(-12deg);
+  transition: transform 180ms ease;
+}
+[data-theme="fruit-stripe"] [data-book-card]:hover::after {
+  transform: translateY(0) skewX(-12deg);
 }
