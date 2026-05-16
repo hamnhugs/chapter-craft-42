@@ -32,6 +32,22 @@ const ChatPanel: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const settingsPanelRef = useRef<HTMLDivElement>(null);
+  const inputBeforeDictationRef = useRef<string>("");
+  const dictation = useDictation({
+    onInterim: (text) => {
+      setInput((inputBeforeDictationRef.current ? inputBeforeDictationRef.current + " " : "") + text);
+    },
+    onFinal: (text) => {
+      const base = inputBeforeDictationRef.current;
+      setInput((base ? base + " " : "") + text);
+    },
+  });
+  const handleMicToggle = () => {
+    if (!dictation.supported) { toast.error("Voice input not supported in this browser."); return; }
+    if (dictation.isListening) { dictation.stop(); return; }
+    inputBeforeDictationRef.current = input;
+    dictation.start();
+  };
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
   useEffect(() => subscribeSpeaking(setSpeakingId), []);
