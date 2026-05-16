@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Plus, Pencil, Trash2, Save, X, StickyNote, ChevronRight, Eraser } from "lucide-react";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
 
 export interface VoiceNote {
   id: string;
@@ -10,29 +11,86 @@ export interface VoiceNote {
   createdAt: number;
 }
 
-const STORAGE_KEY = "voice_notes_v1";
+const LEGACY_STORAGE_KEY = "voice_notes_v1";
+const LEGACY_MIGRATED_KEY = "voice_notes_migrated_v1";
+const VOICE_NOTE_TITLE = "Voice Note";
 
-export function loadVoiceNotes(): VoiceNote[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as VoiceNote[]) : [];
-  } catch {
-    return [];
-  }
+async function getUserId(): Promise<string | null> {
+  const { data } = await supabase.auth.getUser();
+  return data.user?.id ?? null;
 }
 
-function saveVoiceNotes(notes: VoiceNote[]) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(notes)); } catch {}
+export async function loadVoiceNotes(): Promise<VoiceNote[]> {
+  const uid = await getUserId();
+  if (!uid) return [];
+  const { data, error } = await supabase
+    .from("notes")
+    .select("id, content, created_at")
+    .eq("user_id", uid)
+    .is("book_id", null)
+    .order("created_at", { ascending: false });
+  if (error || !data) return [];
+  return data.map((r: any) => ({
+    id: r.id,
+    text: r.content ?? "",
+    createdAt: new Date(r.created_at).getTime(),
+  }));
 }
 
-export function appendVoiceNote(text: string): VoiceNote | null {
+export async function appendVoiceNote(text: string): Promise<VoiceNote | null> {
   const trimmed = text.trim();
   if (!trimmed) return null;
-  const note: VoiceNote = { id: crypto.randomUUID(), text: trimmed, createdAt: Date.now() };
-  const next = [note, ...loadVoiceNotes()];
-  saveVoiceNotes(next);
+  const uid = await getUserId();
+  if (!uid) {
+    toast.error("Sign in to save notes");
+    return null;
+  }
+  const { data, error } = await supabase
+    .from("notes")
+    .insert({ user_id: uid, book_id: null, title: VOICE_NOTE_TITLE, content: trimmed })
+    .select("id, content, created_at")
+    .single();
+  if (error || !data) {
+    toast.error("Could not save note");
+    return null;
+  }
   window.dispatchEvent(new CustomEvent("voice-notes-changed"));
-  return note;
+  return {
+    id: data.id,
+    text: data.content ?? "",
+    createdAt: new Date(data.created_at).getTime(),
+  };
+}
+
+async function migrateLegacyLocalNotes() {
+  try {
+    if (localStorage.getItem(LEGACY_MIGRATED_KEY)) return;
+    const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (!raw) {
+      localStorage.setItem(LEGACY_MIGRATED_KEY, "1");
+      return;
+    }
+    const legacy = JSON.parse(raw) as VoiceNote[];
+    const uid = await getUserId();
+    if (!uid) return; // try again after sign-in
+    if (Array.isArray(legacy) && legacy.length > 0) {
+      const rows = legacy
+        .filter((n) => n && n.text?.trim())
+        .map((n) => ({
+          user_id: uid,
+          book_id: null,
+          title: VOICE_NOTE_TITLE,
+          content: n.text.trim(),
+        }));
+      if (rows.length > 0) {
+        await supabase.from("notes").insert(rows);
+      }
+    }
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+    localStorage.setItem(LEGACY_MIGRATED_KEY, "1");
+  } catch {
+    // non-fatal
+  }
 }
 
 interface Props {
@@ -41,52 +99,114 @@ interface Props {
 }
 
 const VoiceNotesPanel: React.FC<Props> = ({ open, onClose }) => {
-  const [notes, setNotes] = useState<VoiceNote[]>(() => loadVoiceNotes());
+  const [notes, setNotes] = useState<VoiceNote[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [newText, setNewText] = useState("");
   const [showNew, setShowNew] = useState(false);
+  const [loading, setLoading] = useState(true);
   const newRef = useRef<HTMLTextAreaElement>(null);
+  const userIdRef = useRef<string | null>(null);
+
+  const refresh = async () => {
+    const next = await loadVoiceNotes();
+    setNotes(next);
+    setLoading(false);
+  };
 
   useEffect(() => {
-    const onChange = () => setNotes(loadVoiceNotes());
+    let cancelled = false;
+    (async () => {
+      await migrateLegacyLocalNotes();
+      userIdRef.current = await getUserId();
+      if (!cancelled) await refresh();
+    })();
+
+    const onChange = () => { refresh(); };
     window.addEventListener("voice-notes-changed", onChange);
-    window.addEventListener("storage", onChange);
+
+    // Realtime cross-device sync (only voice notes, current user)
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    (async () => {
+      const uid = await getUserId();
+      if (!uid || cancelled) return;
+      channel = supabase
+        .channel(`voice-notes-${uid}`)
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "notes", filter: `user_id=eq.${uid}` },
+          (payload) => {
+            const row: any = (payload.new as any) ?? (payload.old as any);
+            // Only react to voice notes (no book attached)
+            if (row && row.book_id === null) refresh();
+          }
+        )
+        .subscribe();
+    })();
+
+    const { data: authSub } = supabase.auth.onAuthStateChange(() => { refresh(); });
+
     return () => {
+      cancelled = true;
       window.removeEventListener("voice-notes-changed", onChange);
-      window.removeEventListener("storage", onChange);
+      if (channel) supabase.removeChannel(channel);
+      authSub.subscription.unsubscribe();
     };
   }, []);
 
-  const persist = (next: VoiceNote[]) => {
-    setNotes(next);
-    saveVoiceNotes(next);
-  };
-
-  const handleAdd = () => {
+  const handleAdd = async () => {
     const t = newText.trim();
     if (!t) return;
-    persist([{ id: crypto.randomUUID(), text: t, createdAt: Date.now() }, ...notes]);
-    setNewText("");
-    setShowNew(false);
+    const created = await appendVoiceNote(t);
+    if (created) {
+      setNewText("");
+      setShowNew(false);
+      // Optimistic: realtime will also refresh
+      setNotes((prev) => [created, ...prev.filter((n) => n.id !== created.id)]);
+    }
   };
 
-  const handleSaveEdit = (id: string) => {
+  const handleSaveEdit = async (id: string) => {
     const t = editText.trim();
     if (!t) return;
-    persist(notes.map((n) => (n.id === id ? { ...n, text: t } : n)));
+    const prev = notes;
+    setNotes(prev.map((n) => (n.id === id ? { ...n, text: t } : n)));
     setEditingId(null);
+    const { error } = await supabase.from("notes").update({ content: t }).eq("id", id);
+    if (error) {
+      toast.error("Could not save edit");
+      setNotes(prev);
+    }
   };
 
-  const handleDelete = (id: string) => {
-    persist(notes.filter((n) => n.id !== id));
+  const handleDelete = async (id: string) => {
+    const prev = notes;
+    setNotes(prev.filter((n) => n.id !== id));
+    const { error } = await supabase.from("notes").delete().eq("id", id);
+    if (error) {
+      toast.error("Could not delete note");
+      setNotes(prev);
+    }
   };
 
-  const handleClearAll = () => {
+  const handleClearAll = async () => {
     if (notes.length === 0) return;
     if (!confirm("Delete all voice notes?")) return;
-    persist([]);
-    toast.success("All notes cleared");
+    const uid = userIdRef.current ?? (await getUserId());
+    if (!uid) return;
+    const prev = notes;
+    setNotes([]);
+    const { error } = await supabase
+      .from("notes")
+      .delete()
+      .eq("user_id", uid)
+      .is("book_id", null);
+    if (error) {
+      toast.error("Could not clear notes");
+      setNotes(prev);
+    } else {
+      toast.success("All notes cleared");
+    }
   };
 
   return (
@@ -152,7 +272,9 @@ const VoiceNotesPanel: React.FC<Props> = ({ open, onClose }) => {
         </div>
 
         <div className="flex-1 overflow-auto px-4 py-3 space-y-2">
-          {notes.length === 0 ? (
+          {loading ? (
+            <p className="text-xs text-on-surface-variant text-center py-8">Loading…</p>
+          ) : notes.length === 0 ? (
             <p className="text-xs text-on-surface-variant text-center py-8">
               No notes yet. On mobile, press &amp; hold a chat bubble to save it here.
             </p>
