@@ -52,13 +52,16 @@ export function useDictation(opts: UseDictationOpts = {}): UseDictationApi {
     rec.lang = "en-US";
     rec.onstart = () => setIsListening(true);
     rec.onresult = (e: any) => {
+      // Rebuild from scratch every event — some engines (notably Chrome on Android)
+      // re-emit previously-finalized results with resultIndex=0, which causes
+      // incremental appenders to duplicate words ("please please do please do some…").
+      let finalStr = "";
       let interimStr = "";
-      let finalStr = finalRef.current;
-      for (let i = e.resultIndex; i < e.results.length; i++) {
+      for (let i = 0; i < e.results.length; i++) {
         const res = e.results[i];
         const t = String(res[0]?.transcript || "");
         if (res.isFinal) finalStr += (finalStr ? " " : "") + t.trim();
-        else interimStr += t;
+        else interimStr += (interimStr ? " " : "") + t.trim();
       }
       finalRef.current = finalStr;
       const combined = (finalStr + " " + interimStr).replace(/\s+/g, " ").trim();
