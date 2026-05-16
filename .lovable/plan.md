@@ -1,44 +1,39 @@
-# Fix: Transcript PDF won't download
+# Auto-save transcript PDFs to the user's PDF library
 
-## Root cause
+## What changes
 
-The VPS video engine returns a server-side filesystem path as the PDF URL (e.g. `/tmp/video-output/ju-T6uQNPSg.pdf`), not an HTTPS URL. The frontend renders this as `<a href="/tmp/...">`, which the browser resolves against the Lovable domain and fails — nothing downloadable exists there.
+When a video transcription job completes, the generated transcript PDF will be saved to the user's PDF library (the same library that holds uploaded books), in addition to the existing behavior:
 
-Confirmed by inspecting the `video_jobs` table: the most recent completed job has `pdf_url = /tmp/video-output/ju-T6uQNPSg.pdf`.
+- The "Download Transcript PDF" button keeps working exactly as it does now.
+- The auto-saved wiki entry keeps being created.
+- The job row in `video_jobs` keeps being updated.
 
-## Fix
+A new copy of the PDF lands in the library as a regular book item, so the user can open, read, chapterize, or chat with it just like any uploaded PDF.
 
-Route the download through our existing edge function so the browser always hits a valid HTTPS URL, regardless of what the engine returns.
+## How it works
 
-### 1. Edge function `video-to-pdf`
+Inside the `video-to-pdf` edge function's status route, the moment a job transitions to `completed`:
 
-Add a new route:
+1. Build the PDF from the transcript (reuse the existing `buildPdf` helper).
+2. Skip if a library entry for this exact job already exists (dedupe via `file_name = video-{jobId}.pdf` scoped to the user).
+3. Otherwise:
+   - Generate a fresh `bookId` (uuid).
+   - Upload the PDF bytes to the `book-pdfs` storage bucket at `{userId}/{bookId}.pdf`.
+   - Insert a row into `books` with:
+     - `id`: the new bookId
+     - `user_id`: the job's user
+     - `title`: video title from metadata, falling back to the video URL
+     - `file_name`: `video-{jobId}.pdf`
+     - `page_count`: page count returned by pdf-lib
 
-- `GET /video-to-pdf/download/{jobId}` — auth-checks the user owns the job, fetches the PDF bytes from the VPS engine, streams them back with `Content-Type: application/pdf` and `Content-Disposition: attachment; filename="transcript-{jobId}.pdf"`.
+If the upload or insert fails, log the error and continue — the transcript, wiki entry, and download button still work; only the library copy is missing, and the next status poll will retry.
 
-It will try, in order, the most likely engine endpoints to retrieve the file:
-1. `GET {VIDEO_ENGINE_URL}/video/{jobId}/pdf`
-2. `GET {VIDEO_ENGINE_URL}/video/{jobId}/download`
-3. `GET {VIDEO_ENGINE_URL}/files/{basename(pdf_url)}`
+## Files touched
 
-The first one that returns 200 wins. If none work, return a clear error so we know to add a real endpoint on the VPS.
+- `supabase/functions/video-to-pdf/index.ts` — extend the `completed` branch with the library-save block; have `buildPdf` also return the page count.
 
-### 2. Frontend `VideoTranscript.tsx`
+No DB schema changes, no new buckets, no frontend changes. The Library UI auto-refreshes via its existing fetch on load; newly added books appear on next library visit or refresh.
 
-Replace the raw `href={job.pdf_url}` with a computed proxy URL:
+## Open question
 
-```
-${VITE_SUPABASE_URL}/functions/v1/video-to-pdf/download/${job.id}?token=...
-```
-
-Since `<a>` clicks can't set Authorization headers, the link handler will instead call `fetch` with the auth header, get a blob, and trigger a download via a temporary object URL. Keeps the existing "Download Transcript PDF" button visually identical.
-
-Also update the wiki auto-save block so the markdown PDF link points to the proxy URL too (currently it embeds the same broken `/tmp/...` path).
-
-### 3. No DB or schema change required
-
-`pdf_url` stays as-is for backward compatibility; the proxy ignores it and uses the engine endpoints keyed by `jobId`.
-
-## Open question for you
-
-Do you know which endpoint your VPS engine exposes to serve the generated PDF? If it's something other than the three guesses above (e.g. `/static/{file}.pdf`), tell me the exact path and I'll wire it directly instead of probing.
+The library entries created from videos will appear alongside uploaded books. Want me to tag them visually (e.g. prefix the title with a small icon or "[Video]") so they're distinguishable, or keep titles clean as just the video title?
