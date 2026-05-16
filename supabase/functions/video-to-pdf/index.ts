@@ -132,10 +132,12 @@ Deno.serve(async (req) => {
       const engineStatus = await statusRes.json();
 
       if (engineStatus.status === "completed" && engineStatus.url) {
-        // Update video_jobs
+        // Update video_jobs (persist transcript for on-demand PDF generation)
         await supabase.from("video_jobs").update({
           status: "completed",
           pdf_url: engineStatus.url,
+          transcript: engineStatus.transcript || null,
+          title: (engineStatus.metadata && engineStatus.metadata.title) || null,
           metadata: engineStatus.metadata || null,
           word_count: engineStatus.word_count || 0,
           error: null,
