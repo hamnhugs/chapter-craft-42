@@ -10,12 +10,18 @@ interface BuildOpts {
   voiceMode?: boolean;
   /** Latest user message — used to retrieve graph-aware context. */
   latestUserQuery?: string;
+  /** Free-form user-supplied instructions prepended at the very top. */
+  customSystemPrompt?: string;
 }
 
 export async function buildChatSystemPrompt({
-  books, selectedBook, deepResearch, voiceMode, latestUserQuery,
+  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt,
 }: BuildOpts): Promise<string> {
   const parts: string[] = [];
+
+  if (customSystemPrompt && customSystemPrompt.trim()) {
+    parts.push("## User Custom Instructions", customSystemPrompt.trim(), "");
+  }
 
   if (voiceMode) {
     parts.push(
