@@ -380,7 +380,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
       }
     },
-    [apiKey, books, activeBookId, deepResearch, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken, messages, persistMessage, addChapter, updateChapter, removeChapter, setActiveBookSilent]
+    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, selectedModel, deepResearchModel, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, addChapter, updateChapter, removeChapter, setActiveBookSilent]
   );
 
 
@@ -389,8 +389,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       value={{
         messages,
         isLoading,
-        deepResearch,
-        setDeepResearch,
+        deepResearch: chatDeepResearch || voiceDeepResearch,
+        setDeepResearch: setChatDeepResearch,
+        chatDeepResearch,
+        setChatDeepResearch,
+        voiceDeepResearch,
+        setVoiceDeepResearch,
         sendMessage,
         clearChat,
         abort,
