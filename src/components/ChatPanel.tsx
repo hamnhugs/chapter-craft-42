@@ -33,6 +33,20 @@ const ChatPanel: React.FC = () => {
   useEffect(() => subscribeSpeaking(setSpeakingId), []);
   useEffect(() => () => stopSpeaking(), []);
 
+  // Chat cannot use embedding-only models (they're for Wiki reindex). Auto-switch away.
+  const chatModels = savedModels.filter((m) => !isEmbeddingModel(m));
+  useEffect(() => {
+    if (!loaded) return;
+    if (isEmbeddingModel(selectedModel)) {
+      const fallback = chatModels[0];
+      if (fallback) {
+        setSelectedModel(fallback);
+        toast.message(`Switched Chat to "${fallback}"`, { description: `"${selectedModel}" is an embedding model and can't be used for chat.` });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, selectedModel]);
+
   // Auto-read assistant replies when the user has the setting enabled.
   const autoReadRef = useRef<{ enabled: boolean; lastId: string | null }>({ enabled: false, lastId: null });
   useEffect(() => {
