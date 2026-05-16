@@ -60,6 +60,7 @@ export function useChatSettings() {
           autoReadReplies: !!(data as any).auto_read_replies,
           wikiModel: (data as any).wiki_model || "",
           customSystemPrompt: (data as any).custom_system_prompt || "",
+          burplexityApiToken: (data as any).burplexity_api_token || "",
         });
       }
       setLoaded(true);
