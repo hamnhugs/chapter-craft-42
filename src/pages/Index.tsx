@@ -5,6 +5,7 @@ import Library from "@/components/Library";
 import ChatPanel from "@/components/ChatPanel";
 import WikiPanel from "@/components/WikiPanel";
 import VoiceChat from "@/components/VoiceChat";
+import AutoChapterize from "@/components/AutoChapterize";
 import VideoTranscript from "@/components/VideoTranscript";
 import ThemeSwitcher from "@/components/ThemeSwitcher";
 import StripeBar from "@/components/fruit-stripe/StripeBar";
