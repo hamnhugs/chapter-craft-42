@@ -267,6 +267,28 @@ const VoiceChat: React.FC = () => {
 
   const stopSpeaking = () => { synthRef.current.cancel(); setIsSpeaking(false); };
 
+  const runBackgroundSearch = useCallback(async (query: string) => {
+    if (!burplexityApiToken) return;
+    setPendingSearchCount((c) => c + 1);
+    try {
+      const result = await executeQuickSearch(query, burplexityApiToken);
+      if (result.error || !result.citations.length) return;
+      let md = `🔍 **Search Results for:** "${query}"\n\n`;
+      result.citations.forEach((c, i) => {
+        md += `**${i + 1}. ${c.title}**\n${c.url}\n`;
+        if (c.snippet) md += `${c.snippet}\n`;
+        md += "\n";
+      });
+      if (result.elapsed_ms) {
+        md += `_Completed in ${result.elapsed_ms}ms${result.backend ? ` via ${result.backend}` : ""}_`;
+      }
+      injectDisplayMessage(md);
+      if (ttsEnabled) ttsSpeak("Search results are ready", { rate: ttsRate });
+    } finally {
+      setPendingSearchCount((c) => c - 1);
+    }
+  }, [burplexityApiToken, injectDisplayMessage, ttsEnabled, ttsRate]);
+
   const submit = useCallback(async (text: string) => {
     if (!text.trim()) return;
     if (!apiKey) { toast.error("Set your OpenRouter API key first"); setShowSettings(true); return; }
@@ -426,28 +448,6 @@ const VoiceChat: React.FC = () => {
     stopSpeaking();
     if (msg) toast(msg);
   };
-
-  const runBackgroundSearch = useCallback(async (query: string) => {
-    if (!burplexityApiToken) return;
-    setPendingSearchCount((c) => c + 1);
-    try {
-      const result = await executeQuickSearch(query, burplexityApiToken);
-      if (result.error || !result.citations.length) return;
-      let md = `🔍 **Search Results for:** "${query}"\n\n`;
-      result.citations.forEach((c, i) => {
-        md += `**${i + 1}. ${c.title}**\n${c.url}\n`;
-        if (c.snippet) md += `${c.snippet}\n`;
-        md += "\n";
-      });
-      if (result.elapsed_ms) {
-        md += `_Completed in ${result.elapsed_ms}ms${result.backend ? ` via ${result.backend}` : ""}_`;
-      }
-      injectDisplayMessage(md);
-      if (ttsEnabled) ttsSpeak("Search results are ready", { rate: ttsRate });
-    } finally {
-      setPendingSearchCount((c) => c - 1);
-    }
-  }, [burplexityApiToken, injectDisplayMessage, ttsEnabled, ttsRate]);
 
   const toggleHandsFree = () => {
     if (handsFree) {
