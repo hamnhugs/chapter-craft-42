@@ -97,7 +97,7 @@ Deno.serve(async (req) => {
       }
 
       title = title || job.video_url || "Video transcript";
-      const pdfBytes = await buildPdf(title, transcript);
+      const { bytes: pdfBytes } = await buildPdf(title, transcript);
 
       return new Response(pdfBytes, {
         status: 200,
@@ -184,6 +184,49 @@ Deno.serve(async (req) => {
             source_url: job.video_url,
           });
         }
+
+        // Auto-save PDF to user's PDF library (books table + book-pdfs bucket)
+        if (engineStatus.transcript) {
+          try {
+            const fileName = `video-${jobId}.pdf`;
+            const { data: existingBook } = await supabase
+              .from("books")
+              .select("id")
+              .eq("user_id", user.id)
+              .eq("file_name", fileName)
+              .maybeSingle();
+
+            if (!existingBook) {
+              const meta = engineStatus.metadata || {};
+              const title = meta.title || job.video_url || "Video transcript";
+              const { bytes, pageCount } = await buildPdf(title, engineStatus.transcript);
+              const bookId = crypto.randomUUID();
+              const path = `${user.id}/${bookId}.pdf`;
+
+              const { error: upErr } = await supabase.storage
+                .from("book-pdfs")
+                .upload(path, bytes, { contentType: "application/pdf", upsert: true });
+
+              if (upErr) {
+                console.error("library upload failed:", upErr);
+              } else {
+                const { error: insErr } = await supabase.from("books").insert({
+                  id: bookId,
+                  user_id: user.id,
+                  title,
+                  file_name: fileName,
+                  page_count: pageCount,
+                });
+                if (insErr) {
+                  console.error("library insert failed:", insErr);
+                  await supabase.storage.from("book-pdfs").remove([path]);
+                }
+              }
+            }
+          } catch (libErr) {
+            console.error("library auto-save error:", libErr);
+          }
+        }
       } else if (engineStatus.status === "failed") {
         await supabase.from("video_jobs").update({
           status: "failed",
@@ -210,7 +253,7 @@ function json(b: unknown, status = 200) {
 }
 
 // Generate a simple multi-page PDF from a title + transcript text.
-async function buildPdf(title: string, transcript: string): Promise<Uint8Array> {
+async function buildPdf(title: string, transcript: string): Promise<{ bytes: Uint8Array; pageCount: number }> {
   // Strip characters WinAnsi can't encode (pdf-lib StandardFonts limitation)
   const sanitize = (s: string) =>
     s.replace(/[\u2018\u2019]/g, "'")
@@ -270,5 +313,6 @@ async function buildPdf(title: string, transcript: string): Promise<Uint8Array> 
     y -= lineH;
   }
 
-  return await doc.save();
+  const bytes = await doc.save();
+  return { bytes, pageCount: doc.getPageCount() };
 }
