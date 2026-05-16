@@ -6,6 +6,7 @@ import { useChatSettings } from "@/hooks/useChatSettings";
 import { buildChatSystemPrompt } from "@/lib/buildChatSystemPrompt";
 import { CHAT_TOOL_DEFINITIONS, executeChatTool, ToolEvent } from "@/lib/chatTools";
 import { toast } from "sonner";
+import { isEmbeddingModel } from "@/lib/utils";
 
 export interface ChatMessage {
   id?: string;
@@ -193,6 +194,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
 
       const model = deepResearch ? deepResearchModel : selectedModel;
+      if (isEmbeddingModel(model)) {
+        const msg = `"${model}" is an embedding model — pick a chat model in Settings (it's only valid for Wiki reindex).`;
+        toast.error(msg);
+        assistantText = `❌ ${msg}`;
+        updateAssistant();
+        setIsLoading(false);
+        return;
+      }
       const workingMessages: any[] = [
         { role: "system", content: systemPrompt },
         ...baseHistory,

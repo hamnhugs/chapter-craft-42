@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
+import { isEmbeddingModel } from "@/lib/utils";
 
 const DEFAULT_MODEL = "google/gemini-2.5-flash";
 const DEFAULT_DEEP_RESEARCH_MODEL = "google/gemini-2.5-pro";
@@ -97,14 +98,21 @@ export function useChatSettings() {
   }, [update]);
 
   const addModel = useCallback((model: string) => {
-    if (!model.trim()) return;
-    if (settings.savedModels.includes(model.trim())) { toast.error("Model already saved"); return; }
+    const id = model.trim();
+    if (!id) return;
+    if (settings.savedModels.includes(id)) { toast.error("Model already saved"); return; }
+    const embed = isEmbeddingModel(id);
     update({
-      savedModels: [...settings.savedModels, model.trim()],
-      selectedModel: model.trim(),
+      savedModels: [...settings.savedModels, id],
+      // Don't make embedding models the active Chat model — they only work for Wiki reindex.
+      selectedModel: embed ? settings.selectedModel : id,
     });
-    toast.success(`Model "${model.trim()}" added`);
-  }, [settings.savedModels, update]);
+    if (embed) {
+      toast.success(`Embedding model "${id}" added — select it in Wiki Settings.`);
+    } else {
+      toast.success(`Model "${id}" added`);
+    }
+  }, [settings.savedModels, settings.selectedModel, update]);
 
   const removeModel = useCallback((model: string) => {
     if (settings.savedModels.length <= 1) { toast.error("You need at least one model"); return; }

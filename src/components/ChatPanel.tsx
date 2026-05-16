@@ -12,6 +12,7 @@ import { extractKnowledge } from "@/lib/knowledgeApi";
 import { Loader2 } from "lucide-react";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { speak, stopSpeaking, subscribeSpeaking, getSpeakingId } from "@/lib/speak";
+import { isEmbeddingModel } from "@/lib/utils";
 
 const ChatPanel: React.FC = () => {
   const { books, activeBookId } = useApp();
@@ -31,6 +32,20 @@ const ChatPanel: React.FC = () => {
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
   useEffect(() => subscribeSpeaking(setSpeakingId), []);
   useEffect(() => () => stopSpeaking(), []);
+
+  // Chat cannot use embedding-only models (they're for Wiki reindex). Auto-switch away.
+  const chatModels = savedModels.filter((m) => !isEmbeddingModel(m));
+  useEffect(() => {
+    if (!loaded) return;
+    if (isEmbeddingModel(selectedModel)) {
+      const fallback = chatModels[0];
+      if (fallback) {
+        setSelectedModel(fallback);
+        toast.message(`Switched Chat to "${fallback}"`, { description: `"${selectedModel}" is an embedding model and can't be used for chat.` });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, selectedModel]);
 
   // Auto-read assistant replies when the user has the setting enabled.
   const autoReadRef = useRef<{ enabled: boolean; lastId: string | null }>({ enabled: false, lastId: null });
@@ -137,19 +152,22 @@ const ChatPanel: React.FC = () => {
                 onChange={(e) => setSelectedModel(e.target.value)}
                 className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40"
               >
-                {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
+                {chatModels.map((m) => (<option key={m} value={m}>{m}</option>))}
               </select>
               <div className="flex gap-2 mt-1">
                 <Input type="text" placeholder="provider/model-name" value={newModelInput} onChange={(e) => setNewModelInput(e.target.value)} className="text-sm font-mono bg-surface-container-high border-none" onKeyDown={(e) => { if (e.key === "Enter") handleAddModel(); }} />
                 <Button size="sm" onClick={handleAddModel}>Add</Button>
               </div>
               <div className="flex flex-wrap gap-1.5 mt-1">
-                {savedModels.map((m) => (
-                  <span key={m} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md ${m === selectedModel ? "bg-primary-container/20 text-primary border border-primary-container/30" : "bg-surface-container-highest text-on-surface-variant"}`}>
-                    <button onClick={() => setSelectedModel(m)} className="hover:underline">{m}</button>
-                    <button onClick={() => removeModel(m)} className="hover:text-destructive ml-0.5 material-symbols-outlined text-xs">close</button>
-                  </span>
-                ))}
+                {savedModels.map((m) => {
+                  const embed = isEmbeddingModel(m);
+                  return (
+                    <span key={m} title={embed ? "Embedding model — used by Wiki reindex, not Chat" : undefined} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md ${m === selectedModel ? "bg-primary-container/20 text-primary border border-primary-container/30" : embed ? "bg-surface-container-highest/50 text-on-surface-variant/60 italic" : "bg-surface-container-highest text-on-surface-variant"}`}>
+                      <button onClick={() => { if (embed) { toast.error("Embedding model — pick it in Wiki Settings, not Chat."); return; } setSelectedModel(m); }} className="hover:underline">{m}{embed ? " (embed)" : ""}</button>
+                      <button onClick={() => removeModel(m)} className="hover:text-destructive ml-0.5 material-symbols-outlined text-xs">close</button>
+                    </span>
+                  );
+                })}
               </div>
             </div>
             <div className="flex flex-col gap-1.5">
