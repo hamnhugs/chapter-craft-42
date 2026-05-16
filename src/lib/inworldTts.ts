@@ -1,15 +1,4 @@
-const BASE_URL = "https://api.inworld.ai";
-
-// The Inworld platform provides API keys pre-encoded as base64(key:secret).
-// If the key looks like a raw non-encoded string, encode it as basic auth.
-function authHeader(apiKey: string): string {
-  const trimmed = apiKey.trim();
-  if (/^[A-Za-z0-9+/]+=+$/.test(trimmed)) {
-    // Already base64-padded — use directly (platform-generated key format)
-    return `Basic ${trimmed}`;
-  }
-  return `Basic ${btoa(`${trimmed}:`)}`;
-}
+import { supabase } from "@/integrations/supabase/client";
 
 export interface InworldVoice {
   voice_id: string;
@@ -19,10 +8,25 @@ export interface InworldVoice {
   gender?: string;
 }
 
-export async function fetchInworldVoices(apiKey: string): Promise<InworldVoice[]> {
-  const resp = await fetch(`${BASE_URL}/v1/tts/voices`, {
-    headers: { Authorization: authHeader(apiKey) },
-  });
+const FUNCTIONS_BASE = `${import.meta.env.VITE_SUPABASE_URL ?? "https://ktzaysdkdkocqhewwtnn.supabase.co"}/functions/v1/inworld-tts`;
+const ANON_KEY =
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ??
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt0emF5c2RrZGtvY3FoZXd3dG5uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE3MDc5NTMsImV4cCI6MjA4NzI4Mzk1M30.Kql1cXJFJ1Me2XKQj0Jkf1G-iKHiUbc0GB_24NOfsP0";
+
+async function authHeaders(): Promise<Record<string, string>> {
+  const { data } = await supabase.auth.getSession();
+  const jwt = data.session?.access_token;
+  if (!jwt) throw new Error("Not signed in");
+  return {
+    Authorization: `Bearer ${jwt}`,
+    apikey: ANON_KEY,
+  };
+}
+
+// `_apiKey` accepted for backwards compatibility with existing callers; ignored.
+export async function fetchInworldVoices(_apiKey?: string): Promise<InworldVoice[]> {
+  const headers = await authHeaders();
+  const resp = await fetch(`${FUNCTIONS_BASE}/voices`, { headers });
   if (!resp.ok) {
     const body = await resp.text().catch(() => resp.statusText);
     throw new Error(`${resp.status}: ${body}`);
@@ -33,24 +37,15 @@ export async function fetchInworldVoices(apiKey: string): Promise<InworldVoice[]
 
 export async function synthesizeSpeech(
   text: string,
-  apiKey: string,
+  _apiKey: string | undefined,
   voiceId: string,
-  model = "inworld-tts-2"
+  model = "inworld-tts-2",
 ): Promise<ArrayBuffer> {
-  const clean = text.replace(/[#*_`~[\]()>|]/g, "").replace(/\n+/g, ". ").trim();
-  const resp = await fetch(`${BASE_URL}/v1/tts/synthesize`, {
+  const headers = await authHeaders();
+  const resp = await fetch(FUNCTIONS_BASE, {
     method: "POST",
-    headers: {
-      Authorization: authHeader(apiKey),
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      text: clean,
-      voice_id: voiceId,
-      model,
-      output_format: "mp3",
-      delivery_mode: "BALANCED",
-    }),
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify({ text, voice_id: voiceId, model }),
   });
   if (!resp.ok) {
     const body = await resp.text().catch(() => resp.statusText);
