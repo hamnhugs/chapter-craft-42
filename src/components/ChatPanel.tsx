@@ -16,8 +16,8 @@ import { speak, stopSpeaking, subscribeSpeaking, getSpeakingId } from "@/lib/spe
 const ChatPanel: React.FC = () => {
   const { books, activeBookId } = useApp();
   const {
-    apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, loaded,
-    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setTtsRate,
+    apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, autoReadReplies, loaded,
+    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setTtsRate, setAutoReadReplies,
   } = useChatSettings();
   const { messages, isLoading, deepResearch, setDeepResearch, sendMessage, clearChat } = useChat();
   const [input, setInput] = useState("");
