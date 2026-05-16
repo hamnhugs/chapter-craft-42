@@ -144,6 +144,7 @@ export function useChatSettings() {
     setWikiModel: (m: string) => update({ wikiModel: m }),
     setCustomSystemPrompt: (p: string) => update({ customSystemPrompt: p }),
     setBurplexityApiToken: (t: string) => update({ burplexityApiToken: t.trim() }),
+    setInworldApiKey: (k: string) => update({ inworldApiKey: k.trim() }),
     addModel,
     removeModel,
     setNewModelInput: undefined, // handled in component
