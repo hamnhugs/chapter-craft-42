@@ -1,82 +1,47 @@
-# Three small UX fixes
+# Mobile-friendly Voice settings
 
-## 1. Easier to close the Chat settings panel
+## Problem
 
-**File:** `src/components/ChatPanel.tsx`
+In `src/components/VoiceChat.tsx`, the settings panel (lines 464–526) is rendered as an inline `<div>` shoved between the toolbar and the messages list. On mobile (647px viewport):
+- No close button — the only way to dismiss is to scroll back up and tap the gear icon again.
+- It pushes the chat content out of view.
+- Inputs and the model list overflow horizontally on narrow widths.
+- No safe-area padding, no drag affordance, no backdrop.
 
-Today the settings panel only has a close (X) button on mobile (inside a `md:hidden` header). On desktop you must scroll back to the "Settings" toggle button in the input bar.
+## Solution: bottom-sheet pattern (2026 best practice)
 
-Changes:
-- Make the sticky header (with the X close button) visible on all screen sizes — remove `md:hidden`, keep the "Settings" label.
-- Add an Escape-key listener while the panel is open that calls `setShowSettings(false)`.
-- Add a click-outside handler on the panel container that closes it when the user taps anywhere outside.
+Modern mobile settings UIs use a **bottom sheet** with: drag handle, sticky header with title + close (X), scrollable body, safe-area inset padding, swipe-down-to-dismiss, and a scrim/backdrop. On desktop, the same content stays as a side panel or modal.
 
-No behavior change for the Voice page panel — its existing controls are fine.
+The project already ships `vaul` via `src/components/ui/drawer.tsx`, which is the standard React bottom-sheet primitive (used by shadcn). We'll reuse it.
 
-## 2. Replay button on bot bubbles in the Voice tab
+### Changes to `src/components/VoiceChat.tsx`
 
-**File:** `src/components/VoiceChat.tsx`
+1. **Replace the inline `{showSettings && (...)}` block** with a `<Drawer open={showSettings} onOpenChange={setShowSettings}>`:
+   - `DrawerContent` already provides the drag handle (the small pill at the top) and swipe-to-close via vaul.
+   - Wrap with a `DrawerHeader` containing:
+     - `DrawerTitle`: "Settings"
+     - A `DrawerClose` button rendered as an icon button (X) in the top-right — explicit close affordance, large 44×44 hit target.
+   - Body: keep the existing three sections (API key, Model, Deep Research, Custom Instructions) but inside a scrollable container with `max-h-[85vh] overflow-y-auto pb-[env(safe-area-inset-bottom)]`.
+   - On desktop (≥`md`), the drawer still works but we cap width: add `md:max-w-2xl md:mx-auto` to `DrawerContent`.
 
-The Chat tab already has a circular speaker button on each assistant bubble (uses the shared `speak` helper from `src/lib/speak.ts`). The Voice tab has only "Save to voice notes" and long-press, no replay.
+2. **Responsive grid tweaks** inside the sheet:
+   - Change the API-key/model grid from `grid-cols-1 lg:grid-cols-2` to single column on mobile (already is) but reduce padding (`p-3` instead of `p-4`) and ensure `min-w-0` so long model strings wrap.
+   - Make the model chip list use `flex-wrap` + `break-all` to prevent overflow.
 
-Changes:
-- Import `speak`, `stopSpeaking`, `subscribeSpeaking`, `getSpeakingId` from `@/lib/speak`.
-- Track `speakingId` in local state (mirroring `ChatPanel`).
-- On every message bubble (both user and assistant, matching Chat), render a small floating "volume_up / stop_circle" button positioned beside the bubble. Clicking replays via `speak(msg.content, { id, rate: ttsRate })`; clicking again on the same id stops.
-- The replay button respects the user's existing `ttsRate` slider. It works even when `ttsEnabled` (auto-speak) is OFF — replay is an explicit user action.
-- Keep the existing long-press / "Save to voice notes" affordance unchanged.
+3. **Escape-key + backdrop dismiss** come for free from vaul.
 
-## 3. Custom system prompt for the chat (Voice + Chat settings)
-
-The user wants to inject a personal instruction (persona, tone, focus) into every Librarian reply.
-
-### Database
-
-Add a nullable text column to `user_settings`:
-
-```sql
-alter table public.user_settings
-  add column if not exists custom_system_prompt text;
-```
-
-### Settings hook
-
-**File:** `src/hooks/useChatSettings.ts`
-- Add `customSystemPrompt: string` to `ChatSettings` (default `""`).
-- Load from `data.custom_system_prompt`.
-- Save under `custom_system_prompt` in the upsert payload.
-- Export `setCustomSystemPrompt`.
-
-### System-prompt builder
-
-**File:** `src/lib/buildChatSystemPrompt.ts`
-- Accept `customSystemPrompt?: string` in `BuildOpts`.
-- When non-empty, prepend a clearly fenced block at the very top of the system prompt:
-  `## User Custom Instructions\n<value>\n` so the model treats it as a primary directive but our tool / memory sections still apply.
-
-### ChatContext
-
-**File:** `src/context/ChatContext.tsx`
-- Read `customSystemPrompt` from `useChatSettings()` and pass it through to `buildChatSystemPrompt(...)` everywhere it's called (regular send + voice send).
-
-### UI: Voice settings
-
-**File:** `src/components/VoiceChat.tsx`
-- In the existing `{showSettings && (...)}` block, add a full-width section "Custom Instructions" with a `<Textarea>` (3–5 rows), placeholder like *"e.g. Always answer as a no-nonsense literary critic. Reference page numbers."* and a Save button that calls `setCustomSystemPrompt`.
-
-### UI: Chat settings
-
-**File:** `src/components/ChatPanel.tsx`
-- Add the same "Custom Instructions" section as a new full-width row inside the existing settings panel (below the voice-playback grid).
+4. **No behavior change** to the rest of the Voice page; the gear button still toggles `showSettings`.
 
 ## Technical notes
 
-- No edge-function changes — the system prompt is composed client-side.
-- `customSystemPrompt` is treated as plain text; we never execute it, we just prepend it to the system message.
-- Migration is additive and nullable; existing rows continue to work.
-- Replay button reuses the global `speak` singleton so starting one cancels any in-flight playback (consistent with Chat tab).
+- Import the existing primitives:
+  `import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerClose } from "@/components/ui/drawer";`
+- Close button: `<DrawerClose asChild><Button variant="ghost" size="icon" aria-label="Close settings"><X className="h-5 w-5" /></Button></DrawerClose>`, positioned absolute top-right inside the header.
+- The drag handle in `drawer.tsx` is already rendered automatically.
+- Keep all existing state (`promptDraft`, `apiKey`, `selectedModel`, etc.) untouched — only the wrapper changes.
+- No CSS/token changes; the sheet uses `bg-background` which already matches the editorial theme.
 
 ## Out of scope
 
-- No changes to embedding-model handling, Wiki, or the API-key flow.
-- No new model selectors.
+- Chat tab settings panel (already has its own close fix from previous turn).
+- No changes to the actual settings fields or persistence.
