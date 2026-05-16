@@ -141,10 +141,11 @@ const ChatPanel: React.FC = () => {
       {/* Settings bar */}
       {showSettings && (
         <div
-          className="border-b border-outline-variant/10 bg-surface-container-low px-4 py-3 md:py-4 space-y-4 max-h-[60vh] md:max-h-none overflow-y-auto md:overflow-visible overscroll-contain"
+          ref={settingsPanelRef}
+          className="border-b border-outline-variant/10 bg-surface-container-low px-4 py-3 md:py-4 space-y-4 max-h-[60vh] md:max-h-[70vh] overflow-y-auto overscroll-contain"
           style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 0.75rem)" }}
         >
-          <div className="sticky top-0 -mx-4 -mt-3 px-4 py-2 bg-surface-container-low/95 backdrop-blur-sm flex items-center justify-between z-10 md:hidden">
+          <div className="sticky top-0 -mx-4 -mt-3 px-4 py-2 bg-surface-container-low/95 backdrop-blur-sm flex items-center justify-between z-10">
             <span className="text-xs font-semibold uppercase tracking-widest text-on-surface-variant">Settings</span>
             <button
               onClick={() => setShowSettings(false)}
