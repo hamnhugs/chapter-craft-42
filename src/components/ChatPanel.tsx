@@ -12,6 +12,7 @@ import { extractKnowledge } from "@/lib/knowledgeApi";
 import { Loader2 } from "lucide-react";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { speak, stopSpeaking, subscribeSpeaking, getSpeakingId } from "@/lib/speak";
+import { isEmbeddingModel } from "@/lib/utils";
 
 const ChatPanel: React.FC = () => {
   const { books, activeBookId } = useApp();
