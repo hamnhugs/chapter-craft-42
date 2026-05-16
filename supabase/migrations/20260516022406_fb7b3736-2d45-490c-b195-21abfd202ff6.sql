@@ -1,0 +1,1 @@
+ALTER TABLE public.user_settings ADD COLUMN IF NOT EXISTS tts_rate numeric NOT NULL DEFAULT 1.05;
