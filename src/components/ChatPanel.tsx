@@ -192,11 +192,22 @@ const ChatPanel: React.FC = () => {
                 ))}
               </div>
             )}
-            <div className={`${msg.role === "user" ? "message-bubble-user bg-primary-container text-on-primary-container" : "message-bubble-ai bg-surface-container-high text-foreground border-l-2 border-primary-container/20"} p-5 shadow-sm leading-relaxed`}>
+            <div className={`relative group ${msg.role === "user" ? "message-bubble-user bg-primary-container text-on-primary-container" : "message-bubble-ai bg-surface-container-high text-foreground border-l-2 border-primary-container/20"} p-5 shadow-sm leading-relaxed`}>
               {msg.role === "assistant" ? (
                 <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown>{msg.content}</ReactMarkdown></div>
               ) : (
                 <p className="whitespace-pre-wrap font-medium">{msg.content}</p>
+              )}
+              {msg.content && (
+                <button
+                  onClick={() => handleSpeak(msg, i)}
+                  title={speakingId === bubbleId(msg, i) ? "Stop reading" : "Read aloud"}
+                  className={`absolute top-1/2 -translate-y-1/2 ${msg.role === "user" ? "-left-3" : "-right-3"} w-7 h-7 rounded-full bg-surface-container-highest border border-outline-variant/20 shadow-sm flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-all opacity-70 hover:opacity-100`}
+                >
+                  <span className="material-symbols-outlined text-base">
+                    {speakingId === bubbleId(msg, i) ? "stop_circle" : "volume_up"}
+                  </span>
+                </button>
               )}
             </div>
           </div>
