@@ -126,6 +126,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     };
     loadBooks();
+
+    // Realtime: auto-refresh library when books are added/removed elsewhere
+    // (e.g. video transcript PDFs auto-saved by the edge function, mobile app uploads)
+    const channel = supabase
+      .channel(`books-realtime-${user.id}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "books", filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          const b: any = payload.new;
+          setBooks((prev) => {
+            if (prev.some((x) => x.id === b.id)) return prev;
+            const newBook: BookDocument = {
+              id: b.id,
+              title: b.title,
+              fileName: b.file_name,
+              fileData: "",
+              pageCount: b.page_count ?? 0,
+              coverImageUrl: b.cover_image_url || undefined,
+              chapters: [],
+              addedAt: new Date(b.created_at).getTime(),
+            };
+            return [newBook, ...prev];
+          });
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "books", filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          const oldId = (payload.old as any)?.id;
+          if (!oldId) return;
+          setBooks((prev) => prev.filter((b) => b.id !== oldId));
+          setActiveBookId((prev) => (prev === oldId ? null : prev));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [user]);
 
   const addBook = useCallback(async (book: BookDocument, sourceFile?: File) => {
