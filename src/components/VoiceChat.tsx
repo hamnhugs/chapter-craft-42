@@ -80,6 +80,9 @@ const VoiceChat: React.FC = () => {
   const sendTimerRef = useRef<number | null>(null);
   const stoppedByUserRef = useRef(false);
   const lastSpokenIndexRef = useRef<number>(-1);
+  const lastFinalSegmentRef = useRef<string>("");
+  const lastSentTextRef = useRef<string>("");
+  const lastSentAtRef = useRef<number>(0);
 
   useEffect(() => { handsFreeRef.current = handsFree; localStorage.setItem(HANDS_FREE_KEY, String(handsFree)); }, [handsFree]);
   useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
@@ -153,7 +156,7 @@ const VoiceChat: React.FC = () => {
   const speak = useCallback((text: string) => {
     if (!ttsEnabled) {
       if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), 150);
+        window.setTimeout(() => safeStartListening(), 400);
       }
       return;
     }
@@ -165,13 +168,13 @@ const VoiceChat: React.FC = () => {
     utterance.onend = () => {
       setIsSpeaking(false);
       if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), 200);
+        window.setTimeout(() => safeStartListening(), 450);
       }
     };
     utterance.onerror = () => {
       setIsSpeaking(false);
       if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), 200);
+        window.setTimeout(() => safeStartListening(), 450);
       }
     };
     synthRef.current.speak(utterance);
@@ -189,11 +192,11 @@ const VoiceChat: React.FC = () => {
       const reply = await sendMessage(text, { voiceMode: true });
       if (reply) speak(reply);
       else if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), 200);
+        window.setTimeout(() => safeStartListening(), 450);
       }
     } catch {
       if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), 400);
+        window.setTimeout(() => safeStartListening(), 600);
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -205,43 +208,56 @@ const VoiceChat: React.FC = () => {
   const flushPendingTranscript = useCallback(() => {
     const text = finalBufferRef.current.trim();
     finalBufferRef.current = "";
+    lastFinalSegmentRef.current = "";
     if (sendTimerRef.current) { window.clearTimeout(sendTimerRef.current); sendTimerRef.current = null; }
     if (!text) return;
+    // Dedupe: drop if identical to the last sent text within 2.5s (Chrome echo).
+    const now = Date.now();
+    if (text === lastSentTextRef.current && now - lastSentAtRef.current < 2500) {
+      setInterimTranscript("");
+      return;
+    }
+    lastSentTextRef.current = text;
+    lastSentAtRef.current = now;
     setInterimTranscript("");
     try { recognitionRef.current?.stop(); } catch {}
     submitRef.current(text);
   }, []);
 
-  const safeStartListening = useCallback(() => {
-    if (!SpeechRecognition) return;
-    if (isListeningRef.current || isLoadingRef.current || isSpeakingRef.current) return;
-    if (stoppedByUserRef.current) return;
-    try { recognitionRef.current?.start(); } catch { /* ignore */ }
-  }, []);
-
-  const startListening = useCallback(() => {
-    if (!SpeechRecognition) { toast.error("Speech recognition not supported. Try Chrome."); return; }
-    if (!apiKey) { toast.error("Set your API key first"); setShowSettings(true); return; }
-    stopSpeaking();
-    stoppedByUserRef.current = false;
-
+  const buildRecognition = useCallback(() => {
     const recognition = new SpeechRecognition();
-    const continuous = handsFreeRef.current;
-    recognition.continuous = continuous;
+    recognition.continuous = handsFreeRef.current;
     recognition.interimResults = true;
     recognition.lang = "en-US";
 
-    recognition.onstart = () => setIsListening(true);
+    recognition.onstart = () => {
+      setIsListening(true);
+      lastFinalSegmentRef.current = "";
+    };
 
     recognition.onresult = (event: any) => {
       let interim = "";
       let newFinal = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const res = event.results[i];
-        if (res.isFinal) newFinal += res[0].transcript;
-        else interim += res[0].transcript;
+        if (res.isFinal) {
+          const seg = String(res[0].transcript || "").trim();
+          if (!seg) continue;
+          // Skip duplicate final segments (Chrome echo across restarts).
+          if (seg === lastFinalSegmentRef.current) continue;
+          lastFinalSegmentRef.current = seg;
+          newFinal += (newFinal ? " " : "") + seg;
+        } else {
+          interim += res[0].transcript;
+        }
       }
-      if (newFinal) finalBufferRef.current = (finalBufferRef.current + " " + newFinal).trim();
+      if (newFinal) {
+        const buf = finalBufferRef.current.trim();
+        // Don't re-append if buffer already ends with the same segment.
+        if (!buf.toLowerCase().endsWith(newFinal.toLowerCase())) {
+          finalBufferRef.current = (buf + " " + newFinal).trim();
+        }
+      }
       setInterimTranscript((finalBufferRef.current + " " + interim).trim());
 
       if (handsFreeRef.current) {
@@ -267,23 +283,50 @@ const VoiceChat: React.FC = () => {
     recognition.onend = () => {
       setIsListening(false);
       if (handsFreeRef.current && !stoppedByUserRef.current && !isLoadingRef.current && !isSpeakingRef.current) {
-        if (finalBufferRef.current.trim()) flushPendingTranscript();
-        else window.setTimeout(() => safeStartListening(), 250);
+        const buf = finalBufferRef.current.trim();
+        const isDup = buf && buf === lastSentTextRef.current && Date.now() - lastSentAtRef.current < 2500;
+        if (buf && !isDup) flushPendingTranscript();
+        else {
+          finalBufferRef.current = "";
+          lastFinalSegmentRef.current = "";
+          window.setTimeout(() => safeStartListening(), 250);
+        }
       } else {
         setInterimTranscript("");
       }
     };
 
+    return recognition;
+  }, [flushPendingTranscript]);
+
+  const safeStartListening = useCallback(() => {
+    if (!SpeechRecognition) return;
+    if (isListeningRef.current || isLoadingRef.current || isSpeakingRef.current) return;
+    if (stoppedByUserRef.current) return;
+    try { recognitionRef.current?.stop(); } catch {}
+    const recognition = buildRecognition();
     recognitionRef.current = recognition;
+    try { recognition.start(); } catch { /* ignore */ }
+  }, [buildRecognition]);
+
+  const startListening = useCallback(() => {
+    if (!SpeechRecognition) { toast.error("Speech recognition not supported. Try Chrome."); return; }
+    if (!apiKey) { toast.error("Set your API key first"); setShowSettings(true); return; }
+    stopSpeaking();
+    stoppedByUserRef.current = false;
     finalBufferRef.current = "";
+    lastFinalSegmentRef.current = "";
     setInterimTranscript("");
+    const recognition = buildRecognition();
+    recognitionRef.current = recognition;
     try { recognition.start(); } catch {}
-  }, [apiKey, flushPendingTranscript, safeStartListening]);
+  }, [apiKey, buildRecognition]);
 
   const stopListening = () => {
     stoppedByUserRef.current = true;
     if (sendTimerRef.current) { window.clearTimeout(sendTimerRef.current); sendTimerRef.current = null; }
     finalBufferRef.current = "";
+    lastFinalSegmentRef.current = "";
     try { recognitionRef.current?.stop(); } catch {}
     setIsListening(false);
     setInterimTranscript("");
