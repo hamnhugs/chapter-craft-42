@@ -952,7 +952,7 @@ const AutoChapterize: React.FC = () => {
             {phase === "idle" ? (
               <>
                 <Sparkles className="w-4 h-4 mr-1" />
-                {mode === "toc" ? "Detect remaining chapters" : "Detect sections"}
+                {mode === "toc" ? "Detect remaining chapters" : mode === "paper" ? "Detect sections" : "Detect tiny papers"}
               </>
             ) : (
               <>
