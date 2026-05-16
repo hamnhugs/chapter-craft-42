@@ -152,7 +152,7 @@ const ChatPanel: React.FC = () => {
                 onChange={(e) => setSelectedModel(e.target.value)}
                 className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40"
               >
-                {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
+                {chatModels.map((m) => (<option key={m} value={m}>{m}</option>))}
               </select>
               <div className="flex gap-2 mt-1">
                 <Input type="text" placeholder="provider/model-name" value={newModelInput} onChange={(e) => setNewModelInput(e.target.value)} className="text-sm font-mono bg-surface-container-high border-none" onKeyDown={(e) => { if (e.key === "Enter") handleAddModel(); }} />
