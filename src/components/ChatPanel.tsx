@@ -32,6 +32,31 @@ const ChatPanel: React.FC = () => {
   useEffect(() => subscribeSpeaking(setSpeakingId), []);
   useEffect(() => () => stopSpeaking(), []);
 
+  // Auto-read assistant replies when the user has the setting enabled.
+  const autoReadRef = useRef<{ enabled: boolean; lastId: string | null }>({ enabled: false, lastId: null });
+  useEffect(() => {
+    const wasEnabled = autoReadRef.current.enabled;
+    autoReadRef.current.enabled = autoReadReplies;
+    // If user just turned it OFF, stop any in-flight playback.
+    if (wasEnabled && !autoReadReplies) stopSpeaking();
+    // Seed lastId so we don't read historical messages when toggling ON.
+    if (!wasEnabled && autoReadReplies) {
+      const last = messages[messages.length - 1];
+      autoReadRef.current.lastId = last ? (last.id || String(messages.length - 1)) : null;
+    }
+  }, [autoReadReplies]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!autoReadReplies || isLoading) return;
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== "assistant") return;
+    const id = last.id || `chat-${messages.length - 1}`;
+    if (autoReadRef.current.lastId === id) return;
+    if (!last.content || !last.content.trim()) return;
+    autoReadRef.current.lastId = id;
+    speak(last.content, { id: `chat-${last.id || messages.length - 1}`, rate: ttsRate });
+  }, [messages, isLoading, autoReadReplies, ttsRate]);
+
   const bubbleId = (msg: { id?: string }, i: number) => `chat-${msg.id || i}`;
   const handleSpeak = (msg: { id?: string; content: string }, i: number) => {
     const id = bubbleId(msg, i);
