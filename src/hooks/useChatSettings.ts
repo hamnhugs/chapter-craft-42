@@ -18,6 +18,7 @@ interface ChatSettings {
   wikiModel: string; // "" = use default Gemini gateway
   customSystemPrompt: string;
   burplexityApiToken: string;
+  inworldApiKey: string;
 }
 
 const defaults: ChatSettings = {
