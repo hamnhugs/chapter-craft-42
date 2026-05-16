@@ -233,11 +233,13 @@ Rules:
       })),
     );
 
-    // Create relationships
+    // Create LLM-asserted relationships (enum-validated)
+    const VALID_RELS = new Set(["contradicts","refutes","supports","extends","derived_from","prerequisite","relates_to","mentions"]);
     const allEntries = [...(existingEntries || []), ...savedEntries.filter(e => e.id)];
     for (const entry of savedEntries) {
       if (!entry.relationships || !entry.id) continue;
       for (const rel of entry.relationships) {
+        if (!VALID_RELS.has(rel.relationship)) continue;
         const target = allEntries.find(
           e => e.title.toLowerCase() === rel.target_title.toLowerCase()
         );
@@ -247,6 +249,7 @@ Rules:
             source_entry_id: entry.id,
             target_entry_id: target.id,
             relationship: rel.relationship,
+            created_by: "ingest",
           }, { onConflict: "source_entry_id,target_entry_id,relationship" });
         }
       }
@@ -286,9 +289,11 @@ Rules:
     }
 
     return new Response(JSON.stringify({
-      entries: savedEntries,
+      entries: savedEntries.map((e) => ({ ...e, embedding: undefined })),
       summary: extracted.conversation_summary,
       key_facts: newKeyFacts,
+      splits,
+      conflicts: conflictCount,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
