@@ -342,18 +342,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
       }
     },
-    [apiKey, books, activeBookId, deepResearch, selectedModel, deepResearchModel, messages, persistMessage, addChapter, updateChapter, removeChapter, setActiveBookViaTool]
+    [apiKey, books, activeBookId, deepResearch, selectedModel, deepResearchModel, messages, persistMessage, addChapter, updateChapter, removeChapter, setActiveBookSilent]
   );
 
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const id = (e as CustomEvent).detail?.id as string | undefined;
-      if (!id) return;
-      setActiveBook(id);
-    };
-    window.addEventListener("chat:set-active-book", handler as EventListener);
-    return () => window.removeEventListener("chat:set-active-book", handler as EventListener);
-  }, [setActiveBook]);
 
   return (
     <ChatContext.Provider
