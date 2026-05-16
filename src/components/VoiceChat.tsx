@@ -96,25 +96,37 @@ const VoiceChat: React.FC = () => {
   const isLoadingRef = useRef(false);
   const isSpeakingRef = useRef(false);
   const isListeningRef = useRef(false);
-  // Map of recognition result index -> finalized transcript chunk.
-  // Using a map prevents duplication when Chrome re-emits or revises finals.
-  const finalChunksRef = useRef<Map<number, string>>(new Map());
+  const finalTranscriptRef = useRef("");
+  const previousFinalLengthRef = useRef(0);
   const submittingRef = useRef(false);
   const sendTimerRef = useRef<number | null>(null);
   const stoppedByUserRef = useRef(false);
   const lastSpokenIndexRef = useRef<number>(-1);
-  const lastFinalSegmentRef = useRef<string>("");
   const lastSentTextRef = useRef<string>("");
   const lastSentAtRef = useRef<number>(0);
 
-  const buildStableTranscript = () => {
-    const entries = Array.from(finalChunksRef.current.entries()).sort((a, b) => a[0] - b[0]);
-    return entries.map(([, v]) => v).join(" ").replace(/\s+/g, " ").trim();
-  };
+  const normalizeTranscript = (value: string) => value.replace(/\s+/g, " ").trim();
   const resetTranscriptBuffers = () => {
-    finalChunksRef.current = new Map();
+    finalTranscriptRef.current = "";
+    previousFinalLengthRef.current = 0;
     submittingRef.current = false;
     if (sendTimerRef.current) { window.clearTimeout(sendTimerRef.current); sendTimerRef.current = null; }
+  };
+  const detachRecognitionHandlers = (recognition: any) => {
+    if (!recognition) return;
+    recognition.onstart = null;
+    recognition.onresult = null;
+    recognition.onerror = null;
+    recognition.onend = null;
+  };
+  const stopCurrentRecognitionQuietly = () => {
+    const recognition = recognitionRef.current;
+    if (!recognition) return;
+    detachRecognitionHandlers(recognition);
+    try { recognition.stop(); } catch {}
+    recognitionRef.current = null;
+    isListeningRef.current = false;
+    setIsListening(false);
   };
 
   useEffect(() => { handsFreeRef.current = handsFree; localStorage.setItem(HANDS_FREE_KEY, String(handsFree)); }, [handsFree]);
