@@ -280,6 +280,7 @@ export async function executeChatTool(
           };
         }
       }
+      case "isolate_chapter": {
         const book = deps.books.find((b) => b.id === args.book_id);
         if (!book) return { result: { error: "Book not found" }, event: { name, summary: "Book not found", ok: false } };
         const sp = Number(args.start_page);
