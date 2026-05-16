@@ -26,12 +26,12 @@ type Detected = {
   title: string;
   startPage: number;
   endPage: number;
-  source: "outline" | "toc-snapped" | "toc-raw" | "heading" | "paper-snapped" | "paper-raw";
+  source: "outline" | "toc-snapped" | "toc-raw" | "heading" | "paper-snapped" | "paper-raw" | "tiny";
   selected: boolean;
 };
 
 type Phase = "idle" | "loading-pdf" | "detecting" | "preview" | "saving";
-type Mode = "toc" | "paper";
+type Mode = "toc" | "paper" | "tiny";
 
 const normalize = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
