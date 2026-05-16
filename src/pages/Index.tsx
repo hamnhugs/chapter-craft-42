@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useApp } from "@/context/AppContext";
 import PdfViewer from "@/components/PdfViewer";
 import Library from "@/components/Library";
@@ -19,6 +19,21 @@ const tabs = [
 const Index: React.FC = () => {
   const { activeTab, setActiveTab, getActiveBook, signOut } = useApp();
   const activeBook = getActiveBook();
+
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    if (typeof window === "undefined") return "dark";
+    return (localStorage.getItem("cc-theme") as "dark" | "light") || "dark";
+  });
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === "dark") root.classList.add("dark");
+    else root.classList.remove("dark");
+    try { localStorage.setItem("cc-theme", theme); } catch {}
+  }, [theme]);
+
+  const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
+
 
   return (
     <div className="flex flex-col h-screen bg-background">
