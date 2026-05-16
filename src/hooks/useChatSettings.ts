@@ -134,6 +134,7 @@ export function useChatSettings() {
     setTtsRate: (r: number) => update({ ttsRate: Math.min(2, Math.max(0.5, r)) }),
     setAutoReadReplies: (v: boolean) => update({ autoReadReplies: v }),
     setWikiModel: (m: string) => update({ wikiModel: m }),
+    setCustomSystemPrompt: (p: string) => update({ customSystemPrompt: p }),
     addModel,
     removeModel,
     setNewModelInput: undefined, // handled in component
