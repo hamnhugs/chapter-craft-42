@@ -13,6 +13,7 @@ import VoiceNotesPanel, { appendVoiceNote } from "./VoiceNotesPanel";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerClose } from "@/components/ui/drawer";
 import { speak as ttsSpeak, stopSpeaking as ttsStop, subscribeSpeaking as ttsSubscribe, getSpeakingId as ttsGetId } from "@/lib/speak";
+import PromptLibrary from "@/components/PromptLibrary";
 
 const LEGACY_OPENROUTER_STORAGE_KEY = "openrouter_api_key";
 const VOICE_ENABLED_KEY = "voice_tts_enabled";
