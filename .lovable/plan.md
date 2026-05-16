@@ -1,22 +1,34 @@
-# Restore Auto Chapterizer
+# Add "Tiny papers" mode to Auto Chapterizer
 
-The `AutoChapterize` component was removed from the codebase. It still exists in git history (latest version at commit `dea6e8b`, 890 lines, last touched 2026-05-07). I'll restore it and re-wire the tab.
+Add a third detection mode for PDFs that are collections of one-page papers/articles. Each page in the chosen range becomes its own chapter, with the title taken from the top of the page (first non-empty line, cleaned up).
 
-## Steps
+## Changes (all in `src/components/AutoChapterize.tsx`)
 
-1. **Recover the component** — write `src/components/AutoChapterize.tsx` from the saved git version (890 lines, all logic intact: TOC mode, anchor detection, PDF outline parsing, etc.).
+1. **Mode type** — expand `type Mode = "toc" | "paper"` → `"toc" | "paper" | "tiny"`. Add `"tiny"` to the `Detected.source` union.
 
-2. **Add a "Chapterize" tab** to `src/pages/Index.tsx`:
-   - Add `{ id: "chapterize", icon: "auto_fix_high", label: "Chapterize" }` to the `tabs` array (placed between Reader and Chat).
-   - Add the render branch: `activeTab === "chapterize" ? <AutoChapterize /> : ...`.
-   - Import `AutoChapterize`.
+2. **Mode switcher UI** — add a third card next to "TOC" and "Research paper":
+   - Title: "Tiny papers (1 page each)"
+   - Subtitle: "Every page becomes its own chapter. Title is read from the top of the page."
 
-3. **Extend the tab union type** in `src/context/AppContext.tsx`:
-   - Add `"chapterize"` to the `activeTab` literal union (and the `setActiveTab` signature).
+3. **Tiny-mode options panel** (mirrors paper-mode panel, simpler):
+   - From page / To page (defaults: 1 → last page)
+   - "Pages per chapter" (default 1, min 1, max 5) — lets the user group e.g. 2-page papers
+   - Optional title prefix (e.g. "Paper")
 
-4. **Verify** — read the restored file to confirm imports resolve against current `useApp`, `addChapter`, etc. (no schema changes expected; `chapters` table is unchanged).
+4. **Detection logic — `runTiny()`**:
+   - Load the PDF, iterate `fromPage … toPage` in steps of `pagesPerChapter`.
+   - For each chunk, extract text of the first page, take the first meaningful line (skip page numbers, headers shorter than 3 chars, all-caps running headers if repeated), truncate to ~100 chars → chapter title.
+   - Fallback title: `"{prefix} {n} (p. {startPage})"`.
+   - No AI call needed (fast, deterministic, cheap). Show progress per page.
+   - Build `Detected[]` with `source: "tiny"`, `selected: true`.
+
+5. **Wire `run()`** — extend dispatcher: `mode === "toc" ? runToc() : mode === "paper" ? runPaper() : runTiny()`.
+
+6. **Save path** — tiny mode reuses paper-mode save branch (no TOC/Ch.1 preservation; replaces overlapping chapters in the chosen range). Update the `mode === "paper"` guards to `mode !== "toc"` where appropriate.
+
+7. **Pre-flight** — no anchors required for tiny mode (same as paper). Update the `canRun` check.
 
 ## Notes
-- No DB migration needed.
-- No new dependencies.
-- All existing tabs and features remain untouched.
+- No backend/edge function changes — runs fully client-side via pdfjs.
+- No DB migration.
+- Existing TOC and Paper modes remain untouched.

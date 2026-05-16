@@ -26,12 +26,12 @@ type Detected = {
   title: string;
   startPage: number;
   endPage: number;
-  source: "outline" | "toc-snapped" | "toc-raw" | "heading" | "paper-snapped" | "paper-raw";
+  source: "outline" | "toc-snapped" | "toc-raw" | "heading" | "paper-snapped" | "paper-raw" | "tiny";
   selected: boolean;
 };
 
 type Phase = "idle" | "loading-pdf" | "detecting" | "preview" | "saving";
-type Mode = "toc" | "paper";
+type Mode = "toc" | "paper" | "tiny";
 
 const normalize = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
@@ -59,6 +59,9 @@ const AutoChapterize: React.FC = () => {
   const [toPage, setToPage] = useState<number | "">("");
   const [granularity, setGranularity] = useState<"top" | "all">("top");
   const [minPages, setMinPages] = useState<number>(2);
+  // Tiny-papers options
+  const [pagesPerChapter, setPagesPerChapter] = useState<number>(1);
+  const [tinyPrefix, setTinyPrefix] = useState<string>("Paper");
 
   useEffect(() => {
     if (loaded && selectedModel) setModel(selectedModel);
@@ -475,7 +478,97 @@ const AutoChapterize: React.FC = () => {
     }
   };
 
-  const run = () => (mode === "toc" ? runToc() : runPaper());
+  const runTiny = async () => {
+    if (!book) return;
+    setError(null);
+    setDetected([]);
+
+    try {
+      setPhase("loading-pdf");
+      setProgress("Loading book…");
+      const fileUrl = await loadBookFile(book.id);
+      if (!fileUrl) throw new Error("Could not load this book's file from storage.");
+      const pdf = await pdfjsLib.getDocument({ url: fileUrl }).promise;
+      const totalPages = pdf.numPages;
+
+      const startP = Math.max(1, typeof fromPage === "number" ? fromPage : 1);
+      const endP = Math.min(totalPages, typeof toPage === "number" ? toPage : totalPages);
+      if (endP < startP) throw new Error("To-page must be ≥ From-page.");
+
+      const step = Math.max(1, Math.min(5, pagesPerChapter || 1));
+      const prefix = (tinyPrefix || "Paper").trim() || "Paper";
+
+      setPhase("detecting");
+      const rows: Detected[] = [];
+      let idx = 0;
+      for (let p = startP; p <= endP; p += step) {
+        idx += 1;
+        const chunkEnd = Math.min(endP, p + step - 1);
+        setProgress(`Reading page ${p}/${endP}…`);
+
+        let title = "";
+        try {
+          const page = await pdf.getPage(p);
+          const tc = await page.getTextContent();
+          // Reconstruct lines using y-position
+          const items = (tc.items as any[])
+            .filter((it) => typeof it.str === "string" && it.str.trim().length > 0)
+            .map((it) => ({ str: it.str.trim(), y: it.transform?.[5] ?? 0 }));
+          items.sort((a, b) => b.y - a.y);
+          const grouped: string[] = [];
+          let currentY: number | null = null;
+          let currentLine: string[] = [];
+          for (const it of items) {
+            if (currentY === null || Math.abs(it.y - currentY) < 3) {
+              currentLine.push(it.str);
+              currentY = currentY ?? it.y;
+            } else {
+              if (currentLine.length) grouped.push(currentLine.join(" "));
+              currentLine = [it.str];
+              currentY = it.y;
+            }
+          }
+          if (currentLine.length) grouped.push(currentLine.join(" "));
+
+          for (const raw of grouped) {
+            const line = raw.replace(/\s+/g, " ").trim();
+            if (line.length < 4) continue;
+            if (/^\d+$/.test(line)) continue; // page number
+            if (/^page\s+\d+/i.test(line)) continue;
+            title = line.slice(0, 120);
+            break;
+          }
+        } catch {
+          // ignore page extraction failures
+        }
+
+        if (!title) title = `${prefix} ${idx} (p. ${p})`;
+
+        rows.push({
+          title,
+          startPage: p,
+          endPage: chunkEnd,
+          source: "tiny",
+          selected: true,
+        });
+      }
+
+      if (rows.length === 0) throw new Error("No pages in the chosen range.");
+
+      setDetected(rows);
+      setPhase("preview");
+      setProgress("");
+      toast.success(`Detected ${rows.length} tiny paper${rows.length === 1 ? "" : "s"}`);
+    } catch (e: any) {
+      console.error(e);
+      setError(e?.message || "Detection failed");
+      setPhase("idle");
+      setProgress("");
+      toast.error(e?.message || "Detection failed");
+    }
+  };
+
+  const run = () => (mode === "toc" ? runToc() : mode === "paper" ? runPaper() : runTiny());
 
   const updateRow = (i: number, patch: Partial<Detected>) => {
     setDetected((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
@@ -500,7 +593,7 @@ const AutoChapterize: React.FC = () => {
         for (const c of existingToReplace) {
           await removeChapter(book.id, c.id);
         }
-      } else if (mode === "paper") {
+      } else if (mode === "paper" || mode === "tiny") {
         // Replace any existing chapters that overlap the user's chosen range
         const lo = toSave[0].startPage;
         const hi = toSave[toSave.length - 1].endPage;
@@ -597,7 +690,7 @@ const AutoChapterize: React.FC = () => {
         {/* Mode switcher */}
         <section className="space-y-2">
           <Label>Detection mode</Label>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <button
               type="button"
               onClick={() => { setMode("toc"); reset(); }}
@@ -626,6 +719,21 @@ const AutoChapterize: React.FC = () => {
               <div className="font-semibold">Research paper / no TOC</div>
               <div className="text-xs text-muted-foreground mt-1">
                 Detects sections (Abstract, Methods, 2.1, …) when there is no TOC.
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => { setMode("tiny"); reset(); }}
+              disabled={phase !== "idle"}
+              className={`text-left rounded-lg border p-3 text-sm transition-colors ${
+                mode === "tiny"
+                  ? "border-accent bg-accent/10"
+                  : "border-border bg-card hover:bg-muted/40"
+              }`}
+            >
+              <div className="font-semibold">Tiny papers (1 page each)</div>
+              <div className="text-xs text-muted-foreground mt-1">
+                Every page becomes its own chapter. Title is read from the top of the page.
               </div>
             </button>
           </div>
@@ -690,6 +798,64 @@ const AutoChapterize: React.FC = () => {
             </div>
             <p className="text-xs text-muted-foreground">
               Trim the page range to skip cover, references, or appendices. Saving will replace any existing chapters that overlap the chosen range.
+            </p>
+          </section>
+        )}
+
+        {/* Tiny-papers options */}
+        {book && mode === "tiny" && (
+          <section className="rounded-lg border border-border bg-card/50 p-4 space-y-3">
+            <h3 className="font-semibold text-sm">Tiny papers options</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="tiny-from" className="text-xs">From page</Label>
+                <Input
+                  id="tiny-from"
+                  type="number"
+                  min={1}
+                  placeholder="1"
+                  value={fromPage}
+                  onChange={(e) => setFromPage(e.target.value === "" ? "" : parseInt(e.target.value) || 1)}
+                  disabled={phase !== "idle"}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="tiny-to" className="text-xs">To page</Label>
+                <Input
+                  id="tiny-to"
+                  type="number"
+                  min={1}
+                  placeholder="end"
+                  value={toPage}
+                  onChange={(e) => setToPage(e.target.value === "" ? "" : parseInt(e.target.value) || 1)}
+                  disabled={phase !== "idle"}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="tiny-ppc" className="text-xs">Pages per chapter</Label>
+                <Input
+                  id="tiny-ppc"
+                  type="number"
+                  min={1}
+                  max={5}
+                  value={pagesPerChapter}
+                  onChange={(e) => setPagesPerChapter(Math.max(1, Math.min(5, parseInt(e.target.value) || 1)))}
+                  disabled={phase !== "idle"}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="tiny-prefix" className="text-xs">Fallback title prefix</Label>
+                <Input
+                  id="tiny-prefix"
+                  type="text"
+                  value={tinyPrefix}
+                  onChange={(e) => setTinyPrefix(e.target.value)}
+                  disabled={phase !== "idle"}
+                />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Each page (or group of pages) becomes its own chapter. Titles are read from the top of the first page; if none is found, the fallback prefix is used.
             </p>
           </section>
         )}
@@ -786,7 +952,7 @@ const AutoChapterize: React.FC = () => {
             {phase === "idle" ? (
               <>
                 <Sparkles className="w-4 h-4 mr-1" />
-                {mode === "toc" ? "Detect remaining chapters" : "Detect sections"}
+                {mode === "toc" ? "Detect remaining chapters" : mode === "paper" ? "Detect sections" : "Detect tiny papers"}
               </>
             ) : (
               <>
