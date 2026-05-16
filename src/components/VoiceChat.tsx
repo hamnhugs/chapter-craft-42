@@ -185,28 +185,32 @@ const VoiceChat: React.FC = () => {
   useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
   useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
   useEffect(() => { localStorage.setItem(VOICE_ENABLED_KEY, String(ttsEnabled)); }, [ttsEnabled]);
-  useEffect(() => { localStorage.setItem(INWORLD_API_KEY_KEY, inworldApiKey); }, [inworldApiKey]);
   useEffect(() => { localStorage.setItem(INWORLD_VOICE_ID_KEY, inworldVoiceId); }, [inworldVoiceId]);
   useEffect(() => { localStorage.setItem(INWORLD_ENABLED_KEY, String(inworldEnabled)); }, [inworldEnabled]);
 
-  // Load Inworld voices on mount if key is already stored
+  // One-time migration: localStorage -> account-synced setting
+  const migratedRef = useRef(false);
+  useEffect(() => {
+    if (!settingsLoaded || migratedRef.current) return;
+    migratedRef.current = true;
+    const legacyOR = localStorage.getItem(LEGACY_OPENROUTER_STORAGE_KEY);
+    if (legacyOR && !apiKey) persistApiKey(legacyOR);
+    if (legacyOR) localStorage.removeItem(LEGACY_OPENROUTER_STORAGE_KEY);
+    const legacyInworld = localStorage.getItem(INWORLD_API_KEY_KEY);
+    if (legacyInworld && !inworldApiKey) setInworldApiKey(legacyInworld);
+    if (legacyInworld) localStorage.removeItem(INWORLD_API_KEY_KEY);
+  }, [settingsLoaded, apiKey, persistApiKey, inworldApiKey, setInworldApiKey]);
+
+  // Load Inworld voices once the key is known
   const inworldVoiceLoadedRef = useRef(false);
   useEffect(() => {
     if (!inworldVoiceLoadedRef.current && inworldApiKey) {
       inworldVoiceLoadedRef.current = true;
       loadInworldVoices(inworldApiKey);
     }
-  }, [inworldApiKey, loadInworldVoices]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inworldApiKey]);
 
-  // One-time migration: localStorage key -> account-synced setting
-  const migratedRef = useRef(false);
-  useEffect(() => {
-    if (!settingsLoaded || migratedRef.current) return;
-    migratedRef.current = true;
-    const legacy = localStorage.getItem(LEGACY_OPENROUTER_STORAGE_KEY);
-    if (legacy && !apiKey) persistApiKey(legacy);
-    if (legacy) localStorage.removeItem(LEGACY_OPENROUTER_STORAGE_KEY);
-  }, [settingsLoaded, apiKey, persistApiKey]);
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
