@@ -156,7 +156,7 @@ const VoiceChat: React.FC = () => {
   const speak = useCallback((text: string) => {
     if (!ttsEnabled) {
       if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), 150);
+        window.setTimeout(() => safeStartListening(), 600);
       }
       return;
     }
@@ -168,13 +168,13 @@ const VoiceChat: React.FC = () => {
     utterance.onend = () => {
       setIsSpeaking(false);
       if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), 200);
+        window.setTimeout(() => safeStartListening(), 450);
       }
     };
     utterance.onerror = () => {
       setIsSpeaking(false);
       if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), 200);
+        window.setTimeout(() => safeStartListening(), 450);
       }
     };
     synthRef.current.speak(utterance);
@@ -192,11 +192,11 @@ const VoiceChat: React.FC = () => {
       const reply = await sendMessage(text, { voiceMode: true });
       if (reply) speak(reply);
       else if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), 200);
+        window.setTimeout(() => safeStartListening(), 450);
       }
     } catch {
       if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), 400);
+        window.setTimeout(() => safeStartListening(), 600);
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
