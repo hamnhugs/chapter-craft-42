@@ -306,12 +306,25 @@ const VoiceChat: React.FC = () => {
       const stable = mergeTranscriptPieces(finalPieces);
       const interim = mergeTranscriptPieces(interimPieces);
       const sawNewFinal = Boolean(stable) && stable !== finalTranscriptRef.current;
+      const hasInterim = Boolean(interim);
 
       finalTranscriptRef.current = stable;
       previousFinalLengthRef.current = stable.length;
       setInterimTranscript(mergeTranscriptPieces([stable, interim]));
 
-      if (sawNewFinal) {
+      // Hands-free: only send after a real pause. Reset the silence timer on
+      // ANY activity (new final OR ongoing interim) so we wait for the user
+      // to actually stop talking before submitting.
+      if (handsFreeRef.current) {
+        if (sawNewFinal || hasInterim) {
+          if (sendTimerRef.current) window.clearTimeout(sendTimerRef.current);
+          if (stable) {
+            // Longer silence window when still hearing interim chunks.
+            const delay = hasInterim ? 1800 : 1400;
+            sendTimerRef.current = window.setTimeout(() => flushPendingTranscript(), delay);
+          }
+        }
+      } else if (sawNewFinal) {
         if (sendTimerRef.current) window.clearTimeout(sendTimerRef.current);
         sendTimerRef.current = window.setTimeout(() => flushPendingTranscript(), 700);
       }
