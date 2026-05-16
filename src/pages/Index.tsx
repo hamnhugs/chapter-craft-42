@@ -52,16 +52,7 @@ const Index: React.FC = () => {
         </nav>
 
         <div className="flex items-center gap-2">
-          <button
-            onClick={toggleTheme}
-            aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-            className="text-primary hover:bg-primary/10 transition-all duration-200 p-2 rounded-lg active:scale-95"
-          >
-            <span className="material-symbols-outlined text-xl">
-              {theme === "dark" ? "light_mode" : "dark_mode"}
-            </span>
-          </button>
+          <ThemeSwitcher />
           <button
             onClick={signOut}
             className="text-primary hover:bg-primary/10 transition-all duration-200 px-4 py-2 rounded-lg font-body font-medium text-sm active:scale-95"
@@ -70,6 +61,7 @@ const Index: React.FC = () => {
           </button>
         </div>
       </header>
+      {isFruitStripe && <StripeBar thickness={4} />}
 
       {/* Content */}
       <div className="flex-1 overflow-hidden pb-20 md:pb-0">
