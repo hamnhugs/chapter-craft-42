@@ -536,7 +536,7 @@ const VoiceChat: React.FC = () => {
       <div className="bg-surface-container-low">
         {/* Collapse handle */}
         <div
-          className="flex items-center justify-center gap-2 px-4 py-2 cursor-pointer select-none border-t border-outline-variant/10"
+          className="relative flex items-center justify-center gap-2 px-4 py-2 cursor-pointer select-none border-t border-outline-variant/10"
           role="button"
           tabIndex={0}
           aria-expanded={!controlsCollapsed}
