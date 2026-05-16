@@ -121,6 +121,13 @@ serve(async (req) => {
       .sort((a, b) => b.score - a.score)
       .slice(0, deep ? 30 : 18);
 
+    // Bump retrieval stats (vibrancy boost + retrieval_count) for returned nodes.
+    // Fire-and-forget: don't await — don't block the response.
+    const returnedIds = nodes.map((n) => n.id);
+    if (returnedIds.length > 0) {
+      supabase.rpc("touch_node_retrievals", { node_ids: returnedIds }).catch(() => {});
+    }
+
     return json({ nodes, edges, query_embedded: !!qVec });
   } catch (e) {
     console.error("knowledge-retrieve error:", e);

@@ -9,11 +9,56 @@ export interface KnowledgeEntry {
   source_book_id: string | null;
   tags: string[];
   confidence: number;
+  /** ACT-R vibrancy score [0.1, 1.0] — decays with idle time, boosted on retrieval. */
+  vibrancy?: number;
+  last_retrieved_at?: string | null;
+  retrieval_count?: number;
   valid_from: string | null;
   valid_to: string | null;
   created_at: string;
   updated_at: string;
 }
+
+// ── Layer 2: Episodic log ──────────────────────────────────────────────────────
+
+export interface EpisodicLogEntry {
+  id: string;
+  user_id: string;
+  session_id: string;
+  summary: string | null;
+  key_facts: string[];
+  entry_count: number;
+  created_at: string;
+}
+
+// ── Layer 5: Consolidation queue ──────────────────────────────────────────────
+
+export interface ConsolidationQueueItem {
+  id: string;
+  user_id: string;
+  entry_id: string | null;
+  reason: "conflict_staged" | "new_entry" | "orphan";
+  priority: number;
+  pending_data: Record<string, unknown> | null;
+  processed_at: string | null;
+  created_at: string;
+}
+
+// ── Sleep Cycle result ─────────────────────────────────────────────────────────
+
+export interface SleepCycleReport {
+  ok: boolean;
+  elapsed_ms: number;
+  phases: {
+    rerank:      { updated: number };
+    consolidate: { processed: number; edges_created: number; conflicts_inserted: number };
+    prune:       { orphans: string[] };
+  };
+}
+
+// ── Recording mode ─────────────────────────────────────────────────────────────
+
+export type MemoryMode = "recording" | "retrieval";
 
 export interface MemoryGraphEdge {
   id: string;
@@ -202,5 +247,56 @@ export async function fetchConflicts(status?: KnowledgeConflict["status"]): Prom
 export async function updateConflictStatus(id: string, status: KnowledgeConflict["status"]): Promise<void> {
   const { error } = await supabase.from("knowledge_conflicts").update({ status }).eq("id", id);
   if (error) throw error;
+}
+
+// ── Layer 2: Episodic log ──────────────────────────────────────────────────────
+
+export async function fetchEpisodicLog(limit = 20): Promise<EpisodicLogEntry[]> {
+  const { data, error } = await supabase
+    .from("episodic_log")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data || []) as unknown as EpisodicLogEntry[];
+}
+
+// ── Recording / Retrieval mode ─────────────────────────────────────────────────
+
+export async function getMemoryMode(): Promise<MemoryMode> {
+  const { data } = await supabase
+    .from("user_settings")
+    .select("is_recording_mode")
+    .maybeSingle();
+  return data?.is_recording_mode === false ? "retrieval" : "recording";
+}
+
+export async function setMemoryMode(mode: MemoryMode): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+  const { error } = await supabase
+    .from("user_settings")
+    .upsert({ user_id: user.id, is_recording_mode: mode === "recording" }, { onConflict: "user_id" });
+  if (error) throw error;
+}
+
+// ── Layer 5: Consolidation queue ──────────────────────────────────────────────
+
+export async function fetchConsolidationQueue(includingProcessed = false): Promise<ConsolidationQueueItem[]> {
+  let q = supabase
+    .from("consolidation_queue")
+    .select("*")
+    .order("priority", { ascending: true })
+    .order("created_at", { ascending: true });
+  if (!includingProcessed) q = q.is("processed_at", null);
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data || []) as unknown as ConsolidationQueueItem[];
+}
+
+// ── Sleep Cycle ────────────────────────────────────────────────────────────────
+
+export async function triggerSleepCycle(): Promise<SleepCycleReport> {
+  return callEdge("knowledge-consolidate", {});
 }
 

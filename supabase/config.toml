@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.knowledge-ingest]
 verify_jwt = false
+
+[functions.knowledge-consolidate]
+verify_jwt = false

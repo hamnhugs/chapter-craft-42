@@ -2,6 +2,13 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { atomicitySplit, embedAndStore, probeAndLinkConflicts, type Candidate } from "../_shared/atomicity.ts";
 import { resolveWikiLlm } from "../_shared/wiki-llm.ts";
+import {
+  checkRecordingMode,
+  logEpisode,
+  enqueueEntry,
+  enqueueConflictStaged,
+  QUEUE_PRIORITY,
+} from "../_shared/memory-layers.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -41,12 +48,22 @@ serve(async (req) => {
       });
     }
 
-    const { messages, source_book_id } = await req.json();
+    // ── Layer 2 Encoding Gate: block writes when in Retrieval Mode ──────────
+    const gate = await checkRecordingMode(supabase, user.id);
+    if (!gate.allowed) {
+      return new Response(JSON.stringify({ error: gate.reason, mode: "retrieval" }), {
+        status: 423, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const { messages, source_book_id, session_id } = await req.json();
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return new Response(JSON.stringify({ error: "messages array required" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    // Derive a stable session id for the episodic log.
+    const effectiveSessionId: string = session_id || `sess_${Date.now()}`;
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
@@ -223,7 +240,11 @@ Rules:
       savedEntries.push({ ...entry, id: inserted.id, action: "ADDED", embedding: vec });
     }
 
-    // Conflict probe for all newly added/updated entries
+    // ── Conflict probe + encoding gate: route hard conflicts to queue ───────
+    // probeAndLinkConflicts writes memory_graph edges and knowledge_conflicts rows.
+    // For entries flagged as hard contradictions, we additionally enqueue them
+    // in the consolidation_queue with reason 'conflict_staged' so the Sleep
+    // Cycle can generate bridging edges before they become part of the graph.
     const conflictCount = await probeAndLinkConflicts(
       supabase,
       user.id,
@@ -231,6 +252,23 @@ Rules:
         id: e.id, title: e.title, content: e.content, embedding: e.embedding,
       })),
     );
+
+    if (conflictCount > 0) {
+      // Enqueue each entry that triggered an open conflict for Sleep Cycle review.
+      const { data: openConflicts } = await supabase
+        .from("knowledge_conflicts")
+        .select("entry_a")
+        .eq("user_id", user.id)
+        .eq("status", "open");
+      for (const c of (openConflicts || []) as any[]) {
+        await enqueueEntry(supabase, user.id, c.entry_a, "conflict_staged");
+      }
+    }
+
+    // Queue all new entries for edge generation in the Sleep Cycle.
+    for (const e of savedEntries.filter((e) => e.id && e.action === "ADDED")) {
+      await enqueueEntry(supabase, user.id, e.id, "new_entry");
+    }
 
     // Create LLM-asserted relationships (enum-validated)
     const VALID_RELS = new Set(["contradicts","refutes","supports","extends","derived_from","prerequisite","relates_to","mentions"]);
@@ -254,25 +292,36 @@ Rules:
       }
     }
 
-    // Update conversation memory
+    // ── Layer 2: Write to episodic_log (one row per session) ────────────────
+    // This replaces the old single-row conversation_memory pattern for new sessions.
+    // The legacy conversation_memory row is still updated for backward compat
+    // with any code that reads the rolling summary.
+    const newKeyFacts = extracted.key_facts || [];
+    await logEpisode(
+      supabase,
+      user.id,
+      effectiveSessionId,
+      extracted.conversation_summary || "",
+      newKeyFacts,
+      savedEntries.length,
+    );
+
+    // Legacy rolling summary update (kept for WikiPanel backward compat).
     const { data: existingMemory } = await supabase
       .from("conversation_memory")
       .select("*")
       .eq("user_id", user.id)
       .maybeSingle();
 
-    const newKeyFacts = extracted.key_facts || [];
     if (existingMemory) {
       const existingFacts = Array.isArray(existingMemory.key_facts) ? existingMemory.key_facts : [];
       const mergedFacts = [...existingFacts, ...newKeyFacts].slice(-50);
       const newSummary = existingMemory.summary
         ? `${existingMemory.summary}\n\n---\n\n${extracted.conversation_summary}`
         : extracted.conversation_summary;
-      // Keep summary under ~2000 chars
       const trimmedSummary = newSummary.length > 2000
         ? newSummary.slice(newSummary.length - 2000)
         : newSummary;
-
       await supabase.from("conversation_memory").update({
         summary: trimmedSummary,
         key_facts: mergedFacts,

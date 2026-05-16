@@ -8,17 +8,20 @@ import { useApp } from "@/context/AppContext";
 import ReactMarkdown from "react-markdown";
 import {
   KnowledgeEntry, MemoryGraphEdge, LintResult, KnowledgeConflict,
+  EpisodicLogEntry, SleepCycleReport, MemoryMode,
   fetchKnowledgeEntries, fetchMemoryGraph,
   deleteKnowledgeEntry, updateKnowledgeEntry,
   runLint, ingestBook,
   fetchConflicts, updateConflictStatus, reindexEmbeddings,
+  fetchEpisodicLog, getMemoryMode, setMemoryMode, triggerSleepCycle,
+  fetchConsolidationQueue, ConsolidationQueueItem,
 } from "@/lib/knowledgeApi";
 import { Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useChatSettings } from "@/hooks/useChatSettings";
 
-type WikiView = "entries" | "detail" | "lint" | "conflicts";
+type WikiView = "entries" | "detail" | "lint" | "conflicts" | "episodic" | "queue";
 
 const WikiPanel: React.FC = () => {
   const { books, activeBookId } = useApp();
@@ -39,19 +42,27 @@ const WikiPanel: React.FC = () => {
   const [conflicts, setConflicts] = useState<KnowledgeConflict[]>([]);
   const [reindexing, setReindexing] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [memoryMode, setMemoryModeState] = useState<MemoryMode>("recording");
+  const [memoryModeLoading, setMemoryModeLoading] = useState(false);
+  const [sleepCycleRunning, setSleepCycleRunning] = useState(false);
+  const [sleepCycleReport, setSleepCycleReport] = useState<SleepCycleReport | null>(null);
+  const [episodicLog, setEpisodicLog] = useState<EpisodicLogEntry[]>([]);
+  const [queueItems, setQueueItems] = useState<ConsolidationQueueItem[]>([]);
   const { savedModels, wikiModel, setWikiModel, apiKey: openrouterKey } = useChatSettings();
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [e, g, c] = await Promise.all([
+      const [e, g, c, mode] = await Promise.all([
         fetchKnowledgeEntries(),
         fetchMemoryGraph(),
         fetchConflicts().catch(() => []),
+        getMemoryMode().catch(() => "recording" as MemoryMode),
       ]);
       setEntries(e);
       setGraph(g);
       setConflicts(c);
+      setMemoryModeState(mode);
     } catch (err: any) {
       toast.error(err.message || "Failed to load knowledge base");
     } finally {
@@ -70,6 +81,55 @@ const WikiPanel: React.FC = () => {
     window.addEventListener("open-conflicts", handler);
     return () => window.removeEventListener("open-conflicts", handler);
   }, [loadData]);
+
+  const handleToggleMemoryMode = async () => {
+    const next: MemoryMode = memoryMode === "recording" ? "retrieval" : "recording";
+    setMemoryModeLoading(true);
+    try {
+      await setMemoryMode(next);
+      setMemoryModeState(next);
+      toast.success(next === "recording" ? "Recording Mode: writes enabled" : "Retrieval Mode: writes disabled");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to switch mode");
+    } finally {
+      setMemoryModeLoading(false);
+    }
+  };
+
+  const handleSleepCycle = async () => {
+    setSleepCycleRunning(true);
+    setSleepCycleReport(null);
+    try {
+      const report = await triggerSleepCycle();
+      setSleepCycleReport(report);
+      toast.success(`Sleep Cycle complete — ${report.phases.consolidate.edges_created} edges created, ${report.phases.prune.orphans.length} orphans queued`);
+      await loadData();
+    } catch (err: any) {
+      toast.error(err.message || "Sleep Cycle failed");
+    } finally {
+      setSleepCycleRunning(false);
+    }
+  };
+
+  const handleLoadEpisodic = async () => {
+    try {
+      const log = await fetchEpisodicLog(30);
+      setEpisodicLog(log);
+      setView("episodic");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to load episodic log");
+    }
+  };
+
+  const handleLoadQueue = async () => {
+    try {
+      const items = await fetchConsolidationQueue();
+      setQueueItems(items);
+      setView("queue");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to load consolidation queue");
+    }
+  };
 
   const filteredEntries = entries.filter((e) => {
     if (filterType !== "all" && e.entry_type !== filterType) return false;
@@ -199,6 +259,40 @@ const WikiPanel: React.FC = () => {
               {openConflictsCount > 0 && (
                 <span className="ml-1 inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold">{openConflictsCount}</span>
               )}
+            </button>
+            {/* Memory Mode toggle */}
+            <button
+              onClick={handleToggleMemoryMode}
+              disabled={memoryModeLoading}
+              title={memoryMode === "recording" ? "Switch to Retrieval Mode (disables writes)" : "Switch to Recording Mode (enables writes)"}
+              className={`flex items-center gap-2 px-4 py-3 rounded-xl text-sm border font-semibold transition-all disabled:opacity-50 ${
+                memoryMode === "recording"
+                  ? "bg-primary-container text-on-primary-container border-primary-container/30"
+                  : "bg-surface-container-highest text-on-surface-variant border-outline-variant/20"
+              }`}
+            >
+              {memoryModeLoading
+                ? <Loader2 className="w-4 h-4 animate-spin" />
+                : <span className="material-symbols-outlined text-sm">{memoryMode === "recording" ? "edit" : "visibility"}</span>
+              }
+              {memoryMode === "recording" ? "Recording" : "Retrieval"}
+            </button>
+            {/* Sleep Cycle */}
+            <button
+              onClick={handleSleepCycle}
+              disabled={sleepCycleRunning || entries.length === 0}
+              title="Run Sleep Cycle: re-rank vibrancy, consolidate edges, prune orphans"
+              className="flex items-center gap-2 px-4 py-3 bg-secondary-container text-on-secondary-container rounded-xl text-sm border border-outline-variant/10 hover:bg-secondary-container/80 transition-all disabled:opacity-50"
+            >
+              {sleepCycleRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <span className="material-symbols-outlined text-sm">bedtime</span>}
+              Sleep Cycle
+            </button>
+            {/* Episodic Log + Queue */}
+            <button onClick={handleLoadEpisodic} className="flex items-center gap-2 px-4 py-3 bg-surface-container-high text-foreground rounded-xl text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all">
+              <span className="material-symbols-outlined text-sm">history</span> Episodes
+            </button>
+            <button onClick={handleLoadQueue} className="flex items-center gap-2 px-4 py-3 bg-surface-container-high text-foreground rounded-xl text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all">
+              <span className="material-symbols-outlined text-sm">pending_actions</span> Queue
             </button>
             <button onClick={handleReindex} disabled={reindexing} className="flex items-center gap-2 px-4 py-3 bg-surface-container-high text-foreground rounded-xl text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all disabled:opacity-50">
               {reindexing ? <Loader2 className="w-4 h-4 animate-spin" /> : <span className="material-symbols-outlined text-sm">memory</span>}
@@ -512,6 +606,68 @@ const WikiPanel: React.FC = () => {
               );
             })}
           </div>
+        ) : view === "episodic" ? (
+          <div className="space-y-4">
+            <h3 className="font-headline font-bold text-2xl text-foreground mb-2">
+              Episodic Memory Log
+              <span className="ml-3 text-sm font-normal text-on-surface-variant">Layer 2 — {episodicLog.length} sessions</span>
+            </h3>
+            {episodicLog.length === 0 ? (
+              <p className="text-on-surface-variant text-sm italic">No session episodes recorded yet. Save a chat to Wiki to begin building the episodic log.</p>
+            ) : episodicLog.map((ep) => (
+              <div key={ep.id} className="p-4 rounded-xl bg-surface-container-high border border-outline-variant/10">
+                <div className="flex items-center gap-3 mb-2">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Session</span>
+                  <code className="text-xs text-primary">{ep.session_id}</code>
+                  <span className="ml-auto text-xs text-on-surface-variant">{new Date(ep.created_at).toLocaleString()}</span>
+                  <span className="text-xs text-on-surface-variant">{ep.entry_count} entries</span>
+                </div>
+                {ep.summary && <p className="text-sm text-foreground mb-2">{ep.summary}</p>}
+                {ep.key_facts.length > 0 && (
+                  <ul className="text-xs text-on-surface-variant space-y-0.5 list-disc list-inside">
+                    {ep.key_facts.map((f, i) => <li key={i}>{f}</li>)}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
+
+        ) : view === "queue" ? (
+          <div className="space-y-4">
+            <h3 className="font-headline font-bold text-2xl text-foreground mb-2">
+              Consolidation Queue
+              <span className="ml-3 text-sm font-normal text-on-surface-variant">Layer 5 — {queueItems.length} pending</span>
+            </h3>
+            {sleepCycleReport && (
+              <div className="p-4 rounded-xl bg-secondary-container/20 border border-secondary-container/30 text-sm space-y-1">
+                <p className="font-semibold text-foreground">Last Sleep Cycle — {sleepCycleReport.elapsed_ms}ms</p>
+                <p className="text-on-surface-variant">Re-ranked: {sleepCycleReport.phases.rerank.updated} nodes · Edges created: {sleepCycleReport.phases.consolidate.edges_created} · Conflicts inserted: {sleepCycleReport.phases.consolidate.conflicts_inserted} · Orphans queued: {sleepCycleReport.phases.prune.orphans.length}</p>
+              </div>
+            )}
+            {queueItems.length === 0 ? (
+              <p className="text-on-surface-variant text-sm italic">Queue is empty. The Sleep Cycle will populate it as new entries and conflicts arrive.</p>
+            ) : queueItems.map((item) => (
+              <div key={item.id} className="p-4 rounded-xl bg-surface-container-high border border-outline-variant/10 flex items-start gap-4">
+                <span className={`mt-0.5 text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full ${
+                  item.reason === "conflict_staged" ? "bg-destructive/15 text-destructive"
+                  : item.reason === "orphan" ? "bg-amber-500/15 text-amber-600"
+                  : "bg-secondary-container/40 text-on-secondary-container"
+                }`}>
+                  {item.reason.replace("_", " ")}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-mono text-on-surface-variant truncate">
+                    {item.entry_id || (item.pending_data as any)?.title || "pending"}
+                  </p>
+                  <p className="text-xs text-on-surface-variant">Priority {item.priority} · {new Date(item.created_at).toLocaleString()}</p>
+                </div>
+                <span className={`text-[10px] font-semibold ${item.processed_at ? "text-green-600" : "text-on-surface-variant"}`}>
+                  {item.processed_at ? "done" : "pending"}
+                </span>
+              </div>
+            ))}
+          </div>
+
         ) : null}
       </main>
     </div>
