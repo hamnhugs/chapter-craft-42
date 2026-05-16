@@ -367,13 +367,6 @@ const VoiceChat: React.FC = () => {
 
   const handleClear = () => { stopSpeaking(); clearChat(); };
 
-  const handleSendText = async () => {
-    const text = textInput.trim();
-    if (!text) return;
-    setTextInput("");
-    await submit(text);
-  };
-
   const statusLabel = isListening
     ? "Listening…"
     : isLoading
@@ -382,7 +375,7 @@ const VoiceChat: React.FC = () => {
     ? "Speaking…"
     : handsFree
     ? "Hands-free paused"
-    : "Tap to talk or type below";
+    : "Tap to talk";
 
   return (
     <div className="flex h-full overflow-hidden">
