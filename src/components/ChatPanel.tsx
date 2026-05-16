@@ -388,9 +388,22 @@ const ChatPanel: React.FC = () => {
             <div className="flex-grow relative">
               <Textarea
                 ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown}
-                placeholder={apiKey ? "Ask about your books..." : "Set your OpenRouter API key to start chatting"}
-                rows={1} className="bg-surface-container-high border-none rounded-xl text-foreground py-3 px-4 pr-12 focus:ring-1 focus:ring-primary/40 resize-none min-h-[50px] max-h-[120px]" disabled={isLoading}
+                placeholder={dictation.isListening ? "Listening… speak now" : apiKey ? "Ask about your books..." : "Set your OpenRouter API key to start chatting"}
+                rows={1} className="bg-surface-container-high border-none rounded-xl text-foreground py-3 pl-4 pr-20 focus:ring-1 focus:ring-primary/40 resize-none min-h-[50px] max-h-[120px]" disabled={isLoading}
               />
+              {dictation.supported && (
+                <button
+                  type="button"
+                  onClick={handleMicToggle}
+                  title={dictation.isListening ? "Stop dictation" : "Dictate message"}
+                  aria-label={dictation.isListening ? "Stop dictation" : "Dictate message"}
+                  className={`absolute right-11 bottom-2 p-1.5 rounded-lg transition-all active:scale-90 ${dictation.isListening ? "bg-destructive text-destructive-foreground animate-pulse" : "bg-surface-container-highest text-on-surface-variant hover:text-primary"}`}
+                >
+                  <span className="material-symbols-outlined text-lg" style={dictation.isListening ? { fontVariationSettings: "'FILL' 1" } : undefined}>
+                    {dictation.isListening ? "mic_off" : "mic"}
+                  </span>
+                </button>
+              )}
               <button
                 onClick={handleSend}
                 disabled={isLoading || !input.trim()}
