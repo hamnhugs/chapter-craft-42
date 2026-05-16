@@ -690,7 +690,7 @@ const AutoChapterize: React.FC = () => {
         {/* Mode switcher */}
         <section className="space-y-2">
           <Label>Detection mode</Label>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <button
               type="button"
               onClick={() => { setMode("toc"); reset(); }}
@@ -719,6 +719,21 @@ const AutoChapterize: React.FC = () => {
               <div className="font-semibold">Research paper / no TOC</div>
               <div className="text-xs text-muted-foreground mt-1">
                 Detects sections (Abstract, Methods, 2.1, …) when there is no TOC.
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => { setMode("tiny"); reset(); }}
+              disabled={phase !== "idle"}
+              className={`text-left rounded-lg border p-3 text-sm transition-colors ${
+                mode === "tiny"
+                  ? "border-accent bg-accent/10"
+                  : "border-border bg-card hover:bg-muted/40"
+              }`}
+            >
+              <div className="font-semibold">Tiny papers (1 page each)</div>
+              <div className="text-xs text-muted-foreground mt-1">
+                Every page becomes its own chapter. Title is read from the top of the page.
               </div>
             </button>
           </div>
