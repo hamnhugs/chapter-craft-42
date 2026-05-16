@@ -68,47 +68,63 @@ export const THEMES: ThemeDef[] = [
   {
     id: "dexters-lab",
     name: "Dexter's Laboratory",
-    description: "Burnt red lab walls, neon orange & CRT teal. Bungee headlines.",
-    swatch: ["#4a1a14", "#f76a2b", "#62c7d3"],
+    description: "Prismatic Lab — deep violet glass-brutalism with holo-gradient accents.",
+    swatch: ["#1a0b2e", "#bd00ff", "#00eefc"],
     fonts: {
-      headline: "'Bungee', 'Space Grotesk', sans-serif",
+      headline: "'Space Grotesk', system-ui, sans-serif",
       body: "'Space Grotesk', system-ui, sans-serif",
+      display: "'Space Grotesk', system-ui, sans-serif",
       googleFontsHref:
-        "https://fonts.googleapis.com/css2?family=Bungee&family=Space+Grotesk:wght@300;400;500;600;700&display=swap",
+        "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap",
     },
     tokens: {
-      "--background": "0 55% 12%",
-      "--foreground": "40 30% 92%",
-      "--card": "15 18% 16%",
-      "--card-foreground": "40 30% 92%",
-      "--popover": "15 18% 14%",
-      "--popover-foreground": "40 30% 92%",
-      "--primary": "15 95% 55%",
-      "--primary-foreground": "0 0% 100%",
-      "--secondary": "188 55% 64%",
-      "--secondary-foreground": "0 55% 12%",
-      "--muted": "15 18% 20%",
-      "--muted-foreground": "40 18% 70%",
-      "--accent": "15 95% 55%",
+      // Deep violet canvas #1a0b2e
+      "--background": "265 61% 11%",
+      // On-surface #eddcff
+      "--foreground": "270 100% 93%",
+      // Card #27183b
+      "--card": "265 42% 16%",
+      "--card-foreground": "270 100% 93%",
+      "--popover": "265 51% 13%",
+      "--popover-foreground": "270 100% 93%",
+      // Primary #ecb2ff (light prismatic lavender)
+      "--primary": "286 100% 85%",
+      // On-primary #520071
+      "--primary-foreground": "284 100% 22%",
+      // Secondary #d3fbff (icy cyan tint)
+      "--secondary": "186 100% 91%",
+      "--secondary-foreground": "265 61% 11%",
+      "--muted": "265 35% 18%",
+      // Muted text #d4c0d7
+      "--muted-foreground": "291 18% 80%",
+      // Accent → magenta pop #e7006e
+      "--accent": "331 100% 45%",
       "--accent-foreground": "0 0% 100%",
-      "--destructive": "0 80% 55%",
-      "--destructive-foreground": "0 0% 100%",
-      "--border": "15 18% 24%",
-      "--input": "15 18% 18%",
-      "--ring": "15 95% 55%",
-      "--surface-container-lowest": "0 55% 8%",
-      "--surface-container-low": "15 18% 14%",
-      "--surface-container": "15 18% 16%",
-      "--surface-container-high": "15 18% 20%",
-      "--surface-container-highest": "15 18% 24%",
-      "--outline": "15 18% 40%",
-      "--outline-variant": "15 18% 28%",
-      "--on-surface-variant": "40 18% 78%",
-      "--primary-container": "15 95% 55%",
+      // Destructive #ffb4ab
+      "--destructive": "5 100% 84%",
+      "--destructive-foreground": "356 100% 21%",
+      // Deep-violet ink #150629
+      "--border": "265 73% 9%",
+      "--input": "265 42% 16%",
+      // Ring cyan #00eefc
+      "--ring": "184 100% 49%",
+      "--surface-container-lowest": "265 73% 9%",
+      "--surface-container-low": "266 45% 15%",
+      "--surface-container": "265 42% 16%",
+      "--surface-container-high": "264 35% 21%",
+      "--surface-container-highest": "263 28% 25%",
+      // Outline #9d8ba0
+      "--outline": "292 9% 59%",
+      // Outline-variant #514255
+      "--outline-variant": "289 13% 30%",
+      "--on-surface-variant": "291 18% 80%",
+      // Primary-container → vivid violet #bd00ff
+      "--primary-container": "284 100% 50%",
       "--on-primary-container": "0 0% 100%",
-      "--viewer-bg": "0 55% 12%",
-      "--toolbar-bg": "15 18% 14%",
-      "--book-spine": "15 95% 55%",
+      "--viewer-bg": "265 61% 11%",
+      "--toolbar-bg": "265 73% 9%",
+      // Book spine violet
+      "--book-spine": "284 100% 50%",
     },
   },
   {
