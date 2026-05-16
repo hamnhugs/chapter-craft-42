@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { useApp } from "@/context/AppContext";
 import PdfViewer from "@/components/PdfViewer";
 import Library from "@/components/Library";
@@ -9,6 +9,7 @@ import AutoChapterize from "@/components/AutoChapterize";
 import VideoTranscript from "@/components/VideoTranscript";
 import ThemeSwitcher from "@/components/ThemeSwitcher";
 import StripeBar from "@/components/fruit-stripe/StripeBar";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { useTheme } from "@/context/ThemeContext";
 
 const tabs = [
@@ -21,8 +22,14 @@ const tabs = [
   { id: "voice" as const, icon: "settings_voice", label: "Voice" },
 ];
 
+const PRIMARY_IDS = ["library", "viewer", "chapterize", "chat"] as const;
+const primaryTabs = PRIMARY_IDS.map((id) => tabs.find((t) => t.id === id)!);
+const moreTabs = tabs.filter((t) => !PRIMARY_IDS.includes(t.id as any));
+
 const Index: React.FC = () => {
   const { activeTab, setActiveTab, getActiveBook, signOut } = useApp();
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreActive = moreTabs.some((t) => t.id === activeTab);
   const activeBook = getActiveBook();
   const { themeId } = useTheme();
   const isFruitStripe = themeId === "fruit-stripe";
@@ -85,32 +92,121 @@ const Index: React.FC = () => {
       </div>
 
       {/* Mobile Bottom Nav */}
-      {isFruitStripe && <StripeBar thickness={4} className="md:hidden fixed left-0 right-0 bottom-20 z-[51]" />}
-      <nav data-mobile-nav className="md:hidden fixed bottom-0 w-full z-50 flex justify-around items-center px-4 pb-6 pt-2 bg-background/70 backdrop-blur-md shadow-2xl shadow-black rounded-t-2xl">
-        {tabs.map((tab) => {
-          const isActive = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex flex-col items-center justify-center p-2 transition-all duration-200 ${
-                isActive
-                  ? "bg-accent text-on-primary-container rounded-xl scale-105"
-                  : "text-secondary hover:text-primary active:scale-90"
-              }`}
-            >
-              <span
-                className="material-symbols-outlined"
-                style={isActive ? { fontVariationSettings: "'FILL' 1" } : undefined}
+      <nav
+        data-mobile-nav
+        className="md:hidden fixed bottom-0 inset-x-0 z-50 border-t border-border/60 bg-background/85 backdrop-blur-xl"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      >
+        <div className="grid grid-cols-5 h-16">
+          {primaryTabs.map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                aria-label={tab.label}
+                aria-current={isActive ? "page" : undefined}
+                className="group relative flex flex-col items-center justify-center gap-0.5 outline-none focus-visible:ring-2 focus-visible:ring-accent/60 rounded-md"
               >
-                {tab.icon}
-              </span>
-              <span className="font-body text-[10px] font-semibold uppercase tracking-widest mt-1">
-                {tab.label}
-              </span>
-            </button>
-          );
-        })}
+                <span className="relative flex items-center justify-center h-8 w-14">
+                  {isActive && (
+                    <span className="absolute inset-0 rounded-full bg-accent/15" aria-hidden />
+                  )}
+                  <span
+                    className={`material-symbols-outlined relative text-[22px] transition-transform duration-150 group-active:scale-90 ${
+                      isActive ? "text-accent" : "text-secondary"
+                    }`}
+                    style={isActive ? { fontVariationSettings: "'FILL' 1" } : undefined}
+                  >
+                    {tab.icon}
+                  </span>
+                </span>
+                <span
+                  className={`font-body text-[11px] leading-none font-medium ${
+                    isActive ? "text-accent" : "text-muted-foreground"
+                  }`}
+                >
+                  {tab.label}
+                </span>
+              </button>
+            );
+          })}
+
+          <Sheet open={moreOpen} onOpenChange={setMoreOpen}>
+            <SheetTrigger asChild>
+              <button
+                aria-label="More tabs"
+                aria-current={moreActive ? "page" : undefined}
+                className="group relative flex flex-col items-center justify-center gap-0.5 outline-none focus-visible:ring-2 focus-visible:ring-accent/60 rounded-md"
+              >
+                <span className="relative flex items-center justify-center h-8 w-14">
+                  {moreActive && (
+                    <span className="absolute inset-0 rounded-full bg-accent/15" aria-hidden />
+                  )}
+                  <span
+                    className={`material-symbols-outlined relative text-[22px] transition-transform duration-150 group-active:scale-90 ${
+                      moreActive ? "text-accent" : "text-secondary"
+                    }`}
+                    style={moreActive ? { fontVariationSettings: "'FILL' 1" } : undefined}
+                  >
+                    more_horiz
+                  </span>
+                </span>
+                <span
+                  className={`font-body text-[11px] leading-none font-medium ${
+                    moreActive ? "text-accent" : "text-muted-foreground"
+                  }`}
+                >
+                  More
+                </span>
+              </button>
+            </SheetTrigger>
+            <SheetContent
+              side="bottom"
+              className="rounded-t-3xl border-t border-border/60 bg-background/95 backdrop-blur-xl pb-[calc(env(safe-area-inset-bottom)+1.5rem)]"
+            >
+              <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-muted-foreground/30" />
+              <SheetHeader className="text-left">
+                <SheetTitle className="font-display text-xl">More</SheetTitle>
+              </SheetHeader>
+              <div className="mt-4 grid grid-cols-3 gap-3">
+                {moreTabs.map((tab) => {
+                  const isActive = activeTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => {
+                        setActiveTab(tab.id);
+                        setMoreOpen(false);
+                      }}
+                      className={`flex flex-col items-center justify-center gap-2 h-24 rounded-2xl border bg-card transition-colors active:scale-95 ${
+                        isActive
+                          ? "border-accent/60 ring-1 ring-accent/40 bg-accent/10"
+                          : "border-border/60 hover:bg-muted/40"
+                      }`}
+                    >
+                      <span
+                        className={`material-symbols-outlined text-[26px] ${
+                          isActive ? "text-accent" : "text-secondary"
+                        }`}
+                        style={isActive ? { fontVariationSettings: "'FILL' 1" } : undefined}
+                      >
+                        {tab.icon}
+                      </span>
+                      <span
+                        className={`font-body text-[12px] font-medium ${
+                          isActive ? "text-accent" : "text-foreground"
+                        }`}
+                      >
+                        {tab.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </SheetContent>
+          </Sheet>
+        </div>
       </nav>
     </div>
   );

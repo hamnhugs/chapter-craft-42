@@ -1,34 +1,55 @@
-# Add "Tiny papers" mode to Auto Chapterizer
+# Mobile bottom navigation — redesign
 
-Add a third detection mode for PDFs that are collections of one-page papers/articles. Each page in the chosen range becomes its own chapter, with the title taken from the top of the page (first non-empty line, cleaned up).
+## Problems with the current bar
+- 7 equal items overflow on small screens (Voice is clipped at 414px and below).
+- Active item uses a wide rounded-pill that expands the cell, breaking equal spacing.
+- Labels are uppercase 10px with widest tracking — dated and hard to read.
+- No `env(safe-area-inset-bottom)` respect → on iPhones with a home indicator, items sit too low.
+- Extra "fruit-stripe" decorative bar on top of nav adds noise.
 
-## Changes (all in `src/components/AutoChapterize.tsx`)
+## Modern bottom-nav references (2025)
+- **Material 3 Navigation Bar**: 3-5 destinations, ~80dp tall, pill indicator *behind the icon only* (not the whole item), label below in sentence case (12sp). Items are equal-width. Overflow → secondary surface.
+- **Apple HIG Tab Bar**: max 5 tabs; use a "More" tab when there are more destinations; respect safe-area inset; subtle press feedback only.
+- **Linear/Arc/Vercel patterns**: blurred floating bar, soft shadow, no harsh borders, single-color active state with a thin top indicator or pill behind icon.
 
-1. **Mode type** — expand `type Mode = "toc" | "paper"` → `"toc" | "paper" | "tiny"`. Add `"tiny"` to the `Detected.source` union.
+## Plan
 
-2. **Mode switcher UI** — add a third card next to "TOC" and "Research paper":
-   - Title: "Tiny papers (1 page each)"
-   - Subtitle: "Every page becomes its own chapter. Title is read from the top of the page."
+### 1. Cap visible items at 5, move the rest to a "More" sheet
+Primary tabs (most-used): **Library, Reader, Chapterize, Chat, More**.
+"More" opens a bottom Sheet (shadcn `Sheet` from `side="bottom"`) containing **Wiki, Video, Voice** with the same icon+label treatment but larger tap targets. Selecting one closes the sheet and activates the tab.
 
-3. **Tiny-mode options panel** (mirrors paper-mode panel, simpler):
-   - From page / To page (defaults: 1 → last page)
-   - "Pages per chapter" (default 1, min 1, max 5) — lets the user group e.g. 2-page papers
-   - Optional title prefix (e.g. "Paper")
+The 5-item cap is enforced only on the mobile bar; desktop nav stays unchanged (all 7 tabs).
 
-4. **Detection logic — `runTiny()`**:
-   - Load the PDF, iterate `fromPage … toPage` in steps of `pagesPerChapter`.
-   - For each chunk, extract text of the first page, take the first meaningful line (skip page numbers, headers shorter than 3 chars, all-caps running headers if repeated), truncate to ~100 chars → chapter title.
-   - Fallback title: `"{prefix} {n} (p. {startPage})"`.
-   - No AI call needed (fast, deterministic, cheap). Show progress per page.
-   - Build `Detected[]` with `source: "tiny"`, `selected: true`.
+### 2. Replace the item visual
+- Equal-width flex children (no scale on active — kills cell width consistency).
+- Pill indicator (rounded-full, `bg-accent/15`, h-8 w-14) sits **behind the icon only**, centered.
+- Active icon: `text-accent`, FILL=1 (already supported via material-symbols variation).
+- Inactive icon: `text-secondary`, no fill.
+- Label: sentence case ("Library", "Reader"…), `text-[11px] font-medium`, no uppercase, no tracking-widest, `text-accent` when active, `text-muted-foreground` otherwise.
+- Vertical layout: icon row (h-8) + label row, ~4px gap.
+- Tap feedback: `active:scale-95` on the icon only, 120ms ease.
 
-5. **Wire `run()`** — extend dispatcher: `mode === "toc" ? runToc() : mode === "paper" ? runPaper() : runTiny()`.
+### 3. Bar container
+- Height auto (~64px) plus `pb-[env(safe-area-inset-bottom)]`.
+- Remove `rounded-t-2xl` heavy shadow; use a single soft top border `border-t border-border/60` and `bg-background/85 backdrop-blur-xl` for the floating-glass feel.
+- Drop the extra `<StripeBar>` above the nav on mobile (keeps the cleaner look). Theme accent already conveys the brand.
+- Keep `z-50` so it sits over content; remove the now-unneeded `bottom-20` stripe.
 
-6. **Save path** — tiny mode reuses paper-mode save branch (no TOC/Ch.1 preservation; replaces overlapping chapters in the chosen range). Update the `mode === "paper"` guards to `mode !== "toc"` where appropriate.
+### 4. "More" sheet
+- shadcn `Sheet` opens from the bottom.
+- Grid of 3 large tiles (icon top, label below), each 96px tall, rounded-2xl, `bg-card`, active tile gets accent ring.
+- Header: "More" with a small grabber bar.
 
-7. **Pre-flight** — no anchors required for tiny mode (same as paper). Update the `canRun` check.
+### 5. Files touched
+- `src/pages/Index.tsx` — split tabs into `primaryTabs` (4) + `moreTabs` (3), rewrite the `<nav data-mobile-nav>` block, add a `MoreSheet` subcomponent or inline it.
+- No new dependencies; `Sheet` already exists at `src/components/ui/sheet.tsx`.
+- No changes to `AppContext`, routes, or business logic.
 
-## Notes
-- No backend/edge function changes — runs fully client-side via pdfjs.
-- No DB migration.
-- Existing TOC and Paper modes remain untouched.
+### 6. Verification
+- Resize browser to 360, 390, 414, 480px — confirm no clipping, equal-width items, label visible.
+- Check active states, More sheet open/close, safe-area padding on a tall viewport.
+
+## Out of scope
+- Desktop nav (unchanged).
+- Theme switcher / Sign out in the header (unchanged).
+- Reordering or renaming tabs beyond the primary/secondary split above — happy to adjust which 4 are primary if you want a different set (e.g. Library / Reader / Chat / Wiki).
