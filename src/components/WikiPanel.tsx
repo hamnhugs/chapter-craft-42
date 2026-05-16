@@ -220,6 +220,16 @@ const WikiPanel: React.FC = () => {
     } catch (err: any) { toast.error(err.message); }
   };
 
+  const handleResolveByDelete = async (conflictId: string, deleteEntryId: string) => {
+    try {
+      await deleteKnowledgeEntry(deleteEntryId);
+      await updateConflictStatus(conflictId, "resolved");
+      setEntries((prev) => prev.filter((e) => e.id !== deleteEntryId));
+      setConflicts((prev) => prev.map((c) => c.id === conflictId ? { ...c, status: "resolved" } : c));
+      toast.success("Conflict resolved — entry deleted");
+    } catch (err: any) { toast.error(err.message); }
+  };
+
   const openConflicts = () => setView("conflicts");
   const openConflictsCount = conflicts.filter(c => c.status === "open").length;
 
@@ -645,28 +655,61 @@ const WikiPanel: React.FC = () => {
             ) : conflicts.map((c) => {
               const a = entries.find(e => e.id === c.entry_a);
               const b = entries.find(e => e.id === c.entry_b);
+              const isDuplicate = c.kind === "duplicate" || c.kind === "overlap";
               return (
                 <div key={c.id} className={`p-5 rounded-xl border-l-4 ${c.status === "open" ? "bg-error-container/20 border-destructive" : "bg-surface-container-high border-outline-variant/30 opacity-70"}`}>
-                  <div className="flex items-center gap-2 mb-2">
+                  <div className="flex items-center gap-2 mb-3">
                     <Badge variant="destructive" className="text-[10px]">{c.kind}</Badge>
                     <Badge variant="secondary" className="text-[10px]">{c.status}</Badge>
+                    <span className="ml-auto text-[10px] text-on-surface-variant">{new Date(c.created_at).toLocaleDateString()}</span>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 my-3">
-                    <button onClick={() => a && openDetail(a)} className="text-left p-3 bg-surface-container-high rounded-lg hover:bg-surface-container-highest">
-                      <p className="text-xs text-on-surface-variant mb-1">Entry A</p>
-                      <p className="font-bold text-sm">{a?.title || c.entry_a.slice(0,8)}</p>
-                    </button>
-                    <button onClick={() => b && openDetail(b)} className="text-left p-3 bg-surface-container-high rounded-lg hover:bg-surface-container-highest">
-                      <p className="text-xs text-on-surface-variant mb-1">Entry B</p>
-                      <p className="font-bold text-sm">{b?.title || c.entry_b.slice(0,8)}</p>
-                    </button>
-                  </div>
+
                   {c.rationale && <p className="text-sm text-on-surface-variant mb-3 italic">"{c.rationale}"</p>}
+
+                  {/* Side-by-side entry comparison with inline previews */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                    {[{ label: "Entry A", entry: a, id: c.entry_a }, { label: "Entry B", entry: b, id: c.entry_b }].map(({ label, entry, id }) => (
+                      <div key={id} className="bg-surface-container-high rounded-lg overflow-hidden border border-outline-variant/10">
+                        <div className="px-3 pt-3 pb-2">
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant mb-1">{label}</p>
+                          <p className="font-bold text-sm text-foreground leading-snug">{entry?.title || id.slice(0, 8)}</p>
+                          {entry && (
+                            <p className="text-xs text-on-surface-variant mt-1.5 line-clamp-3 leading-relaxed">{entry.content.slice(0, 180)}</p>
+                          )}
+                        </div>
+                        {entry && (
+                          <button
+                            onClick={() => openDetail(entry)}
+                            className="w-full flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-primary hover:bg-primary/5 border-t border-outline-variant/10 transition-colors"
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>open_in_new</span>
+                            Open &amp; Edit
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Resolution actions */}
                   {c.status === "open" && (
-                    <div className="flex gap-2">
-                      <Button size="sm" variant="outline" onClick={() => handleConflictStatus(c.id, "acknowledged")}>Acknowledge</Button>
-                      <Button size="sm" variant="outline" onClick={() => handleConflictStatus(c.id, "resolved")}>Resolved</Button>
-                      <Button size="sm" variant="ghost" onClick={() => handleConflictStatus(c.id, "dismissed")}>Dismiss</Button>
+                    <div className="space-y-2">
+                      {isDuplicate && a && b && (
+                        <div className="flex gap-2 flex-wrap">
+                          <Button size="sm" variant="destructive" onClick={() => handleResolveByDelete(c.id, b.id)}>
+                            <span className="material-symbols-outlined text-sm mr-1">delete</span>
+                            Keep A, Delete B
+                          </Button>
+                          <Button size="sm" variant="destructive" onClick={() => handleResolveByDelete(c.id, a.id)}>
+                            <span className="material-symbols-outlined text-sm mr-1">delete</span>
+                            Keep B, Delete A
+                          </Button>
+                        </div>
+                      )}
+                      <div className="flex gap-2 flex-wrap">
+                        <Button size="sm" variant="outline" onClick={() => handleConflictStatus(c.id, "acknowledged")}>Acknowledge</Button>
+                        <Button size="sm" variant="outline" onClick={() => handleConflictStatus(c.id, "resolved")}>Mark Resolved</Button>
+                        <Button size="sm" variant="ghost" onClick={() => handleConflictStatus(c.id, "dismissed")}>Dismiss</Button>
+                      </div>
                     </div>
                   )}
                 </div>
