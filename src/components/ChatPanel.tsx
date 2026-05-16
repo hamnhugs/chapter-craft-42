@@ -134,7 +134,7 @@ const ChatPanel: React.FC = () => {
               </div>
             </div>
           </section>
-          <section className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-4 rounded-xl bg-surface-container-low">
+          <section className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-3 md:p-4 rounded-xl bg-surface-container-low">
             <div className="flex flex-col gap-1.5">
               <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
                 <span className="material-symbols-outlined text-xs align-middle mr-1">science</span>Deep Research Model
