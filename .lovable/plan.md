@@ -1,39 +1,34 @@
 ## Goal
-Let users pick which OpenRouter model powers the Wiki's AI operations (ingest, extract, lint), reusing the saved model list from Chat.
+Use OpenRouter's embedding endpoint (default model `perplexity/pplx-embed-v1-4b`) to power Reindex and semantic search, replacing the broken Lovable Gateway / Google paths.
 
-## 1. Database
-Add one column to `user_settings`:
-- `wiki_model text NULL` — when null, wiki falls back to the current Lovable Gateway default (`google/gemini-3-flash-preview`).
+## 1. Edge function: `supabase/functions/_shared/embed.ts`
+Add OpenRouter as the **primary** embedding path:
 
-## 2. Settings panel in Wiki tab
-Add a **Settings** button (gear icon) in the WikiPanel header next to Reindex/Health Check. Clicking it opens a sheet/dialog with:
-- A dropdown listing the user's `saved_models` from `user_settings` (same list as Chat).
-- A "Use default (Gemini Flash)" option at the top.
-- A small note: "Requires your OpenRouter API key in Chat Settings." Show a warning if `openrouter_api_key` is empty and a custom model is selected.
-- Save persists `wiki_model` via the existing settings hook (extend `useChatSettings` with `wikiModel` / `setWikiModel`, or add a tiny `useWikiSettings` reading the same row).
+- Read `OPENROUTER_API_KEY` from env (already a project secret — confirmed).
+- POST to `https://openrouter.ai/api/v1/embeddings` with `{ model: "perplexity/pplx-embed-v1-4b", input: [...] }` and `Authorization: Bearer ${OPENROUTER_API_KEY}`.
+- Keep existing Lovable Gateway + Google paths as **fallback** in case OpenRouter rejects the model later.
+- Make the model id configurable via `OPENROUTER_EMBED_MODEL` env, defaulting to `perplexity/pplx-embed-v1-4b`.
 
-## 3. Edge functions
-Update `knowledge-ingest`, `knowledge-extract`, `knowledge-lint`:
-- After auth, read `user_settings.wiki_model` and `openrouter_api_key` for the calling user.
-- If `wiki_model` is set **and** an OpenRouter key exists → call `https://openrouter.ai/api/v1/chat/completions` with that model and the user's key.
-- Otherwise → keep current Lovable Gateway path unchanged.
-- Preserve the existing tool-calling payload (works on both gateways since both are OpenAI-compatible).
-- On OpenRouter failure, fall back to Lovable Gateway and surface a toast-friendly error message.
+### Dimension handling (important tradeoff)
+The DB column is fixed at `vector(768)`. `pplx-embed-v1-4b` likely returns more (e.g. 1024 or 1536). Two choices:
 
-## 4. UX details
-- Show the active wiki model name as a subtle chip under the Wiki header ("Model: openai/gpt-5-mini" or "Default").
-- If the user picks a custom model with no API key saved, the Save button stays enabled but a warning toast points them to Chat Settings.
+- **Default (recommended for now):** truncate the returned vector to the first 768 floats. Works immediately, no migration, but retrieval quality drops a bit vs. native dims.
+- **Optional later:** if you want full quality, I can run a migration to change the column to the model's native dimension and reindex everything. We can do that after confirming the model's actual output size from one successful call.
+
+I'll default to **truncate-to-768** so Reindex starts working right away, and log the actual returned dim so we know what a future migration target would be.
+
+## 2. Reindex UX (`src/components/WikiPanel.tsx`)
+Already shows distinct toasts for success/partial/failure. No changes unless errors persist after deploy.
+
+## 3. Verification
+- Deploy `knowledge-embed` + `_shared`.
+- Click Reindex from the Wiki tab.
+- Watch edge logs: expect `gatewayEmbed` and `googleEmbed` to no longer be reached, and OpenRouter to return 200.
+- If model returns a dim != 768, log a one-line warning ("openrouter returned N dims — truncated to 768").
 
 ## Out of scope
-- No new model browsing UI (reuses Chat's saved list).
-- No separate API key field — the existing `openrouter_api_key` is reused.
-- Embedding model unchanged.
+- Per-user OpenRouter embedding model (uses project-wide `OPENROUTER_API_KEY` for now). The wiki *chat* model selector you just got stays user-scoped.
+- Changing the `vector(768)` column dimension — can be a follow-up if truncation quality isn't enough.
 
 ## Files touched
-- migration: add `wiki_model` column
-- `src/hooks/useChatSettings.ts` — add `wikiModel`
-- `src/components/WikiPanel.tsx` — Settings button + dialog + active-model chip
-- `supabase/functions/knowledge-ingest/index.ts`
-- `supabase/functions/knowledge-extract/index.ts`
-- `supabase/functions/knowledge-lint/index.ts`
-- (optional) `supabase/functions/_shared/llm.ts` — small helper that picks gateway vs OpenRouter
+- `supabase/functions/_shared/embed.ts` — add `openrouterEmbed()`, reorder fallbacks, truncate to 768.
