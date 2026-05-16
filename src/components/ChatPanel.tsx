@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import { extractKnowledge } from "@/lib/knowledgeApi";
@@ -15,8 +16,8 @@ import { speak, stopSpeaking, subscribeSpeaking, getSpeakingId } from "@/lib/spe
 const ChatPanel: React.FC = () => {
   const { books, activeBookId } = useApp();
   const {
-    apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, loaded,
-    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setTtsRate,
+    apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, autoReadReplies, loaded,
+    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setTtsRate, setAutoReadReplies,
   } = useChatSettings();
   const { messages, isLoading, deepResearch, setDeepResearch, sendMessage, clearChat } = useChat();
   const [input, setInput] = useState("");
@@ -30,6 +31,31 @@ const ChatPanel: React.FC = () => {
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
   useEffect(() => subscribeSpeaking(setSpeakingId), []);
   useEffect(() => () => stopSpeaking(), []);
+
+  // Auto-read assistant replies when the user has the setting enabled.
+  const autoReadRef = useRef<{ enabled: boolean; lastId: string | null }>({ enabled: false, lastId: null });
+  useEffect(() => {
+    const wasEnabled = autoReadRef.current.enabled;
+    autoReadRef.current.enabled = autoReadReplies;
+    // If user just turned it OFF, stop any in-flight playback.
+    if (wasEnabled && !autoReadReplies) stopSpeaking();
+    // Seed lastId so we don't read historical messages when toggling ON.
+    if (!wasEnabled && autoReadReplies) {
+      const last = messages[messages.length - 1];
+      autoReadRef.current.lastId = last ? (last.id || String(messages.length - 1)) : null;
+    }
+  }, [autoReadReplies]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!autoReadReplies || isLoading) return;
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== "assistant") return;
+    const id = last.id || `chat-${messages.length - 1}`;
+    if (autoReadRef.current.lastId === id) return;
+    if (!last.content || !last.content.trim()) return;
+    autoReadRef.current.lastId = id;
+    speak(last.content, { id: `chat-${last.id || messages.length - 1}`, rate: ttsRate });
+  }, [messages, isLoading, autoReadReplies, ttsRate]);
 
   const bubbleId = (msg: { id?: string }, i: number) => `chat-${msg.id || i}`;
   const handleSpeak = (msg: { id?: string; content: string }, i: number) => {
@@ -147,6 +173,16 @@ const ChatPanel: React.FC = () => {
                 {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
               </select>
               <p className="text-[10px] text-on-surface-variant px-1">Used when Deep Research is ON. Pick a strong reasoning model for best results.</p>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
+                <span className="material-symbols-outlined text-xs align-middle mr-1">record_voice_over</span>Auto-read replies
+              </label>
+              <div className="flex items-center justify-between gap-3 bg-surface-container-high rounded-lg py-3 px-4 border border-outline-variant/10">
+                <span className="text-sm text-primary">{autoReadReplies ? "On — replies will be read aloud" : "Off"}</span>
+                <Switch checked={autoReadReplies} onCheckedChange={setAutoReadReplies} aria-label="Auto-read assistant replies" />
+              </div>
+              <p className="text-[10px] text-on-surface-variant px-1">Reads each new assistant reply aloud using the playback speed below.</p>
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center justify-between">

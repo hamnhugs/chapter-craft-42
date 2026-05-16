@@ -13,6 +13,7 @@ interface ChatSettings {
   selectedModel: string;
   deepResearchModel: string;
   ttsRate: number;
+  autoReadReplies: boolean;
 }
 
 const defaults: ChatSettings = {
@@ -21,6 +22,7 @@ const defaults: ChatSettings = {
   selectedModel: DEFAULT_MODEL,
   deepResearchModel: DEFAULT_DEEP_RESEARCH_MODEL,
   ttsRate: DEFAULT_TTS_RATE,
+  autoReadReplies: false,
 };
 
 export function useChatSettings() {
@@ -48,6 +50,7 @@ export function useChatSettings() {
           ttsRate: typeof (data as any).tts_rate === "number" && (data as any).tts_rate > 0
             ? (data as any).tts_rate
             : DEFAULT_TTS_RATE,
+          autoReadReplies: !!(data as any).auto_read_replies,
         });
       }
       setLoaded(true);
@@ -66,6 +69,7 @@ export function useChatSettings() {
         selected_model: next.selectedModel,
         deep_research_model: next.deepResearchModel,
         tts_rate: next.ttsRate,
+        auto_read_replies: next.autoReadReplies,
       };
       const { error } = await supabase
         .from("user_settings")
@@ -112,6 +116,7 @@ export function useChatSettings() {
     setSelectedModel: (m: string) => update({ selectedModel: m }),
     setDeepResearchModel: (m: string) => update({ deepResearchModel: m }),
     setTtsRate: (r: number) => update({ ttsRate: Math.min(2, Math.max(0.5, r)) }),
+    setAutoReadReplies: (v: boolean) => update({ autoReadReplies: v }),
     addModel,
     removeModel,
     setNewModelInput: undefined, // handled in component
