@@ -81,8 +81,8 @@ const Index: React.FC = () => {
       </div>
 
       {/* Mobile Bottom Nav */}
+      {isFruitStripe && <StripeBar thickness={4} className="md:hidden fixed left-0 right-0 bottom-20 z-[51]" />}
       <nav data-mobile-nav className="md:hidden fixed bottom-0 w-full z-50 flex justify-around items-center px-4 pb-6 pt-2 bg-background/70 backdrop-blur-md shadow-2xl shadow-black rounded-t-2xl">
-        {isFruitStripe && <StripeBar thickness={4} className="absolute top-0 left-0" />}
         {tabs.map((tab) => {
           const isActive = activeTab === tab.id;
           return (
