@@ -252,15 +252,16 @@ const VoiceChat: React.FC = () => {
 
   const flushPendingTranscript = useCallback(() => {
     if (submittingRef.current) return;
-    const text = buildStableTranscript();
+    const text = normalizeTranscript(finalTranscriptRef.current);
     if (sendTimerRef.current) { window.clearTimeout(sendTimerRef.current); sendTimerRef.current = null; }
     if (!text) return;
     submittingRef.current = true;
-    finalChunksRef.current = new Map();
+    finalTranscriptRef.current = "";
+    previousFinalLengthRef.current = 0;
     lastSentTextRef.current = text;
     lastSentAtRef.current = Date.now();
     setInterimTranscript("");
-    try { recognitionRef.current?.stop(); } catch {}
+    stopCurrentRecognitionQuietly();
     submitRef.current(text);
   }, []);
 
@@ -275,24 +276,25 @@ const VoiceChat: React.FC = () => {
     };
 
     recognition.onresult = (event: any) => {
-      let interim = "";
-      let sawNewFinal = false;
-      for (let i = event.resultIndex; i < event.results.length; i++) {
+      let finalText = "";
+      let interimText = "";
+      for (let i = 0; i < event.results.length; i++) {
         const res = event.results[i];
-        const t = String(res[0].transcript || "").trim();
+        const t = String(res[0]?.transcript || "").trim();
+        if (!t) continue;
         if (res.isFinal) {
-          // Set/replace by index — re-emits of the same index do not duplicate.
-          const prev = finalChunksRef.current.get(i);
-          if (prev !== t) {
-            finalChunksRef.current.set(i, t);
-            sawNewFinal = true;
-          }
+          finalText += `${t} `;
         } else {
-          interim += (interim ? " " : "") + t;
+          interimText += `${t} `;
         }
       }
-      const stable = buildStableTranscript();
-      setInterimTranscript((stable + (interim ? " " + interim : "")).replace(/\s+/g, " ").trim());
+      const stable = normalizeTranscript(finalText);
+      const interim = normalizeTranscript(interimText);
+      const sawNewFinal = stable.length > previousFinalLengthRef.current;
+
+      finalTranscriptRef.current = stable;
+      previousFinalLengthRef.current = stable.length;
+      setInterimTranscript(normalizeTranscript(`${stable} ${interim}`));
 
       if (sawNewFinal) {
         if (sendTimerRef.current) window.clearTimeout(sendTimerRef.current);
@@ -312,14 +314,15 @@ const VoiceChat: React.FC = () => {
 
     recognition.onend = () => {
       setIsListening(false);
+      isListeningRef.current = false;
       if (handsFreeRef.current && !stoppedByUserRef.current && !isLoadingRef.current && !isSpeakingRef.current) {
-        const stable = buildStableTranscript();
+        const stable = normalizeTranscript(finalTranscriptRef.current);
         if (stable && !submittingRef.current) flushPendingTranscript();
         else {
           window.setTimeout(() => safeStartListening(), 250);
         }
       } else {
-        const stable = buildStableTranscript();
+        const stable = normalizeTranscript(finalTranscriptRef.current);
         if (!handsFreeRef.current && stable && !stoppedByUserRef.current && !submittingRef.current) {
           flushPendingTranscript();
         } else {
@@ -335,7 +338,7 @@ const VoiceChat: React.FC = () => {
     if (!SpeechRecognition) return;
     if (isListeningRef.current || isLoadingRef.current || isSpeakingRef.current) return;
     if (stoppedByUserRef.current) return;
-    try { recognitionRef.current?.stop(); } catch {}
+    stopCurrentRecognitionQuietly();
     resetTranscriptBuffers();
     const recognition = buildRecognition();
     recognitionRef.current = recognition;
@@ -347,8 +350,8 @@ const VoiceChat: React.FC = () => {
     if (!apiKey) { toast.error("Set your API key first"); setShowSettings(true); return; }
     stopSpeaking();
     stoppedByUserRef.current = false;
+    stopCurrentRecognitionQuietly();
     resetTranscriptBuffers();
-    lastFinalSegmentRef.current = "";
     setInterimTranscript("");
     const recognition = buildRecognition();
     recognitionRef.current = recognition;
@@ -358,9 +361,7 @@ const VoiceChat: React.FC = () => {
   const stopListening = () => {
     stoppedByUserRef.current = true;
     resetTranscriptBuffers();
-    lastFinalSegmentRef.current = "";
-    try { recognitionRef.current?.stop(); } catch {}
-    setIsListening(false);
+    stopCurrentRecognitionQuietly();
     setInterimTranscript("");
   };
 
