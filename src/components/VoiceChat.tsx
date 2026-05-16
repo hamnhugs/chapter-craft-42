@@ -462,69 +462,84 @@ const VoiceChat: React.FC = () => {
         Notes
       </button>
 
-      {showSettings && (
-        <div className="border-b border-outline-variant/10 bg-surface-container-low px-4 py-4">
-          <section className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-4 rounded-xl bg-surface-container-low">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">OpenRouter API Key</label>
-              <div className="relative">
-                <input className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 pr-10 focus:ring-1 focus:ring-primary/40" type="password" placeholder="sk-or-v1-..." defaultValue={apiKey} id="voice-key-input" onKeyDown={(e) => { if (e.key === "Enter") saveApiKey((e.target as HTMLInputElement).value); }} />
-                <span className="material-symbols-outlined absolute right-3 top-2.5 text-on-surface-variant text-sm">key</span>
+      <Drawer open={showSettings} onOpenChange={setShowSettings}>
+        <DrawerContent className="md:max-w-2xl md:mx-auto">
+          <DrawerHeader className="relative border-b border-outline-variant/10">
+            <DrawerTitle className="text-left">Settings</DrawerTitle>
+            <DrawerClose asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Close settings"
+                className="absolute right-2 top-2 h-11 w-11"
+              >
+                <X className="h-5 w-5" />
+              </Button>
+            </DrawerClose>
+          </DrawerHeader>
+          <div className="max-h-[80vh] overflow-y-auto px-4 py-4 space-y-3" style={{ paddingBottom: "calc(1rem + env(safe-area-inset-bottom))" }}>
+            <section className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-3 rounded-xl bg-surface-container-low">
+              <div className="flex flex-col gap-1.5 min-w-0">
+                <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">OpenRouter API Key</label>
+                <div className="relative">
+                  <input className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 pr-10 focus:ring-1 focus:ring-primary/40" type="password" placeholder="sk-or-v1-..." defaultValue={apiKey} id="voice-key-input" onKeyDown={(e) => { if (e.key === "Enter") saveApiKey((e.target as HTMLInputElement).value); }} />
+                  <span className="material-symbols-outlined absolute right-3 top-2.5 text-on-surface-variant text-sm">key</span>
+                </div>
+                <div className="flex gap-2 mt-1">
+                  <Button size="sm" onClick={() => { const el = document.getElementById("voice-key-input") as HTMLInputElement; saveApiKey(el?.value || ""); }}>Save</Button>
+                  {apiKey && <Button size="sm" variant="destructive" onClick={() => saveApiKey("")}>Remove</Button>}
+                </div>
               </div>
-              <div className="flex gap-2 mt-1">
-                <Button size="sm" onClick={() => { const el = document.getElementById("voice-key-input") as HTMLInputElement; saveApiKey(el?.value || ""); }}>Save</Button>
-                {apiKey && <Button size="sm" variant="destructive" onClick={() => saveApiKey("")}>Remove</Button>}
+              <div className="flex flex-col gap-1.5 min-w-0">
+                <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Model</label>
+                <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40">
+                  {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
+                </select>
+                <div className="flex gap-2 mt-1">
+                  <Input type="text" placeholder="provider/model-name" value={newModelInput} onChange={(e) => setNewModelInput(e.target.value)} className="text-sm font-mono bg-surface-container-high border-none" onKeyDown={(e) => { if (e.key === "Enter") addModel(); }} />
+                  <Button size="sm" onClick={addModel}>Add</Button>
+                </div>
+                <div className="flex flex-wrap gap-1.5 mt-1">
+                  {savedModels.map((m) => (
+                    <span key={m} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md max-w-full break-all ${m === selectedModel ? "bg-primary-container/20 text-primary" : "bg-surface-container-highest text-on-surface-variant"}`}>
+                      <button onClick={() => setSelectedModel(m)} className="hover:underline text-left break-all">{m}</button>
+                      <button onClick={() => removeModel(m)} className="hover:text-destructive ml-0.5 material-symbols-outlined text-xs shrink-0">close</button>
+                    </span>
+                  ))}
+                </div>
               </div>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Model</label>
-              <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40">
-                {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
-              </select>
-              <div className="flex gap-2 mt-1">
-                <Input type="text" placeholder="provider/model-name" value={newModelInput} onChange={(e) => setNewModelInput(e.target.value)} className="text-sm font-mono bg-surface-container-high border-none" onKeyDown={(e) => { if (e.key === "Enter") addModel(); }} />
-                <Button size="sm" onClick={addModel}>Add</Button>
+              <div className="flex flex-col gap-1.5 min-w-0">
+                <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
+                  <span className="material-symbols-outlined text-xs align-middle mr-1">science</span>Deep Research Model
+                </label>
+                <select value={deepResearchModel} onChange={(e) => setDeepResearchModel(e.target.value)} className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40">
+                  {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
+                </select>
+                <p className="text-[10px] text-on-surface-variant px-1">Used when Deep Research is ON.</p>
               </div>
-              <div className="flex flex-wrap gap-1.5 mt-1">
-                {savedModels.map((m) => (
-                  <span key={m} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md ${m === selectedModel ? "bg-primary-container/20 text-primary" : "bg-surface-container-highest text-on-surface-variant"}`}>
-                    <button onClick={() => setSelectedModel(m)} className="hover:underline">{m}</button>
-                    <button onClick={() => removeModel(m)} className="hover:text-destructive ml-0.5 material-symbols-outlined text-xs">close</button>
-                  </span>
-                ))}
-              </div>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
-                <span className="material-symbols-outlined text-xs align-middle mr-1">science</span>Deep Research Model
+            </section>
+            <section className="p-3 rounded-xl bg-surface-container-low">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center gap-1">
+                <span className="material-symbols-outlined text-xs align-middle">psychology</span>Custom Instructions
               </label>
-              <select value={deepResearchModel} onChange={(e) => setDeepResearchModel(e.target.value)} className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40">
-                {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
-              </select>
-              <p className="text-[10px] text-on-surface-variant px-1">Used when Deep Research is ON.</p>
-            </div>
-          </section>
-          <section className="p-4 rounded-xl bg-surface-container-low mt-2">
-            <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center gap-1">
-              <span className="material-symbols-outlined text-xs align-middle">psychology</span>Custom Instructions
-            </label>
-            <p className="text-[10px] text-on-surface-variant px-1 mt-1 mb-2">Prepended to every Librarian reply. Shared with the Chat tab.</p>
-            <Textarea
-              value={promptDraft}
-              onChange={(e) => setPromptDraft(e.target.value)}
-              rows={4}
-              placeholder="e.g. Always answer as a no-nonsense literary critic. Reference page numbers when possible."
-              className="bg-surface-container-high border-none text-sm"
-            />
-            <div className="flex gap-2 mt-2">
-              <Button size="sm" onClick={() => { setCustomSystemPrompt(promptDraft); toast.success("Custom instructions saved"); }}>Save</Button>
-              {customSystemPrompt && (
-                <Button size="sm" variant="destructive" onClick={() => { setCustomSystemPrompt(""); setPromptDraft(""); toast.success("Custom instructions cleared"); }}>Clear</Button>
-              )}
-            </div>
-          </section>
-        </div>
-      )}
+              <p className="text-[10px] text-on-surface-variant px-1 mt-1 mb-2">Prepended to every Librarian reply. Shared with the Chat tab.</p>
+              <Textarea
+                value={promptDraft}
+                onChange={(e) => setPromptDraft(e.target.value)}
+                rows={4}
+                placeholder="e.g. Always answer as a no-nonsense literary critic. Reference page numbers when possible."
+                className="bg-surface-container-high border-none text-sm"
+              />
+              <div className="flex gap-2 mt-2">
+                <Button size="sm" onClick={() => { setCustomSystemPrompt(promptDraft); toast.success("Custom instructions saved"); }}>Save</Button>
+                {customSystemPrompt && (
+                  <Button size="sm" variant="destructive" onClick={() => { setCustomSystemPrompt(""); setPromptDraft(""); toast.success("Custom instructions cleared"); }}>Clear</Button>
+                )}
+              </div>
+            </section>
+          </div>
+        </DrawerContent>
+      </Drawer>
 
       {/* Messages */}
       <div ref={messagesContainerRef} className="flex-1 overflow-auto px-4 py-6 space-y-6 hide-scrollbar">
