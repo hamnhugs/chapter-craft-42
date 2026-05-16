@@ -593,7 +593,7 @@ const AutoChapterize: React.FC = () => {
         for (const c of existingToReplace) {
           await removeChapter(book.id, c.id);
         }
-      } else if (mode === "paper") {
+      } else if (mode === "paper" || mode === "tiny") {
         // Replace any existing chapters that overlap the user's chosen range
         const lo = toSave[0].startPage;
         const hi = toSave[toSave.length - 1].endPage;
