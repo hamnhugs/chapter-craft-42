@@ -24,8 +24,14 @@ interface SendOpts {
 interface ChatContextValue {
   messages: ChatMessage[];
   isLoading: boolean;
+  /** Legacy combined flag — true if either tab has Deep Research on. Kept for backward compat. */
   deepResearch: boolean;
+  /** Deprecated: writes to the chat-tab flag (preserves old call sites). */
   setDeepResearch: (v: boolean) => void;
+  chatDeepResearch: boolean;
+  setChatDeepResearch: (v: boolean) => void;
+  voiceDeepResearch: boolean;
+  setVoiceDeepResearch: (v: boolean) => void;
   sendMessage: (text: string, opts?: SendOpts) => Promise<string>;
   clearChat: () => Promise<void>;
   abort: () => void;
