@@ -24,7 +24,7 @@ const SpeechRecognition = (window as any).SpeechRecognition || (window as any).w
 const VoiceChat: React.FC = () => {
   const { books, activeBookId } = useApp();
   const {
-    messages, isLoading, deepResearch, setDeepResearch, sendMessage, clearChat,
+    messages, isLoading, voiceDeepResearch, setVoiceDeepResearch, sendMessage, clearChat,
   } = useChat();
 
   const [isListening, setIsListening] = useState(false);
