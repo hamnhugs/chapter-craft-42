@@ -1,23 +1,29 @@
-# Fix repeating words in Chat dictation
+# Brief for Burplexity bot: fix the Voice ↔ Burplexity connection
 
-## Problem
-The mic in the Chat tab transcribes like:
-> "please please do please do some please do some deep…"
+Hand this whole document to the Burplexity project's AI. It contains the exact contract the Chapter Craft client uses today plus what's needed to make voice search work without blocking the voice reply.
 
-Each new word causes the entire phrase so far to be re-appended.
+---
 
-## Root cause
-`useDictation` accumulates final results incrementally:
+## 1. Where Chapter Craft calls Burplexity
+
+**File:** `src/lib/chatTools.ts`
+
 ```
-for (let i = e.resultIndex; i < e.results.length; i++) { ... finalStr += t }
+const BURPLEXITY_BOT_ASK_URL = "https://tmagmbmitnvcwubxcwoc.supabase.co/functions/v1/bot-ask";
 ```
-On Chrome (especially Android/mobile), `SpeechRecognition` often re-emits the full results array with `resultIndex = 0` and previously-finalized segments included again. Appending from `resultIndex` then double-counts every finalized chunk, producing the staircase repetition seen above.
 
-## Fix
-Rebuild the final + interim strings from scratch on every `onresult` event by scanning all `e.results` (not from `resultIndex`), so the transcript always reflects the engine's current truth instead of an ever-growing append log.
+The `web_search` tool exposed to the LLM is wired like this:
 
-## Files to change
-- `src/hooks/useDictation.ts` — replace the incremental accumulator in `rec.onresult` with a full-scan rebuild; keep `finalRef` as the snapshot used by `onend` / `onFinal`.
+```ts
+const r = await fetch(BURPLEXITY_BOT_ASK_URL, {
+  method: "POST",
+  headers: { "Content-Type": "application/json", "x-api-key": token },
+  body: JSON.stringify({ query: q, save_to_wiki: false }),
+});
+const j = await r.json();
+// expected: { answer: string, citations: [{title,url,snippet}, ...] }
+```
 
-## Out of scope
-No UI changes, no changes to Voice tab, prompt library, or deep-research wiring.
+The token comes from `useChatSettings().burplexityApiToken` (must start with `pp_`). It is shared by the Chat tab and Voice tab.
+
+`web_search` is registered in `CHAT_TOOL_DEFINITIONS` and the system prompt in `src/lib/buildChatSystemPrompt.ts` explicitly tells the model to call it for any "search / look up
