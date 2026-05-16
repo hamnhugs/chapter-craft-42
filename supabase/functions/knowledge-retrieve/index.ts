@@ -125,7 +125,7 @@ serve(async (req) => {
     // Fire-and-forget: don't await — don't block the response.
     const returnedIds = nodes.map((n) => n.id);
     if (returnedIds.length > 0) {
-      supabase.rpc("touch_node_retrievals", { node_ids: returnedIds }).catch(() => {});
+      Promise.resolve(supabase.rpc("touch_node_retrievals", { node_ids: returnedIds })).catch(() => {});
     }
 
     return json({ nodes, edges, query_embedded: !!qVec });
