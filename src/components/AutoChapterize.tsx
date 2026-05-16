@@ -802,6 +802,64 @@ const AutoChapterize: React.FC = () => {
           </section>
         )}
 
+        {/* Tiny-papers options */}
+        {book && mode === "tiny" && (
+          <section className="rounded-lg border border-border bg-card/50 p-4 space-y-3">
+            <h3 className="font-semibold text-sm">Tiny papers options</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="tiny-from" className="text-xs">From page</Label>
+                <Input
+                  id="tiny-from"
+                  type="number"
+                  min={1}
+                  placeholder="1"
+                  value={fromPage}
+                  onChange={(e) => setFromPage(e.target.value === "" ? "" : parseInt(e.target.value) || 1)}
+                  disabled={phase !== "idle"}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="tiny-to" className="text-xs">To page</Label>
+                <Input
+                  id="tiny-to"
+                  type="number"
+                  min={1}
+                  placeholder="end"
+                  value={toPage}
+                  onChange={(e) => setToPage(e.target.value === "" ? "" : parseInt(e.target.value) || 1)}
+                  disabled={phase !== "idle"}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="tiny-ppc" className="text-xs">Pages per chapter</Label>
+                <Input
+                  id="tiny-ppc"
+                  type="number"
+                  min={1}
+                  max={5}
+                  value={pagesPerChapter}
+                  onChange={(e) => setPagesPerChapter(Math.max(1, Math.min(5, parseInt(e.target.value) || 1)))}
+                  disabled={phase !== "idle"}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="tiny-prefix" className="text-xs">Fallback title prefix</Label>
+                <Input
+                  id="tiny-prefix"
+                  type="text"
+                  value={tinyPrefix}
+                  onChange={(e) => setTinyPrefix(e.target.value)}
+                  disabled={phase !== "idle"}
+                />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Each page (or group of pages) becomes its own chapter. Titles are read from the top of the first page; if none is found, the fallback prefix is used.
+            </p>
+          </section>
+        )}
+
         {/* Pre-flight status */}
         {book && mode === "toc" && (
           <section className="rounded-lg border border-border bg-card/50 p-4 space-y-3">
