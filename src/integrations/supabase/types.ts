@@ -412,6 +412,7 @@ export type Database = {
           tts_rate: number
           updated_at: string
           user_id: string
+          wiki_model: string | null
         }
         Insert: {
           auto_read_replies?: boolean
@@ -426,6 +427,7 @@ export type Database = {
           tts_rate?: number
           updated_at?: string
           user_id: string
+          wiki_model?: string | null
         }
         Update: {
           auto_read_replies?: boolean
@@ -440,6 +442,7 @@ export type Database = {
           tts_rate?: number
           updated_at?: string
           user_id?: string
+          wiki_model?: string | null
         }
         Relationships: []
       }

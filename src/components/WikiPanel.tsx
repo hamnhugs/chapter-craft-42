@@ -14,6 +14,9 @@ import {
   fetchConflicts, updateConflictStatus, reindexEmbeddings,
 } from "@/lib/knowledgeApi";
 import { Loader2 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useChatSettings } from "@/hooks/useChatSettings";
 
 type WikiView = "entries" | "detail" | "lint" | "conflicts";
 
@@ -35,6 +38,8 @@ const WikiPanel: React.FC = () => {
   const [ingestLoading, setIngestLoading] = useState(false);
   const [conflicts, setConflicts] = useState<KnowledgeConflict[]>([]);
   const [reindexing, setReindexing] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const { savedModels, wikiModel, setWikiModel, apiKey: openrouterKey } = useChatSettings();
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -206,8 +211,56 @@ const WikiPanel: React.FC = () => {
             <button onClick={loadData} disabled={loading} className="p-3 bg-surface-container-high rounded-xl border border-outline-variant/10 hover:bg-surface-container-highest transition-all">
               <span className={`material-symbols-outlined ${loading ? "animate-spin" : ""}`}>refresh</span>
             </button>
+            <button onClick={() => setSettingsOpen(true)} className="p-3 bg-surface-container-high rounded-xl border border-outline-variant/10 hover:bg-surface-container-highest transition-all" title="Wiki settings">
+              <span className="material-symbols-outlined">settings</span>
+            </button>
           </div>
         </section>
+
+        <div className="mb-6 -mt-6 text-xs text-on-surface-variant">
+          Wiki model: <span className="font-mono text-foreground">{wikiModel || "Default (Gemini Flash)"}</span>
+        </div>
+
+        <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Wiki Settings</DialogTitle>
+              <DialogDescription>
+                Choose which model powers wiki ingest, extract, and health checks.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Model</label>
+                <Select
+                  value={wikiModel || "__default__"}
+                  onValueChange={(v) => setWikiModel(v === "__default__" ? "" : v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__default__">Default (Gemini Flash)</SelectItem>
+                    {savedModels.map((m) => (
+                      <SelectItem key={m} value={m}>{m}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-on-surface-variant">
+                  Models come from your saved list in Chat Settings. Custom models use OpenRouter and require your API key there.
+                </p>
+                {wikiModel && !openrouterKey && (
+                  <p className="text-xs text-destructive">
+                    No OpenRouter API key found. Add one in Chat Settings, or wiki ops will fall back to the default model.
+                  </p>
+                )}
+              </div>
+            </div>
+            <DialogFooter>
+              <Button onClick={() => setSettingsOpen(false)}>Done</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {loading && entries.length === 0 ? (
           <div className="flex items-center justify-center py-20">

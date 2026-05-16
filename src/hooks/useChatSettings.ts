@@ -14,6 +14,7 @@ interface ChatSettings {
   deepResearchModel: string;
   ttsRate: number;
   autoReadReplies: boolean;
+  wikiModel: string; // "" = use default Gemini gateway
 }
 
 const defaults: ChatSettings = {
@@ -23,6 +24,7 @@ const defaults: ChatSettings = {
   deepResearchModel: DEFAULT_DEEP_RESEARCH_MODEL,
   ttsRate: DEFAULT_TTS_RATE,
   autoReadReplies: false,
+  wikiModel: "",
 };
 
 export function useChatSettings() {
@@ -51,6 +53,7 @@ export function useChatSettings() {
             ? (data as any).tts_rate
             : DEFAULT_TTS_RATE,
           autoReadReplies: !!(data as any).auto_read_replies,
+          wikiModel: (data as any).wiki_model || "",
         });
       }
       setLoaded(true);
@@ -70,6 +73,7 @@ export function useChatSettings() {
         deep_research_model: next.deepResearchModel,
         tts_rate: next.ttsRate,
         auto_read_replies: next.autoReadReplies,
+        wiki_model: next.wikiModel || null,
       };
       const { error } = await supabase
         .from("user_settings")
@@ -117,6 +121,7 @@ export function useChatSettings() {
     setDeepResearchModel: (m: string) => update({ deepResearchModel: m }),
     setTtsRate: (r: number) => update({ ttsRate: Math.min(2, Math.max(0.5, r)) }),
     setAutoReadReplies: (v: boolean) => update({ autoReadReplies: v }),
+    setWikiModel: (m: string) => update({ wikiModel: m }),
     addModel,
     removeModel,
     setNewModelInput: undefined, // handled in component

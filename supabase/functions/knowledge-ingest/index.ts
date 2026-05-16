@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { atomicitySplit, embedAndStore, probeAndLinkConflicts, type Candidate } from "../_shared/atomicity.ts";
+import { resolveWikiLlm } from "../_shared/wiki-llm.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -76,14 +77,12 @@ serve(async (req) => {
       `## ${ch.name} (pages ${ch.start_page}-${ch.end_page})\n${(ch.text_content || "").slice(0, 6000)}`
     ).join("\n\n");
 
-    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const llm = await resolveWikiLlm(supabase, user.id);
+    const aiResponse = await fetch(llm.url, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
+      headers: llm.headers,
       body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
+        model: llm.model,
         messages: [
           {
             role: "system",
