@@ -10,6 +10,7 @@ interface AppState {
   addBook: (book: BookDocument, sourceFile?: File) => Promise<void>;
   removeBook: (id: string) => void;
   setActiveBook: (id: string) => void;
+  setActiveBookSilent: (id: string) => void;
   setActiveTab: (tab: "library" | "viewer" | "chat" | "wiki" | "video" | "voice") => void;
   addChapter: (bookId: string, chapter: Chapter) => Promise<void>;
   updateChapter: (bookId: string, chapterId: string, name: string) => void;
@@ -254,6 +255,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setActiveTab("viewer");
   }, []);
 
+  const setActiveBookSilent = useCallback((id: string) => {
+    setActiveBookId(id);
+  }, []);
+
   const addChapter = useCallback(async (bookId: string, chapter: Chapter) => {
     const userId = await getAuthenticatedUserId();
 
@@ -380,6 +385,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addBook,
         removeBook,
         setActiveBook,
+        setActiveBookSilent,
         setActiveTab,
         addChapter,
         updateChapter,
