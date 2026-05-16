@@ -240,6 +240,7 @@ export async function executeChatTool(
           snippet: (e.content || "").slice(0, 400),
         }));
         return { result: entries, event: { name, summary: `Searched wiki for "${q}" — ${entries.length} hit(s)`, ok: true } };
+      }
       case "web_search": {
         const q = String(args.query || "").trim();
         if (!q) return { result: { error: "Empty query" }, event: { name, summary: "Empty query", ok: false } };
