@@ -281,22 +281,23 @@ const ChatPanel: React.FC = () => {
               <p className="text-[10px] text-on-surface-variant px-1">Used for read-aloud buttons here and replies in the Voice tab.</p>
             </div>
           </section>
+          <PromptLibrary scopeHint="chat" />
           <section className="p-3 md:p-4 rounded-xl bg-surface-container-low">
             <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center gap-1">
-              <span className="material-symbols-outlined text-xs align-middle">psychology</span>Custom Instructions
+              <span className="material-symbols-outlined text-xs align-middle">history_edu</span>Legacy Custom Instructions
             </label>
-            <p className="text-[10px] text-on-surface-variant px-1 mt-1 mb-2">Prepended to every Librarian reply (Chat &amp; Voice). Use it to set persona, tone, or focus.</p>
+            <p className="text-[10px] text-on-surface-variant px-1 mt-1 mb-2">Used only if no prompt above is active. Prefer the Prompt Library for new prompts.</p>
             <Textarea
               value={promptDraft}
               onChange={(e) => setPromptDraft(e.target.value)}
-              rows={4}
-              placeholder="e.g. Always answer as a no-nonsense literary critic. Reference page numbers when possible."
+              rows={3}
+              placeholder="e.g. Always answer as a no-nonsense literary critic."
               className="bg-surface-container-high border-none text-sm"
             />
             <div className="flex gap-2 mt-2">
-              <Button size="sm" onClick={() => { setCustomSystemPrompt(promptDraft); toast.success("Custom instructions saved"); }}>Save</Button>
+              <Button size="sm" onClick={() => { setCustomSystemPrompt(promptDraft); toast.success("Saved"); }}>Save</Button>
               {customSystemPrompt && (
-                <Button size="sm" variant="destructive" onClick={() => { setCustomSystemPrompt(""); setPromptDraft(""); toast.success("Custom instructions cleared"); }}>Clear</Button>
+                <Button size="sm" variant="destructive" onClick={() => { setCustomSystemPrompt(""); setPromptDraft(""); toast.success("Cleared"); }}>Clear</Button>
               )}
             </div>
           </section>
