@@ -7,15 +7,14 @@ import ReactMarkdown from "react-markdown";
 import { fetchKnowledgeEntries, fetchConversationMemory, extractKnowledge } from "@/lib/knowledgeApi";
 import { Loader2, StickyNote, BookmarkPlus } from "lucide-react";
 import VoiceNotesPanel, { appendVoiceNote } from "./VoiceNotesPanel";
+import { useChatSettings } from "@/hooks/useChatSettings";
 
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
 }
 
-const OPENROUTER_STORAGE_KEY = "openrouter_api_key";
-const SAVED_MODELS_KEY = "openrouter_saved_models";
-const SELECTED_MODEL_KEY = "openrouter_selected_model";
+const LEGACY_OPENROUTER_STORAGE_KEY = "openrouter_api_key";
 const DEFAULT_MODEL = "google/gemini-2.5-flash";
 const VOICE_ENABLED_KEY = "voice_tts_enabled";
 const HANDS_FREE_KEY = "voice_hands_free";
