@@ -5,12 +5,14 @@ import { toast } from "sonner";
 
 const DEFAULT_MODEL = "google/gemini-2.5-flash";
 const DEFAULT_DEEP_RESEARCH_MODEL = "google/gemini-2.5-pro";
+const DEFAULT_TTS_RATE = 1.05;
 
 interface ChatSettings {
   apiKey: string;
   savedModels: string[];
   selectedModel: string;
   deepResearchModel: string;
+  ttsRate: number;
 }
 
 const defaults: ChatSettings = {
@@ -18,6 +20,7 @@ const defaults: ChatSettings = {
   savedModels: [DEFAULT_MODEL],
   selectedModel: DEFAULT_MODEL,
   deepResearchModel: DEFAULT_DEEP_RESEARCH_MODEL,
+  ttsRate: DEFAULT_TTS_RATE,
 };
 
 export function useChatSettings() {
