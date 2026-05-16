@@ -31,7 +31,7 @@ const Index: React.FC = () => {
       <header data-app-header className="sticky top-0 w-full flex items-center justify-between px-6 py-4 bg-background/80 backdrop-blur-xl z-50 shadow-[0px_4px_20px_rgba(0,0,0,0.04),0px_10px_40px_rgba(0,0,0,0.08)]">
         <div className="flex items-center gap-3">
           <span className="material-symbols-outlined text-accent text-2xl">menu_book</span>
-          <span data-wordmark className="font-display font-bold text-3xl tracking-tight text-primary">Chapter Craft</span>
+          <span data-wordmark className="font-display font-bold text-3xl tracking-tight text-primary">​</span>
         </div>
 
         {/* Desktop nav */}
