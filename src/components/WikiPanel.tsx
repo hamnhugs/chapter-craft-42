@@ -112,10 +112,33 @@ const WikiPanel: React.FC = () => {
 
   const handleIngest = async (bookId: string) => {
     setIngestLoading(true);
-    try { const result = await ingestBook(bookId); toast.success(`Extracted ${result.entries_created} entries`); loadData(); }
+    try {
+      const result = await ingestBook(bookId);
+      toast.success(`Extracted ${result.entries_created} entries${result.splits ? `, split ${result.splits}` : ""}${result.conflicts ? `, ${result.conflicts} conflict(s) flagged` : ""}`);
+      loadData();
+    }
     catch (err: any) { toast.error(err.message); }
     finally { setIngestLoading(false); }
   };
+
+  const handleReindex = async () => {
+    setReindexing(true);
+    try {
+      const res = await reindexEmbeddings(true);
+      toast.success(`Embedded ${res.updated}/${res.total} entries${res.failed ? ` (${res.failed} failed)` : ""}`);
+    } catch (err: any) { toast.error(err.message || "Reindex failed"); }
+    finally { setReindexing(false); }
+  };
+
+  const handleConflictStatus = async (id: string, status: KnowledgeConflict["status"]) => {
+    try {
+      await updateConflictStatus(id, status);
+      setConflicts((prev) => prev.map((c) => c.id === id ? { ...c, status } : c));
+    } catch (err: any) { toast.error(err.message); }
+  };
+
+  const openConflicts = () => setView("conflicts");
+  const openConflictsCount = conflicts.filter(c => c.status === "open").length;
 
   const openDetail = (entry: KnowledgeEntry) => { setSelectedEntry(entry); setView("detail"); setEditing(false); };
   const startEdit = () => {
@@ -141,12 +164,23 @@ const WikiPanel: React.FC = () => {
             <h2 className="font-headline font-bold text-5xl md:text-6xl text-primary tracking-tight">Knowledge Wiki</h2>
             <p className="text-on-surface-variant max-w-xl text-lg italic font-headline">"The sum of all acquired insights, meticulously categorized."</p>
           </div>
-          <div className="flex gap-3">
+          <div className="flex gap-3 flex-wrap">
             {view !== "entries" && (
               <button onClick={() => { setView("entries"); setSelectedEntry(null); }} className="flex items-center gap-2 px-4 py-3 bg-surface-container-high text-foreground rounded-xl text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all">
                 <span className="material-symbols-outlined text-sm">arrow_back</span> Back
               </button>
             )}
+            <button onClick={openConflicts} disabled={conflicts.length === 0} className="relative flex items-center gap-2 px-4 py-3 bg-surface-container-high text-foreground rounded-xl text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all disabled:opacity-50">
+              <span className="material-symbols-outlined text-sm">report</span>
+              Conflicts
+              {openConflictsCount > 0 && (
+                <span className="ml-1 inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold">{openConflictsCount}</span>
+              )}
+            </button>
+            <button onClick={handleReindex} disabled={reindexing} className="flex items-center gap-2 px-4 py-3 bg-surface-container-high text-foreground rounded-xl text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all disabled:opacity-50">
+              {reindexing ? <Loader2 className="w-4 h-4 animate-spin" /> : <span className="material-symbols-outlined text-sm">memory</span>}
+              Reindex
+            </button>
             <button onClick={handleLint} disabled={lintLoading || entries.length === 0} className="flex items-center gap-2 bg-primary-container text-on-primary-container px-6 py-3 rounded-xl font-bold active:scale-95 transition-transform shadow-lg disabled:opacity-50">
               {lintLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <span className="material-symbols-outlined text-xl">health_and_safety</span>}
               <span>Health Check</span>
