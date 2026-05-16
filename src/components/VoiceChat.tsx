@@ -7,15 +7,14 @@ import ReactMarkdown from "react-markdown";
 import { fetchKnowledgeEntries, fetchConversationMemory, extractKnowledge } from "@/lib/knowledgeApi";
 import { Loader2, StickyNote, BookmarkPlus } from "lucide-react";
 import VoiceNotesPanel, { appendVoiceNote } from "./VoiceNotesPanel";
+import { useChatSettings } from "@/hooks/useChatSettings";
 
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
 }
 
-const OPENROUTER_STORAGE_KEY = "openrouter_api_key";
-const SAVED_MODELS_KEY = "openrouter_saved_models";
-const SELECTED_MODEL_KEY = "openrouter_selected_model";
+const LEGACY_OPENROUTER_STORAGE_KEY = "openrouter_api_key";
 const DEFAULT_MODEL = "google/gemini-2.5-flash";
 const VOICE_ENABLED_KEY = "voice_tts_enabled";
 const HANDS_FREE_KEY = "voice_hands_free";
@@ -62,12 +61,16 @@ const VoiceChat: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [extracting, setExtracting] = useState(false);
 
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem(OPENROUTER_STORAGE_KEY) || "");
-  const [savedModels, setSavedModels] = useState<string[]>(() => {
-    try { const stored = localStorage.getItem(SAVED_MODELS_KEY); return stored ? JSON.parse(stored) : [DEFAULT_MODEL]; }
-    catch { return [DEFAULT_MODEL]; }
-  });
-  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem(SELECTED_MODEL_KEY) || DEFAULT_MODEL);
+  const {
+    apiKey,
+    savedModels,
+    selectedModel,
+    loaded: settingsLoaded,
+    saveApiKey: persistApiKey,
+    setSelectedModel,
+    addModel: addModelToSettings,
+    removeModel: removeModelFromSettings,
+  } = useChatSettings();
   const [newModelInput, setNewModelInput] = useState("");
 
   const recognitionRef = useRef<any>(null);
@@ -90,9 +93,19 @@ const VoiceChat: React.FC = () => {
   useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
   useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
 
-  useEffect(() => { localStorage.setItem(SAVED_MODELS_KEY, JSON.stringify(savedModels)); }, [savedModels]);
-  useEffect(() => { localStorage.setItem(SELECTED_MODEL_KEY, selectedModel); }, [selectedModel]);
   useEffect(() => { localStorage.setItem(VOICE_ENABLED_KEY, String(ttsEnabled)); }, [ttsEnabled]);
+
+  // One-time migration: if account has no key yet but this device has a legacy localStorage key, adopt it.
+  const migratedRef = useRef(false);
+  useEffect(() => {
+    if (!settingsLoaded || migratedRef.current) return;
+    migratedRef.current = true;
+    const legacy = localStorage.getItem(LEGACY_OPENROUTER_STORAGE_KEY);
+    if (legacy && !apiKey) {
+      persistApiKey(legacy);
+    }
+    if (legacy) localStorage.removeItem(LEGACY_OPENROUTER_STORAGE_KEY);
+  }, [settingsLoaded, apiKey, persistApiKey]);
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
   useEffect(() => {
     const onSelectionChange = () => {
@@ -143,26 +156,19 @@ const VoiceChat: React.FC = () => {
   }, []);
 
   const saveApiKey = (key: string) => {
-    setApiKey(key);
-    if (key) { localStorage.setItem(OPENROUTER_STORAGE_KEY, key); toast.success("API key saved"); }
-    else { localStorage.removeItem(OPENROUTER_STORAGE_KEY); toast.success("API key removed"); }
+    persistApiKey(key);
     setShowSettings(false);
   };
 
   const addModel = () => {
     const model = newModelInput.trim();
     if (!model) return;
-    if (savedModels.includes(model)) { toast.error("Model already saved"); return; }
-    setSavedModels((prev) => [...prev, model]);
-    setSelectedModel(model);
+    addModelToSettings(model);
     setNewModelInput("");
-    toast.success(`Model "${model}" added`);
   };
 
   const removeModel = (model: string) => {
-    if (savedModels.length <= 1) { toast.error("Need at least one model"); return; }
-    setSavedModels((prev) => prev.filter((m) => m !== model));
-    if (selectedModel === model) setSelectedModel(savedModels.find((m) => m !== model) || DEFAULT_MODEL);
+    removeModelFromSettings(model);
   };
 
   const selectedBook = books.find((b) => b.id === activeBookId);
