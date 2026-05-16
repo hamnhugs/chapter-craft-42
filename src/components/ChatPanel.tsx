@@ -26,12 +26,38 @@ const ChatPanel: React.FC = () => {
   const [newModelInput, setNewModelInput] = useState("");
   const [extracting, setExtracting] = useState(false);
   const [speakingId, setSpeakingId] = useState<string | null>(getSpeakingId());
+  const [promptDraft, setPromptDraft] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const settingsPanelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
   useEffect(() => subscribeSpeaking(setSpeakingId), []);
   useEffect(() => () => stopSpeaking(), []);
+  useEffect(() => { setPromptDraft(customSystemPrompt || ""); }, [customSystemPrompt, showSettings]);
+
+  // ESC + click-outside to close the settings panel.
+  useEffect(() => {
+    if (!showSettings) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setShowSettings(false); };
+    const onDown = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (settingsPanelRef.current && !settingsPanelRef.current.contains(target)) {
+        const toggle = document.getElementById("chat-settings-toggle");
+        if (toggle && toggle.contains(target)) return;
+        setShowSettings(false);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("touchstart", onDown, { passive: true });
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("touchstart", onDown);
+    };
+  }, [showSettings]);
 
   // Chat cannot use embedding-only models (they're for Wiki reindex). Auto-switch away.
   const chatModels = savedModels.filter((m) => !isEmbeddingModel(m));
