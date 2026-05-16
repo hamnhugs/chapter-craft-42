@@ -18,6 +18,7 @@ const VideoTranscript: React.FC = () => {
   const [jobs, setJobs] = useState<VideoJob[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [formatForChapterize, setFormatForChapterize] = useState(false);
   const pollingRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
 
   // Load existing jobs on mount
@@ -107,7 +108,7 @@ const VideoTranscript: React.FC = () => {
             apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ videoUrl: url.trim() }),
+          body: JSON.stringify({ videoUrl: url.trim(), formatForChapterize }),
         }
       );
 
@@ -154,6 +155,40 @@ const VideoTranscript: React.FC = () => {
         <p className="text-secondary text-sm mt-1">
           Paste a YouTube URL to extract a full raw transcript + downloadable PDF. Saved to your library automatically.
         </p>
+      </div>
+
+      {/* Format for Chapterization toggle */}
+      <div className="bg-surface border border-border rounded-2xl p-4 flex flex-col gap-2">
+        <button
+          type="button"
+          role="switch"
+          aria-checked={formatForChapterize}
+          onClick={() => setFormatForChapterize((v) => !v)}
+          className="flex items-center gap-3 w-full text-left group"
+        >
+          <div
+            className={`relative w-10 h-6 rounded-full transition-colors flex-shrink-0 ${
+              formatForChapterize ? "bg-accent" : "bg-border"
+            }`}
+          >
+            <span
+              className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${
+                formatForChapterize ? "translate-x-4" : "translate-x-0"
+              }`}
+            />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-primary">Format for Chapterization</p>
+            <p className="text-xs text-secondary mt-0.5">
+              Uses AI to divide the transcript into labeled sections, making it much easier to detect and name chapters afterward.
+            </p>
+          </div>
+        </button>
+        {formatForChapterize && (
+          <p className="text-xs text-accent pl-13 ml-[52px]">
+            The transcript will be organized into titled sections with a table of contents. Processing takes a few extra seconds.
+          </p>
+        )}
       </div>
 
       {/* Submit form */}

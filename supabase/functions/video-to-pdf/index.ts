@@ -2,10 +2,12 @@
 // Routes:
 //   POST /video-to-pdf/submit  -> Submit video URL for caption extraction
 //   GET  /video-to-pdf/status/{job_id} -> Poll job status
+//   GET  /video-to-pdf/download/{job_id} -> On-demand PDF download
 //
 // Proxies to VPS-hosted VideoCaptionEngine at PORT 8000.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { PDFDocument, StandardFonts, rgb } from "npm:pdf-lib@1.17.1";
+import { resolveWikiLlm } from "../_shared/wiki-llm.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -38,7 +40,7 @@ Deno.serve(async (req) => {
 
     // ── POST /submit ────────────────────────────────────────────────────────
     if (req.method === "POST" && segments[0] === "submit") {
-      const { videoUrl } = await req.json();
+      const { videoUrl, formatForChapterize } = await req.json();
       if (!videoUrl?.trim()) return json({ error: "videoUrl required" }, 400);
 
       const submitRes = await fetch(`${VIDEO_ENGINE_URL}/video/submit`, {
@@ -54,12 +56,13 @@ Deno.serve(async (req) => {
 
       const { job_id, status, message } = await submitRes.json();
 
-      // Persist job reference in Supabase
+      // Persist job reference in Supabase (store formatting preference in metadata)
       await supabase.from("video_jobs").insert({
         id: job_id,
         user_id: user.id,
         video_url: videoUrl,
         status: status,
+        metadata: { format_for_chapterize: !!formatForChapterize },
       });
 
       return json({ job_id, status, message });
@@ -137,13 +140,18 @@ Deno.serve(async (req) => {
       const engineStatus = await statusRes.json();
 
       if (engineStatus.status === "completed" && engineStatus.url) {
-        // Update video_jobs (persist transcript for on-demand PDF generation)
+        // Merge stored preferences (e.g. format_for_chapterize) with engine-returned metadata
+        const storedMeta = (job.metadata as Record<string, unknown>) || {};
+        const mergedMetadata = { ...storedMeta, ...(engineStatus.metadata || {}) };
+        const formatForChapterize = !!storedMeta.format_for_chapterize;
+
+        // Update video_jobs — persist transcript + title for on-demand PDF, merge metadata
         await supabase.from("video_jobs").update({
           status: "completed",
           pdf_url: engineStatus.url,
           transcript: engineStatus.transcript || null,
           title: (engineStatus.metadata && engineStatus.metadata.title) || null,
-          metadata: engineStatus.metadata || null,
+          metadata: mergedMetadata,
           word_count: engineStatus.word_count || 0,
           error: null,
           updated_at: new Date().toISOString(),
@@ -165,12 +173,26 @@ Deno.serve(async (req) => {
             ? `${Math.floor(meta.duration_seconds / 60)}m ${Math.round(meta.duration_seconds % 60)}s`
             : "";
 
-          // PDF link at top + full raw transcript below (NO AI summary)
+          // Optionally format the transcript for easier chapterization
+          let finalTranscript = engineStatus.transcript;
+          let formattedSuccessfully = false;
+          if (formatForChapterize) {
+            try {
+              finalTranscript = await formatTranscriptForChapterization(supabase, user.id, engineStatus.transcript);
+              formattedSuccessfully = true;
+            } catch (e) {
+              console.error("Transcript formatting failed, using raw:", e);
+            }
+          }
+
           const pdfLink = engineStatus.url
             ? `**[Download Transcript PDF](${engineStatus.url})**\n\n---\n\n`
             : "";
-          const content = pdfLink + engineStatus.transcript;
+          const content = pdfLink + finalTranscript;
           const summary = `Video transcript — ${channel}${duration ? ` · ${duration}` : ""}`;
+          const tags = formattedSuccessfully
+            ? ["video", "transcript", "chapterized"]
+            : ["video", "transcript"];
 
           await supabase.from("wiki_entries").insert({
             user_id: user.id,
@@ -180,7 +202,7 @@ Deno.serve(async (req) => {
             subject: "Video Transcript",
             kind: "video",
             maturity: "note",
-            tags: ["video", "transcript"],
+            tags,
             source_url: job.video_url,
           });
         }
@@ -245,6 +267,65 @@ Deno.serve(async (req) => {
   }
 });
 
+async function formatTranscriptForChapterization(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  transcript: string,
+): Promise<string> {
+  const llm = await resolveWikiLlm(supabase, userId);
+
+  const systemPrompt = `You are a transcript formatter that prepares raw video transcripts for chapter detection.
+
+Your job:
+1. Read the transcript and identify 4–12 major topic shifts (depending on length).
+2. Insert a markdown heading (## Section Title) at each transition with a clear, descriptive title.
+3. Group the surrounding text into readable paragraphs under each heading.
+4. Remove filler words (um, uh, you know, like, right?) when they don't affect meaning — preserve all substantive content.
+5. Add a "## Table of Contents" section at the very top that lists every heading with a one-sentence description.
+6. Do NOT summarize, paraphrase, or omit any substantive content.
+7. Return ONLY the formatted transcript — no preamble, no explanation.
+
+Output format:
+## Table of Contents
+- Chapter Title: One-sentence description
+...
+
+---
+
+## Chapter Title
+[formatted content]
+
+## Next Chapter Title
+[formatted content]`;
+
+  const res = await fetch(llm.url, {
+    method: "POST",
+    headers: llm.headers,
+    body: JSON.stringify({
+      model: llm.model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content: `Format this video transcript for chapterization:\n\n${transcript}`,
+        },
+      ],
+      max_tokens: 12000,
+      temperature: 0.2,
+    }),
+  });
+
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`LLM call failed (${res.status}): ${txt.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  const formatted = data?.choices?.[0]?.message?.content;
+  if (!formatted) throw new Error("Empty response from LLM");
+  return formatted;
+}
+
 function json(b: unknown, status = 200) {
   return new Response(JSON.stringify(b), {
     status,
@@ -256,10 +337,10 @@ function json(b: unknown, status = 200) {
 async function buildPdf(title: string, transcript: string): Promise<{ bytes: Uint8Array; pageCount: number }> {
   // Strip characters WinAnsi can't encode (pdf-lib StandardFonts limitation)
   const sanitize = (s: string) =>
-    s.replace(/[\u2018\u2019]/g, "'")
-     .replace(/[\u201C\u201D]/g, '"')
-     .replace(/[\u2013\u2014]/g, "-")
-     .replace(/\u2026/g, "...")
+    s.replace(/['']/g, "'")
+     .replace(/[""]/g, '"')
+     .replace(/[–—]/g, "-")
+     .replace(/…/g, "...")
      .replace(/[^\x09\x0A\x0D\x20-\x7E\xA0-\xFF]/g, "");
 
   const doc = await PDFDocument.create();
