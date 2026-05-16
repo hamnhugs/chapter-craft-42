@@ -3,6 +3,7 @@ import { useApp } from "@/context/AppContext";
 import { useChat } from "@/context/ChatContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
@@ -10,6 +11,7 @@ import { extractKnowledge } from "@/lib/knowledgeApi";
 import { Loader2, StickyNote, BookmarkPlus } from "lucide-react";
 import VoiceNotesPanel, { appendVoiceNote } from "./VoiceNotesPanel";
 import { useChatSettings } from "@/hooks/useChatSettings";
+import { speak as ttsSpeak, stopSpeaking as ttsStop, subscribeSpeaking as ttsSubscribe, getSpeakingId as ttsGetId } from "@/lib/speak";
 
 const LEGACY_OPENROUTER_STORAGE_KEY = "openrouter_api_key";
 const VOICE_ENABLED_KEY = "voice_tts_enabled";
@@ -81,11 +83,20 @@ const VoiceChat: React.FC = () => {
   };
 
   const {
-    apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, loaded: settingsLoaded,
-    saveApiKey: persistApiKey, setSelectedModel, setDeepResearchModel,
+    apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, customSystemPrompt, loaded: settingsLoaded,
+    saveApiKey: persistApiKey, setSelectedModel, setDeepResearchModel, setCustomSystemPrompt,
     addModel: addModelToSettings, removeModel: removeModelFromSettings,
   } = useChatSettings();
   const [newModelInput, setNewModelInput] = useState("");
+  const [promptDraft, setPromptDraft] = useState("");
+  useEffect(() => { setPromptDraft(customSystemPrompt || ""); }, [customSystemPrompt, showSettings]);
+  const [bubbleSpeakingId, setBubbleSpeakingId] = useState<string | null>(ttsGetId());
+  useEffect(() => ttsSubscribe(setBubbleSpeakingId), []);
+  useEffect(() => () => ttsStop(), []);
+  const replayBubble = (id: string, text: string) => {
+    if (bubbleSpeakingId === id) { ttsStop(); return; }
+    ttsSpeak(text, { id, rate: ttsRate });
+  };
 
   const recognitionRef = useRef<any>(null);
   const synthRef = useRef(window.speechSynthesis);
@@ -492,6 +503,25 @@ const VoiceChat: React.FC = () => {
               <p className="text-[10px] text-on-surface-variant px-1">Used when Deep Research is ON.</p>
             </div>
           </section>
+          <section className="p-4 rounded-xl bg-surface-container-low mt-2">
+            <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center gap-1">
+              <span className="material-symbols-outlined text-xs align-middle">psychology</span>Custom Instructions
+            </label>
+            <p className="text-[10px] text-on-surface-variant px-1 mt-1 mb-2">Prepended to every Librarian reply. Shared with the Chat tab.</p>
+            <Textarea
+              value={promptDraft}
+              onChange={(e) => setPromptDraft(e.target.value)}
+              rows={4}
+              placeholder="e.g. Always answer as a no-nonsense literary critic. Reference page numbers when possible."
+              className="bg-surface-container-high border-none text-sm"
+            />
+            <div className="flex gap-2 mt-2">
+              <Button size="sm" onClick={() => { setCustomSystemPrompt(promptDraft); toast.success("Custom instructions saved"); }}>Save</Button>
+              {customSystemPrompt && (
+                <Button size="sm" variant="destructive" onClick={() => { setCustomSystemPrompt(""); setPromptDraft(""); toast.success("Custom instructions cleared"); }}>Clear</Button>
+              )}
+            </div>
+          </section>
         </div>
       )}
 
@@ -554,6 +584,20 @@ const VoiceChat: React.FC = () => {
               ) : (
                 <p className="whitespace-pre-wrap font-medium">{msg.content}</p>
               )}
+              {msg.content && (() => {
+                const bid = `voice-${msg.id || i}`;
+                const playing = bubbleSpeakingId === bid;
+                return (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); replayBubble(bid, msg.content); }}
+                    title={playing ? "Stop reading" : "Read aloud"}
+                    aria-label={playing ? "Stop reading" : "Read aloud"}
+                    className={`absolute top-1/2 -translate-y-1/2 ${msg.role === "user" ? "-left-3" : "-right-3"} w-7 h-7 rounded-full bg-surface-container-highest border border-outline-variant/20 shadow-sm flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-all opacity-80`}
+                  >
+                    <span className="material-symbols-outlined text-base">{playing ? "stop_circle" : "volume_up"}</span>
+                  </button>
+                );
+              })()}
               <button
                 onClick={() => saveBubbleToNotes(msg.content)}
                 className="hidden md:flex absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 transition-opacity items-center justify-center w-7 h-7 rounded-full bg-surface-container-highest text-on-surface-variant hover:text-primary shadow-md"

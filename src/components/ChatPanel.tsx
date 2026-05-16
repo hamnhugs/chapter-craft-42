@@ -17,8 +17,8 @@ import { isEmbeddingModel } from "@/lib/utils";
 const ChatPanel: React.FC = () => {
   const { books, activeBookId } = useApp();
   const {
-    apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, autoReadReplies, loaded,
-    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setTtsRate, setAutoReadReplies,
+    apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, autoReadReplies, customSystemPrompt, loaded,
+    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setTtsRate, setAutoReadReplies, setCustomSystemPrompt,
   } = useChatSettings();
   const { messages, isLoading, deepResearch, setDeepResearch, sendMessage, clearChat } = useChat();
   const [input, setInput] = useState("");
@@ -26,12 +26,38 @@ const ChatPanel: React.FC = () => {
   const [newModelInput, setNewModelInput] = useState("");
   const [extracting, setExtracting] = useState(false);
   const [speakingId, setSpeakingId] = useState<string | null>(getSpeakingId());
+  const [promptDraft, setPromptDraft] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const settingsPanelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
   useEffect(() => subscribeSpeaking(setSpeakingId), []);
   useEffect(() => () => stopSpeaking(), []);
+  useEffect(() => { setPromptDraft(customSystemPrompt || ""); }, [customSystemPrompt, showSettings]);
+
+  // ESC + click-outside to close the settings panel.
+  useEffect(() => {
+    if (!showSettings) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setShowSettings(false); };
+    const onDown = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (settingsPanelRef.current && !settingsPanelRef.current.contains(target)) {
+        const toggle = document.getElementById("chat-settings-toggle");
+        if (toggle && toggle.contains(target)) return;
+        setShowSettings(false);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("touchstart", onDown, { passive: true });
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("touchstart", onDown);
+    };
+  }, [showSettings]);
 
   // Chat cannot use embedding-only models (they're for Wiki reindex). Auto-switch away.
   const chatModels = savedModels.filter((m) => !isEmbeddingModel(m));
@@ -115,10 +141,11 @@ const ChatPanel: React.FC = () => {
       {/* Settings bar */}
       {showSettings && (
         <div
-          className="border-b border-outline-variant/10 bg-surface-container-low px-4 py-3 md:py-4 space-y-4 max-h-[60vh] md:max-h-none overflow-y-auto md:overflow-visible overscroll-contain"
+          ref={settingsPanelRef}
+          className="border-b border-outline-variant/10 bg-surface-container-low px-4 py-3 md:py-4 space-y-4 max-h-[60vh] md:max-h-[70vh] overflow-y-auto overscroll-contain"
           style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 0.75rem)" }}
         >
-          <div className="sticky top-0 -mx-4 -mt-3 px-4 py-2 bg-surface-container-low/95 backdrop-blur-sm flex items-center justify-between z-10 md:hidden">
+          <div className="sticky top-0 -mx-4 -mt-3 px-4 py-2 bg-surface-container-low/95 backdrop-blur-sm flex items-center justify-between z-10">
             <span className="text-xs font-semibold uppercase tracking-widest text-on-surface-variant">Settings</span>
             <button
               onClick={() => setShowSettings(false)}
@@ -217,6 +244,25 @@ const ChatPanel: React.FC = () => {
                 />
               </div>
               <p className="text-[10px] text-on-surface-variant px-1">Used for read-aloud buttons here and replies in the Voice tab.</p>
+            </div>
+          </section>
+          <section className="p-3 md:p-4 rounded-xl bg-surface-container-low">
+            <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center gap-1">
+              <span className="material-symbols-outlined text-xs align-middle">psychology</span>Custom Instructions
+            </label>
+            <p className="text-[10px] text-on-surface-variant px-1 mt-1 mb-2">Prepended to every Librarian reply (Chat &amp; Voice). Use it to set persona, tone, or focus.</p>
+            <Textarea
+              value={promptDraft}
+              onChange={(e) => setPromptDraft(e.target.value)}
+              rows={4}
+              placeholder="e.g. Always answer as a no-nonsense literary critic. Reference page numbers when possible."
+              className="bg-surface-container-high border-none text-sm"
+            />
+            <div className="flex gap-2 mt-2">
+              <Button size="sm" onClick={() => { setCustomSystemPrompt(promptDraft); toast.success("Custom instructions saved"); }}>Save</Button>
+              {customSystemPrompt && (
+                <Button size="sm" variant="destructive" onClick={() => { setCustomSystemPrompt(""); setPromptDraft(""); toast.success("Custom instructions cleared"); }}>Clear</Button>
+              )}
             </div>
           </section>
         </div>
@@ -333,7 +379,7 @@ const ChatPanel: React.FC = () => {
               <button onClick={() => setDeepResearch(!deepResearch)} className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${deepResearch ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`}>
                 <span className="material-symbols-outlined text-sm" style={deepResearch ? { fontVariationSettings: "'FILL' 1" } : {}}>science</span> Deep Research {deepResearch ? "ON" : "OFF"}
               </button>
-              <button onClick={() => setShowSettings(!showSettings)} className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-1 hover:text-primary transition-colors">
+              <button id="chat-settings-toggle" onClick={() => setShowSettings(!showSettings)} className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-1 hover:text-primary transition-colors">
                 <span className="material-symbols-outlined text-sm">tune</span> Settings
               </button>
               {messages.length > 0 && (

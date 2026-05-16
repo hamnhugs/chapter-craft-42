@@ -16,6 +16,7 @@ interface ChatSettings {
   ttsRate: number;
   autoReadReplies: boolean;
   wikiModel: string; // "" = use default Gemini gateway
+  customSystemPrompt: string;
 }
 
 const defaults: ChatSettings = {
@@ -26,6 +27,7 @@ const defaults: ChatSettings = {
   ttsRate: DEFAULT_TTS_RATE,
   autoReadReplies: false,
   wikiModel: "",
+  customSystemPrompt: "",
 };
 
 export function useChatSettings() {
@@ -55,6 +57,7 @@ export function useChatSettings() {
             : DEFAULT_TTS_RATE,
           autoReadReplies: !!(data as any).auto_read_replies,
           wikiModel: (data as any).wiki_model || "",
+          customSystemPrompt: (data as any).custom_system_prompt || "",
         });
       }
       setLoaded(true);
@@ -75,6 +78,7 @@ export function useChatSettings() {
         tts_rate: next.ttsRate,
         auto_read_replies: next.autoReadReplies,
         wiki_model: next.wikiModel || null,
+        custom_system_prompt: next.customSystemPrompt || "",
       };
       const { error } = await supabase
         .from("user_settings")
@@ -130,6 +134,7 @@ export function useChatSettings() {
     setTtsRate: (r: number) => update({ ttsRate: Math.min(2, Math.max(0.5, r)) }),
     setAutoReadReplies: (v: boolean) => update({ autoReadReplies: v }),
     setWikiModel: (m: string) => update({ wikiModel: m }),
+    setCustomSystemPrompt: (p: string) => update({ customSystemPrompt: p }),
     addModel,
     removeModel,
     setNewModelInput: undefined, // handled in component
