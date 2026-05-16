@@ -313,5 +313,6 @@ async function buildPdf(title: string, transcript: string): Promise<{ bytes: Uin
     y -= lineH;
   }
 
-  return await doc.save();
+  const bytes = await doc.save();
+  return { bytes, pageCount: doc.getPageCount() };
 }
