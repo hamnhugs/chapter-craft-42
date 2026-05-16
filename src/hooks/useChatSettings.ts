@@ -63,6 +63,7 @@ export function useChatSettings() {
           wikiModel: (data as any).wiki_model || "",
           customSystemPrompt: (data as any).custom_system_prompt || "",
           burplexityApiToken: (data as any).burplexity_api_token || "",
+          inworldApiKey: (data as any).inworld_api_key || "",
         });
       }
       setLoaded(true);
