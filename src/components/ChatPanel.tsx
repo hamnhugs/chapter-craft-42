@@ -159,12 +159,15 @@ const ChatPanel: React.FC = () => {
                 <Button size="sm" onClick={handleAddModel}>Add</Button>
               </div>
               <div className="flex flex-wrap gap-1.5 mt-1">
-                {savedModels.map((m) => (
-                  <span key={m} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md ${m === selectedModel ? "bg-primary-container/20 text-primary border border-primary-container/30" : "bg-surface-container-highest text-on-surface-variant"}`}>
-                    <button onClick={() => setSelectedModel(m)} className="hover:underline">{m}</button>
-                    <button onClick={() => removeModel(m)} className="hover:text-destructive ml-0.5 material-symbols-outlined text-xs">close</button>
-                  </span>
-                ))}
+                {savedModels.map((m) => {
+                  const embed = isEmbeddingModel(m);
+                  return (
+                    <span key={m} title={embed ? "Embedding model — used by Wiki reindex, not Chat" : undefined} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md ${m === selectedModel ? "bg-primary-container/20 text-primary border border-primary-container/30" : embed ? "bg-surface-container-highest/50 text-on-surface-variant/60 italic" : "bg-surface-container-highest text-on-surface-variant"}`}>
+                      <button onClick={() => { if (embed) { toast.error("Embedding model — pick it in Wiki Settings, not Chat."); return; } setSelectedModel(m); }} className="hover:underline">{m}{embed ? " (embed)" : ""}</button>
+                      <button onClick={() => removeModel(m)} className="hover:text-destructive ml-0.5 material-symbols-outlined text-xs">close</button>
+                    </span>
+                  );
+                })}
               </div>
             </div>
             <div className="flex flex-col gap-1.5">
