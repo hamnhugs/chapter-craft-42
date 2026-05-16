@@ -64,6 +64,47 @@ Deno.serve(async (req) => {
       return json({ job_id, status, message });
     }
 
+    // ── GET /download/{job_id} ──────────────────────────────────────────────
+    if (req.method === "GET" && segments[0] === "download" && segments[1]) {
+      const jobId = segments[1];
+
+      const { data: job } = await supabase
+        .from("video_jobs")
+        .select("id, pdf_url")
+        .eq("id", jobId)
+        .eq("user_id", user.id)
+        .single();
+
+      if (!job) return json({ error: "Job not found" }, 404);
+
+      const basename = (job.pdf_url || "").split("/").filter(Boolean).pop() || "";
+      const candidates = [
+        `${VIDEO_ENGINE_URL}/video/${jobId}/pdf`,
+        `${VIDEO_ENGINE_URL}/video/${jobId}/download`,
+        basename ? `${VIDEO_ENGINE_URL}/files/${basename}` : "",
+        basename ? `${VIDEO_ENGINE_URL}/static/${basename}` : "",
+        basename ? `${VIDEO_ENGINE_URL}/video-output/${basename}` : "",
+      ].filter(Boolean);
+
+      for (const u of candidates) {
+        try {
+          const r = await fetch(u);
+          if (r.ok) {
+            return new Response(r.body, {
+              status: 200,
+              headers: {
+                ...corsHeaders,
+                "Content-Type": "application/pdf",
+                "Content-Disposition": `attachment; filename="transcript-${jobId}.pdf"`,
+                "Cache-Control": "private, max-age=0",
+              },
+            });
+          }
+        } catch { /* try next */ }
+      }
+      return json({ error: "PDF not retrievable from engine" }, 502);
+    }
+
     // ── GET /status/{job_id} ────────────────────────────────────────────────
     if (req.method === "GET" && segments[0] === "status" && segments[1]) {
       const jobId = segments[1];

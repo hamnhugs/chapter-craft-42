@@ -1,44 +1,44 @@
-## Problem
+# Fix: Transcript PDF won't download
 
-The app references three database objects that don't exist in the backend:
+## Root cause
 
-1. `user_settings.is_recording_mode` column — read/written by `getMemoryMode`/`setMemoryMode` in `src/lib/knowledgeApi.ts` and by `checkRecordingMode` in `supabase/functions/_shared/memory-layers.ts`.
-2. `public.episodic_log` table — read by `fetchEpisodicLog` and written by `logEpisode`.
-3. `public.consolidation_queue` table — read by `fetchConsolidationQueue` and written by `enqueueEntry` / `enqueueConflictStaged` / `markProcessed`.
+The VPS video engine returns a server-side filesystem path as the PDF URL (e.g. `/tmp/video-output/ju-T6uQNPSg.pdf`), not an HTTPS URL. The frontend renders this as `<a href="/tmp/...">`, which the browser resolves against the Lovable domain and fails — nothing downloadable exists there.
 
-The code (and the shared "Layered Memory Stack" module) was shipped but the schema migration never ran, so every call fails with "not found in schema cache".
+Confirmed by inspecting the `video_jobs` table: the most recent completed job has `pdf_url = /tmp/video-output/ju-T6uQNPSg.pdf`.
 
 ## Fix
 
-Run one migration that adds the missing column and two tables, with proper RLS (user-scoped, matching the rest of the project).
+Route the download through our existing edge function so the browser always hits a valid HTTPS URL, regardless of what the engine returns.
 
-### Schema changes
+### 1. Edge function `video-to-pdf`
 
-- `user_settings`
-  - Add `is_recording_mode boolean NOT NULL DEFAULT true`.
+Add a new route:
 
-- `public.episodic_log`
-  - `id uuid pk`, `user_id uuid not null`, `session_id uuid not null`,
-    `summary text`, `key_facts jsonb not null default '[]'`,
-    `entry_count int not null default 0`, `created_at timestamptz default now()`.
-  - Indexes: `(user_id, created_at desc)`, `(user_id, session_id)`.
-  - RLS: owner-only SELECT/INSERT/UPDATE/DELETE (`auth.uid() = user_id`).
+- `GET /video-to-pdf/download/{jobId}` — auth-checks the user owns the job, fetches the PDF bytes from the VPS engine, streams them back with `Content-Type: application/pdf` and `Content-Disposition: attachment; filename="transcript-{jobId}.pdf"`.
 
-- `public.consolidation_queue`
-  - `id uuid pk`, `user_id uuid not null`,
-    `entry_id uuid null` (nullable for `conflict_staged`),
-    `reason text not null` (check in `'conflict_staged','new_entry','orphan'`),
-    `priority int not null default 5`,
-    `pending_data jsonb null`,
-    `processed_at timestamptz null`,
-    `created_at timestamptz default now()`.
-  - Unique partial index on `(user_id, entry_id, reason) where entry_id is not null` to support the `onConflict` upsert in `enqueueEntry`.
-  - Index `(user_id, processed_at, priority, created_at)` for the queue read in `fetchConsolidationQueue`.
-  - RLS: owner-only SELECT/INSERT/UPDATE/DELETE.
+It will try, in order, the most likely engine endpoints to retrieve the file:
+1. `GET {VIDEO_ENGINE_URL}/video/{jobId}/pdf`
+2. `GET {VIDEO_ENGINE_URL}/video/{jobId}/download`
+3. `GET {VIDEO_ENGINE_URL}/files/{basename(pdf_url)}`
 
-### Out of scope
+The first one that returns 200 wins. If none work, return a clear error so we know to add a real endpoint on the VPS.
 
-- No app code changes — the existing `knowledgeApi.ts` and edge function helpers already match this shape.
-- No changes to existing tables besides the one new column.
+### 2. Frontend `VideoTranscript.tsx`
 
-After approval I'll create the migration; once it runs the three errors disappear.
+Replace the raw `href={job.pdf_url}` with a computed proxy URL:
+
+```
+${VITE_SUPABASE_URL}/functions/v1/video-to-pdf/download/${job.id}?token=...
+```
+
+Since `<a>` clicks can't set Authorization headers, the link handler will instead call `fetch` with the auth header, get a blob, and trigger a download via a temporary object URL. Keeps the existing "Download Transcript PDF" button visually identical.
+
+Also update the wiki auto-save block so the markdown PDF link points to the proxy URL too (currently it embeds the same broken `/tmp/...` path).
+
+### 3. No DB or schema change required
+
+`pdf_url` stays as-is for backward compatibility; the proxy ignores it and uses the engine endpoints keyed by `jobId`.
+
+## Open question for you
+
+Do you know which endpoint your VPS engine exposes to serve the generated PDF? If it's something other than the three guesses above (e.g. `/static/{file}.pdf`), tell me the exact path and I'll wire it directly instead of probing.

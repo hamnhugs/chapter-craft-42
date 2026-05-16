@@ -214,16 +214,34 @@ const VideoTranscript: React.FC = () => {
               <p className="text-red-400 text-xs">{job.error}</p>
             )}
 
-            {job.status === "completed" && job.pdf_url && (
-              <a
-                href={job.pdf_url}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 text-accent text-sm font-medium hover:underline"
+            {job.status === "completed" && (
+              <button
+                onClick={async () => {
+                  try {
+                    const token = await getToken();
+                    const res = await fetch(
+                      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/video-to-pdf/download/${job.id}`,
+                      { headers: { Authorization: `Bearer ${token}`, apikey: import.meta.env.VITE_SUPABASE_ANON_KEY } }
+                    );
+                    if (!res.ok) throw new Error(`Download failed (${res.status})`);
+                    const blob = await res.blob();
+                    const objUrl = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = objUrl;
+                    a.download = `transcript-${job.id}.pdf`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
+                  } catch (e) {
+                    alert(e instanceof Error ? e.message : "Download failed");
+                  }
+                }}
+                className="inline-flex items-center gap-1 text-accent text-sm font-medium hover:underline self-start"
               >
                 <span className="material-symbols-outlined text-base">picture_as_pdf</span>
                 Download Transcript PDF
-              </a>
+              </button>
             )}
           </div>
         ))}
