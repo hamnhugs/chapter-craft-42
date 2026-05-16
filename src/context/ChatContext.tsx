@@ -189,13 +189,18 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const baseHistory = [...messages, userMsg].map((m) => ({ role: m.role, content: m.content }));
 
+      const isVoice = !!opts?.voiceMode;
+      const deepResearch = isVoice ? voiceDeepResearch : chatDeepResearch;
+      const scopedPromptBody = getActiveBodyForScope(isVoice ? "voice" : "chat");
+      const promptToInject = scopedPromptBody || customSystemPrompt;
+
       const systemPrompt = await buildChatSystemPrompt({
         books,
         selectedBook,
         deepResearch,
-        voiceMode: opts?.voiceMode,
+        voiceMode: isVoice,
         latestUserQuery: trimmed,
-        customSystemPrompt,
+        customSystemPrompt: promptToInject,
       });
 
       const assistantEvents: ToolEvent[] = [];
