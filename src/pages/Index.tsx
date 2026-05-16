@@ -14,6 +14,7 @@ import { useTheme } from "@/context/ThemeContext";
 const tabs = [
   { id: "library" as const, icon: "library_books", label: "Library" },
   { id: "viewer" as const, icon: "auto_stories", label: "Reader" },
+  { id: "chapterize" as const, icon: "auto_fix_high", label: "Chapterize" },
   { id: "chat" as const, icon: "forum", label: "Chat" },
   { id: "wiki" as const, icon: "menu_book", label: "Wiki" },
   { id: "video" as const, icon: "smart_display", label: "Video" },
