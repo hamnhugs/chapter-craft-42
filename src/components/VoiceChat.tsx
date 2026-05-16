@@ -39,9 +39,9 @@ const VoiceChat: React.FC = () => {
   const startLongPress = (text: string) => {
     longPressFiredRef.current = false;
     if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
-    longPressTimer.current = window.setTimeout(() => {
+    longPressTimer.current = window.setTimeout(async () => {
       longPressFiredRef.current = true;
-      const note = appendVoiceNote(text);
+      const note = await appendVoiceNote(text);
       if (note) {
         try { (navigator as any).vibrate?.(30); } catch {}
         toast.success("Saved to voice notes");
@@ -52,8 +52,8 @@ const VoiceChat: React.FC = () => {
   const cancelLongPress = () => {
     if (longPressTimer.current) { window.clearTimeout(longPressTimer.current); longPressTimer.current = null; }
   };
-  const saveBubbleToNotes = (text: string) => {
-    const note = appendVoiceNote(text);
+  const saveBubbleToNotes = async (text: string) => {
+    const note = await appendVoiceNote(text);
     if (note) { toast.success("Saved to voice notes"); setNotesPanelOpen(true); }
   };
   const [interimTranscript, setInterimTranscript] = useState("");

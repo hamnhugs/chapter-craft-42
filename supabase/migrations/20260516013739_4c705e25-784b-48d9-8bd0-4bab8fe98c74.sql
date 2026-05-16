@@ -1,0 +1,3 @@
+ALTER TABLE public.notes ALTER COLUMN book_id DROP NOT NULL;
+ALTER TABLE public.notes REPLICA IDENTITY FULL;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.notes;

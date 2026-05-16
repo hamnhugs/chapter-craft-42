@@ -278,7 +278,7 @@ export type Database = {
       }
       notes: {
         Row: {
-          book_id: string
+          book_id: string | null
           content: string
           created_at: string
           id: string
@@ -287,7 +287,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
-          book_id: string
+          book_id?: string | null
           content?: string
           created_at?: string
           id?: string
@@ -296,7 +296,7 @@ export type Database = {
           user_id: string
         }
         Update: {
-          book_id?: string
+          book_id?: string | null
           content?: string
           created_at?: string
           id?: string
