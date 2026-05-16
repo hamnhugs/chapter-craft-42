@@ -156,26 +156,19 @@ const VoiceChat: React.FC = () => {
   }, []);
 
   const saveApiKey = (key: string) => {
-    setApiKey(key);
-    if (key) { localStorage.setItem(OPENROUTER_STORAGE_KEY, key); toast.success("API key saved"); }
-    else { localStorage.removeItem(OPENROUTER_STORAGE_KEY); toast.success("API key removed"); }
+    persistApiKey(key);
     setShowSettings(false);
   };
 
   const addModel = () => {
     const model = newModelInput.trim();
     if (!model) return;
-    if (savedModels.includes(model)) { toast.error("Model already saved"); return; }
-    setSavedModels((prev) => [...prev, model]);
-    setSelectedModel(model);
+    addModelToSettings(model);
     setNewModelInput("");
-    toast.success(`Model "${model}" added`);
   };
 
   const removeModel = (model: string) => {
-    if (savedModels.length <= 1) { toast.error("Need at least one model"); return; }
-    setSavedModels((prev) => prev.filter((m) => m !== model));
-    if (selectedModel === model) setSelectedModel(savedModels.find((m) => m !== model) || DEFAULT_MODEL);
+    removeModelFromSettings(model);
   };
 
   const selectedBook = books.find((b) => b.id === activeBookId);
