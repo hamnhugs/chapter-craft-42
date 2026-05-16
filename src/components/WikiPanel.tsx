@@ -7,14 +7,15 @@ import { toast } from "sonner";
 import { useApp } from "@/context/AppContext";
 import ReactMarkdown from "react-markdown";
 import {
-  KnowledgeEntry, MemoryGraphEdge, LintResult,
+  KnowledgeEntry, MemoryGraphEdge, LintResult, KnowledgeConflict,
   fetchKnowledgeEntries, fetchMemoryGraph,
   deleteKnowledgeEntry, updateKnowledgeEntry,
   runLint, ingestBook,
+  fetchConflicts, updateConflictStatus, reindexEmbeddings,
 } from "@/lib/knowledgeApi";
 import { Loader2 } from "lucide-react";
 
-type WikiView = "entries" | "detail" | "lint";
+type WikiView = "entries" | "detail" | "lint" | "conflicts";
 
 const WikiPanel: React.FC = () => {
   const { books, activeBookId } = useApp();
@@ -32,13 +33,20 @@ const WikiPanel: React.FC = () => {
   const [lintResult, setLintResult] = useState<LintResult | null>(null);
   const [lintLoading, setLintLoading] = useState(false);
   const [ingestLoading, setIngestLoading] = useState(false);
+  const [conflicts, setConflicts] = useState<KnowledgeConflict[]>([]);
+  const [reindexing, setReindexing] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [e, g] = await Promise.all([fetchKnowledgeEntries(), fetchMemoryGraph()]);
+      const [e, g, c] = await Promise.all([
+        fetchKnowledgeEntries(),
+        fetchMemoryGraph(),
+        fetchConflicts().catch(() => []),
+      ]);
       setEntries(e);
       setGraph(g);
+      setConflicts(c);
     } catch (err: any) {
       toast.error(err.message || "Failed to load knowledge base");
     } finally {
