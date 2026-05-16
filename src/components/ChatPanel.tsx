@@ -23,10 +23,20 @@ const ChatPanel: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [newModelInput, setNewModelInput] = useState("");
   const [extracting, setExtracting] = useState(false);
+  const [speakingId, setSpeakingId] = useState<string | null>(getSpeakingId());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+  useEffect(() => subscribeSpeaking(setSpeakingId), []);
+  useEffect(() => () => stopSpeaking(), []);
+
+  const bubbleId = (msg: { id?: string }, i: number) => `chat-${msg.id || i}`;
+  const handleSpeak = (msg: { id?: string; content: string }, i: number) => {
+    const id = bubbleId(msg, i);
+    if (speakingId === id) { stopSpeaking(); return; }
+    speak(msg.content, { id, rate: ttsRate });
+  };
 
   const handleSaveApiKey = (key: string) => { saveApiKey(key); setShowSettings(false); };
   const handleAddModel = () => { const m = newModelInput.trim(); if (!m) return; addModel(m); setNewModelInput(""); };
