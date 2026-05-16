@@ -157,12 +157,16 @@ async function googleEmbedBatch(texts: string[]): Promise<(number[] | null)[]> {
 // ---------- Public API ----------
 
 export async function embedOne(text: string): Promise<number[] | null> {
+  const or = await openrouterEmbed([text]);
+  if (or && or[0]) return or[0];
   const gw = await gatewayEmbed([text]);
   if (gw && gw[0]) return gw[0];
   return googleEmbedOne(text, "RETRIEVAL_DOCUMENT");
 }
 
 export async function embedQuery(text: string): Promise<number[] | null> {
+  const or = await openrouterEmbed([text]);
+  if (or && or[0]) return or[0];
   const gw = await gatewayEmbed([text]);
   if (gw && gw[0]) return gw[0];
   return googleEmbedOne(text, "RETRIEVAL_QUERY");
@@ -170,6 +174,8 @@ export async function embedQuery(text: string): Promise<number[] | null> {
 
 export async function embedBatch(texts: string[]): Promise<(number[] | null)[]> {
   if (texts.length === 0) return [];
+  const or = await openrouterEmbed(texts);
+  if (or) return or;
   const gw = await gatewayEmbed(texts);
   if (gw) return gw;
   return googleEmbedBatch(texts);
