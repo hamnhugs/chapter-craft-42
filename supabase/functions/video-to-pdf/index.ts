@@ -253,7 +253,7 @@ function json(b: unknown, status = 200) {
 }
 
 // Generate a simple multi-page PDF from a title + transcript text.
-async function buildPdf(title: string, transcript: string): Promise<Uint8Array> {
+async function buildPdf(title: string, transcript: string): Promise<{ bytes: Uint8Array; pageCount: number }> {
   // Strip characters WinAnsi can't encode (pdf-lib StandardFonts limitation)
   const sanitize = (s: string) =>
     s.replace(/[\u2018\u2019]/g, "'")
