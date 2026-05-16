@@ -78,6 +78,7 @@ export function useChatSettings() {
         tts_rate: next.ttsRate,
         auto_read_replies: next.autoReadReplies,
         wiki_model: next.wikiModel || null,
+        custom_system_prompt: next.customSystemPrompt || "",
       };
       const { error } = await supabase
         .from("user_settings")
