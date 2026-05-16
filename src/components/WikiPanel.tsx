@@ -403,6 +403,44 @@ const WikiPanel: React.FC = () => {
               <p className="text-center text-on-surface-variant py-8">Your knowledge base looks healthy! 🎉</p>
             )}
           </div>
+        ) : view === "conflicts" ? (
+          <div className="max-w-3xl mx-auto space-y-4">
+            <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface-variant">
+              Conflicts ({conflicts.length}) — open: {openConflictsCount}
+            </h3>
+            {conflicts.length === 0 ? (
+              <p className="text-center text-on-surface-variant py-8">No conflicts detected. 🎉</p>
+            ) : conflicts.map((c) => {
+              const a = entries.find(e => e.id === c.entry_a);
+              const b = entries.find(e => e.id === c.entry_b);
+              return (
+                <div key={c.id} className={`p-5 rounded-xl border-l-4 ${c.status === "open" ? "bg-error-container/20 border-destructive" : "bg-surface-container-high border-outline-variant/30 opacity-70"}`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Badge variant="destructive" className="text-[10px]">{c.kind}</Badge>
+                    <Badge variant="secondary" className="text-[10px]">{c.status}</Badge>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 my-3">
+                    <button onClick={() => a && openDetail(a)} className="text-left p-3 bg-surface-container-high rounded-lg hover:bg-surface-container-highest">
+                      <p className="text-xs text-on-surface-variant mb-1">Entry A</p>
+                      <p className="font-bold text-sm">{a?.title || c.entry_a.slice(0,8)}</p>
+                    </button>
+                    <button onClick={() => b && openDetail(b)} className="text-left p-3 bg-surface-container-high rounded-lg hover:bg-surface-container-highest">
+                      <p className="text-xs text-on-surface-variant mb-1">Entry B</p>
+                      <p className="font-bold text-sm">{b?.title || c.entry_b.slice(0,8)}</p>
+                    </button>
+                  </div>
+                  {c.rationale && <p className="text-sm text-on-surface-variant mb-3 italic">"{c.rationale}"</p>}
+                  {c.status === "open" && (
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" onClick={() => handleConflictStatus(c.id, "acknowledged")}>Acknowledge</Button>
+                      <Button size="sm" variant="outline" onClick={() => handleConflictStatus(c.id, "resolved")}>Resolved</Button>
+                      <Button size="sm" variant="ghost" onClick={() => handleConflictStatus(c.id, "dismissed")}>Dismiss</Button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         ) : null}
       </main>
     </div>
