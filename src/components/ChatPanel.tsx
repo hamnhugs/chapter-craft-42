@@ -1,19 +1,14 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { useApp } from "@/context/AppContext";
+import { useChat } from "@/context/ChatContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
-import { fetchKnowledgeEntries, fetchConversationMemory, extractKnowledge } from "@/lib/knowledgeApi";
-import { DEEP_RESEARCH_SYSTEM_PROMPT, DEEP_RESEARCH_ADVANCED_PROMPT } from "@/lib/deepResearchPrompt";
+import { extractKnowledge } from "@/lib/knowledgeApi";
 import { Loader2 } from "lucide-react";
 import { useChatSettings } from "@/hooks/useChatSettings";
-
-interface ChatMessage {
-  role: "user" | "assistant" | "system";
-  content: string;
-}
 
 const ChatPanel: React.FC = () => {
   const { books, activeBookId } = useApp();
@@ -21,104 +16,26 @@ const ChatPanel: React.FC = () => {
     apiKey, savedModels, selectedModel, deepResearchModel, loaded,
     saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel,
   } = useChatSettings();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const { messages, isLoading, deepResearch, setDeepResearch, sendMessage, clearChat } = useChat();
   const [input, setInput] = useState("");
   const [showSettings, setShowSettings] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
   const [newModelInput, setNewModelInput] = useState("");
   const [extracting, setExtracting] = useState(false);
-  const [deepResearch, setDeepResearch] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-  const handleSaveApiKey = (key: string) => {
-    saveApiKey(key);
-    setShowSettings(false);
-  };
-
-  const handleAddModel = () => {
-    const model = newModelInput.trim();
-    if (!model) return;
-    addModel(model);
-    setNewModelInput("");
-  };
+  const handleSaveApiKey = (key: string) => { saveApiKey(key); setShowSettings(false); };
+  const handleAddModel = () => { const m = newModelInput.trim(); if (!m) return; addModel(m); setNewModelInput(""); };
 
   const selectedBook = books.find((b) => b.id === activeBookId);
-
-  const buildSystemPrompt = useCallback(async () => {
-    const parts: string[] = [
-      "You are an intelligent reading assistant for the Chapter Craft app with long-term memory. You help users understand, analyze, and discuss their books and chapters.",
-    ];
-
-    try {
-      const [knowledgeEntries, conversationMemory] = await Promise.all([
-        fetchKnowledgeEntries().catch(() => []),
-        fetchConversationMemory().catch(() => null),
-      ]);
-
-      if (conversationMemory?.summary) {
-        parts.push("", "## Your Memory (from past conversations)", conversationMemory.summary);
-        if (conversationMemory.key_facts && conversationMemory.key_facts.length > 0) {
-          parts.push("", "### Key Facts You've Learned");
-          (conversationMemory.key_facts as string[]).slice(-20).forEach(f => parts.push(`- ${f}`));
-        }
-      }
-
-      if (knowledgeEntries.length > 0) {
-        parts.push("", "## Your Knowledge Wiki");
-        const relevant = selectedBook
-          ? knowledgeEntries.filter(e => e.source_book_id === selectedBook.id || !e.source_book_id).slice(0, 30)
-          : knowledgeEntries.slice(0, 30);
-        relevant.forEach(e => {
-          parts.push(`- **${e.title}** (${e.entry_type}, ${Math.round(e.confidence * 100)}%): ${e.content.slice(0, 200)}`);
-        });
-      }
-    } catch { /* proceed without memory */ }
-
-    parts.push("", "## Available Library", `The user has ${books.length} book(s) in their library:`);
-    books.forEach((book) => {
-      parts.push(`- **${book.title}** (${book.pageCount} pages, ${book.chapters.length} chapter(s))`);
-      book.chapters.forEach((ch) => {
-        parts.push(`  - Chapter: "${ch.name}" (pages ${ch.startPage}–${ch.endPage})`);
-      });
-    });
-
-    if (selectedBook) {
-      parts.push("", `## Currently Active Book: "${selectedBook.title}"`);
-      parts.push(`File: ${selectedBook.fileName} | Pages: ${selectedBook.pageCount}`);
-      if (selectedBook.chapters.length > 0) {
-        parts.push("", "### Chapter Contents");
-        selectedBook.chapters.forEach((ch) => {
-          parts.push(`#### ${ch.name} (pages ${ch.startPage}–${ch.endPage})`);
-          if (ch.textContent) {
-            const text = ch.textContent.length > 12000 ? ch.textContent.slice(0, 12000) + "\n\n[...truncated]" : ch.textContent;
-            parts.push(text);
-          } else {
-            parts.push("(No text content extracted for this chapter)");
-          }
-          parts.push("");
-        });
-      }
-    }
-
-    if (deepResearch) {
-      parts.push("", DEEP_RESEARCH_SYSTEM_PROMPT, DEEP_RESEARCH_ADVANCED_PROMPT);
-    }
-
-    parts.push("", "Be concise but thorough. Use markdown formatting. Reference specific chapter names and page numbers when relevant.");
-    return parts.join("\n");
-  }, [books, selectedBook, deepResearch]);
 
   const handleSaveToWiki = async () => {
     if (messages.length < 2) { toast.error("Chat first before saving to wiki"); return; }
     setExtracting(true);
     try {
-      const result = await extractKnowledge(
-        messages.map(m => ({ role: m.role, content: m.content })),
-        activeBookId || undefined
-      );
+      const result = await extractKnowledge(messages.map(m => ({ role: m.role, content: m.content })), activeBookId || undefined);
       const count = result.entries?.length || 0;
       toast.success(`Saved ${count} knowledge ${count === 1 ? "entry" : "entries"} to your wiki`);
     } catch (err: any) {
@@ -128,92 +45,17 @@ const ChatPanel: React.FC = () => {
     }
   };
 
-  const sendMessage = async () => {
-    if (!input.trim()) return;
+  const handleSend = async () => {
+    const text = input.trim();
+    if (!text) return;
     if (!apiKey) { toast.error("Please set your OpenRouter API key first"); setShowSettings(true); return; }
-
-    const userMsg: ChatMessage = { role: "user", content: input.trim() };
-    const updatedMessages = [...messages, userMsg];
-    setMessages(updatedMessages);
     setInput("");
-    setIsLoading(true);
-
-    try {
-      const systemPrompt = await buildSystemPrompt();
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-          "HTTP-Referer": window.location.origin,
-          "X-Title": "Chapter Craft",
-        },
-        body: JSON.stringify({
-          model: deepResearch ? deepResearchModel : selectedModel,
-          messages: [
-            { role: "system", content: systemPrompt },
-            ...updatedMessages.map((m) => ({ role: m.role, content: m.content })),
-          ],
-          stream: true,
-        }),
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        if (response.status === 401) throw new Error("Invalid API key.");
-        if (response.status === 402) throw new Error("Insufficient credits.");
-        if (response.status === 429) throw new Error("Rate limited. Try again.");
-        throw new Error(`OpenRouter error (${response.status}): ${errText}`);
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error("No response stream");
-
-      const decoder = new TextDecoder();
-      let assistantContent = "";
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        let newlineIdx: number;
-        while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
-          let line = buffer.slice(0, newlineIdx);
-          buffer = buffer.slice(newlineIdx + 1);
-          if (line.endsWith("\r")) line = line.slice(0, -1);
-          if (!line.startsWith("data: ")) continue;
-          const jsonStr = line.slice(6).trim();
-          if (jsonStr === "[DONE]") break;
-          try {
-            const parsed = JSON.parse(jsonStr);
-            const delta = parsed.choices?.[0]?.delta?.content;
-            if (delta) {
-              assistantContent += delta;
-              setMessages([...updatedMessages, { role: "assistant", content: assistantContent }]);
-            }
-          } catch { /* partial JSON */ }
-        }
-      }
-
-      if (!assistantContent) {
-        setMessages([...updatedMessages, { role: "assistant", content: "(No response received)" }]);
-      }
-    } catch (err: any) {
-      console.error("Chat error:", err);
-      toast.error(err.message || "Failed to get response");
-      setMessages([...updatedMessages, { role: "assistant", content: `❌ Error: ${err.message}` }]);
-    } finally {
-      setIsLoading(false);
-    }
+    try { await sendMessage(text); } catch { /* surfaced via toast */ }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
-
-  const clearChat = () => { setMessages([]); toast.success("Chat cleared"); };
 
   return (
     <div className="flex flex-col h-full">
@@ -296,7 +138,7 @@ const ChatPanel: React.FC = () => {
                 ? `Ready to discuss "${selectedBook.title}". ${selectedBook.chapters.length > 0 ? `${selectedBook.chapters.length} chapter(s) loaded.` : "No chapters isolated yet."}`
                 : "Select a book in the Reader tab, then come here to chat about it."}
             </p>
-            {!apiKey && (
+            {!apiKey && loaded && (
               <button onClick={() => setShowSettings(true)} className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-lg text-primary text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all">
                 <span className="material-symbols-outlined text-sm">key</span> Set API Key
               </button>
@@ -305,7 +147,7 @@ const ChatPanel: React.FC = () => {
         )}
 
         {messages.map((msg, i) => (
-          <div key={i} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"} max-w-[85%] ${msg.role === "user" ? "self-end" : ""}`}>
+          <div key={msg.id || i} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"} max-w-[85%] ${msg.role === "user" ? "self-end" : ""}`}>
             <div className="flex items-center gap-2 mb-2 mx-4">
               {msg.role === "assistant" && <span className="material-symbols-outlined text-primary-container text-lg">auto_stories</span>}
               <span className={`font-headline font-bold text-sm tracking-wide ${msg.role === "user" ? "text-primary" : "text-secondary"}`}>
@@ -313,6 +155,15 @@ const ChatPanel: React.FC = () => {
               </span>
               {msg.role === "user" && <span className="material-symbols-outlined text-primary text-lg">person</span>}
             </div>
+            {msg.role === "assistant" && msg.toolEvents && msg.toolEvents.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2 ml-4">
+                {msg.toolEvents.map((ev, idx) => (
+                  <span key={idx} className={`text-[11px] px-2 py-1 rounded-md ${ev.ok ? "bg-secondary-container/40 text-on-secondary-container" : "bg-destructive/15 text-destructive"}`}>
+                    <span className="material-symbols-outlined text-xs align-middle mr-1">{ev.ok ? "build" : "error"}</span>{ev.summary}
+                  </span>
+                ))}
+              </div>
+            )}
             <div className={`${msg.role === "user" ? "message-bubble-user bg-primary-container text-on-primary-container" : "message-bubble-ai bg-surface-container-high text-foreground border-l-2 border-primary-container/20"} p-5 shadow-sm leading-relaxed`}>
               {msg.role === "assistant" ? (
                 <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown>{msg.content}</ReactMarkdown></div>
@@ -353,7 +204,7 @@ const ChatPanel: React.FC = () => {
                 rows={1} className="bg-surface-container-high border-none rounded-xl text-foreground py-3 px-4 pr-12 focus:ring-1 focus:ring-primary/40 resize-none min-h-[50px] max-h-[120px]" disabled={isLoading}
               />
               <button
-                onClick={sendMessage}
+                onClick={handleSend}
                 disabled={isLoading || !input.trim()}
                 className="absolute right-2 bottom-2 p-1.5 bg-primary-container text-on-primary-container rounded-lg hover:brightness-110 active:scale-90 transition-all disabled:opacity-50"
               >
