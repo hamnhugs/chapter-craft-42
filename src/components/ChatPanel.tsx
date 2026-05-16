@@ -4,27 +4,39 @@ import { useChat } from "@/context/ChatContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Slider } from "@/components/ui/slider";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import { extractKnowledge } from "@/lib/knowledgeApi";
 import { Loader2 } from "lucide-react";
 import { useChatSettings } from "@/hooks/useChatSettings";
+import { speak, stopSpeaking, subscribeSpeaking, getSpeakingId } from "@/lib/speak";
 
 const ChatPanel: React.FC = () => {
   const { books, activeBookId } = useApp();
   const {
-    apiKey, savedModels, selectedModel, deepResearchModel, loaded,
-    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel,
+    apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, loaded,
+    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setTtsRate,
   } = useChatSettings();
   const { messages, isLoading, deepResearch, setDeepResearch, sendMessage, clearChat } = useChat();
   const [input, setInput] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [newModelInput, setNewModelInput] = useState("");
   const [extracting, setExtracting] = useState(false);
+  const [speakingId, setSpeakingId] = useState<string | null>(getSpeakingId());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+  useEffect(() => subscribeSpeaking(setSpeakingId), []);
+  useEffect(() => () => stopSpeaking(), []);
+
+  const bubbleId = (msg: { id?: string }, i: number) => `chat-${msg.id || i}`;
+  const handleSpeak = (msg: { id?: string; content: string }, i: number) => {
+    const id = bubbleId(msg, i);
+    if (speakingId === id) { stopSpeaking(); return; }
+    speak(msg.content, { id, rate: ttsRate });
+  };
 
   const handleSaveApiKey = (key: string) => { saveApiKey(key); setShowSettings(false); };
   const handleAddModel = () => { const m = newModelInput.trim(); if (!m) return; addModel(m); setNewModelInput(""); };
@@ -123,6 +135,22 @@ const ChatPanel: React.FC = () => {
               </select>
               <p className="text-[10px] text-on-surface-variant px-1">Used when Deep Research is ON. Pick a strong reasoning model for best results.</p>
             </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center justify-between">
+                <span><span className="material-symbols-outlined text-xs align-middle mr-1">volume_up</span>Voice Playback Speed</span>
+                <span className="text-primary normal-case tracking-normal">{ttsRate.toFixed(2)}×</span>
+              </label>
+              <div className="bg-surface-container-high rounded-lg py-3 px-4 border border-outline-variant/10">
+                <Slider
+                  value={[ttsRate]}
+                  min={0.5}
+                  max={2}
+                  step={0.05}
+                  onValueChange={(v) => setTtsRate(v[0])}
+                />
+              </div>
+              <p className="text-[10px] text-on-surface-variant px-1">Used for read-aloud buttons here and replies in the Voice tab.</p>
+            </div>
           </section>
         </div>
       )}
@@ -164,11 +192,22 @@ const ChatPanel: React.FC = () => {
                 ))}
               </div>
             )}
-            <div className={`${msg.role === "user" ? "message-bubble-user bg-primary-container text-on-primary-container" : "message-bubble-ai bg-surface-container-high text-foreground border-l-2 border-primary-container/20"} p-5 shadow-sm leading-relaxed`}>
+            <div className={`relative group ${msg.role === "user" ? "message-bubble-user bg-primary-container text-on-primary-container" : "message-bubble-ai bg-surface-container-high text-foreground border-l-2 border-primary-container/20"} p-5 shadow-sm leading-relaxed`}>
               {msg.role === "assistant" ? (
                 <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown>{msg.content}</ReactMarkdown></div>
               ) : (
                 <p className="whitespace-pre-wrap font-medium">{msg.content}</p>
+              )}
+              {msg.content && (
+                <button
+                  onClick={() => handleSpeak(msg, i)}
+                  title={speakingId === bubbleId(msg, i) ? "Stop reading" : "Read aloud"}
+                  className={`absolute top-1/2 -translate-y-1/2 ${msg.role === "user" ? "-left-3" : "-right-3"} w-7 h-7 rounded-full bg-surface-container-highest border border-outline-variant/20 shadow-sm flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-all opacity-70 hover:opacity-100`}
+                >
+                  <span className="material-symbols-outlined text-base">
+                    {speakingId === bubbleId(msg, i) ? "stop_circle" : "volume_up"}
+                  </span>
+                </button>
               )}
             </div>
           </div>

@@ -5,12 +5,14 @@ import { toast } from "sonner";
 
 const DEFAULT_MODEL = "google/gemini-2.5-flash";
 const DEFAULT_DEEP_RESEARCH_MODEL = "google/gemini-2.5-pro";
+const DEFAULT_TTS_RATE = 1.05;
 
 interface ChatSettings {
   apiKey: string;
   savedModels: string[];
   selectedModel: string;
   deepResearchModel: string;
+  ttsRate: number;
 }
 
 const defaults: ChatSettings = {
@@ -18,6 +20,7 @@ const defaults: ChatSettings = {
   savedModels: [DEFAULT_MODEL],
   selectedModel: DEFAULT_MODEL,
   deepResearchModel: DEFAULT_DEEP_RESEARCH_MODEL,
+  ttsRate: DEFAULT_TTS_RATE,
 };
 
 export function useChatSettings() {
@@ -42,6 +45,9 @@ export function useChatSettings() {
           savedModels: (data.saved_models as string[]) || [DEFAULT_MODEL],
           selectedModel: data.selected_model || DEFAULT_MODEL,
           deepResearchModel: data.deep_research_model || DEFAULT_DEEP_RESEARCH_MODEL,
+          ttsRate: typeof (data as any).tts_rate === "number" && (data as any).tts_rate > 0
+            ? (data as any).tts_rate
+            : DEFAULT_TTS_RATE,
         });
       }
       setLoaded(true);
@@ -53,12 +59,13 @@ export function useChatSettings() {
     if (!user) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
-      const payload = {
+      const payload: any = {
         user_id: user.id,
         openrouter_api_key: next.apiKey,
         saved_models: next.savedModels as any,
         selected_model: next.selectedModel,
         deep_research_model: next.deepResearchModel,
+        tts_rate: next.ttsRate,
       };
       const { error } = await supabase
         .from("user_settings")
@@ -104,6 +111,7 @@ export function useChatSettings() {
     saveApiKey,
     setSelectedModel: (m: string) => update({ selectedModel: m }),
     setDeepResearchModel: (m: string) => update({ deepResearchModel: m }),
+    setTtsRate: (r: number) => update({ ttsRate: Math.min(2, Math.max(0.5, r)) }),
     addModel,
     removeModel,
     setNewModelInput: undefined, // handled in component

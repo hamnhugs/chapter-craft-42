@@ -351,6 +351,7 @@ export type Database = {
           openrouter_api_key: string | null
           saved_models: Json | null
           selected_model: string | null
+          tts_rate: number
           updated_at: string
           user_id: string
         }
@@ -363,6 +364,7 @@ export type Database = {
           openrouter_api_key?: string | null
           saved_models?: Json | null
           selected_model?: string | null
+          tts_rate?: number
           updated_at?: string
           user_id: string
         }
@@ -375,6 +377,7 @@ export type Database = {
           openrouter_api_key?: string | null
           saved_models?: Json | null
           selected_model?: string | null
+          tts_rate?: number
           updated_at?: string
           user_id?: string
         }
