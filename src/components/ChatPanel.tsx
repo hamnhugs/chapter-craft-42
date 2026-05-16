@@ -4,17 +4,19 @@ import { useChat } from "@/context/ChatContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Slider } from "@/components/ui/slider";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import { extractKnowledge } from "@/lib/knowledgeApi";
 import { Loader2 } from "lucide-react";
 import { useChatSettings } from "@/hooks/useChatSettings";
+import { speak, stopSpeaking, subscribeSpeaking, getSpeakingId } from "@/lib/speak";
 
 const ChatPanel: React.FC = () => {
   const { books, activeBookId } = useApp();
   const {
-    apiKey, savedModels, selectedModel, deepResearchModel, loaded,
-    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel,
+    apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, loaded,
+    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setTtsRate,
   } = useChatSettings();
   const { messages, isLoading, deepResearch, setDeepResearch, sendMessage, clearChat } = useChat();
   const [input, setInput] = useState("");
