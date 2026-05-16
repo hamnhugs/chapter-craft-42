@@ -278,7 +278,7 @@ const VoiceChat: React.FC = () => {
   }, [inworldVoiceId]);
 
   const saveInworldKey = (key: string) => {
-    setInworldApiKeyState(key.trim());
+    setInworldApiKey(key.trim());
     if (key.trim()) loadInworldVoices(key.trim());
   };
   const addModel = () => { const m = newModelInput.trim(); if (!m) return; addModelToSettings(m); setNewModelInput(""); };
@@ -661,7 +661,7 @@ const VoiceChat: React.FC = () => {
                       Save & Load Voices
                     </Button>
                     {inworldApiKey && (
-                      <Button size="sm" variant="destructive" onClick={() => { setInworldApiKeyState(""); setInworldEnabled(false); setInworldVoices([]); }}>
+                      <Button size="sm" variant="destructive" onClick={() => { setInworldApiKey(""); setInworldEnabled(false); setInworldVoices([]); }}>
                         Remove
                       </Button>
                     )}
