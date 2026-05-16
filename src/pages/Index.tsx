@@ -77,6 +77,8 @@ const Index: React.FC = () => {
           <VideoTranscript />
         ) : activeTab === "voice" ? (
           <VoiceChat />
+        ) : activeTab === "chapterize" ? (
+          <AutoChapterize />
         ) : (
           <PdfViewer />
         )}
