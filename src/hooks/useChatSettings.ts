@@ -69,6 +69,7 @@ export function useChatSettings() {
         selected_model: next.selectedModel,
         deep_research_model: next.deepResearchModel,
         tts_rate: next.ttsRate,
+        auto_read_replies: next.autoReadReplies,
       };
       const { error } = await supabase
         .from("user_settings")
