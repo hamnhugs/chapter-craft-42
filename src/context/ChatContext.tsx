@@ -46,10 +46,24 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { books, activeBookId, addChapter, updateChapter, removeChapter, setActiveBookSilent } = useApp();
 
   const { apiKey, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken } = useChatSettings();
+  const { getActiveBodyForScope, migrate } = usePromptPresets();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [deepResearch, setDeepResearch] = useState(false);
+  const [chatDeepResearch, setChatDeepResearch] = useState<boolean>(() =>
+    typeof window !== "undefined" && localStorage.getItem("chat_deep_research") === "1");
+  const [voiceDeepResearch, setVoiceDeepResearch] = useState<boolean>(() =>
+    typeof window !== "undefined" && localStorage.getItem("voice_deep_research") === "1");
+  useEffect(() => { localStorage.setItem("chat_deep_research", chatDeepResearch ? "1" : "0"); }, [chatDeepResearch]);
+  useEffect(() => { localStorage.setItem("voice_deep_research", voiceDeepResearch ? "1" : "0"); }, [voiceDeepResearch]);
+  // One-time seed of prompt presets from legacy customSystemPrompt.
+  const migratedPromptsRef = useRef(false);
+  useEffect(() => {
+    if (migratedPromptsRef.current) return;
+    if (!customSystemPrompt) return;
+    migratedPromptsRef.current = true;
+    migrate(customSystemPrompt);
+  }, [customSystemPrompt, migrate]);
   const abortRef = useRef<AbortController | null>(null);
   const loadedRef = useRef(false);
 
