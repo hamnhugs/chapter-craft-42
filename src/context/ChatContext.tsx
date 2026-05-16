@@ -291,7 +291,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const { result, event } = await executeChatTool(t.name!, t.args || "{}", {
               books,
               activeBookId,
-              setActiveBookId: setActiveBookViaTool,
+              setActiveBookId: setActiveBookSilent,
               addChapter,
               updateChapter,
               removeChapter,
