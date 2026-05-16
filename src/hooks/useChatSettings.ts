@@ -16,6 +16,7 @@ interface ChatSettings {
   ttsRate: number;
   autoReadReplies: boolean;
   wikiModel: string; // "" = use default Gemini gateway
+  customSystemPrompt: string;
 }
 
 const defaults: ChatSettings = {
@@ -26,6 +27,7 @@ const defaults: ChatSettings = {
   ttsRate: DEFAULT_TTS_RATE,
   autoReadReplies: false,
   wikiModel: "",
+  customSystemPrompt: "",
 };
 
 export function useChatSettings() {
