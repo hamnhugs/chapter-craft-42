@@ -135,6 +135,22 @@ const ChatPanel: React.FC = () => {
               </select>
               <p className="text-[10px] text-on-surface-variant px-1">Used when Deep Research is ON. Pick a strong reasoning model for best results.</p>
             </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center justify-between">
+                <span><span className="material-symbols-outlined text-xs align-middle mr-1">volume_up</span>Voice Playback Speed</span>
+                <span className="text-primary normal-case tracking-normal">{ttsRate.toFixed(2)}×</span>
+              </label>
+              <div className="bg-surface-container-high rounded-lg py-3 px-4 border border-outline-variant/10">
+                <Slider
+                  value={[ttsRate]}
+                  min={0.5}
+                  max={2}
+                  step={0.05}
+                  onValueChange={(v) => setTtsRate(v[0])}
+                />
+              </div>
+              <p className="text-[10px] text-on-surface-variant px-1">Used for read-aloud buttons here and replies in the Voice tab.</p>
+            </div>
           </section>
         </div>
       )}
