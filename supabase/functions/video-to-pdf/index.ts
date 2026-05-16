@@ -70,39 +70,43 @@ Deno.serve(async (req) => {
 
       const { data: job } = await supabase
         .from("video_jobs")
-        .select("id, pdf_url")
+        .select("id, transcript, title, video_url, metadata")
         .eq("id", jobId)
         .eq("user_id", user.id)
         .single();
 
       if (!job) return json({ error: "Job not found" }, 404);
 
-      const basename = (job.pdf_url || "").split("/").filter(Boolean).pop() || "";
-      const candidates = [
-        `${VIDEO_ENGINE_URL}/video/${jobId}/pdf`,
-        `${VIDEO_ENGINE_URL}/video/${jobId}/download`,
-        basename ? `${VIDEO_ENGINE_URL}/files/${basename}` : "",
-        basename ? `${VIDEO_ENGINE_URL}/static/${basename}` : "",
-        basename ? `${VIDEO_ENGINE_URL}/video-output/${basename}` : "",
-      ].filter(Boolean);
-
-      for (const u of candidates) {
+      // Try stored transcript; fall back to refetching from engine
+      let transcript = job.transcript as string | null;
+      let title = (job.title as string | null) || "";
+      if (!transcript) {
         try {
-          const r = await fetch(u);
+          const r = await fetch(`${VIDEO_ENGINE_URL}/video/${jobId}`);
           if (r.ok) {
-            return new Response(r.body, {
-              status: 200,
-              headers: {
-                ...corsHeaders,
-                "Content-Type": "application/pdf",
-                "Content-Disposition": `attachment; filename="transcript-${jobId}.pdf"`,
-                "Cache-Control": "private, max-age=0",
-              },
-            });
+            const eng = await r.json();
+            transcript = eng.transcript || null;
+            title = title || eng?.metadata?.title || "";
           }
-        } catch { /* try next */ }
+        } catch { /* ignore */ }
       }
-      return json({ error: "PDF not retrievable from engine" }, 502);
+
+      if (!transcript) {
+        return json({ error: "Transcript not available yet — try again in a moment." }, 404);
+      }
+
+      title = title || job.video_url || "Video transcript";
+      const pdfBytes = await buildPdf(title, transcript);
+
+      return new Response(pdfBytes, {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/pdf",
+          "Content-Disposition": `attachment; filename="transcript-${jobId}.pdf"`,
+          "Cache-Control": "private, max-age=0",
+        },
+      });
     }
 
     // ── GET /status/{job_id} ────────────────────────────────────────────────
