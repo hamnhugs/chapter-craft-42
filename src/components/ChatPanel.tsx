@@ -13,6 +13,8 @@ import { Loader2 } from "lucide-react";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { speak, stopSpeaking, subscribeSpeaking, getSpeakingId } from "@/lib/speak";
 import { isEmbeddingModel } from "@/lib/utils";
+import { useDictation } from "@/hooks/useDictation";
+import PromptLibrary from "@/components/PromptLibrary";
 
 const ChatPanel: React.FC = () => {
   const { books, activeBookId } = useApp();
@@ -20,7 +22,7 @@ const ChatPanel: React.FC = () => {
     apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, autoReadReplies, customSystemPrompt, burplexityApiToken, loaded,
     saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setTtsRate, setAutoReadReplies, setCustomSystemPrompt, setBurplexityApiToken,
   } = useChatSettings();
-  const { messages, isLoading, deepResearch, setDeepResearch, sendMessage, clearChat } = useChat();
+  const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, clearChat } = useChat();
   const [input, setInput] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [newModelInput, setNewModelInput] = useState("");
