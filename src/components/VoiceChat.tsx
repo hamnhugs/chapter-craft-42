@@ -13,6 +13,7 @@ import VoiceNotesPanel, { appendVoiceNote } from "./VoiceNotesPanel";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerClose } from "@/components/ui/drawer";
 import { speak as ttsSpeak, stopSpeaking as ttsStop, subscribeSpeaking as ttsSubscribe, getSpeakingId as ttsGetId } from "@/lib/speak";
+import PromptLibrary from "@/components/PromptLibrary";
 
 const LEGACY_OPENROUTER_STORAGE_KEY = "openrouter_api_key";
 const VOICE_ENABLED_KEY = "voice_tts_enabled";
@@ -24,7 +25,7 @@ const SpeechRecognition = (window as any).SpeechRecognition || (window as any).w
 const VoiceChat: React.FC = () => {
   const { books, activeBookId } = useApp();
   const {
-    messages, isLoading, deepResearch, setDeepResearch, sendMessage, clearChat,
+    messages, isLoading, voiceDeepResearch, setVoiceDeepResearch, sendMessage, clearChat,
   } = useChat();
 
   const [isListening, setIsListening] = useState(false);
@@ -530,22 +531,23 @@ const VoiceChat: React.FC = () => {
                 <p className="text-[10px] text-on-surface-variant px-1">Used when Deep Research is ON.</p>
               </div>
             </section>
+            <PromptLibrary scopeHint="voice" />
             <section className="p-3 rounded-xl bg-surface-container-low">
               <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center gap-1">
-                <span className="material-symbols-outlined text-xs align-middle">psychology</span>Custom Instructions
+                <span className="material-symbols-outlined text-xs align-middle">history_edu</span>Legacy Custom Instructions
               </label>
-              <p className="text-[10px] text-on-surface-variant px-1 mt-1 mb-2">Prepended to every Librarian reply. Shared with the Chat tab.</p>
+              <p className="text-[10px] text-on-surface-variant px-1 mt-1 mb-2">Used only if no Prompt Library entry is active.</p>
               <Textarea
                 value={promptDraft}
                 onChange={(e) => setPromptDraft(e.target.value)}
-                rows={4}
-                placeholder="e.g. Always answer as a no-nonsense literary critic. Reference page numbers when possible."
+                rows={3}
+                placeholder="e.g. Always answer as a no-nonsense literary critic."
                 className="bg-surface-container-high border-none text-sm"
               />
               <div className="flex gap-2 mt-2">
-                <Button size="sm" onClick={() => { setCustomSystemPrompt(promptDraft); toast.success("Custom instructions saved"); }}>Save</Button>
+                <Button size="sm" onClick={() => { setCustomSystemPrompt(promptDraft); toast.success("Saved"); }}>Save</Button>
                 {customSystemPrompt && (
-                  <Button size="sm" variant="destructive" onClick={() => { setCustomSystemPrompt(""); setPromptDraft(""); toast.success("Custom instructions cleared"); }}>Clear</Button>
+                  <Button size="sm" variant="destructive" onClick={() => { setCustomSystemPrompt(""); setPromptDraft(""); toast.success("Cleared"); }}>Clear</Button>
                 )}
               </div>
             </section>
@@ -720,46 +722,14 @@ const VoiceChat: React.FC = () => {
             <div
               className={`px-4 pb-4 pt-1 motion-safe:transition-transform motion-safe:duration-300 ease-out ${controlsCollapsed ? "translate-y-2" : "translate-y-0"}`}
             >
-              <div className="flex items-center justify-center gap-3 flex-wrap">
-                <button onClick={() => setShowSettings(!showSettings)} className="p-3 rounded-full bg-surface-container-high text-on-surface-variant hover:text-primary transition-colors" title="Settings">
-                  <span className="material-symbols-outlined">tune</span>
-                </button>
-
-                <button onClick={() => { setTtsEnabled(!ttsEnabled); if (ttsEnabled) stopSpeaking(); }} className={`p-3 rounded-full transition-all ${ttsEnabled ? "bg-primary-container/20 text-primary" : "bg-surface-container-high text-on-surface-variant"}`} title={ttsEnabled ? "Voice replies on" : "Voice replies off"}>
-                  <span className="material-symbols-outlined">{ttsEnabled ? "volume_up" : "volume_off"}</span>
-                </button>
-
-                <button
-                  onClick={() => setDeepResearch(!deepResearch)}
-                  className={`px-3 py-3 rounded-full transition-all flex items-center gap-1.5 text-xs font-semibold ${deepResearch ? "bg-primary-container text-on-primary-container shadow-md" : "bg-surface-container-high text-on-surface-variant hover:text-primary"}`}
-                  title="Deep Research"
-                >
-                  <span className="material-symbols-outlined text-base" style={deepResearch ? { fontVariationSettings: "'FILL' 1" } : {}}>science</span>
-                  Deep Research {deepResearch ? "ON" : "OFF"}
-                </button>
-
-                <button
-                  onClick={() => setNotesPanelOpen((v) => !v)}
-                  className={`px-4 py-3 rounded-full transition-all flex items-center gap-2 text-sm font-medium ${notesPanelOpen ? "bg-primary-container text-on-primary-container shadow-md" : "bg-surface-container-high text-on-surface-variant hover:text-primary"}`}
-                  title="Voice notes"
-                >
-                  <StickyNote className="w-4 h-4" />
-                  Notes
-                </button>
-
-                <button
-                  onClick={toggleHandsFree}
-                  className={`px-4 py-3 rounded-full transition-all flex items-center gap-2 text-sm font-medium ${handsFree ? "bg-primary-container text-on-primary-container shadow-md" : "bg-surface-container-high text-on-surface-variant hover:text-primary"}`}
-                  title="Hands-free conversation"
-                >
-                  <span className="material-symbols-outlined text-base">all_inclusive</span>
-                  {handsFree ? "Hands-free on" : "Hands-free"}
-                </button>
-
+              {/* Mobile-first layout: mic on top, toggles in row, secondary actions in row. */}
+              <div className="flex flex-col items-center gap-3 sm:flex-row sm:flex-wrap sm:justify-center">
+                {/* Primary mic — full-width on mobile, prominent */}
                 <button
                   onClick={isListening ? stopListening : startListening}
                   disabled={isLoading}
-                  className={`w-20 h-20 rounded-full flex items-center justify-center transition-all shadow-lg ${
+                  aria-label={isListening ? "Stop listening" : "Start listening"}
+                  className={`order-1 sm:order-3 w-20 h-20 rounded-full flex items-center justify-center transition-all shadow-lg ${
                     isListening
                       ? "bg-destructive text-destructive-foreground animate-pulse scale-110"
                       : isLoading
@@ -776,17 +746,80 @@ const VoiceChat: React.FC = () => {
                   )}
                 </button>
 
-                {messages.length >= 2 && (
-                  <button onClick={handleSaveToWiki} disabled={extracting} className="p-3 rounded-full bg-secondary-container text-on-secondary-container hover:bg-secondary-container/80 transition-all disabled:opacity-50" title="Save chat to Wiki">
-                    {extracting ? <Loader2 className="w-5 h-5 animate-spin" /> : <span className="material-symbols-outlined">history_edu</span>}
+                {/* Row 1 (mobile): primary toggles */}
+                <div className="order-2 sm:order-1 grid grid-cols-3 gap-2 w-full sm:w-auto sm:flex sm:gap-3">
+                  <button
+                    onClick={toggleHandsFree}
+                    aria-pressed={handsFree}
+                    className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-2 sm:px-4 py-2.5 rounded-2xl sm:rounded-full transition-all text-xs sm:text-sm font-medium ${handsFree ? "bg-primary-container text-on-primary-container shadow-md" : "bg-surface-container-high text-on-surface-variant hover:text-primary"}`}
+                    title="Hands-free conversation"
+                  >
+                    <span className="material-symbols-outlined text-lg sm:text-base">all_inclusive</span>
+                    <span className="leading-none">{handsFree ? "On" : "Hands-free"}</span>
                   </button>
-                )}
 
-                {messages.length > 0 && (
-                  <button onClick={handleClear} className="p-3 rounded-full bg-surface-container-high text-on-surface-variant hover:text-destructive transition-colors" title="Clear chat">
-                    <span className="material-symbols-outlined">delete</span>
+                  <button
+                    onClick={() => setVoiceDeepResearch(!voiceDeepResearch)}
+                    aria-pressed={voiceDeepResearch}
+                    className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-2 sm:px-3 py-2.5 rounded-2xl sm:rounded-full transition-all text-xs sm:text-sm font-medium ${voiceDeepResearch ? "bg-primary-container text-on-primary-container shadow-md" : "bg-surface-container-high text-on-surface-variant hover:text-primary"}`}
+                    title="Deep Research"
+                  >
+                    <span className="material-symbols-outlined text-lg sm:text-base" style={voiceDeepResearch ? { fontVariationSettings: "'FILL' 1" } : {}}>science</span>
+                    <span className="leading-none">{voiceDeepResearch ? "Deep On" : "Deep Res"}</span>
                   </button>
-                )}
+
+                  <button
+                    onClick={() => { setTtsEnabled(!ttsEnabled); if (ttsEnabled) stopSpeaking(); }}
+                    aria-pressed={ttsEnabled}
+                    className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-2 sm:px-3 py-2.5 rounded-2xl sm:rounded-full transition-all text-xs sm:text-sm font-medium ${ttsEnabled ? "bg-primary-container/30 text-primary" : "bg-surface-container-high text-on-surface-variant hover:text-primary"}`}
+                    title={ttsEnabled ? "Voice replies on" : "Voice replies off"}
+                  >
+                    <span className="material-symbols-outlined text-lg sm:text-base">{ttsEnabled ? "volume_up" : "volume_off"}</span>
+                    <span className="leading-none">{ttsEnabled ? "Voice On" : "Voice Off"}</span>
+                  </button>
+                </div>
+
+                {/* Row 2 (mobile): secondary actions */}
+                <div className="order-3 sm:order-4 grid grid-cols-4 gap-2 w-full sm:w-auto sm:flex sm:gap-3">
+                  <button
+                    onClick={() => setNotesPanelOpen((v) => !v)}
+                    aria-pressed={notesPanelOpen}
+                    className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-2 sm:px-4 py-2.5 rounded-2xl sm:rounded-full transition-all text-xs sm:text-sm font-medium ${notesPanelOpen ? "bg-primary-container text-on-primary-container shadow-md" : "bg-surface-container-high text-on-surface-variant hover:text-primary"}`}
+                    title="Voice notes"
+                  >
+                    <StickyNote className="w-4 h-4 sm:w-4 sm:h-4" />
+                    <span className="leading-none">Notes</span>
+                  </button>
+
+                  <button
+                    onClick={handleSaveToWiki}
+                    disabled={extracting || messages.length < 2}
+                    className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-2 sm:px-3 py-2.5 rounded-2xl sm:rounded-full bg-secondary-container text-on-secondary-container hover:bg-secondary-container/80 transition-all text-xs sm:text-sm font-medium disabled:opacity-40"
+                    title="Save chat to Wiki"
+                  >
+                    {extracting ? <Loader2 className="w-4 h-4 animate-spin" /> : <span className="material-symbols-outlined text-lg sm:text-base">history_edu</span>}
+                    <span className="leading-none">Wiki</span>
+                  </button>
+
+                  <button
+                    onClick={handleClear}
+                    disabled={messages.length === 0}
+                    className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-2 sm:px-3 py-2.5 rounded-2xl sm:rounded-full bg-surface-container-high text-on-surface-variant hover:text-destructive transition-colors text-xs sm:text-sm font-medium disabled:opacity-40"
+                    title="Clear chat"
+                  >
+                    <span className="material-symbols-outlined text-lg sm:text-base">delete</span>
+                    <span className="leading-none">Clear</span>
+                  </button>
+
+                  <button
+                    onClick={() => setShowSettings(!showSettings)}
+                    className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-2 sm:px-3 py-2.5 rounded-2xl sm:rounded-full bg-surface-container-high text-on-surface-variant hover:text-primary transition-colors text-xs sm:text-sm font-medium"
+                    title="Settings"
+                  >
+                    <span className="material-symbols-outlined text-lg sm:text-base">tune</span>
+                    <span className="leading-none">Settings</span>
+                  </button>
+                </div>
               </div>
               <p className="text-xs text-on-surface-variant text-center mt-3">
                 {statusLabel}

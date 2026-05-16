@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useApp } from "@/context/AppContext";
 import { useChatSettings } from "@/hooks/useChatSettings";
+import { usePromptPresets } from "@/hooks/usePromptPresets";
 import { buildChatSystemPrompt } from "@/lib/buildChatSystemPrompt";
 import { CHAT_TOOL_DEFINITIONS, executeChatTool, ToolEvent } from "@/lib/chatTools";
 import { toast } from "sonner";
@@ -23,8 +24,14 @@ interface SendOpts {
 interface ChatContextValue {
   messages: ChatMessage[];
   isLoading: boolean;
+  /** Legacy combined flag — true if either tab has Deep Research on. Kept for backward compat. */
   deepResearch: boolean;
+  /** Deprecated: writes to the chat-tab flag (preserves old call sites). */
   setDeepResearch: (v: boolean) => void;
+  chatDeepResearch: boolean;
+  setChatDeepResearch: (v: boolean) => void;
+  voiceDeepResearch: boolean;
+  setVoiceDeepResearch: (v: boolean) => void;
   sendMessage: (text: string, opts?: SendOpts) => Promise<string>;
   clearChat: () => Promise<void>;
   abort: () => void;
@@ -39,10 +46,24 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { books, activeBookId, addChapter, updateChapter, removeChapter, setActiveBookSilent } = useApp();
 
   const { apiKey, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken } = useChatSettings();
+  const { getActiveBodyForScope, migrate } = usePromptPresets();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [deepResearch, setDeepResearch] = useState(false);
+  const [chatDeepResearch, setChatDeepResearch] = useState<boolean>(() =>
+    typeof window !== "undefined" && localStorage.getItem("chat_deep_research") === "1");
+  const [voiceDeepResearch, setVoiceDeepResearch] = useState<boolean>(() =>
+    typeof window !== "undefined" && localStorage.getItem("voice_deep_research") === "1");
+  useEffect(() => { localStorage.setItem("chat_deep_research", chatDeepResearch ? "1" : "0"); }, [chatDeepResearch]);
+  useEffect(() => { localStorage.setItem("voice_deep_research", voiceDeepResearch ? "1" : "0"); }, [voiceDeepResearch]);
+  // One-time seed of prompt presets from legacy customSystemPrompt.
+  const migratedPromptsRef = useRef(false);
+  useEffect(() => {
+    if (migratedPromptsRef.current) return;
+    if (!customSystemPrompt) return;
+    migratedPromptsRef.current = true;
+    migrate(customSystemPrompt);
+  }, [customSystemPrompt, migrate]);
   const abortRef = useRef<AbortController | null>(null);
   const loadedRef = useRef(false);
 
@@ -168,13 +189,18 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const baseHistory = [...messages, userMsg].map((m) => ({ role: m.role, content: m.content }));
 
+      const isVoice = !!opts?.voiceMode;
+      const deepResearch = isVoice ? voiceDeepResearch : chatDeepResearch;
+      const scopedPromptBody = getActiveBodyForScope(isVoice ? "voice" : "chat");
+      const promptToInject = scopedPromptBody || customSystemPrompt;
+
       const systemPrompt = await buildChatSystemPrompt({
         books,
         selectedBook,
         deepResearch,
-        voiceMode: opts?.voiceMode,
+        voiceMode: isVoice,
         latestUserQuery: trimmed,
-        customSystemPrompt,
+        customSystemPrompt: promptToInject,
       });
 
       const assistantEvents: ToolEvent[] = [];
@@ -354,7 +380,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
       }
     },
-    [apiKey, books, activeBookId, deepResearch, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken, messages, persistMessage, addChapter, updateChapter, removeChapter, setActiveBookSilent]
+    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, selectedModel, deepResearchModel, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, addChapter, updateChapter, removeChapter, setActiveBookSilent]
   );
 
 
@@ -363,8 +389,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       value={{
         messages,
         isLoading,
-        deepResearch,
-        setDeepResearch,
+        deepResearch: chatDeepResearch || voiceDeepResearch,
+        setDeepResearch: setChatDeepResearch,
+        chatDeepResearch,
+        setChatDeepResearch,
+        voiceDeepResearch,
+        setVoiceDeepResearch,
         sendMessage,
         clearChat,
         abort,

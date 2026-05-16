@@ -13,6 +13,8 @@ import { Loader2 } from "lucide-react";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { speak, stopSpeaking, subscribeSpeaking, getSpeakingId } from "@/lib/speak";
 import { isEmbeddingModel } from "@/lib/utils";
+import { useDictation } from "@/hooks/useDictation";
+import PromptLibrary from "@/components/PromptLibrary";
 
 const ChatPanel: React.FC = () => {
   const { books, activeBookId } = useApp();
@@ -20,7 +22,7 @@ const ChatPanel: React.FC = () => {
     apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, autoReadReplies, customSystemPrompt, burplexityApiToken, loaded,
     saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setTtsRate, setAutoReadReplies, setCustomSystemPrompt, setBurplexityApiToken,
   } = useChatSettings();
-  const { messages, isLoading, deepResearch, setDeepResearch, sendMessage, clearChat } = useChat();
+  const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, clearChat } = useChat();
   const [input, setInput] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [newModelInput, setNewModelInput] = useState("");
@@ -30,6 +32,22 @@ const ChatPanel: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const settingsPanelRef = useRef<HTMLDivElement>(null);
+  const inputBeforeDictationRef = useRef<string>("");
+  const dictation = useDictation({
+    onInterim: (text) => {
+      setInput((inputBeforeDictationRef.current ? inputBeforeDictationRef.current + " " : "") + text);
+    },
+    onFinal: (text) => {
+      const base = inputBeforeDictationRef.current;
+      setInput((base ? base + " " : "") + text);
+    },
+  });
+  const handleMicToggle = () => {
+    if (!dictation.supported) { toast.error("Voice input not supported in this browser."); return; }
+    if (dictation.isListening) { dictation.stop(); return; }
+    inputBeforeDictationRef.current = input;
+    dictation.start();
+  };
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
   useEffect(() => subscribeSpeaking(setSpeakingId), []);
@@ -263,22 +281,23 @@ const ChatPanel: React.FC = () => {
               <p className="text-[10px] text-on-surface-variant px-1">Used for read-aloud buttons here and replies in the Voice tab.</p>
             </div>
           </section>
+          <PromptLibrary scopeHint="chat" />
           <section className="p-3 md:p-4 rounded-xl bg-surface-container-low">
             <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center gap-1">
-              <span className="material-symbols-outlined text-xs align-middle">psychology</span>Custom Instructions
+              <span className="material-symbols-outlined text-xs align-middle">history_edu</span>Legacy Custom Instructions
             </label>
-            <p className="text-[10px] text-on-surface-variant px-1 mt-1 mb-2">Prepended to every Librarian reply (Chat &amp; Voice). Use it to set persona, tone, or focus.</p>
+            <p className="text-[10px] text-on-surface-variant px-1 mt-1 mb-2">Used only if no prompt above is active. Prefer the Prompt Library for new prompts.</p>
             <Textarea
               value={promptDraft}
               onChange={(e) => setPromptDraft(e.target.value)}
-              rows={4}
-              placeholder="e.g. Always answer as a no-nonsense literary critic. Reference page numbers when possible."
+              rows={3}
+              placeholder="e.g. Always answer as a no-nonsense literary critic."
               className="bg-surface-container-high border-none text-sm"
             />
             <div className="flex gap-2 mt-2">
-              <Button size="sm" onClick={() => { setCustomSystemPrompt(promptDraft); toast.success("Custom instructions saved"); }}>Save</Button>
+              <Button size="sm" onClick={() => { setCustomSystemPrompt(promptDraft); toast.success("Saved"); }}>Save</Button>
               {customSystemPrompt && (
-                <Button size="sm" variant="destructive" onClick={() => { setCustomSystemPrompt(""); setPromptDraft(""); toast.success("Custom instructions cleared"); }}>Clear</Button>
+                <Button size="sm" variant="destructive" onClick={() => { setCustomSystemPrompt(""); setPromptDraft(""); toast.success("Cleared"); }}>Clear</Button>
               )}
             </div>
           </section>
@@ -369,9 +388,22 @@ const ChatPanel: React.FC = () => {
             <div className="flex-grow relative">
               <Textarea
                 ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown}
-                placeholder={apiKey ? "Ask about your books..." : "Set your OpenRouter API key to start chatting"}
-                rows={1} className="bg-surface-container-high border-none rounded-xl text-foreground py-3 px-4 pr-12 focus:ring-1 focus:ring-primary/40 resize-none min-h-[50px] max-h-[120px]" disabled={isLoading}
+                placeholder={dictation.isListening ? "Listening… speak now" : apiKey ? "Ask about your books..." : "Set your OpenRouter API key to start chatting"}
+                rows={1} className="bg-surface-container-high border-none rounded-xl text-foreground py-3 pl-4 pr-20 focus:ring-1 focus:ring-primary/40 resize-none min-h-[50px] max-h-[120px]" disabled={isLoading}
               />
+              {dictation.supported && (
+                <button
+                  type="button"
+                  onClick={handleMicToggle}
+                  title={dictation.isListening ? "Stop dictation" : "Dictate message"}
+                  aria-label={dictation.isListening ? "Stop dictation" : "Dictate message"}
+                  className={`absolute right-11 bottom-2 p-1.5 rounded-lg transition-all active:scale-90 ${dictation.isListening ? "bg-destructive text-destructive-foreground animate-pulse" : "bg-surface-container-highest text-on-surface-variant hover:text-primary"}`}
+                >
+                  <span className="material-symbols-outlined text-lg" style={dictation.isListening ? { fontVariationSettings: "'FILL' 1" } : undefined}>
+                    {dictation.isListening ? "mic_off" : "mic"}
+                  </span>
+                </button>
+              )}
               <button
                 onClick={handleSend}
                 disabled={isLoading || !input.trim()}
@@ -393,8 +425,8 @@ const ChatPanel: React.FC = () => {
           </div>
           <div className="flex justify-between items-center px-2">
             <div className="flex gap-4">
-              <button onClick={() => setDeepResearch(!deepResearch)} className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${deepResearch ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`}>
-                <span className="material-symbols-outlined text-sm" style={deepResearch ? { fontVariationSettings: "'FILL' 1" } : {}}>science</span> Deep Research {deepResearch ? "ON" : "OFF"}
+              <button onClick={() => setChatDeepResearch(!chatDeepResearch)} className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${chatDeepResearch ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`}>
+                <span className="material-symbols-outlined text-sm" style={chatDeepResearch ? { fontVariationSettings: "'FILL' 1" } : {}}>science</span> Deep Research {chatDeepResearch ? "ON" : "OFF"}
               </button>
               <button id="chat-settings-toggle" onClick={() => setShowSettings(!showSettings)} className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-1 hover:text-primary transition-colors">
                 <span className="material-symbols-outlined text-sm">tune</span> Settings
