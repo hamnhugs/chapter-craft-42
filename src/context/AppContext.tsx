@@ -6,12 +6,12 @@ import { useAuth } from "@/hooks/useAuth";
 interface AppState {
   books: BookDocument[];
   activeBookId: string | null;
-  activeTab: "library" | "viewer" | "chat" | "wiki" | "video" | "voice";
+  activeTab: "library" | "viewer" | "chat" | "wiki" | "video" | "voice" | "chapterize";
   addBook: (book: BookDocument, sourceFile?: File) => Promise<void>;
   removeBook: (id: string) => void;
   setActiveBook: (id: string) => void;
   setActiveBookSilent: (id: string) => void;
-  setActiveTab: (tab: "library" | "viewer" | "chat" | "wiki" | "video" | "voice") => void;
+  setActiveTab: (tab: "library" | "viewer" | "chat" | "wiki" | "video" | "voice" | "chapterize") => void;
   addChapter: (bookId: string, chapter: Chapter) => Promise<void>;
   updateChapter: (bookId: string, chapterId: string, name: string) => void;
   removeChapter: (bookId: string, chapterId: string) => void;
@@ -44,7 +44,7 @@ const getStoragePathsForBook = (userId: string, bookId: string, fileName: string
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [books, setBooks] = useState<BookDocument[]>([]);
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"library" | "viewer" | "chat" | "wiki" | "video" | "voice">("library");
+  const [activeTab, setActiveTab] = useState<"library" | "viewer" | "chat" | "wiki" | "video" | "voice" | "chapterize">("library");
   const { user, signOut } = useAuth();
 
   const getAuthenticatedUserId = useCallback(async () => {

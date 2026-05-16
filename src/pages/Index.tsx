@@ -5,6 +5,7 @@ import Library from "@/components/Library";
 import ChatPanel from "@/components/ChatPanel";
 import WikiPanel from "@/components/WikiPanel";
 import VoiceChat from "@/components/VoiceChat";
+import AutoChapterize from "@/components/AutoChapterize";
 import VideoTranscript from "@/components/VideoTranscript";
 import ThemeSwitcher from "@/components/ThemeSwitcher";
 import StripeBar from "@/components/fruit-stripe/StripeBar";
@@ -13,6 +14,7 @@ import { useTheme } from "@/context/ThemeContext";
 const tabs = [
   { id: "library" as const, icon: "library_books", label: "Library" },
   { id: "viewer" as const, icon: "auto_stories", label: "Reader" },
+  { id: "chapterize" as const, icon: "auto_fix_high", label: "Chapterize" },
   { id: "chat" as const, icon: "forum", label: "Chat" },
   { id: "wiki" as const, icon: "menu_book", label: "Wiki" },
   { id: "video" as const, icon: "smart_display", label: "Video" },
@@ -75,6 +77,8 @@ const Index: React.FC = () => {
           <VideoTranscript />
         ) : activeTab === "voice" ? (
           <VoiceChat />
+        ) : activeTab === "chapterize" ? (
+          <AutoChapterize />
         ) : (
           <PdfViewer />
         )}
