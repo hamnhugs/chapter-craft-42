@@ -139,6 +139,7 @@ export function useChatSettings() {
     setAutoReadReplies: (v: boolean) => update({ autoReadReplies: v }),
     setWikiModel: (m: string) => update({ wikiModel: m }),
     setCustomSystemPrompt: (p: string) => update({ customSystemPrompt: p }),
+    setBurplexityApiToken: (t: string) => update({ burplexityApiToken: t.trim() }),
     addModel,
     removeModel,
     setNewModelInput: undefined, // handled in component
