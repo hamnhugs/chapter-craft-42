@@ -85,14 +85,12 @@ Rules:
 - Tag with relevant topics
 - Note relationships between entries`;
 
-    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const llm = await resolveWikiLlm(supabase, user.id);
+    const aiResponse = await fetch(llm.url, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
+      headers: llm.headers,
       body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
+        model: llm.model,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: `Extract knowledge entries from this conversation:\n\n${conversationText}` },
