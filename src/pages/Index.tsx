@@ -9,6 +9,7 @@ import AutoChapterize from "@/components/AutoChapterize";
 import VideoTranscript from "@/components/VideoTranscript";
 import ThemeSwitcher from "@/components/ThemeSwitcher";
 import StripeBar from "@/components/fruit-stripe/StripeBar";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { useTheme } from "@/context/ThemeContext";
 
 const tabs = [
