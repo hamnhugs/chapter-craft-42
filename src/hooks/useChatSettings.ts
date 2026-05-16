@@ -53,6 +53,7 @@ export function useChatSettings() {
             ? (data as any).tts_rate
             : DEFAULT_TTS_RATE,
           autoReadReplies: !!(data as any).auto_read_replies,
+          wikiModel: (data as any).wiki_model || "",
         });
       }
       setLoaded(true);
