@@ -8,7 +8,10 @@ export interface ToolDeps {
   addChapter: (bookId: string, chapter: Chapter) => Promise<void>;
   updateChapter: (bookId: string, chapterId: string, name: string) => Promise<void> | void;
   removeChapter: (bookId: string, chapterId: string) => Promise<void> | void;
+  burplexityApiToken?: string;
 }
+
+const BURPLEXITY_BOT_ASK_URL = "https://tmagmbmitnvcwubxcwoc.supabase.co/functions/v1/bot-ask";
 
 export const CHAT_TOOL_DEFINITIONS = [
   {
