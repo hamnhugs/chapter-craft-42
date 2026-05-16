@@ -7,14 +7,15 @@ import { toast } from "sonner";
 import { useApp } from "@/context/AppContext";
 import ReactMarkdown from "react-markdown";
 import {
-  KnowledgeEntry, MemoryGraphEdge, LintResult,
+  KnowledgeEntry, MemoryGraphEdge, LintResult, KnowledgeConflict,
   fetchKnowledgeEntries, fetchMemoryGraph,
   deleteKnowledgeEntry, updateKnowledgeEntry,
   runLint, ingestBook,
+  fetchConflicts, updateConflictStatus, reindexEmbeddings,
 } from "@/lib/knowledgeApi";
 import { Loader2 } from "lucide-react";
 
-type WikiView = "entries" | "detail" | "lint";
+type WikiView = "entries" | "detail" | "lint" | "conflicts";
 
 const WikiPanel: React.FC = () => {
   const { books, activeBookId } = useApp();
@@ -32,13 +33,20 @@ const WikiPanel: React.FC = () => {
   const [lintResult, setLintResult] = useState<LintResult | null>(null);
   const [lintLoading, setLintLoading] = useState(false);
   const [ingestLoading, setIngestLoading] = useState(false);
+  const [conflicts, setConflicts] = useState<KnowledgeConflict[]>([]);
+  const [reindexing, setReindexing] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [e, g] = await Promise.all([fetchKnowledgeEntries(), fetchMemoryGraph()]);
+      const [e, g, c] = await Promise.all([
+        fetchKnowledgeEntries(),
+        fetchMemoryGraph(),
+        fetchConflicts().catch(() => []),
+      ]);
       setEntries(e);
       setGraph(g);
+      setConflicts(c);
     } catch (err: any) {
       toast.error(err.message || "Failed to load knowledge base");
     } finally {
@@ -104,10 +112,33 @@ const WikiPanel: React.FC = () => {
 
   const handleIngest = async (bookId: string) => {
     setIngestLoading(true);
-    try { const result = await ingestBook(bookId); toast.success(`Extracted ${result.entries_created} entries`); loadData(); }
+    try {
+      const result = await ingestBook(bookId);
+      toast.success(`Extracted ${result.entries_created} entries${result.splits ? `, split ${result.splits}` : ""}${result.conflicts ? `, ${result.conflicts} conflict(s) flagged` : ""}`);
+      loadData();
+    }
     catch (err: any) { toast.error(err.message); }
     finally { setIngestLoading(false); }
   };
+
+  const handleReindex = async () => {
+    setReindexing(true);
+    try {
+      const res = await reindexEmbeddings(true);
+      toast.success(`Embedded ${res.updated}/${res.total} entries${res.failed ? ` (${res.failed} failed)` : ""}`);
+    } catch (err: any) { toast.error(err.message || "Reindex failed"); }
+    finally { setReindexing(false); }
+  };
+
+  const handleConflictStatus = async (id: string, status: KnowledgeConflict["status"]) => {
+    try {
+      await updateConflictStatus(id, status);
+      setConflicts((prev) => prev.map((c) => c.id === id ? { ...c, status } : c));
+    } catch (err: any) { toast.error(err.message); }
+  };
+
+  const openConflicts = () => setView("conflicts");
+  const openConflictsCount = conflicts.filter(c => c.status === "open").length;
 
   const openDetail = (entry: KnowledgeEntry) => { setSelectedEntry(entry); setView("detail"); setEditing(false); };
   const startEdit = () => {
@@ -133,12 +164,23 @@ const WikiPanel: React.FC = () => {
             <h2 className="font-headline font-bold text-5xl md:text-6xl text-primary tracking-tight">Knowledge Wiki</h2>
             <p className="text-on-surface-variant max-w-xl text-lg italic font-headline">"The sum of all acquired insights, meticulously categorized."</p>
           </div>
-          <div className="flex gap-3">
+          <div className="flex gap-3 flex-wrap">
             {view !== "entries" && (
               <button onClick={() => { setView("entries"); setSelectedEntry(null); }} className="flex items-center gap-2 px-4 py-3 bg-surface-container-high text-foreground rounded-xl text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all">
                 <span className="material-symbols-outlined text-sm">arrow_back</span> Back
               </button>
             )}
+            <button onClick={openConflicts} disabled={conflicts.length === 0} className="relative flex items-center gap-2 px-4 py-3 bg-surface-container-high text-foreground rounded-xl text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all disabled:opacity-50">
+              <span className="material-symbols-outlined text-sm">report</span>
+              Conflicts
+              {openConflictsCount > 0 && (
+                <span className="ml-1 inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold">{openConflictsCount}</span>
+              )}
+            </button>
+            <button onClick={handleReindex} disabled={reindexing} className="flex items-center gap-2 px-4 py-3 bg-surface-container-high text-foreground rounded-xl text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all disabled:opacity-50">
+              {reindexing ? <Loader2 className="w-4 h-4 animate-spin" /> : <span className="material-symbols-outlined text-sm">memory</span>}
+              Reindex
+            </button>
             <button onClick={handleLint} disabled={lintLoading || entries.length === 0} className="flex items-center gap-2 bg-primary-container text-on-primary-container px-6 py-3 rounded-xl font-bold active:scale-95 transition-transform shadow-lg disabled:opacity-50">
               {lintLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <span className="material-symbols-outlined text-xl">health_and_safety</span>}
               <span>Health Check</span>
@@ -360,6 +402,44 @@ const WikiPanel: React.FC = () => {
             {lintResult.issues.length === 0 && lintResult.suggestions.length === 0 && (
               <p className="text-center text-on-surface-variant py-8">Your knowledge base looks healthy! 🎉</p>
             )}
+          </div>
+        ) : view === "conflicts" ? (
+          <div className="max-w-3xl mx-auto space-y-4">
+            <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface-variant">
+              Conflicts ({conflicts.length}) — open: {openConflictsCount}
+            </h3>
+            {conflicts.length === 0 ? (
+              <p className="text-center text-on-surface-variant py-8">No conflicts detected. 🎉</p>
+            ) : conflicts.map((c) => {
+              const a = entries.find(e => e.id === c.entry_a);
+              const b = entries.find(e => e.id === c.entry_b);
+              return (
+                <div key={c.id} className={`p-5 rounded-xl border-l-4 ${c.status === "open" ? "bg-error-container/20 border-destructive" : "bg-surface-container-high border-outline-variant/30 opacity-70"}`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Badge variant="destructive" className="text-[10px]">{c.kind}</Badge>
+                    <Badge variant="secondary" className="text-[10px]">{c.status}</Badge>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 my-3">
+                    <button onClick={() => a && openDetail(a)} className="text-left p-3 bg-surface-container-high rounded-lg hover:bg-surface-container-highest">
+                      <p className="text-xs text-on-surface-variant mb-1">Entry A</p>
+                      <p className="font-bold text-sm">{a?.title || c.entry_a.slice(0,8)}</p>
+                    </button>
+                    <button onClick={() => b && openDetail(b)} className="text-left p-3 bg-surface-container-high rounded-lg hover:bg-surface-container-highest">
+                      <p className="text-xs text-on-surface-variant mb-1">Entry B</p>
+                      <p className="font-bold text-sm">{b?.title || c.entry_b.slice(0,8)}</p>
+                    </button>
+                  </div>
+                  {c.rationale && <p className="text-sm text-on-surface-variant mb-3 italic">"{c.rationale}"</p>}
+                  {c.status === "open" && (
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" onClick={() => handleConflictStatus(c.id, "acknowledged")}>Acknowledge</Button>
+                      <Button size="sm" variant="outline" onClick={() => handleConflictStatus(c.id, "resolved")}>Resolved</Button>
+                      <Button size="sm" variant="ghost" onClick={() => handleConflictStatus(c.id, "dismissed")}>Dismiss</Button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         ) : null}
       </main>

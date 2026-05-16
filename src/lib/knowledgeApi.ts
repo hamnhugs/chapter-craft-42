@@ -126,3 +126,81 @@ export async function ingestBook(bookId: string): Promise<any> {
   }
   return resp.json();
 }
+
+// ---- Phase 4: graph-aware retrieval ----
+export interface RetrievedNode {
+  id: string;
+  title: string;
+  content: string;
+  entry_type: string | null;
+  score: number;
+  hop: number;
+  via: string | null;
+  from_seed: string;
+}
+export interface RetrievedEdge {
+  source_entry_id: string;
+  target_entry_id: string;
+  relationship: string;
+  edge_class: string;
+}
+export interface RetrievalResult {
+  nodes: RetrievedNode[];
+  edges: RetrievedEdge[];
+  query_embedded?: boolean;
+}
+
+async function callEdge(fnName: string, body: unknown): Promise<any> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/${fnName}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ error: `Error ${resp.status}` }));
+    throw new Error(err.error || `Error ${resp.status}`);
+  }
+  return resp.json();
+}
+
+export async function retrieveKnowledge(
+  query: string,
+  opts: { depth?: number; match_count?: number; deep?: boolean } = {},
+): Promise<RetrievalResult> {
+  return callEdge("knowledge-retrieve", { query, ...opts });
+}
+
+export async function reindexEmbeddings(all_missing = true): Promise<{ updated: number; failed: number; total: number }> {
+  return callEdge("knowledge-embed", { all_missing });
+}
+
+// ---- Conflict management ----
+export interface KnowledgeConflict {
+  id: string;
+  user_id: string;
+  entry_a: string;
+  entry_b: string;
+  kind: string;
+  rationale: string;
+  status: "open" | "acknowledged" | "resolved" | "dismissed";
+  created_at: string;
+  updated_at: string;
+}
+
+export async function fetchConflicts(status?: KnowledgeConflict["status"]): Promise<KnowledgeConflict[]> {
+  let q = supabase.from("knowledge_conflicts").select("*").order("created_at", { ascending: false });
+  if (status) q = q.eq("status", status);
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data || []) as unknown as KnowledgeConflict[];
+}
+
+export async function updateConflictStatus(id: string, status: KnowledgeConflict["status"]): Promise<void> {
+  const { error } = await supabase.from("knowledge_conflicts").update({ status }).eq("id", id);
+  if (error) throw error;
+}
+

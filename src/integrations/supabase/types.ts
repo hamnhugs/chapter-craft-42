@@ -166,11 +166,50 @@ export type Database = {
         }
         Relationships: []
       }
+      knowledge_conflicts: {
+        Row: {
+          created_at: string
+          entry_a: string
+          entry_b: string
+          id: string
+          kind: string
+          rationale: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          entry_a: string
+          entry_b: string
+          id?: string
+          kind?: string
+          rationale?: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          entry_a?: string
+          entry_b?: string
+          id?: string
+          kind?: string
+          rationale?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       knowledge_entries: {
         Row: {
+          atomicity_warning: string | null
           confidence: number
           content: string
           created_at: string
+          embedding: string | null
+          embedding_model: string | null
           entry_type: string
           folder: string
           id: string
@@ -181,15 +220,19 @@ export type Database = {
           subject: string | null
           tags: string[]
           title: string
+          tsv: unknown
           updated_at: string
           user_id: string
           valid_from: string | null
           valid_to: string | null
         }
         Insert: {
+          atomicity_warning?: string | null
           confidence?: number
           content?: string
           created_at?: string
+          embedding?: string | null
+          embedding_model?: string | null
           entry_type?: string
           folder?: string
           id?: string
@@ -200,15 +243,19 @@ export type Database = {
           subject?: string | null
           tags?: string[]
           title: string
+          tsv?: unknown
           updated_at?: string
           user_id: string
           valid_from?: string | null
           valid_to?: string | null
         }
         Update: {
+          atomicity_warning?: string | null
           confidence?: number
           content?: string
           created_at?: string
+          embedding?: string | null
+          embedding_model?: string | null
           entry_type?: string
           folder?: string
           id?: string
@@ -219,6 +266,7 @@ export type Database = {
           subject?: string | null
           tags?: string[]
           title?: string
+          tsv?: unknown
           updated_at?: string
           user_id?: string
           valid_from?: string | null
@@ -237,27 +285,36 @@ export type Database = {
       memory_graph: {
         Row: {
           created_at: string
+          created_by: string
+          edge_class: string | null
           id: string
           relationship: string
           source_entry_id: string
           target_entry_id: string
           user_id: string
+          weight: number
         }
         Insert: {
           created_at?: string
+          created_by?: string
+          edge_class?: string | null
           id?: string
           relationship?: string
           source_entry_id: string
           target_entry_id: string
           user_id: string
+          weight?: number
         }
         Update: {
           created_at?: string
+          created_by?: string
+          edge_class?: string | null
           id?: string
           relationship?: string
           source_entry_id?: string
           target_entry_id?: string
           user_id?: string
+          weight?: number
         }
         Relationships: [
           {
@@ -504,7 +561,62 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      find_contradictions: {
+        Args: { entry_id: string }
+        Returns: {
+          other_content: string
+          other_id: string
+          other_title: string
+          relationship: string
+        }[]
+      }
+      get_neighbors: {
+        Args: { classes?: string[]; depth?: number; seed_ids: string[] }
+        Returns: {
+          content: string
+          entry_id: string
+          from_seed: string
+          hop: number
+          title: string
+          via_edge_class: string
+          via_relationship: string
+        }[]
+      }
+      hybrid_search_knowledge: {
+        Args: {
+          full_text_weight?: number
+          match_count?: number
+          query_embedding: string
+          query_text: string
+          rrf_k?: number
+          semantic_weight?: number
+        }
+        Returns: {
+          content: string
+          entry_type: string
+          id: string
+          score: number
+          source_book_id: string
+          tags: string[]
+          title: string
+        }[]
+      }
+      match_knowledge: {
+        Args: {
+          book_filter?: string
+          match_count?: number
+          query_embedding: string
+        }
+        Returns: {
+          content: string
+          entry_type: string
+          id: string
+          similarity: number
+          source_book_id: string
+          tags: string[]
+          title: string
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never

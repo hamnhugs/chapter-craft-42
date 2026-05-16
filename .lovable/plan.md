@@ -1,55 +1,104 @@
-# Mobile bottom navigation — redesign
 
-## Problems with the current bar
-- 7 equal items overflow on small screens (Voice is clipped at 414px and below).
-- Active item uses a wide rounded-pill that expands the cell, breaking equal spacing.
-- Labels are uppercase 10px with widest tracking — dated and hard to read.
-- No `env(safe-area-inset-bottom)` respect → on iPhones with a home indicator, items sit too low.
-- Extra "fruit-stripe" decorative bar on top of nav adds noise.
+# Infinite-Brain Upgrade: Plan
 
-## Modern bottom-nav references (2025)
-- **Material 3 Navigation Bar**: 3-5 destinations, ~80dp tall, pill indicator *behind the icon only* (not the whole item), label below in sentence case (12sp). Items are equal-width. Overflow → secondary surface.
-- **Apple HIG Tab Bar**: max 5 tabs; use a "More" tab when there are more destinations; respect safe-area inset; subtle press feedback only.
-- **Linear/Arc/Vercel patterns**: blurred floating bar, soft shadow, no harsh borders, single-color active state with a thin top indicator or pill behind icon.
+Implements all 5 audit findings. Patterns drawn from Supabase hybrid-search docs (RRF over pgvector + tsvector), Microsoft GraphRAG (vector → graph expansion), and the three-layer contradiction model (detect on ingest, store negative edge, surface in retrieval).
 
-## Plan
+---
 
-### 1. Cap visible items at 5, move the rest to a "More" sheet
-Primary tabs (most-used): **Library, Reader, Chapterize, Chat, More**.
-"More" opens a bottom Sheet (shadcn `Sheet` from `side="bottom"`) containing **Wiki, Video, Voice** with the same icon+label treatment but larger tap targets. Selecting one closes the sheet and activates the tab.
+## Phase 1 — Database foundations (one migration)
 
-The 5-item cap is enforced only on the mobile bar; desktop nav stays unchanged (all 7 tabs).
+**Atomicity gate**
+- Add validation trigger on `knowledge_entries`: reject `content` > 1500 chars or with more than 1 top-level `##` heading (one-claim-per-node rule). Soft warning column `atomicity_warning text` for borderline cases.
 
-### 2. Replace the item visual
-- Equal-width flex children (no scale on active — kills cell width consistency).
-- Pill indicator (rounded-full, `bg-accent/15`, h-8 w-14) sits **behind the icon only**, centered.
-- Active icon: `text-accent`, FILL=1 (already supported via material-symbols variation).
-- Inactive icon: `text-secondary`, no fill.
-- Label: sentence case ("Library", "Reader"…), `text-[11px] font-medium`, no uppercase, no tracking-widest, `text-accent` when active, `text-muted-foreground` otherwise.
-- Vertical layout: icon row (h-8) + label row, ~4px gap.
-- Tap feedback: `active:scale-95` on the icon only, 120ms ease.
+**Vector layer**
+- Enable `pgvector` extension.
+- Add `knowledge_entries.embedding vector(1536)` + `tsv tsvector` generated column (title + content).
+- HNSW index on `embedding` (cosine), GIN index on `tsv`.
 
-### 3. Bar container
-- Height auto (~64px) plus `pb-[env(safe-area-inset-bottom)]`.
-- Remove `rounded-t-2xl` heavy shadow; use a single soft top border `border-t border-border/60` and `bg-background/85 backdrop-blur-xl` for the floating-glass feel.
-- Drop the extra `<StripeBar>` above the nav on mobile (keeps the cleaner look). Theme accent already conveys the brand.
-- Keep `z-50` so it sits over content; remove the now-unneeded `bottom-20` stripe.
+**Edge taxonomy & integrity**
+- Add CHECK constraint on `memory_graph.relationship` (enum-style: `contradicts, refutes, supports, extends, derived_from, prerequisite, relates_to, mentions`).
+- Add `memory_graph.edge_class text` derived via trigger: `structural` (contradicts/refutes/supports/extends/derived_from/prerequisite) vs `associative` (relates_to/mentions).
+- Add `memory_graph.weight float default 1.0` and `created_by text` ('ingest'|'lint'|'user').
+- Unique index `(source_entry_id, target_entry_id, relationship)` to prevent dupes.
 
-### 4. "More" sheet
-- shadcn `Sheet` opens from the bottom.
-- Grid of 3 large tiles (icon top, label below), each 96px tall, rounded-2xl, `bg-card`, active tile gets accent ring.
-- Header: "More" with a small grabber bar.
+**RPC functions (security definer, user-scoped via auth.uid())**
+- `match_knowledge(query_embedding, match_count, book_filter)` — cosine kNN.
+- `hybrid_search_knowledge(query_text, query_embedding, match_count)` — RRF fusion of tsvector + vector (Supabase pattern).
+- `get_neighbors(entry_id, depth int, classes text[])` — recursive CTE, bidirectional traversal, returns rows with `hop`, `path`, `relationship`.
+- `find_contradictions(entry_id)` — returns entries connected via `contradicts`/`refutes` in either direction.
 
-### 5. Files touched
-- `src/pages/Index.tsx` — split tabs into `primaryTabs` (4) + `moreTabs` (3), rewrite the `<nav data-mobile-nav>` block, add a `MoreSheet` subcomponent or inline it.
-- No new dependencies; `Sheet` already exists at `src/components/ui/sheet.tsx`.
-- No changes to `AppContext`, routes, or business logic.
+**Conflict alerts table**
+- New `knowledge_conflicts (id, user_id, entry_a, entry_b, kind, rationale, status, created_at)`; RLS by `user_id`; status enum `open|acknowledged|resolved|dismissed`.
 
-### 6. Verification
-- Resize browser to 360, 390, 414, 480px — confirm no clipping, equal-width items, label visible.
-- Check active states, More sheet open/close, safe-area padding on a tall viewport.
+## Phase 2 — Embedding pipeline
+
+- New edge function `knowledge-embed`:
+  - Input: `{ entry_ids?: string[], all_missing?: bool }`.
+  - Calls Lovable AI Gateway embeddings endpoint (`google/text-embedding-004` or OpenAI `text-embedding-3-small` — use whichever the gateway exposes; fallback: store text and skip if unavailable).
+  - Batches up to 50, writes `embedding`.
+- Trigger embed automatically inside `knowledge-extract` and `knowledge-ingest` right after insert/update.
+- Backfill: one-off call `{all_missing: true}` from the WikiPanel toolbar ("Reindex" button).
+
+## Phase 3 — Ingest pipeline upgrades
+
+`knowledge-extract` and `knowledge-ingest` both get:
+
+1. **Atomicity split step** — before insert, ask the LLM (tool call `split_if_compound`) to break any candidate entry > 1500 chars or covering >1 distinct claim into atomic children. Reject anything that still violates after one split pass.
+2. **Conflict probe** — for each candidate entry:
+   - Embed candidate.
+   - `match_knowledge` top-5 nearest existing entries (full content, not 200-char preview).
+   - Tool call `assess_conflicts` returns `[{target_id, kind: contradicts|refutes|supersedes|consistent, rationale}]`.
+   - Insert non-`consistent` rows into `memory_graph` with proper relationship + into `knowledge_conflicts` as `open`.
+3. **Edge class auto-tag** — relationship value drives `edge_class` via trigger; no client logic needed.
+
+## Phase 4 — Graph-aware retrieval (the big win)
+
+Rewrite `src/lib/buildChatSystemPrompt.ts`:
+
+1. Embed the user's last message (call new `knowledge-embed` with `text` mode, returns vector to client; or do retrieval server-side via a new `knowledge-retrieve` function — preferred, keeps embedding key server-side).
+2. New edge function `knowledge-retrieve`:
+   - `hybrid_search_knowledge(query, embedding, 12)` → seed nodes.
+   - `get_neighbors(seed_ids, depth=2, classes=['structural'])` → expansion set, prefer `contradicts`/`refutes`/`supports`.
+   - Dedupe, rank by `seed_score * 0.7 + graph_boost * 0.3` (mirrors `kg_hybrid_search` α/β pattern).
+   - Returns full-content entries + edge labels.
+3. Prompt builder injects results as:
+   ```
+   ## Retrieved Knowledge (k nodes, m structural edges)
+   ### Node: <title>
+   <full content>
+   **Edges:** contradicts → "Other title"; supports → "X"
+   ```
+4. Deep Research mode bumps `depth=3` and `match_count=20`.
+
+## Phase 5 — UI surfacing
+
+`WikiPanel.tsx`:
+- New "Conflicts" tab (badge with open count) listing `knowledge_conflicts` with both entries side-by-side, accept/dismiss/resolve actions.
+- Entry detail view shows incoming + outgoing edges grouped by class; `contradicts` edges rendered with destructive variant.
+- Toolbar: "Reindex embeddings" button → calls `knowledge-embed { all_missing: true }` with progress toast.
+- Lint tab: contradiction issues now link directly to conflict records.
+
+## Phase 6 — Verification
+
+- Migration linter clean.
+- Manual probe: insert one entry that contradicts an existing one → assert conflict row appears + `contradicts` edge created + chat retrieves both when asked "what refutes X".
+- Backfill embeddings; confirm `match_knowledge` returns sensible neighbors.
+- Confirm RLS: `knowledge_conflicts`, RPCs all enforce `auth.uid()`.
+
+---
+
+## Technical reference (for the implementer)
+
+- Hybrid search SQL: Supabase `hybrid_search` RRF template.
+- Graph traversal: recursive CTE on `memory_graph` UNIONing source↔target for symmetric edges.
+- Embeddings: Lovable AI Gateway `text-embedding-3-small` (1536 dims) — confirm availability at implementation; if absent, fall back to `google/text-embedding-004` (768 dims, adjust column).
+- Trigger `validate_knowledge_entry_atomicity` mirrors style of existing `validate_knowledge_entry_enums`.
+- Edge class auto-tag via `BEFORE INSERT OR UPDATE` trigger keyed on the relationship enum.
 
 ## Out of scope
-- Desktop nav (unchanged).
-- Theme switcher / Sign out in the header (unchanged).
-- Reordering or renaming tabs beyond the primary/secondary split above — happy to adjust which 4 are primary if you want a different set (e.g. Library / Reader / Chat / Wiki).
+
+- Vector quantization / FTS language tuning beyond English.
+- Real-time websocket alerts (poll on WikiPanel mount for now).
+- Multi-tenant beyond per-user RLS.
+
+Ready to implement on approval.

@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { atomicitySplit, embedAndStore, probeAndLinkConflicts, type Candidate } from "../_shared/atomicity.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -170,25 +171,39 @@ Rules:
     const extracted = JSON.parse(toolCall.function.arguments);
     const savedEntries: any[] = [];
 
-    for (const entry of extracted.entries || []) {
-      if (entry.action === "NO-OP") continue;
+    // Partition into UPDATE vs ADD candidates
+    const updateEntries = (extracted.entries || []).filter((e: any) => e.action === "UPDATE" && e.existing_title);
+    const addEntriesRaw: Candidate[] = (extracted.entries || [])
+      .filter((e: any) => e.action === "ADD" || (!e.action && e.title))
+      .map((e: any) => ({
+        title: e.title,
+        content: e.content,
+        entry_type: e.entry_type || "concept",
+        tags: e.tags || [],
+        confidence: typeof e.confidence === "number" ? e.confidence : 0.8,
+      }));
 
-      if (entry.action === "UPDATE" && entry.existing_title) {
-        const existing = (existingEntries || []).find(
-          e => e.title.toLowerCase() === entry.existing_title.toLowerCase()
-        );
-        if (existing) {
-          await supabase.from("knowledge_entries").update({
-            content: entry.content,
-            tags: entry.tags,
-            confidence: Math.min(1, Math.max(0, entry.confidence)),
-          }).eq("id", existing.id).eq("user_id", user.id);
-          savedEntries.push({ ...entry, id: existing.id, action: "UPDATED" });
-          continue;
-        }
+    // Atomicity split for new entries
+    const { candidates: atomicAdds, splits } = await atomicitySplit(addEntriesRaw);
+
+    // Apply UPDATEs
+    for (const entry of updateEntries) {
+      const existing = (existingEntries || []).find(
+        (e: any) => e.title.toLowerCase() === entry.existing_title.toLowerCase()
+      );
+      if (existing) {
+        await supabase.from("knowledge_entries").update({
+          content: entry.content,
+          tags: entry.tags,
+          confidence: Math.min(1, Math.max(0, entry.confidence)),
+        }).eq("id", existing.id).eq("user_id", user.id);
+        const vec = await embedAndStore(supabase, existing.id, user.id, entry.title, entry.content);
+        savedEntries.push({ ...entry, id: existing.id, action: "UPDATED", embedding: vec });
       }
+    }
 
-      // ADD
+    // Apply ADDs (atomic)
+    for (const entry of atomicAdds) {
       const { data: inserted, error: insertError } = await supabase
         .from("knowledge_entries")
         .insert({
@@ -203,16 +218,28 @@ Rules:
         .select("id")
         .single();
 
-      if (!insertError && inserted) {
-        savedEntries.push({ ...entry, id: inserted.id, action: "ADDED" });
-      }
+      if (insertError) { console.error("insert failed:", insertError.message); continue; }
+      if (!inserted) continue;
+      const vec = await embedAndStore(supabase, inserted.id, user.id, entry.title, entry.content);
+      savedEntries.push({ ...entry, id: inserted.id, action: "ADDED", embedding: vec });
     }
 
-    // Create relationships
+    // Conflict probe for all newly added/updated entries
+    const conflictCount = await probeAndLinkConflicts(
+      supabase,
+      user.id,
+      savedEntries.filter((e) => e.id).map((e) => ({
+        id: e.id, title: e.title, content: e.content, embedding: e.embedding,
+      })),
+    );
+
+    // Create LLM-asserted relationships (enum-validated)
+    const VALID_RELS = new Set(["contradicts","refutes","supports","extends","derived_from","prerequisite","relates_to","mentions"]);
     const allEntries = [...(existingEntries || []), ...savedEntries.filter(e => e.id)];
     for (const entry of savedEntries) {
       if (!entry.relationships || !entry.id) continue;
       for (const rel of entry.relationships) {
+        if (!VALID_RELS.has(rel.relationship)) continue;
         const target = allEntries.find(
           e => e.title.toLowerCase() === rel.target_title.toLowerCase()
         );
@@ -222,6 +249,7 @@ Rules:
             source_entry_id: entry.id,
             target_entry_id: target.id,
             relationship: rel.relationship,
+            created_by: "ingest",
           }, { onConflict: "source_entry_id,target_entry_id,relationship" });
         }
       }
@@ -261,9 +289,11 @@ Rules:
     }
 
     return new Response(JSON.stringify({
-      entries: savedEntries,
+      entries: savedEntries.map((e) => ({ ...e, embedding: undefined })),
       summary: extracted.conversation_summary,
       key_facts: newKeyFacts,
+      splits,
+      conflicts: conflictCount,
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

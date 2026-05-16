@@ -172,6 +172,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         selectedBook,
         deepResearch,
         voiceMode: opts?.voiceMode,
+        latestUserQuery: trimmed,
       });
 
       const assistantEvents: ToolEvent[] = [];
