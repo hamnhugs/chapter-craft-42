@@ -35,14 +35,7 @@ const MAX_TOOL_ITERATIONS = 5;
 
 export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
-  const { books, activeBookId, setActiveBook, addChapter, updateChapter, removeChapter, setActiveTab } = useApp();
-
-  const setActiveBookViaTool = useCallback(
-    (id: string) => {
-      setActiveBook(id);
-    },
-    [setActiveBook]
-  );
+  const { books, activeBookId, addChapter, updateChapter, removeChapter, setActiveBookSilent } = useApp();
 
   const { apiKey, selectedModel, deepResearchModel } = useChatSettings();
 
