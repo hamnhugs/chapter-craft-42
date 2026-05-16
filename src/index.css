@@ -344,3 +344,225 @@
 [data-theme="fruit-stripe"] [data-book-card]:hover::after {
   transform: translateY(0) skewX(-12deg);
 }
+
+/* =====================================================================
+   PRISMATIC LAB (Dexter's Lab) — scoped overrides
+   Deep violet glass-brutalism with holo-gradient accents.
+   ===================================================================== */
+:root[data-theme="dexters-lab"] {
+  --dl-ink: #150629;
+  --dl-violet: #bd00ff;
+  --dl-cyan: #00eefc;
+  --dl-magenta: #e7006e;
+  --dl-lemon: #f8d878;
+  --dl-surface: #27183b;
+  --dl-surface-high: #322346;
+  --dl-on: #eddcff;
+  --dl-on-variant: #d4c0d7;
+  --dl-holo: linear-gradient(135deg, #bd00ff 0%, #00eefc 50%, #f8d878 100%);
+  --dl-hazard: repeating-linear-gradient(45deg, #bd00ff 0 10px, #150629 10px 20px);
+}
+
+/* Selection — violet bg */
+[data-theme="dexters-lab"] ::selection {
+  background: var(--dl-violet);
+  color: #fff;
+}
+
+/* Focus ring — cyan 2px */
+[data-theme="dexters-lab"] *:focus-visible {
+  outline: 2px solid var(--dl-cyan) !important;
+  outline-offset: 2px;
+}
+
+/* Scrollbar — violet thumb on ink track */
+[data-theme="dexters-lab"] ::-webkit-scrollbar { width: 10px; height: 10px; }
+[data-theme="dexters-lab"] ::-webkit-scrollbar-track { background: var(--dl-ink); }
+[data-theme="dexters-lab"] ::-webkit-scrollbar-thumb {
+  background: var(--dl-violet);
+  border: 2px solid var(--dl-ink);
+  border-radius: 4px;
+}
+[data-theme="dexters-lab"] ::-webkit-scrollbar-thumb:hover { background: var(--dl-magenta); }
+
+/* Glass-Brutalism cards — 3px ink border + offset block shadow */
+[data-theme="dexters-lab"] .bg-card,
+[data-theme="dexters-lab"] [data-sticker],
+[data-theme="dexters-lab"] .surface-container,
+[data-theme="dexters-lab"] .bg-surface-container,
+[data-theme="dexters-lab"] .bg-surface-container-low,
+[data-theme="dexters-lab"] .bg-surface-container-high {
+  border-radius: 0.25rem;
+  border: 3px solid var(--dl-ink);
+  box-shadow: 4px 4px 0 0 var(--dl-ink);
+  background-color: var(--dl-surface);
+}
+
+/* Dialogs / popovers / menus — heavier block shadow + blur */
+[data-theme="dexters-lab"] [role="dialog"],
+[data-theme="dexters-lab"] [role="menu"],
+[data-theme="dexters-lab"] [data-radix-popper-content-wrapper] > * {
+  border-radius: 0.25rem !important;
+  border: 3px solid var(--dl-ink) !important;
+  box-shadow: 6px 6px 0 0 var(--dl-ink), 0 0 24px rgba(0,238,252,0.15) !important;
+  background: var(--dl-surface) !important;
+  backdrop-filter: blur(12px);
+}
+
+/* Buttons — base treatment */
+[data-theme="dexters-lab"] button:not([data-no-sticker]):not([role="tab"]):not([role="menuitem"]) {
+  border-radius: 0.25rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 700;
+  transition: transform 80ms ease, box-shadow 120ms ease;
+}
+
+/* Holo-gradient primary / accent / destructive */
+[data-theme="dexters-lab"] button.bg-primary,
+[data-theme="dexters-lab"] button.bg-accent,
+[data-theme="dexters-lab"] button.bg-destructive,
+[data-theme="dexters-lab"] button[data-sticker-btn] {
+  background-image: var(--dl-holo) !important;
+  background-size: 200% 200%;
+  color: #fff !important;
+  border: 3px solid var(--dl-ink) !important;
+  box-shadow: 4px 4px 0 0 var(--dl-ink);
+}
+[data-theme="dexters-lab"] button.bg-primary:hover,
+[data-theme="dexters-lab"] button.bg-accent:hover,
+[data-theme="dexters-lab"] button.bg-destructive:hover,
+[data-theme="dexters-lab"] button[data-sticker-btn]:hover {
+  box-shadow: 4px 4px 0 0 var(--dl-ink), 0 0 18px rgba(0,238,252,0.55);
+  background-position: 100% 100%;
+}
+[data-theme="dexters-lab"] button.bg-primary:active,
+[data-theme="dexters-lab"] button.bg-accent:active,
+[data-theme="dexters-lab"] button.bg-destructive:active,
+[data-theme="dexters-lab"] button[data-sticker-btn]:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0 0 0 0 var(--dl-ink);
+}
+
+/* Inputs — violet bg + cyan bottom border, expands on focus */
+[data-theme="dexters-lab"] input,
+[data-theme="dexters-lab"] textarea,
+[data-theme="dexters-lab"] select {
+  background: var(--dl-surface) !important;
+  color: var(--dl-on) !important;
+  border: 1px solid transparent !important;
+  border-bottom: 1px solid var(--dl-cyan) !important;
+  border-radius: 0.25rem;
+  transition: border-color 120ms ease;
+}
+[data-theme="dexters-lab"] input:focus,
+[data-theme="dexters-lab"] textarea:focus,
+[data-theme="dexters-lab"] select:focus {
+  border: 3px solid var(--dl-cyan) !important;
+  outline: none !important;
+}
+
+/* Top app header — ink bg + 3px violet-ink bottom border */
+[data-theme="dexters-lab"] [data-app-header] {
+  background: var(--dl-ink) !important;
+  border-bottom: 3px solid var(--dl-ink);
+  box-shadow: 0 4px 0 0 var(--dl-ink), 0 8px 24px rgba(0,0,0,0.5) !important;
+  backdrop-filter: none;
+}
+
+/* Active tab — replace amber underline with 4px holo bar */
+[data-theme="dexters-lab"] [data-app-header] nav button.text-accent,
+[data-theme="dexters-lab"] [data-app-header] nav button[aria-current="page"] {
+  border-bottom-color: transparent !important;
+  position: relative;
+  color: var(--dl-on) !important;
+}
+[data-theme="dexters-lab"] [data-app-header] nav button.text-accent::after,
+[data-theme="dexters-lab"] [data-app-header] nav button[aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: -6px;
+  height: 4px;
+  background: var(--dl-holo);
+  box-shadow: 0 0 12px rgba(0,238,252,0.5);
+}
+[data-theme="dexters-lab"] [data-app-header] nav button.text-secondary {
+  color: var(--dl-on-variant) !important;
+}
+
+/* Mobile bottom nav */
+[data-theme="dexters-lab"] [data-mobile-nav] {
+  background: var(--dl-ink) !important;
+  border-top: 3px solid var(--dl-ink);
+}
+[data-theme="dexters-lab"] [data-mobile-nav] button { color: var(--dl-on-variant); }
+[data-theme="dexters-lab"] [data-mobile-nav] button.bg-accent {
+  background: var(--dl-magenta) !important;
+  color: #fff !important;
+  border: 3px solid var(--dl-ink);
+  box-shadow: 3px 3px 0 0 var(--dl-ink);
+  border-radius: 0.25rem;
+}
+
+/* Book card placeholders — hazard stripes */
+[data-theme="dexters-lab"] [data-book-card] [data-book-cover-placeholder] {
+  background: var(--dl-hazard) !important;
+  border-bottom: 3px solid var(--dl-ink);
+}
+[data-theme="dexters-lab"] [data-book-card] [data-book-cover-placeholder] .material-symbols-outlined {
+  color: var(--dl-cyan) !important;
+  text-shadow: 0 0 8px rgba(0,238,252,0.7);
+}
+[data-theme="dexters-lab"] [data-book-card] [data-book-cover-overlay] {
+  background: linear-gradient(180deg, transparent 0%, rgba(21,6,41,0.85) 100%) !important;
+}
+
+/* Chat bubbles — cyan AI edge, magenta user edge */
+[data-theme="dexters-lab"] .message-bubble-ai {
+  border-left: 3px solid var(--dl-cyan);
+}
+[data-theme="dexters-lab"] .message-bubble-user {
+  border-right: 3px solid var(--dl-magenta);
+}
+
+/* Progress bars — holo shimmer */
+[data-theme="dexters-lab"] [role="progressbar"] > * {
+  background-image: var(--dl-holo) !important;
+  background-size: 200% 100%;
+  animation: dl-progress 2s linear infinite;
+}
+@keyframes dl-progress {
+  from { background-position: 0% 0; }
+  to { background-position: 200% 0; }
+}
+
+/* Wordmark — neon holographic headline */
+[data-theme="dexters-lab"] .font-display,
+[data-theme="dexters-lab"] [data-wordmark] {
+  font-family: var(--font-display) !important;
+  text-transform: uppercase;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+  background: var(--dl-holo);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 6px rgba(0,238,252,0.45));
+}
+
+/* Book card hover — holo reveal */
+[data-theme="dexters-lab"] [data-book-card] {
+  position: relative;
+  overflow: hidden;
+  border-radius: 0.25rem;
+}
+[data-theme="dexters-lab"] [data-book-card]::after {
+  content: "";
+  position: absolute; left: 0; right: 0; bottom: 0; height: 4px;
+  background: var(--dl-holo);
+  transform: translateY(4px);
+  transition: transform 180ms ease;
+}
+[data-theme="dexters-lab"] [data-book-card]:hover::after {
+  transform: translateY(0);
+}
