@@ -15,7 +15,7 @@ export default {
     extend: {
       fontFamily: {
         headline: ['var(--font-headline)', '"Newsreader"', 'Georgia', 'serif'],
-        display: ['var(--font-headline)', '"Newsreader"', 'Georgia', 'serif'],
+        display: ['var(--font-display)', 'var(--font-headline)', '"Newsreader"', 'Georgia', 'serif'],
         body: ['var(--font-body)', 'Inter', 'system-ui', 'sans-serif'],
         label: ['var(--font-body)', 'Inter', 'system-ui', 'sans-serif'],
       },

@@ -34,6 +34,7 @@ function applyTheme(id: ThemeId) {
   if (theme.fonts) {
     root.style.setProperty("--font-headline", theme.fonts.headline);
     root.style.setProperty("--font-body", theme.fonts.body);
+    root.style.setProperty("--font-display", theme.fonts.display ?? theme.fonts.headline);
     if (theme.fonts.googleFontsHref) loadGoogleFont(theme.fonts.googleFontsHref);
   }
 }
