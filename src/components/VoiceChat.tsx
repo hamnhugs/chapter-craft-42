@@ -106,6 +106,21 @@ const VoiceChat: React.FC = () => {
   const lastSentAtRef = useRef<number>(0);
 
   const normalizeTranscript = (value: string) => value.replace(/\s+/g, " ").trim();
+  const mergeTranscriptPieces = (pieces: string[]) => {
+    const merged: string[] = [];
+    pieces.map(normalizeTranscript).filter(Boolean).forEach((piece) => {
+      const next = piece.split(" ");
+      let overlap = Math.min(merged.length, next.length);
+      while (overlap > 0) {
+        const tail = merged.slice(-overlap).join(" ").toLowerCase();
+        const head = next.slice(0, overlap).join(" ").toLowerCase();
+        if (tail === head) break;
+        overlap -= 1;
+      }
+      merged.push(...next.slice(overlap));
+    });
+    return merged.join(" ").trim();
+  };
   const resetTranscriptBuffers = () => {
     finalTranscriptRef.current = "";
     previousFinalLengthRef.current = 0;
@@ -276,25 +291,25 @@ const VoiceChat: React.FC = () => {
     };
 
     recognition.onresult = (event: any) => {
-      let finalText = "";
-      let interimText = "";
+      const finalPieces: string[] = [];
+      const interimPieces: string[] = [];
       for (let i = 0; i < event.results.length; i++) {
         const res = event.results[i];
         const t = String(res[0]?.transcript || "").trim();
         if (!t) continue;
         if (res.isFinal) {
-          finalText += `${t} `;
+          finalPieces.push(t);
         } else {
-          interimText += `${t} `;
+          interimPieces.push(t);
         }
       }
-      const stable = normalizeTranscript(finalText);
-      const interim = normalizeTranscript(interimText);
-      const sawNewFinal = stable.length > previousFinalLengthRef.current;
+      const stable = mergeTranscriptPieces(finalPieces);
+      const interim = mergeTranscriptPieces(interimPieces);
+      const sawNewFinal = Boolean(stable) && stable !== finalTranscriptRef.current;
 
       finalTranscriptRef.current = stable;
       previousFinalLengthRef.current = stable.length;
-      setInterimTranscript(normalizeTranscript(`${stable} ${interim}`));
+      setInterimTranscript(mergeTranscriptPieces([stable, interim]));
 
       if (sawNewFinal) {
         if (sendTimerRef.current) window.clearTimeout(sendTimerRef.current);
