@@ -295,9 +295,13 @@ const VoiceChat: React.FC = () => {
 
   const selectedBook = books.find((b) => b.id === activeBookId);
 
-  const speak = useCallback((text: string) => {
-    // Hard-mute the recognizer before any TTS so the mic can't capture
-    // the assistant's own voice (barge-in protection in hands-free mode).
+  // ----- Streaming TTS queue (lets the first sentence play before the model finishes) -----
+  const ttsQueueRef = useRef<string[]>([]);
+  const ttsPlayingRef = useRef(false);
+  const streamDoneRef = useRef(true);
+  const ttsCancelledRef = useRef(false);
+
+  const muteMicForTts = useCallback(() => {
     isSpeakingRef.current = true;
     if (sendTimerRef.current) { window.clearTimeout(sendTimerRef.current); sendTimerRef.current = null; }
     finalTranscriptRef.current = "";
@@ -306,68 +310,108 @@ const VoiceChat: React.FC = () => {
     stopCurrentRecognitionQuietly();
     setIsListening(false);
     isListeningRef.current = false;
+  }, []);
 
-    if (!ttsEnabled) {
-      isSpeakingRef.current = false;
-      if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), 400);
-      }
+  const finishTtsAndResumeMic = useCallback(() => {
+    setIsSpeaking(false);
+    isSpeakingRef.current = false;
+    if (handsFreeRef.current && !stoppedByUserRef.current) {
+      window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const playNextChunk = useCallback(() => {
+    if (ttsPlayingRef.current) return;
+    if (ttsCancelledRef.current) { ttsQueueRef.current = []; return; }
+    const next = ttsQueueRef.current.shift();
+    if (!next) {
+      if (streamDoneRef.current) finishTtsAndResumeMic();
       return;
     }
+    ttsPlayingRef.current = true;
+    setIsSpeaking(true);
+    isSpeakingRef.current = true;
 
-    const onEnd = () => {
-      setIsSpeaking(false);
-      isSpeakingRef.current = false;
-      if (handsFreeRef.current && !stoppedByUserRef.current) {
-        // Slightly longer grace to absorb speaker tail before re-arming mic.
-        window.setTimeout(() => safeStartListening(), 700);
-      }
+    const done = () => {
+      ttsPlayingRef.current = false;
+      playNextChunk();
     };
 
     if (inworldEnabled && inworldApiKey && inworldVoiceId) {
-      synthRef.current.cancel();
-      setIsSpeaking(true);
-      synthesizeSpeech(text, inworldApiKey, inworldVoiceId)
+      synthesizeSpeech(next, inworldApiKey, inworldVoiceId)
         .then((buffer) => {
+          if (ttsCancelledRef.current) { done(); return; }
           const blob = new Blob([buffer], { type: "audio/mpeg" });
           const url = URL.createObjectURL(blob);
           if (inworldAudioRef.current) {
-            inworldAudioRef.current.pause();
+            try { inworldAudioRef.current.pause(); } catch {}
             inworldAudioRef.current.src = "";
           }
           const audio = new Audio(url);
           inworldAudioRef.current = audio;
-          audio.onplay = () => { isSpeakingRef.current = true; setIsSpeaking(true); };
-          audio.onended = () => { URL.revokeObjectURL(url); onEnd(); };
-          audio.onerror = () => { URL.revokeObjectURL(url); onEnd(); };
-          audio.play().catch(() => onEnd());
+          audio.onended = () => { URL.revokeObjectURL(url); done(); };
+          audio.onerror = () => { URL.revokeObjectURL(url); done(); };
+          audio.play().catch(() => done());
         })
         .catch((err) => {
           console.error("Inworld TTS error:", err);
-          toast.error("Inworld voice failed — using browser TTS");
-          // Fall back to browser TTS
-          const clean = text.replace(/[#*_`~[\]()>|]/g, "").replace(/\n+/g, ". ");
-          const utterance = new SpeechSynthesisUtterance(clean);
-          utterance.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
-          utterance.onend = onEnd;
-          utterance.onerror = onEnd;
-          synthRef.current.speak(utterance);
+          // Fallback to browser TTS for this chunk only
+          const u = new SpeechSynthesisUtterance(next);
+          u.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
+          u.onend = done; u.onerror = done;
+          synthRef.current.speak(u);
         });
       return;
     }
 
-    synthRef.current.cancel();
-    const clean = text.replace(/[#*_`~[\]()>|]/g, "").replace(/\n+/g, ". ");
-    const utterance = new SpeechSynthesisUtterance(clean);
-    utterance.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = onEnd;
-    utterance.onerror = onEnd;
-    synthRef.current.speak(utterance);
+    const u = new SpeechSynthesisUtterance(next);
+    u.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
+    u.onend = done; u.onerror = done;
+    synthRef.current.speak(u);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ttsEnabled, ttsRate, inworldEnabled, inworldApiKey, inworldVoiceId]);
+  }, [inworldEnabled, inworldApiKey, inworldVoiceId, ttsRate, finishTtsAndResumeMic]);
+
+  const enqueueSpeak = useCallback((chunk: string) => {
+    if (!ttsEnabled) return;
+    const t = stripMarkdownForTts(chunk);
+    if (!t) return;
+    ttsCancelledRef.current = false;
+    streamDoneRef.current = false;
+    muteMicForTts();
+    ttsQueueRef.current.push(t);
+    playNextChunk();
+  }, [ttsEnabled, muteMicForTts, playNextChunk]);
+
+  const markTtsStreamDone = useCallback(() => {
+    streamDoneRef.current = true;
+    // If nothing is queued or playing, resume mic now.
+    if (!ttsPlayingRef.current && ttsQueueRef.current.length === 0) {
+      if (isSpeakingRef.current) finishTtsAndResumeMic();
+      else if (handsFreeRef.current && !stoppedByUserRef.current) {
+        window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finishTtsAndResumeMic]);
+
+  // Single-shot speak (used outside of streaming, e.g. replay or short replies)
+  const speak = useCallback((text: string) => {
+    if (!ttsEnabled) {
+      if (handsFreeRef.current && !stoppedByUserRef.current) {
+        window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
+      }
+      return;
+    }
+    enqueueSpeak(text);
+    markTtsStreamDone();
+  }, [ttsEnabled, enqueueSpeak, markTtsStreamDone]);
 
   const stopSpeaking = () => {
+    ttsCancelledRef.current = true;
+    ttsQueueRef.current = [];
+    ttsPlayingRef.current = false;
+    streamDoneRef.current = true;
     synthRef.current.cancel();
     if (inworldAudioRef.current) {
       inworldAudioRef.current.pause();
@@ -377,6 +421,7 @@ const VoiceChat: React.FC = () => {
     isSpeakingRef.current = false;
     setIsSpeaking(false);
   };
+
 
   const runBackgroundSearch = useCallback(async (query: string) => {
     if (!burplexityApiToken) return;
