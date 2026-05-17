@@ -104,7 +104,8 @@ export async function buildChatSystemPrompt({
       selectedBook.chapters.forEach((ch) => {
         parts.push(`#### ${ch.name} (pages ${ch.startPage}–${ch.endPage})`);
         if (ch.textContent) {
-          const text = ch.textContent.length > 12000 ? ch.textContent.slice(0, 12000) + "\n\n[...truncated]" : ch.textContent;
+          const chapterCap = voiceMode ? 3000 : 12000;
+          const text = ch.textContent.length > chapterCap ? ch.textContent.slice(0, chapterCap) + "\n\n[...truncated]" : ch.textContent;
           parts.push(text);
         } else {
           parts.push("(No text content extracted for this chapter)");
