@@ -437,6 +437,7 @@ const VoiceChat: React.FC = () => {
       inworldAudioRef.current = null;
     }
     isSpeakingRef.current = false;
+    turnActiveRef.current = false;
     setIsSpeaking(false);
   };
 
