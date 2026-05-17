@@ -564,8 +564,7 @@ const VoiceChat: React.FC = () => {
         if (sawNewFinal || hasInterim) {
           if (sendTimerRef.current) window.clearTimeout(sendTimerRef.current);
           if (stable) {
-            // Longer silence window when still hearing interim chunks.
-            const delay = hasInterim ? 1800 : 1400;
+            const delay = hasInterim ? SILENCE_INTERIM_MS : SILENCE_FINAL_MS;
             sendTimerRef.current = window.setTimeout(() => flushPendingTranscript(), delay);
           }
         }
