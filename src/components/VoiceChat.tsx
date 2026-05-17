@@ -300,6 +300,10 @@ const VoiceChat: React.FC = () => {
   const ttsPlayingRef = useRef(false);
   const streamDoneRef = useRef(true);
   const ttsCancelledRef = useRef(false);
+  // True from the moment submit() starts until the last TTS chunk finishes.
+  // Covers the model wait, inter-chunk gaps, and post-TTS grace so the mic
+  // never re-arms mid-turn.
+  const turnActiveRef = useRef(false);
 
   const muteMicForTts = useCallback(() => {
     isSpeakingRef.current = true;
