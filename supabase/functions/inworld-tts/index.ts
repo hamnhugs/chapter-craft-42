@@ -71,7 +71,7 @@ Deno.serve(async (req) => {
 
     if (req.method === "POST") {
       const payload = await req.json().catch(() => null) as
-        | { text?: string; voice_id?: string; voiceId?: string; model?: string }
+        | { text?: string; voice_id?: string; voiceId?: string; model?: string; sample_rate?: number }
         | null;
       let voiceId = String(payload?.voice_id ?? payload?.voiceId ?? "").trim();
       if (!payload?.text) {
@@ -86,6 +86,8 @@ Deno.serve(async (req) => {
         .replace(/\n+/g, ". ")
         .trim();
 
+      const sampleRate = Number(payload.sample_rate) > 0 ? Number(payload.sample_rate) : 24000;
+
       const resp = await fetch(`${INWORLD_BASE}/tts/v1/voice`, {
         method: "POST",
         headers: {
@@ -98,7 +100,7 @@ Deno.serve(async (req) => {
           modelId: payload.model || "inworld-tts-2",
           audioConfig: {
             audioEncoding: "MP3",
-            sampleRateHertz: 48000,
+            sampleRateHertz: sampleRate,
           },
         }),
       });
