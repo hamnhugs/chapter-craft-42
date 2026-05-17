@@ -58,7 +58,7 @@ Deno.serve(async (req) => {
     const isVoices = url.pathname.endsWith("/voices");
 
     if (req.method === "GET" && isVoices) {
-      const resp = await fetch(`${INWORLD_BASE}/v1/tts/voices`, {
+      const resp = await fetch(`${INWORLD_BASE}/tts/v1/voices`, {
         headers: { Authorization: basicAuth(inworldKey) },
       });
       const body = await resp.text();
