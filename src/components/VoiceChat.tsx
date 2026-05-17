@@ -356,7 +356,7 @@ const VoiceChat: React.FC = () => {
     if (!inworldEnabled || !inworldApiKey || !inworldVoiceId) return; // browser TTS path doesn't prefetch
     while (
       ttsPendingSynthRef.current < TTS_PREFETCH_CONCURRENCY &&
-      ttsQueueRef.current.length > 0 || ttsAudioQueueRef.current.length > 0 || ttsPendingSynthRef.current > 0
+      ttsQueueRef.current.length > 0
     ) {
       const text = ttsQueueRef.current.shift()!;
       const controller = new AbortController();
