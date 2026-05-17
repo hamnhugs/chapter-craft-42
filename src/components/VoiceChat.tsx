@@ -442,6 +442,9 @@ const VoiceChat: React.FC = () => {
     };
 
     recognition.onresult = (event: any) => {
+      // Barge-in guard: drop anything captured while TTS is playing or a
+      // request is in flight — otherwise the mic transcribes the speaker.
+      if (isSpeakingRef.current || isLoadingRef.current) return;
       const finalPieces: string[] = [];
       const interimPieces: string[] = [];
       for (let i = 0; i < event.results.length; i++) {
