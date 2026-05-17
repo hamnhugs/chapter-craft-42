@@ -13,6 +13,7 @@ interface ChatSettings {
   savedModels: string[];
   selectedModel: string;
   deepResearchModel: string;
+  voiceModel: string; // "" = same as selectedModel
   ttsRate: number;
   autoReadReplies: boolean;
   wikiModel: string; // "" = use default Gemini gateway
@@ -26,6 +27,7 @@ const defaults: ChatSettings = {
   savedModels: [DEFAULT_MODEL],
   selectedModel: DEFAULT_MODEL,
   deepResearchModel: DEFAULT_DEEP_RESEARCH_MODEL,
+  voiceModel: "",
   ttsRate: DEFAULT_TTS_RATE,
   autoReadReplies: false,
   wikiModel: "",
