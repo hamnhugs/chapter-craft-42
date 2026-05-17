@@ -81,7 +81,7 @@ Deno.serve(async (req) => {
         .replace(/\n+/g, ". ")
         .trim();
 
-      const resp = await fetch(`${INWORLD_BASE}/v1/tts/synthesize`, {
+      const resp = await fetch(`${INWORLD_BASE}/tts/v1/voice`, {
         method: "POST",
         headers: {
           Authorization: basicAuth(inworldKey),
