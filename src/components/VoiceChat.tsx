@@ -467,6 +467,19 @@ const VoiceChat: React.FC = () => {
   const submit = useCallback(async (text: string) => {
     if (!text.trim()) return;
     if (!apiKey) { toast.error("Set your OpenRouter API key first"); setShowSettings(true); return; }
+
+    // Lock the mic for the entire turn (model wait + streamed TTS + grace).
+    // This closes the pre-first-token race where a late onresult could fire
+    // before isLoadingRef catches up via its useEffect.
+    turnActiveRef.current = true;
+    isSpeakingRef.current = true;
+    streamDoneRef.current = false;
+    if (sendTimerRef.current) { window.clearTimeout(sendTimerRef.current); sendTimerRef.current = null; }
+    finalTranscriptRef.current = "";
+    previousFinalLengthRef.current = 0;
+    setInterimTranscript("");
+    stopCurrentRecognitionQuietly();
+
     try {
       if (voiceQuickSearch && burplexityApiToken && SEARCH_INTENT_RE.test(text)) {
         runBackgroundSearch(text); // intentionally not awaited
@@ -512,10 +525,21 @@ const VoiceChat: React.FC = () => {
         } else {
           speak(reply);
         }
-      } else if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
+      } else {
+        // No reply produced — end the turn cleanly.
+        streamDoneRef.current = true;
+        isSpeakingRef.current = false;
+        turnActiveRef.current = false;
+        if (handsFreeRef.current && !stoppedByUserRef.current) {
+          window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
+        }
       }
     } catch {
+      streamDoneRef.current = true;
+      ttsQueueRef.current = [];
+      ttsPlayingRef.current = false;
+      isSpeakingRef.current = false;
+      turnActiveRef.current = false;
       if (handsFreeRef.current && !stoppedByUserRef.current) {
         window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS + 200);
       }
