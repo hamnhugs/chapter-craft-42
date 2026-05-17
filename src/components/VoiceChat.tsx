@@ -296,7 +296,16 @@ const VoiceChat: React.FC = () => {
   const selectedBook = books.find((b) => b.id === activeBookId);
 
   // ----- Streaming TTS queue (lets the first sentence play before the model finishes) -----
-  const ttsQueueRef = useRef<string[]>([]);
+  // Two-stage pipeline:
+  //   ttsTextQueueRef  -> pending text chunks awaiting synthesis
+  //   ttsAudioQueueRef -> synthesized audio ready to play
+  // Up to TTS_PREFETCH_CONCURRENCY syntheses run in parallel so the next
+  // sentence is already an MP3 by the time the current one finishes playing.
+  const TTS_PREFETCH_CONCURRENCY = 2;
+  const ttsQueueRef = useRef<string[]>([]); // text queue (kept name for compat with rest of file)
+  const ttsAudioQueueRef = useRef<{ url: string }[]>([]);
+  const ttsPendingSynthRef = useRef(0);
+  const ttsAbortersRef = useRef<Set<AbortController>>(new Set());
   const ttsPlayingRef = useRef(false);
   const streamDoneRef = useRef(true);
   const ttsCancelledRef = useRef(false);
@@ -326,64 +335,114 @@ const VoiceChat: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const playNextChunk = useCallback(() => {
+  const maybeFinishTurn = useCallback(() => {
+    if (
+      streamDoneRef.current &&
+      ttsQueueRef.current.length === 0 &&
+      ttsAudioQueueRef.current.length === 0 &&
+      ttsPendingSynthRef.current === 0 &&
+      !ttsPlayingRef.current
+    ) {
+      finishTtsAndResumeMic();
+    }
+  }, [finishTtsAndResumeMic]);
+
+  // Pump: start more syntheses while we have text + headroom.
+  const pumpSynthRef = useRef<() => void>(() => {});
+  const pumpPlayRef = useRef<() => void>(() => {});
+
+  const pumpSynth = useCallback(() => {
+    if (ttsCancelledRef.current) return;
+    if (!inworldEnabled || !inworldApiKey || !inworldVoiceId) return; // browser TTS path doesn't prefetch
+    while (
+      ttsPendingSynthRef.current < TTS_PREFETCH_CONCURRENCY &&
+      ttsQueueRef.current.length > 0
+    ) {
+      const text = ttsQueueRef.current.shift()!;
+      const controller = new AbortController();
+      ttsAbortersRef.current.add(controller);
+      ttsPendingSynthRef.current += 1;
+      synthesizeSpeech(text, inworldApiKey, inworldVoiceId, "inworld-tts-2", { signal: controller.signal })
+        .then((buffer) => {
+          ttsAbortersRef.current.delete(controller);
+          ttsPendingSynthRef.current -= 1;
+          if (ttsCancelledRef.current) return;
+          const blob = new Blob([buffer], { type: "audio/mpeg" });
+          const url = URL.createObjectURL(blob);
+          ttsAudioQueueRef.current.push({ url });
+          pumpPlayRef.current();
+          pumpSynthRef.current();
+        })
+        .catch((err) => {
+          ttsAbortersRef.current.delete(controller);
+          ttsPendingSynthRef.current -= 1;
+          if (ttsCancelledRef.current) return;
+          if ((err as any)?.name === "AbortError") return;
+          console.error("Inworld TTS error:", err);
+          // Fallback: speak this chunk via browser TTS inline, then continue.
+          ttsPlayingRef.current = true;
+          setIsSpeaking(true);
+          isSpeakingRef.current = true;
+          const u = new SpeechSynthesisUtterance(text);
+          u.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
+          const done = () => {
+            ttsPlayingRef.current = false;
+            pumpPlayRef.current();
+            pumpSynthRef.current();
+            maybeFinishTurn();
+          };
+          u.onend = done; u.onerror = done;
+          synthRef.current.speak(u);
+        });
+    }
+  }, [inworldEnabled, inworldApiKey, inworldVoiceId, ttsRate, maybeFinishTurn]);
+
+  const pumpPlay = useCallback(() => {
     if (ttsPlayingRef.current) return;
-    if (ttsCancelledRef.current) { ttsQueueRef.current = []; return; }
-    const next = ttsQueueRef.current.shift();
-    if (!next) {
-      // Only end the turn when the stream is fully done AND nothing is queued
-      // or playing. Otherwise we're in an inter-chunk gap — stay muted.
-      if (
-        streamDoneRef.current &&
-        ttsQueueRef.current.length === 0 &&
-        !ttsPlayingRef.current
-      ) {
-        finishTtsAndResumeMic();
+    if (ttsCancelledRef.current) {
+      // Drain any queued audio URLs
+      while (ttsAudioQueueRef.current.length) {
+        const { url } = ttsAudioQueueRef.current.shift()!;
+        try { URL.revokeObjectURL(url); } catch {}
       }
+      return;
+    }
+    const next = ttsAudioQueueRef.current.shift();
+    if (!next) {
+      maybeFinishTurn();
       return;
     }
     ttsPlayingRef.current = true;
     setIsSpeaking(true);
     isSpeakingRef.current = true;
 
-    const done = () => {
-      ttsPlayingRef.current = false;
-      playNextChunk();
-    };
-
-    if (inworldEnabled && inworldApiKey && inworldVoiceId) {
-      synthesizeSpeech(next, inworldApiKey, inworldVoiceId)
-        .then((buffer) => {
-          if (ttsCancelledRef.current) { done(); return; }
-          const blob = new Blob([buffer], { type: "audio/mpeg" });
-          const url = URL.createObjectURL(blob);
-          if (inworldAudioRef.current) {
-            try { inworldAudioRef.current.pause(); } catch {}
-            inworldAudioRef.current.src = "";
-          }
-          const audio = new Audio(url);
-          inworldAudioRef.current = audio;
-          audio.onended = () => { URL.revokeObjectURL(url); done(); };
-          audio.onerror = () => { URL.revokeObjectURL(url); done(); };
-          audio.play().catch(() => done());
-        })
-        .catch((err) => {
-          console.error("Inworld TTS error:", err);
-          // Fallback to browser TTS for this chunk only
-          const u = new SpeechSynthesisUtterance(next);
-          u.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
-          u.onend = done; u.onerror = done;
-          synthRef.current.speak(u);
-        });
-      return;
+    let audio = inworldAudioRef.current;
+    if (!audio) {
+      audio = new Audio();
+      inworldAudioRef.current = audio;
+    } else {
+      try { audio.pause(); } catch {}
     }
+    audio.src = next.url;
+    audio.playbackRate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
+    const cleanup = () => {
+      try { URL.revokeObjectURL(next.url); } catch {}
+      ttsPlayingRef.current = false;
+      pumpPlayRef.current();
+      pumpSynthRef.current();
+      maybeFinishTurn();
+    };
+    audio.onended = cleanup;
+    audio.onerror = cleanup;
+    audio.play().catch(cleanup);
+  }, [ttsRate, maybeFinishTurn]);
 
-    const u = new SpeechSynthesisUtterance(next);
-    u.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
-    u.onend = done; u.onerror = done;
-    synthRef.current.speak(u);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inworldEnabled, inworldApiKey, inworldVoiceId, ttsRate, finishTtsAndResumeMic]);
+  // Keep refs pointing at the latest pump fns so promise callbacks can call them.
+  useEffect(() => { pumpSynthRef.current = pumpSynth; }, [pumpSynth]);
+  useEffect(() => { pumpPlayRef.current = pumpPlay; }, [pumpPlay]);
+
+  // Legacy name kept so the rest of the file (which only references playNextChunk indirectly) keeps working.
+  const playNextChunk = pumpPlay;
 
   const enqueueSpeak = useCallback((chunk: string) => {
     if (!ttsEnabled) return;
@@ -392,26 +451,31 @@ const VoiceChat: React.FC = () => {
     ttsCancelledRef.current = false;
     streamDoneRef.current = false;
     muteMicForTts();
-    ttsQueueRef.current.push(t);
-    playNextChunk();
-  }, [ttsEnabled, muteMicForTts, playNextChunk]);
+
+    if (inworldEnabled && inworldApiKey && inworldVoiceId) {
+      ttsQueueRef.current.push(t);
+      pumpSynth();
+      pumpPlay();
+    } else {
+      // Browser TTS: speak directly, no prefetch needed.
+      ttsPlayingRef.current = true;
+      setIsSpeaking(true);
+      isSpeakingRef.current = true;
+      const u = new SpeechSynthesisUtterance(t);
+      u.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
+      const done = () => {
+        ttsPlayingRef.current = false;
+        maybeFinishTurn();
+      };
+      u.onend = done; u.onerror = done;
+      synthRef.current.speak(u);
+    }
+  }, [ttsEnabled, muteMicForTts, inworldEnabled, inworldApiKey, inworldVoiceId, ttsRate, pumpSynth, pumpPlay, maybeFinishTurn]);
 
   const markTtsStreamDone = useCallback(() => {
     streamDoneRef.current = true;
-    // Only resume mic when truly nothing is queued/playing. Otherwise the
-    // audio's `onended` will drive the next playNextChunk → finish path.
-    if (
-      !ttsPlayingRef.current &&
-      ttsQueueRef.current.length === 0
-    ) {
-      if (isSpeakingRef.current || turnActiveRef.current) finishTtsAndResumeMic();
-      else if (handsFreeRef.current && !stoppedByUserRef.current) {
-        turnActiveRef.current = false;
-        window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
-      }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [finishTtsAndResumeMic]);
+    maybeFinishTurn();
+  }, [maybeFinishTurn]);
 
   // Single-shot speak (used outside of streaming, e.g. replay or short replies)
   const speak = useCallback((text: string) => {
@@ -428,13 +492,22 @@ const VoiceChat: React.FC = () => {
   const stopSpeaking = () => {
     ttsCancelledRef.current = true;
     ttsQueueRef.current = [];
+    // Abort in-flight syntheses
+    for (const c of ttsAbortersRef.current) { try { c.abort(); } catch {} }
+    ttsAbortersRef.current.clear();
+    ttsPendingSynthRef.current = 0;
+    // Revoke any queued blob URLs
+    while (ttsAudioQueueRef.current.length) {
+      const { url } = ttsAudioQueueRef.current.shift()!;
+      try { URL.revokeObjectURL(url); } catch {}
+    }
     ttsPlayingRef.current = false;
     streamDoneRef.current = true;
     synthRef.current.cancel();
     if (inworldAudioRef.current) {
-      inworldAudioRef.current.pause();
+      try { inworldAudioRef.current.pause(); } catch {}
       inworldAudioRef.current.src = "";
-      inworldAudioRef.current = null;
+      // Keep the element instance for reuse on next turn
     }
     isSpeakingRef.current = false;
     turnActiveRef.current = false;
@@ -585,7 +658,7 @@ const VoiceChat: React.FC = () => {
         submittingRef.current ||
         !streamDoneRef.current ||
         ttsPlayingRef.current ||
-        ttsQueueRef.current.length > 0
+        ttsQueueRef.current.length > 0 || ttsAudioQueueRef.current.length > 0 || ttsPendingSynthRef.current > 0
       ) return;
       const finalPieces: string[] = [];
       const interimPieces: string[] = [];
@@ -643,7 +716,7 @@ const VoiceChat: React.FC = () => {
         isSpeakingRef.current ||
         turnActiveRef.current ||
         ttsPlayingRef.current ||
-        ttsQueueRef.current.length > 0 ||
+        ttsQueueRef.current.length > 0 || ttsAudioQueueRef.current.length > 0 || ttsPendingSynthRef.current > 0 ||
         !streamDoneRef.current;
       if (handsFreeRef.current && !stoppedByUserRef.current && !turnBusy) {
         const stable = normalizeTranscript(finalTranscriptRef.current);
@@ -672,7 +745,7 @@ const VoiceChat: React.FC = () => {
       isSpeakingRef.current ||
       turnActiveRef.current ||
       ttsPlayingRef.current ||
-      ttsQueueRef.current.length > 0 ||
+      ttsQueueRef.current.length > 0 || ttsAudioQueueRef.current.length > 0 || ttsPendingSynthRef.current > 0 ||
       !streamDoneRef.current
     ) return;
     if (stoppedByUserRef.current) return;
