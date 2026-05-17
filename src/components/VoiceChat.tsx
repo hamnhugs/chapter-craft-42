@@ -398,10 +398,15 @@ const VoiceChat: React.FC = () => {
 
   const markTtsStreamDone = useCallback(() => {
     streamDoneRef.current = true;
-    // If nothing is queued or playing, resume mic now.
-    if (!ttsPlayingRef.current && ttsQueueRef.current.length === 0) {
-      if (isSpeakingRef.current) finishTtsAndResumeMic();
+    // Only resume mic when truly nothing is queued/playing. Otherwise the
+    // audio's `onended` will drive the next playNextChunk → finish path.
+    if (
+      !ttsPlayingRef.current &&
+      ttsQueueRef.current.length === 0
+    ) {
+      if (isSpeakingRef.current || turnActiveRef.current) finishTtsAndResumeMic();
       else if (handsFreeRef.current && !stoppedByUserRef.current) {
+        turnActiveRef.current = false;
         window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
       }
     }
