@@ -20,6 +20,10 @@ export interface ChatMessage {
 interface SendOpts {
   /** When true, the system prompt asks for concise, spoken-friendly replies. */
   voiceMode?: boolean;
+  /** Optional override model — e.g. fast voice model. */
+  modelOverride?: string;
+  /** Called on every streamed delta with the cumulative assistant text. */
+  onDelta?: (fullText: string) => void;
 }
 
 interface ChatContextValue {
