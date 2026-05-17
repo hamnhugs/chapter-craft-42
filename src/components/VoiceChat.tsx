@@ -671,7 +671,6 @@ const VoiceChat: React.FC = () => {
       isLoadingRef.current ||
       isSpeakingRef.current ||
       turnActiveRef.current ||
-      submittingRef.current ||
       ttsPlayingRef.current ||
       ttsQueueRef.current.length > 0 ||
       !streamDoneRef.current
