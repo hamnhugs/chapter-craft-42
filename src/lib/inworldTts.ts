@@ -47,6 +47,7 @@ export async function synthesizeSpeech(
   _apiKey: string | undefined,
   voiceId: string,
   model = "inworld-tts-2",
+  opts?: { signal?: AbortSignal; sampleRate?: number },
 ): Promise<ArrayBuffer> {
   let cleanVoiceId = String(voiceId ?? "").trim();
   if (!cleanVoiceId || cleanVoiceId === "undefined") {
@@ -57,7 +58,13 @@ export async function synthesizeSpeech(
   const resp = await fetch(FUNCTIONS_BASE, {
     method: "POST",
     headers: { ...headers, "Content-Type": "application/json" },
-    body: JSON.stringify({ text, voice_id: cleanVoiceId, model: cleanModel }),
+    body: JSON.stringify({
+      text,
+      voice_id: cleanVoiceId,
+      model: cleanModel,
+      sample_rate: opts?.sampleRate ?? 24000,
+    }),
+    signal: opts?.signal,
   });
   if (!resp.ok) {
     const body = await resp.text().catch(() => resp.statusText);
