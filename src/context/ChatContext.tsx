@@ -228,7 +228,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
       };
 
-      const model = deepResearch ? deepResearchModel : selectedModel;
+      const model = opts?.modelOverride || (deepResearch ? deepResearchModel : selectedModel);
       if (isEmbeddingModel(model)) {
         const msg = `"${model}" is an embedding model — pick a chat model in Settings (it's only valid for Wiki reindex).`;
         toast.error(msg);
