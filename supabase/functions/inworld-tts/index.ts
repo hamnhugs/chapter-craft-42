@@ -73,9 +73,13 @@ Deno.serve(async (req) => {
       const payload = await req.json().catch(() => null) as
         | { text?: string; voice_id?: string; voiceId?: string; model?: string }
         | null;
-      const voiceId = String(payload?.voice_id ?? payload?.voiceId ?? "").trim();
-      if (!payload?.text || !voiceId || voiceId === "undefined") {
-        return jsonError("text and voice_id are required");
+      let voiceId = String(payload?.voice_id ?? payload?.voiceId ?? "").trim();
+      if (!payload?.text) {
+        return jsonError("text is required");
+      }
+      if (!voiceId || voiceId === "undefined") {
+        console.warn("inworld-tts: empty voiceId, falling back to 'Ashley'");
+        voiceId = "Ashley";
       }
       const clean = String(payload.text)
         .replace(/[#*_`~[\]()>|]/g, "")
@@ -93,15 +97,15 @@ Deno.serve(async (req) => {
           voiceId,
           modelId: payload.model || "inworld-tts-2",
           audioConfig: {
-            audio_encoding: "MP3",
-            sample_rate_hertz: 48000,
+            audioEncoding: "MP3",
+            sampleRateHertz: 48000,
           },
         }),
       });
 
       if (!resp.ok) {
         const body = await resp.text().catch(() => resp.statusText);
-        return jsonError(`Inworld synth error: ${body}`, resp.status);
+        return jsonError(`Inworld synth error (voiceId=${voiceId}): ${body}`, resp.status);
       }
 
       const result = await resp.json();

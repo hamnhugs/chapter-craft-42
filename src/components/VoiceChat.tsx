@@ -267,8 +267,8 @@ const VoiceChat: React.FC = () => {
     try {
       const voices = await fetchInworldVoices(key.trim());
       setInworldVoices(voices);
-      if (voices.length > 0 && !inworldVoiceId) {
-        setInworldVoiceIdState(voices[0].voice_id);
+      if (!inworldVoiceId) {
+        setInworldVoiceIdState(voices[0]?.voice_id || "Ashley");
       }
     } catch (err: any) {
       toast.error(`Could not load Inworld voices: ${err.message}`);

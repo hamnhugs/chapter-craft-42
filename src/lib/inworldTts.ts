@@ -48,15 +48,16 @@ export async function synthesizeSpeech(
   voiceId: string,
   model = "inworld-tts-2",
 ): Promise<ArrayBuffer> {
-  const cleanVoiceId = String(voiceId ?? "").trim();
+  let cleanVoiceId = String(voiceId ?? "").trim();
   if (!cleanVoiceId || cleanVoiceId === "undefined") {
-    throw new Error("Select a valid Inworld voice before speaking");
+    cleanVoiceId = "Ashley"; // Inworld built-in default
   }
+  const cleanModel = (model && model.trim()) || "inworld-tts-2";
   const headers = await authHeaders();
   const resp = await fetch(FUNCTIONS_BASE, {
     method: "POST",
     headers: { ...headers, "Content-Type": "application/json" },
-    body: JSON.stringify({ text, voice_id: cleanVoiceId, model }),
+    body: JSON.stringify({ text, voice_id: cleanVoiceId, model: cleanModel }),
   });
   if (!resp.ok) {
     const body = await resp.text().catch(() => resp.statusText);
