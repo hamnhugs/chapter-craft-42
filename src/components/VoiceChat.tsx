@@ -319,6 +319,7 @@ const VoiceChat: React.FC = () => {
   const finishTtsAndResumeMic = useCallback(() => {
     setIsSpeaking(false);
     isSpeakingRef.current = false;
+    turnActiveRef.current = false;
     if (handsFreeRef.current && !stoppedByUserRef.current) {
       window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
     }
@@ -330,7 +331,15 @@ const VoiceChat: React.FC = () => {
     if (ttsCancelledRef.current) { ttsQueueRef.current = []; return; }
     const next = ttsQueueRef.current.shift();
     if (!next) {
-      if (streamDoneRef.current) finishTtsAndResumeMic();
+      // Only end the turn when the stream is fully done AND nothing is queued
+      // or playing. Otherwise we're in an inter-chunk gap — stay muted.
+      if (
+        streamDoneRef.current &&
+        ttsQueueRef.current.length === 0 &&
+        !ttsPlayingRef.current
+      ) {
+        finishTtsAndResumeMic();
+      }
       return;
     }
     ttsPlayingRef.current = true;
