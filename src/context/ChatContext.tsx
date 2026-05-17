@@ -300,6 +300,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   iterText += delta.content;
                   assistantText += delta.content;
                   updateAssistant();
+                  try { opts?.onDelta?.(assistantText); } catch {}
                 }
                 if (delta?.tool_calls && Array.isArray(delta.tool_calls)) {
                   for (const tc of delta.tool_calls) {
