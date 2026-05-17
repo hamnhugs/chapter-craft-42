@@ -510,6 +510,7 @@ export type Database = {
           tts_rate: number
           updated_at: string
           user_id: string
+          voice_model: string | null
           wiki_model: string | null
         }
         Insert: {
@@ -527,6 +528,7 @@ export type Database = {
           tts_rate?: number
           updated_at?: string
           user_id: string
+          voice_model?: string | null
           wiki_model?: string | null
         }
         Update: {
@@ -544,6 +546,7 @@ export type Database = {
           tts_rate?: number
           updated_at?: string
           user_id?: string
+          voice_model?: string | null
           wiki_model?: string | null
         }
         Relationships: []

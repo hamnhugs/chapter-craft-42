@@ -30,6 +30,15 @@ const INWORLD_ENABLED_KEY = "inworld_tts_enabled";
 const SEARCH_INTENT_RE =
   /\b(search|look up|look for|find|google|what is|what are|who is|who are|tell me about|research|check online|latest|current|news about)\b/i;
 
+// Tunable latency knobs for hands-free voice flow
+const SILENCE_INTERIM_MS = 1100; // wait after last interim chunk before sending
+const SILENCE_FINAL_MS = 700;    // wait after a final result before sending
+const POST_TTS_DELAY_MS = 400;   // mic restart grace after TTS ends
+const MIN_SENTENCE_LEN = 14;     // don't ship tiny fragments to TTS
+
+const stripMarkdownForTts = (s: string) =>
+  s.replace(/[#*_`~[\]()>|]/g, "").replace(/\n+/g, ". ").replace(/\s+/g, " ").trim();
+
 const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
 const VoiceChat: React.FC = () => {
@@ -108,8 +117,8 @@ const VoiceChat: React.FC = () => {
   };
 
   const {
-    apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, customSystemPrompt, burplexityApiToken, inworldApiKey, loaded: settingsLoaded,
-    saveApiKey: persistApiKey, setSelectedModel, setDeepResearchModel, setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey,
+    apiKey, savedModels, selectedModel, deepResearchModel, voiceModel, ttsRate, customSystemPrompt, burplexityApiToken, inworldApiKey, loaded: settingsLoaded,
+    saveApiKey: persistApiKey, setSelectedModel, setDeepResearchModel, setVoiceModel, setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey,
     addModel: addModelToSettings, removeModel: removeModelFromSettings,
   } = useChatSettings() as any;
   const [newModelInput, setNewModelInput] = useState("");
@@ -286,9 +295,13 @@ const VoiceChat: React.FC = () => {
 
   const selectedBook = books.find((b) => b.id === activeBookId);
 
-  const speak = useCallback((text: string) => {
-    // Hard-mute the recognizer before any TTS so the mic can't capture
-    // the assistant's own voice (barge-in protection in hands-free mode).
+  // ----- Streaming TTS queue (lets the first sentence play before the model finishes) -----
+  const ttsQueueRef = useRef<string[]>([]);
+  const ttsPlayingRef = useRef(false);
+  const streamDoneRef = useRef(true);
+  const ttsCancelledRef = useRef(false);
+
+  const muteMicForTts = useCallback(() => {
     isSpeakingRef.current = true;
     if (sendTimerRef.current) { window.clearTimeout(sendTimerRef.current); sendTimerRef.current = null; }
     finalTranscriptRef.current = "";
@@ -297,68 +310,108 @@ const VoiceChat: React.FC = () => {
     stopCurrentRecognitionQuietly();
     setIsListening(false);
     isListeningRef.current = false;
+  }, []);
 
-    if (!ttsEnabled) {
-      isSpeakingRef.current = false;
-      if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), 400);
-      }
+  const finishTtsAndResumeMic = useCallback(() => {
+    setIsSpeaking(false);
+    isSpeakingRef.current = false;
+    if (handsFreeRef.current && !stoppedByUserRef.current) {
+      window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const playNextChunk = useCallback(() => {
+    if (ttsPlayingRef.current) return;
+    if (ttsCancelledRef.current) { ttsQueueRef.current = []; return; }
+    const next = ttsQueueRef.current.shift();
+    if (!next) {
+      if (streamDoneRef.current) finishTtsAndResumeMic();
       return;
     }
+    ttsPlayingRef.current = true;
+    setIsSpeaking(true);
+    isSpeakingRef.current = true;
 
-    const onEnd = () => {
-      setIsSpeaking(false);
-      isSpeakingRef.current = false;
-      if (handsFreeRef.current && !stoppedByUserRef.current) {
-        // Slightly longer grace to absorb speaker tail before re-arming mic.
-        window.setTimeout(() => safeStartListening(), 700);
-      }
+    const done = () => {
+      ttsPlayingRef.current = false;
+      playNextChunk();
     };
 
     if (inworldEnabled && inworldApiKey && inworldVoiceId) {
-      synthRef.current.cancel();
-      setIsSpeaking(true);
-      synthesizeSpeech(text, inworldApiKey, inworldVoiceId)
+      synthesizeSpeech(next, inworldApiKey, inworldVoiceId)
         .then((buffer) => {
+          if (ttsCancelledRef.current) { done(); return; }
           const blob = new Blob([buffer], { type: "audio/mpeg" });
           const url = URL.createObjectURL(blob);
           if (inworldAudioRef.current) {
-            inworldAudioRef.current.pause();
+            try { inworldAudioRef.current.pause(); } catch {}
             inworldAudioRef.current.src = "";
           }
           const audio = new Audio(url);
           inworldAudioRef.current = audio;
-          audio.onplay = () => { isSpeakingRef.current = true; setIsSpeaking(true); };
-          audio.onended = () => { URL.revokeObjectURL(url); onEnd(); };
-          audio.onerror = () => { URL.revokeObjectURL(url); onEnd(); };
-          audio.play().catch(() => onEnd());
+          audio.onended = () => { URL.revokeObjectURL(url); done(); };
+          audio.onerror = () => { URL.revokeObjectURL(url); done(); };
+          audio.play().catch(() => done());
         })
         .catch((err) => {
           console.error("Inworld TTS error:", err);
-          toast.error("Inworld voice failed — using browser TTS");
-          // Fall back to browser TTS
-          const clean = text.replace(/[#*_`~[\]()>|]/g, "").replace(/\n+/g, ". ");
-          const utterance = new SpeechSynthesisUtterance(clean);
-          utterance.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
-          utterance.onend = onEnd;
-          utterance.onerror = onEnd;
-          synthRef.current.speak(utterance);
+          // Fallback to browser TTS for this chunk only
+          const u = new SpeechSynthesisUtterance(next);
+          u.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
+          u.onend = done; u.onerror = done;
+          synthRef.current.speak(u);
         });
       return;
     }
 
-    synthRef.current.cancel();
-    const clean = text.replace(/[#*_`~[\]()>|]/g, "").replace(/\n+/g, ". ");
-    const utterance = new SpeechSynthesisUtterance(clean);
-    utterance.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = onEnd;
-    utterance.onerror = onEnd;
-    synthRef.current.speak(utterance);
+    const u = new SpeechSynthesisUtterance(next);
+    u.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
+    u.onend = done; u.onerror = done;
+    synthRef.current.speak(u);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ttsEnabled, ttsRate, inworldEnabled, inworldApiKey, inworldVoiceId]);
+  }, [inworldEnabled, inworldApiKey, inworldVoiceId, ttsRate, finishTtsAndResumeMic]);
+
+  const enqueueSpeak = useCallback((chunk: string) => {
+    if (!ttsEnabled) return;
+    const t = stripMarkdownForTts(chunk);
+    if (!t) return;
+    ttsCancelledRef.current = false;
+    streamDoneRef.current = false;
+    muteMicForTts();
+    ttsQueueRef.current.push(t);
+    playNextChunk();
+  }, [ttsEnabled, muteMicForTts, playNextChunk]);
+
+  const markTtsStreamDone = useCallback(() => {
+    streamDoneRef.current = true;
+    // If nothing is queued or playing, resume mic now.
+    if (!ttsPlayingRef.current && ttsQueueRef.current.length === 0) {
+      if (isSpeakingRef.current) finishTtsAndResumeMic();
+      else if (handsFreeRef.current && !stoppedByUserRef.current) {
+        window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finishTtsAndResumeMic]);
+
+  // Single-shot speak (used outside of streaming, e.g. replay or short replies)
+  const speak = useCallback((text: string) => {
+    if (!ttsEnabled) {
+      if (handsFreeRef.current && !stoppedByUserRef.current) {
+        window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
+      }
+      return;
+    }
+    enqueueSpeak(text);
+    markTtsStreamDone();
+  }, [ttsEnabled, enqueueSpeak, markTtsStreamDone]);
 
   const stopSpeaking = () => {
+    ttsCancelledRef.current = true;
+    ttsQueueRef.current = [];
+    ttsPlayingRef.current = false;
+    streamDoneRef.current = true;
     synthRef.current.cancel();
     if (inworldAudioRef.current) {
       inworldAudioRef.current.pause();
@@ -368,6 +421,7 @@ const VoiceChat: React.FC = () => {
     isSpeakingRef.current = false;
     setIsSpeaking(false);
   };
+
 
   const runBackgroundSearch = useCallback(async (query: string) => {
     if (!burplexityApiToken) return;
@@ -399,19 +453,56 @@ const VoiceChat: React.FC = () => {
         runBackgroundSearch(text); // intentionally not awaited
       }
       // Remember the next assistant message index so we can speak it when it arrives.
-      lastSpokenIndexRef.current = messages.length; // assistant will land after the user msg
-      const reply = await sendMessage(text, { voiceMode: true });
-      if (reply) speak(reply);
-      else if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), 450);
+      lastSpokenIndexRef.current = messages.length;
+
+      // Sentence-streaming TTS: speak each completed sentence as soon as the
+      // model produces it, instead of waiting for the entire reply. The first
+      // audible word lands seconds earlier in hands-free mode.
+      let spokenCursor = 0;
+      const sentenceRe = /[^.!?\n]+[.!?\n]+\s*/g;
+      const onDelta = handsFreeRef.current && ttsEnabled
+        ? (full: string) => {
+            const tail = full.slice(spokenCursor);
+            sentenceRe.lastIndex = 0;
+            let m: RegExpExecArray | null;
+            let consumed = 0;
+            while ((m = sentenceRe.exec(tail)) !== null) {
+              const sentence = m[0].trim();
+              const endIdx = m.index + m[0].length;
+              if (sentence.length >= MIN_SENTENCE_LEN) {
+                enqueueSpeak(sentence);
+                consumed = endIdx;
+              }
+            }
+            if (consumed > 0) spokenCursor += consumed;
+          }
+        : undefined;
+
+      const reply = await sendMessage(text, {
+        voiceMode: true,
+        modelOverride: voiceModel || undefined,
+        onDelta,
+      });
+
+      if (reply) {
+        if (onDelta) {
+          // Flush any remainder past the last sentence boundary.
+          const remainder = reply.slice(spokenCursor).trim();
+          if (remainder) enqueueSpeak(remainder);
+          markTtsStreamDone();
+        } else {
+          speak(reply);
+        }
+      } else if (handsFreeRef.current && !stoppedByUserRef.current) {
+        window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
       }
     } catch {
       if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), 600);
+        window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS + 200);
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiKey, messages.length, sendMessage, speak, voiceQuickSearch, burplexityApiToken, runBackgroundSearch]);
+  }, [apiKey, messages.length, sendMessage, speak, voiceQuickSearch, burplexityApiToken, runBackgroundSearch, voiceModel, ttsEnabled, enqueueSpeak, markTtsStreamDone]);
 
   const submitRef = useRef(submit);
   useEffect(() => { submitRef.current = submit; }, [submit]);
@@ -473,8 +564,7 @@ const VoiceChat: React.FC = () => {
         if (sawNewFinal || hasInterim) {
           if (sendTimerRef.current) window.clearTimeout(sendTimerRef.current);
           if (stable) {
-            // Longer silence window when still hearing interim chunks.
-            const delay = hasInterim ? 1800 : 1400;
+            const delay = hasInterim ? SILENCE_INTERIM_MS : SILENCE_FINAL_MS;
             sendTimerRef.current = window.setTimeout(() => flushPendingTranscript(), delay);
           }
         }
@@ -744,6 +834,16 @@ const VoiceChat: React.FC = () => {
                   {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
                 </select>
                 <p className="text-[10px] text-on-surface-variant px-1">Used when Deep Research is ON.</p>
+              </div>
+              <div className="flex flex-col gap-1.5 min-w-0">
+                <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
+                  <span className="material-symbols-outlined text-xs align-middle mr-1">bolt</span>Voice Model <span className="text-on-surface-variant/60 normal-case tracking-normal">(faster = lower latency)</span>
+                </label>
+                <select value={voiceModel || ""} onChange={(e) => setVoiceModel(e.target.value)} className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40">
+                  <option value="">Same as Chat model</option>
+                  {savedModels.map((m: string) => (<option key={m} value={m}>{m}</option>))}
+                </select>
+                <p className="text-[10px] text-on-surface-variant px-1">Used only in the Voice tab. Pick a fast model (e.g. <code>google/gemini-2.5-flash-lite</code>) for snappier hands-free replies.</p>
               </div>
               <div className="flex flex-col gap-1.5 min-w-0">
                 <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">

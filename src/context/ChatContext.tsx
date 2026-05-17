@@ -20,6 +20,10 @@ export interface ChatMessage {
 interface SendOpts {
   /** When true, the system prompt asks for concise, spoken-friendly replies. */
   voiceMode?: boolean;
+  /** Optional override model — e.g. fast voice model. */
+  modelOverride?: string;
+  /** Called on every streamed delta with the cumulative assistant text. */
+  onDelta?: (fullText: string) => void;
 }
 
 interface ChatContextValue {
@@ -224,7 +228,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
       };
 
-      const model = deepResearch ? deepResearchModel : selectedModel;
+      const model = opts?.modelOverride || (deepResearch ? deepResearchModel : selectedModel);
       if (isEmbeddingModel(model)) {
         const msg = `"${model}" is an embedding model — pick a chat model in Settings (it's only valid for Wiki reindex).`;
         toast.error(msg);
@@ -296,6 +300,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   iterText += delta.content;
                   assistantText += delta.content;
                   updateAssistant();
+                  try { opts?.onDelta?.(assistantText); } catch {}
                 }
                 if (delta?.tool_calls && Array.isArray(delta.tool_calls)) {
                   for (const tc of delta.tool_calls) {

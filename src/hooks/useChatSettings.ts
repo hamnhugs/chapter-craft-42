@@ -13,6 +13,7 @@ interface ChatSettings {
   savedModels: string[];
   selectedModel: string;
   deepResearchModel: string;
+  voiceModel: string; // "" = same as selectedModel
   ttsRate: number;
   autoReadReplies: boolean;
   wikiModel: string; // "" = use default Gemini gateway
@@ -26,6 +27,7 @@ const defaults: ChatSettings = {
   savedModels: [DEFAULT_MODEL],
   selectedModel: DEFAULT_MODEL,
   deepResearchModel: DEFAULT_DEEP_RESEARCH_MODEL,
+  voiceModel: "",
   ttsRate: DEFAULT_TTS_RATE,
   autoReadReplies: false,
   wikiModel: "",
@@ -56,6 +58,7 @@ export function useChatSettings() {
           savedModels: (data.saved_models as string[]) || [DEFAULT_MODEL],
           selectedModel: data.selected_model || DEFAULT_MODEL,
           deepResearchModel: data.deep_research_model || DEFAULT_DEEP_RESEARCH_MODEL,
+          voiceModel: (data as any).voice_model || "",
           ttsRate: typeof (data as any).tts_rate === "number" && (data as any).tts_rate > 0
             ? (data as any).tts_rate
             : DEFAULT_TTS_RATE,
@@ -81,6 +84,7 @@ export function useChatSettings() {
         saved_models: next.savedModels as any,
         selected_model: next.selectedModel,
         deep_research_model: next.deepResearchModel,
+        voice_model: next.voiceModel || null,
         tts_rate: next.ttsRate,
         auto_read_replies: next.autoReadReplies,
         wiki_model: next.wikiModel || null,
@@ -139,6 +143,7 @@ export function useChatSettings() {
     saveApiKey,
     setSelectedModel: (m: string) => update({ selectedModel: m }),
     setDeepResearchModel: (m: string) => update({ deepResearchModel: m }),
+    setVoiceModel: (m: string) => update({ voiceModel: m }),
     setTtsRate: (r: number) => update({ ttsRate: Math.min(2, Math.max(0.5, r)) }),
     setAutoReadReplies: (v: boolean) => update({ autoReadReplies: v }),
     setWikiModel: (m: string) => update({ wikiModel: m }),
