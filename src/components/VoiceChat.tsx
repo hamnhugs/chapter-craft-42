@@ -837,6 +837,16 @@ const VoiceChat: React.FC = () => {
               </div>
               <div className="flex flex-col gap-1.5 min-w-0">
                 <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
+                  <span className="material-symbols-outlined text-xs align-middle mr-1">bolt</span>Voice Model <span className="text-on-surface-variant/60 normal-case tracking-normal">(faster = lower latency)</span>
+                </label>
+                <select value={voiceModel || ""} onChange={(e) => setVoiceModel(e.target.value)} className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40">
+                  <option value="">Same as Chat model</option>
+                  {savedModels.map((m: string) => (<option key={m} value={m}>{m}</option>))}
+                </select>
+                <p className="text-[10px] text-on-surface-variant px-1">Used only in the Voice tab. Pick a fast model (e.g. <code>google/gemini-2.5-flash-lite</code>) for snappier hands-free replies.</p>
+              </div>
+              <div className="flex flex-col gap-1.5 min-w-0">
+                <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
                   <span className="material-symbols-outlined text-xs align-middle mr-1">travel_explore</span>Background Quick Search
                 </label>
                 <div className="flex items-center justify-between gap-3 bg-surface-container-high rounded-lg py-2.5 px-4">
