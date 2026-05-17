@@ -1,30 +1,42 @@
-## Goal
-Eliminate the recurring `Unknown voice: undefined not found!` 404 from Inworld TTS and make voice selection reliable.
+# Fix: Hands-free mic picking up AI's own voice
+
+## Problem
+In hands-free mode, when the assistant's reply is being spoken (Inworld or browser TTS), the SpeechRecognition stream stays active. The microphone hears the speaker output and transcribes it as a new user turn (e.g. "Knot Magic by Tylluan…" → "not Magic by till"), which then gets submitted as the next prompt.
 
 ## Root cause
-The edge function and payload shape now match Inworld's official spec (`POST /tts/v1/voice`, camelCase fields, `Basic` auth). The error comes from the **client** calling synth without a `voiceId` — either the user hasn't picked one yet, or the voices list failed to load and there's no fallback.
+In `src/components/VoiceChat.tsx`:
+- `speak()` flips `isSpeaking` to true, but it does **not** stop the active `SpeechRecognition`. The recognizer keeps running through TTS playback.
+- `recognition.onresult` has no guard against `isSpeakingRef.current`, so chunks captured during playback flow into `finalTranscriptRef` and the silence timer fires `flushPendingTranscript()`.
+- `recognition.onend` already guards on `isSpeakingRef`, but onresult does not — and onend rarely fires mid-playback because `continuous = true`.
 
-## Changes
+## Fix (minimal, preserves every existing feature)
 
-### 1. `src/lib/inworldTts.ts`
-- In `synthesizeSpeech`, if the resolved `voiceId` is empty/null/undefined → default to **`"Ashley"`** instead of throwing. (Ashley is one of Inworld's always-available built-in voices per their quickstart.)
-- Default `modelId` to `"inworld-tts-2"` when not provided.
-- Keep the existing voice-list normalization.
+All changes are localized to `src/components/VoiceChat.tsx`. No feature, button, setting, or flow is removed.
 
-### 2. `src/components/VoiceChat.tsx` (or wherever voice is chosen)
-- When the voices list loads, if no voice is currently selected in settings, auto-select the first returned voice (or fall back to `"Ashley"`).
-- Persist that selection via `useChatSettings` so subsequent calls always carry a real `voiceId`.
+1. **Hard mute the recognizer the moment TTS starts.**
+   In `speak()`, before kicking off Inworld synth or browser `SpeechSynthesisUtterance`:
+   - Set `isSpeakingRef.current = true` synchronously (don't wait for the state effect).
+   - Clear `sendTimerRef` and reset `finalTranscriptRef` / `previousFinalLengthRef` / `interimTranscript` so any partial capture from the user's just-finished turn isn't re-submitted.
+   - Call `stopCurrentRecognitionQuietly()` so the mic stream is released during playback (best echo isolation; works even without hardware AEC).
+   - Existing `onEnd` already restarts listening via `safeStartListening()` after a 400–600 ms grace — keep that, just bump the post-TTS delay to ~700 ms to absorb speaker tail.
 
-### 3. `supabase/functions/inworld-tts/index.ts`
-- Keep the current endpoint and payload. Add a **server-side safety net**: if incoming `voiceId` is empty after normalization, substitute `"Ashley"` and log a warning. Prevents the 404 even if the client regresses.
-- Make sure the error response surfaces the actual `voiceId` we sent to Inworld (helps future debugging).
+2. **Defense in depth: ignore recognition results while speaking.**
+   At the top of `recognition.onresult`, early-return when `isSpeakingRef.current || isLoadingRef.current` is true. This protects against the small window between TTS start and the recognizer actually stopping, and against any race where a stale recognizer instance delivers a final chunk.
 
-## What I do NOT need from you
-- I do not need your runtime API key pasted in chat. Whatever Base64 key you stored as the `INWORLD_API_KEY` secret is already what the edge function reads.
+3. **Don't auto-restart when TTS is still playing.**
+   In `recognition.onend`, the existing guard `!isSpeakingRef.current` is already there — keep it. Also in the `setTimeout(... safeStartListening, 250)` branch, wrap the call so it re-checks `!isSpeakingRef.current && !isLoadingRef.current` at fire time (covers the case where TTS started during the 250 ms wait).
 
-## What I DO need from you (optional, only if Ashley is wrong)
-- If you want a specific default voice other than "Ashley" or "Dennis" (e.g. a cloned voice from your workspace), tell me the exact voice ID and I'll use it as the default.
+4. **Inworld branch parity.**
+   The Inworld code path constructs an `Audio` element. Add `audio.onplay = () => { isSpeakingRef.current = true; setIsSpeaking(true); }` so the speaking flag is true *before* the first sample is emitted (today it's set right after `synthesizeSpeech` is called, which is fine — but onplay is the canonical signal and avoids a gap if synth is slow).
+
+## Out of scope (intentionally not touched)
+- Inworld voice selection / fallback (`Ashley`) — left as-is.
+- Edge function payload — left as-is.
+- Browser TTS path, dictation hook, push-to-talk, settings UI, voice search intent — all untouched.
+- Hands-free toggle, pause-on-tab-hidden, error handling, model/API key flows — untouched.
+
+## Files
+- `src/components/VoiceChat.tsx` — only file modified.
 
 ## Verification
-- After deploy, call `inworld-tts` via the curl tool with no `voiceId` → must return audio (not 404).
-- Open VoiceChat in the preview → voices dropdown populates and first item is auto-selected → synth plays.
+- Toggle hands-free on, ask "list my books", let the assistant speak a long reply, confirm the recognizer status shows "Speaking…" (not "Listening…") throughout playback, and that no spurious user turn is created. Then verify the mic auto-resumes after the reply ends.

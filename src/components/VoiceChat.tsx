@@ -287,7 +287,19 @@ const VoiceChat: React.FC = () => {
   const selectedBook = books.find((b) => b.id === activeBookId);
 
   const speak = useCallback((text: string) => {
+    // Hard-mute the recognizer before any TTS so the mic can't capture
+    // the assistant's own voice (barge-in protection in hands-free mode).
+    isSpeakingRef.current = true;
+    if (sendTimerRef.current) { window.clearTimeout(sendTimerRef.current); sendTimerRef.current = null; }
+    finalTranscriptRef.current = "";
+    previousFinalLengthRef.current = 0;
+    setInterimTranscript("");
+    stopCurrentRecognitionQuietly();
+    setIsListening(false);
+    isListeningRef.current = false;
+
     if (!ttsEnabled) {
+      isSpeakingRef.current = false;
       if (handsFreeRef.current && !stoppedByUserRef.current) {
         window.setTimeout(() => safeStartListening(), 400);
       }
@@ -296,8 +308,10 @@ const VoiceChat: React.FC = () => {
 
     const onEnd = () => {
       setIsSpeaking(false);
+      isSpeakingRef.current = false;
       if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), 450);
+        // Slightly longer grace to absorb speaker tail before re-arming mic.
+        window.setTimeout(() => safeStartListening(), 700);
       }
     };
 
@@ -314,6 +328,7 @@ const VoiceChat: React.FC = () => {
           }
           const audio = new Audio(url);
           inworldAudioRef.current = audio;
+          audio.onplay = () => { isSpeakingRef.current = true; setIsSpeaking(true); };
           audio.onended = () => { URL.revokeObjectURL(url); onEnd(); };
           audio.onerror = () => { URL.revokeObjectURL(url); onEnd(); };
           audio.play().catch(() => onEnd());
