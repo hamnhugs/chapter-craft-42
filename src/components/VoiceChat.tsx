@@ -492,13 +492,22 @@ const VoiceChat: React.FC = () => {
   const stopSpeaking = () => {
     ttsCancelledRef.current = true;
     ttsQueueRef.current = [];
+    // Abort in-flight syntheses
+    for (const c of ttsAbortersRef.current) { try { c.abort(); } catch {} }
+    ttsAbortersRef.current.clear();
+    ttsPendingSynthRef.current = 0;
+    // Revoke any queued blob URLs
+    while (ttsAudioQueueRef.current.length) {
+      const { url } = ttsAudioQueueRef.current.shift()!;
+      try { URL.revokeObjectURL(url); } catch {}
+    }
     ttsPlayingRef.current = false;
     streamDoneRef.current = true;
     synthRef.current.cancel();
     if (inworldAudioRef.current) {
-      inworldAudioRef.current.pause();
+      try { inworldAudioRef.current.pause(); } catch {}
       inworldAudioRef.current.src = "";
-      inworldAudioRef.current = null;
+      // Keep the element instance for reuse on next turn
     }
     isSpeakingRef.current = false;
     turnActiveRef.current = false;
