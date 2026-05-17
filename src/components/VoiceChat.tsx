@@ -453,19 +453,56 @@ const VoiceChat: React.FC = () => {
         runBackgroundSearch(text); // intentionally not awaited
       }
       // Remember the next assistant message index so we can speak it when it arrives.
-      lastSpokenIndexRef.current = messages.length; // assistant will land after the user msg
-      const reply = await sendMessage(text, { voiceMode: true });
-      if (reply) speak(reply);
-      else if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), 450);
+      lastSpokenIndexRef.current = messages.length;
+
+      // Sentence-streaming TTS: speak each completed sentence as soon as the
+      // model produces it, instead of waiting for the entire reply. The first
+      // audible word lands seconds earlier in hands-free mode.
+      let spokenCursor = 0;
+      const sentenceRe = /[^.!?\n]+[.!?\n]+\s*/g;
+      const onDelta = handsFreeRef.current && ttsEnabled
+        ? (full: string) => {
+            const tail = full.slice(spokenCursor);
+            sentenceRe.lastIndex = 0;
+            let m: RegExpExecArray | null;
+            let consumed = 0;
+            while ((m = sentenceRe.exec(tail)) !== null) {
+              const sentence = m[0].trim();
+              const endIdx = m.index + m[0].length;
+              if (sentence.length >= MIN_SENTENCE_LEN) {
+                enqueueSpeak(sentence);
+                consumed = endIdx;
+              }
+            }
+            if (consumed > 0) spokenCursor += consumed;
+          }
+        : undefined;
+
+      const reply = await sendMessage(text, {
+        voiceMode: true,
+        modelOverride: voiceModel || undefined,
+        onDelta,
+      });
+
+      if (reply) {
+        if (onDelta) {
+          // Flush any remainder past the last sentence boundary.
+          const remainder = reply.slice(spokenCursor).trim();
+          if (remainder) enqueueSpeak(remainder);
+          markTtsStreamDone();
+        } else {
+          speak(reply);
+        }
+      } else if (handsFreeRef.current && !stoppedByUserRef.current) {
+        window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
       }
     } catch {
       if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), 600);
+        window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS + 200);
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiKey, messages.length, sendMessage, speak, voiceQuickSearch, burplexityApiToken, runBackgroundSearch]);
+  }, [apiKey, messages.length, sendMessage, speak, voiceQuickSearch, burplexityApiToken, runBackgroundSearch, voiceModel, ttsEnabled, enqueueSpeak, markTtsStreamDone]);
 
   const submitRef = useRef(submit);
   useEffect(() => { submitRef.current = submit; }, [submit]);
