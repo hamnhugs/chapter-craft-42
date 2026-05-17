@@ -58,6 +58,7 @@ export function useChatSettings() {
           savedModels: (data.saved_models as string[]) || [DEFAULT_MODEL],
           selectedModel: data.selected_model || DEFAULT_MODEL,
           deepResearchModel: data.deep_research_model || DEFAULT_DEEP_RESEARCH_MODEL,
+          voiceModel: (data as any).voice_model || "",
           ttsRate: typeof (data as any).tts_rate === "number" && (data as any).tts_rate > 0
             ? (data as any).tts_rate
             : DEFAULT_TTS_RATE,
