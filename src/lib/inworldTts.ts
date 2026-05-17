@@ -32,7 +32,14 @@ export async function fetchInworldVoices(_apiKey?: string): Promise<InworldVoice
     throw new Error(`${resp.status}: ${body}`);
   }
   const data = await resp.json();
-  return Array.isArray(data) ? data : (data.voices ?? []);
+  const voices = Array.isArray(data) ? data : (data.voices ?? []);
+  return voices
+    .map((voice: any) => ({
+      ...voice,
+      voice_id: String(voice.voice_id ?? voice.voiceId ?? voice.id ?? "").trim(),
+      name: String(voice.name ?? voice.displayName ?? voice.voiceId ?? voice.voice_id ?? "Unknown voice"),
+    }))
+    .filter((voice: InworldVoice) => voice.voice_id && voice.voice_id !== "undefined");
 }
 
 export async function synthesizeSpeech(
@@ -41,11 +48,15 @@ export async function synthesizeSpeech(
   voiceId: string,
   model = "inworld-tts-2",
 ): Promise<ArrayBuffer> {
+  const cleanVoiceId = String(voiceId ?? "").trim();
+  if (!cleanVoiceId || cleanVoiceId === "undefined") {
+    throw new Error("Select a valid Inworld voice before speaking");
+  }
   const headers = await authHeaders();
   const resp = await fetch(FUNCTIONS_BASE, {
     method: "POST",
     headers: { ...headers, "Content-Type": "application/json" },
-    body: JSON.stringify({ text, voice_id: voiceId, model }),
+    body: JSON.stringify({ text, voice_id: cleanVoiceId, model }),
   });
   if (!resp.ok) {
     const body = await resp.text().catch(() => resp.statusText);
