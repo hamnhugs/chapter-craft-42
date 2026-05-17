@@ -356,7 +356,7 @@ const VoiceChat: React.FC = () => {
     if (!inworldEnabled || !inworldApiKey || !inworldVoiceId) return; // browser TTS path doesn't prefetch
     while (
       ttsPendingSynthRef.current < TTS_PREFETCH_CONCURRENCY &&
-      ttsQueueRef.current.length > 0
+      ttsQueueRef.current.length > 0 || ttsAudioQueueRef.current.length > 0 || ttsPendingSynthRef.current > 0
     ) {
       const text = ttsQueueRef.current.shift()!;
       const controller = new AbortController();
@@ -658,7 +658,7 @@ const VoiceChat: React.FC = () => {
         submittingRef.current ||
         !streamDoneRef.current ||
         ttsPlayingRef.current ||
-        ttsQueueRef.current.length > 0
+        ttsQueueRef.current.length > 0 || ttsAudioQueueRef.current.length > 0 || ttsPendingSynthRef.current > 0
       ) return;
       const finalPieces: string[] = [];
       const interimPieces: string[] = [];
@@ -716,7 +716,7 @@ const VoiceChat: React.FC = () => {
         isSpeakingRef.current ||
         turnActiveRef.current ||
         ttsPlayingRef.current ||
-        ttsQueueRef.current.length > 0 ||
+        ttsQueueRef.current.length > 0 || ttsAudioQueueRef.current.length > 0 || ttsPendingSynthRef.current > 0 ||
         !streamDoneRef.current;
       if (handsFreeRef.current && !stoppedByUserRef.current && !turnBusy) {
         const stable = normalizeTranscript(finalTranscriptRef.current);
@@ -745,7 +745,7 @@ const VoiceChat: React.FC = () => {
       isSpeakingRef.current ||
       turnActiveRef.current ||
       ttsPlayingRef.current ||
-      ttsQueueRef.current.length > 0 ||
+      ttsQueueRef.current.length > 0 || ttsAudioQueueRef.current.length > 0 || ttsPendingSynthRef.current > 0 ||
       !streamDoneRef.current
     ) return;
     if (stoppedByUserRef.current) return;
