@@ -71,9 +71,10 @@ Deno.serve(async (req) => {
 
     if (req.method === "POST") {
       const payload = await req.json().catch(() => null) as
-        | { text?: string; voice_id?: string; model?: string }
+        | { text?: string; voice_id?: string; voiceId?: string; model?: string }
         | null;
-      if (!payload?.text || !payload?.voice_id) {
+      const voiceId = String(payload?.voice_id ?? payload?.voiceId ?? "").trim();
+      if (!payload?.text || !voiceId || voiceId === "undefined") {
         return jsonError("text and voice_id are required");
       }
       const clean = String(payload.text)
@@ -89,9 +90,9 @@ Deno.serve(async (req) => {
         },
         body: JSON.stringify({
           text: clean,
-          voiceId: payload.voice_id,
+          voiceId,
           modelId: payload.model || "inworld-tts-2",
-          audio_config: {
+          audioConfig: {
             audio_encoding: "MP3",
             sample_rate_hertz: 48000,
           },
