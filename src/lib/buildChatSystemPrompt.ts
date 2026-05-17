@@ -57,8 +57,9 @@ export async function buildChatSystemPrompt({
         const idToTitle = new Map(retrieval.nodes.map((n: any) => [n.id, n.title]));
         for (const node of retrieval.nodes) {
           parts.push("", `### ${node.title}${node.hop > 0 ? ` _(via ${node.via}, hop ${node.hop})_` : ""}`);
-          const text = (node.content || "").length > 4000
-            ? (node.content || "").slice(0, 4000) + "\n[...truncated]"
+          const maxLen = voiceMode ? 1200 : 4000;
+          const text = (node.content || "").length > maxLen
+            ? (node.content || "").slice(0, maxLen) + "\n[...truncated]"
             : node.content || "";
           parts.push(text);
           const outgoing = retrieval.edges.filter((e: any) => e.source_entry_id === node.id);
