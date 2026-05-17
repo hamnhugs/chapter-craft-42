@@ -81,7 +81,7 @@ Deno.serve(async (req) => {
         .replace(/\n+/g, ". ")
         .trim();
 
-      const resp = await fetch(`${INWORLD_BASE}/v1/tts/synthesize`, {
+      const resp = await fetch(`${INWORLD_BASE}/tts/v1/voice`, {
         method: "POST",
         headers: {
           Authorization: basicAuth(inworldKey),
@@ -90,9 +90,11 @@ Deno.serve(async (req) => {
         body: JSON.stringify({
           text: clean,
           voice_id: payload.voice_id,
-          model: payload.model || "inworld-tts-2",
-          output_format: "mp3",
-          delivery_mode: "BALANCED",
+          model_id: payload.model || "inworld-tts-2",
+          audio_config: {
+            audio_encoding: "MP3",
+            sample_rate_hertz: 48000,
+          },
         }),
       });
 
@@ -101,8 +103,11 @@ Deno.serve(async (req) => {
         return jsonError(`Inworld synth error: ${body}`, resp.status);
       }
 
-      const audio = await resp.arrayBuffer();
-      return new Response(audio, {
+      const result = await resp.json();
+      const base64 = result?.audioContent || result?.audio_content;
+      if (!base64) return jsonError("Inworld returned no audio", 502);
+      const bin = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+      return new Response(bin, {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "audio/mpeg" },
       });
