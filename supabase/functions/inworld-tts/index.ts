@@ -89,8 +89,8 @@ Deno.serve(async (req) => {
         },
         body: JSON.stringify({
           text: clean,
-          voice_id: payload.voice_id,
-          model_id: payload.model || "inworld-tts-2",
+          voiceId: payload.voice_id,
+          modelId: payload.model || "inworld-tts-2",
           audio_config: {
             audio_encoding: "MP3",
             sample_rate_hertz: 48000,
