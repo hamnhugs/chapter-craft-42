@@ -501,7 +501,9 @@ const VoiceChat: React.FC = () => {
         const stable = normalizeTranscript(finalTranscriptRef.current);
         if (stable && !submittingRef.current) flushPendingTranscript();
         else {
-          window.setTimeout(() => safeStartListening(), 250);
+          window.setTimeout(() => {
+            if (!isSpeakingRef.current && !isLoadingRef.current) safeStartListening();
+          }, 250);
         }
       } else {
         const stable = normalizeTranscript(finalTranscriptRef.current);
