@@ -300,6 +300,10 @@ const VoiceChat: React.FC = () => {
   const ttsPlayingRef = useRef(false);
   const streamDoneRef = useRef(true);
   const ttsCancelledRef = useRef(false);
+  // True from the moment submit() starts until the last TTS chunk finishes.
+  // Covers the model wait, inter-chunk gaps, and post-TTS grace so the mic
+  // never re-arms mid-turn.
+  const turnActiveRef = useRef(false);
 
   const muteMicForTts = useCallback(() => {
     isSpeakingRef.current = true;
@@ -315,6 +319,7 @@ const VoiceChat: React.FC = () => {
   const finishTtsAndResumeMic = useCallback(() => {
     setIsSpeaking(false);
     isSpeakingRef.current = false;
+    turnActiveRef.current = false;
     if (handsFreeRef.current && !stoppedByUserRef.current) {
       window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
     }
@@ -326,7 +331,15 @@ const VoiceChat: React.FC = () => {
     if (ttsCancelledRef.current) { ttsQueueRef.current = []; return; }
     const next = ttsQueueRef.current.shift();
     if (!next) {
-      if (streamDoneRef.current) finishTtsAndResumeMic();
+      // Only end the turn when the stream is fully done AND nothing is queued
+      // or playing. Otherwise we're in an inter-chunk gap — stay muted.
+      if (
+        streamDoneRef.current &&
+        ttsQueueRef.current.length === 0 &&
+        !ttsPlayingRef.current
+      ) {
+        finishTtsAndResumeMic();
+      }
       return;
     }
     ttsPlayingRef.current = true;
@@ -385,10 +398,15 @@ const VoiceChat: React.FC = () => {
 
   const markTtsStreamDone = useCallback(() => {
     streamDoneRef.current = true;
-    // If nothing is queued or playing, resume mic now.
-    if (!ttsPlayingRef.current && ttsQueueRef.current.length === 0) {
-      if (isSpeakingRef.current) finishTtsAndResumeMic();
+    // Only resume mic when truly nothing is queued/playing. Otherwise the
+    // audio's `onended` will drive the next playNextChunk → finish path.
+    if (
+      !ttsPlayingRef.current &&
+      ttsQueueRef.current.length === 0
+    ) {
+      if (isSpeakingRef.current || turnActiveRef.current) finishTtsAndResumeMic();
       else if (handsFreeRef.current && !stoppedByUserRef.current) {
+        turnActiveRef.current = false;
         window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
       }
     }
@@ -419,6 +437,7 @@ const VoiceChat: React.FC = () => {
       inworldAudioRef.current = null;
     }
     isSpeakingRef.current = false;
+    turnActiveRef.current = false;
     setIsSpeaking(false);
   };
 
@@ -448,6 +467,19 @@ const VoiceChat: React.FC = () => {
   const submit = useCallback(async (text: string) => {
     if (!text.trim()) return;
     if (!apiKey) { toast.error("Set your OpenRouter API key first"); setShowSettings(true); return; }
+
+    // Lock the mic for the entire turn (model wait + streamed TTS + grace).
+    // This closes the pre-first-token race where a late onresult could fire
+    // before isLoadingRef catches up via its useEffect.
+    turnActiveRef.current = true;
+    isSpeakingRef.current = true;
+    streamDoneRef.current = false;
+    if (sendTimerRef.current) { window.clearTimeout(sendTimerRef.current); sendTimerRef.current = null; }
+    finalTranscriptRef.current = "";
+    previousFinalLengthRef.current = 0;
+    setInterimTranscript("");
+    stopCurrentRecognitionQuietly();
+
     try {
       if (voiceQuickSearch && burplexityApiToken && SEARCH_INTENT_RE.test(text)) {
         runBackgroundSearch(text); // intentionally not awaited
@@ -493,10 +525,21 @@ const VoiceChat: React.FC = () => {
         } else {
           speak(reply);
         }
-      } else if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
+      } else {
+        // No reply produced — end the turn cleanly.
+        streamDoneRef.current = true;
+        isSpeakingRef.current = false;
+        turnActiveRef.current = false;
+        if (handsFreeRef.current && !stoppedByUserRef.current) {
+          window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
+        }
       }
     } catch {
+      streamDoneRef.current = true;
+      ttsQueueRef.current = [];
+      ttsPlayingRef.current = false;
+      isSpeakingRef.current = false;
+      turnActiveRef.current = false;
       if (handsFreeRef.current && !stoppedByUserRef.current) {
         window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS + 200);
       }
@@ -535,7 +578,15 @@ const VoiceChat: React.FC = () => {
     recognition.onresult = (event: any) => {
       // Barge-in guard: drop anything captured while TTS is playing or a
       // request is in flight — otherwise the mic transcribes the speaker.
-      if (isSpeakingRef.current || isLoadingRef.current) return;
+      if (
+        isSpeakingRef.current ||
+        isLoadingRef.current ||
+        turnActiveRef.current ||
+        submittingRef.current ||
+        !streamDoneRef.current ||
+        ttsPlayingRef.current ||
+        ttsQueueRef.current.length > 0
+      ) return;
       const finalPieces: string[] = [];
       const interimPieces: string[] = [];
       for (let i = 0; i < event.results.length; i++) {
@@ -587,13 +638,18 @@ const VoiceChat: React.FC = () => {
     recognition.onend = () => {
       setIsListening(false);
       isListeningRef.current = false;
-      if (handsFreeRef.current && !stoppedByUserRef.current && !isLoadingRef.current && !isSpeakingRef.current) {
+      const turnBusy =
+        isLoadingRef.current ||
+        isSpeakingRef.current ||
+        turnActiveRef.current ||
+        ttsPlayingRef.current ||
+        ttsQueueRef.current.length > 0 ||
+        !streamDoneRef.current;
+      if (handsFreeRef.current && !stoppedByUserRef.current && !turnBusy) {
         const stable = normalizeTranscript(finalTranscriptRef.current);
         if (stable && !submittingRef.current) flushPendingTranscript();
         else {
-          window.setTimeout(() => {
-            if (!isSpeakingRef.current && !isLoadingRef.current) safeStartListening();
-          }, 250);
+          window.setTimeout(() => safeStartListening(), 250);
         }
       } else {
         const stable = normalizeTranscript(finalTranscriptRef.current);
@@ -610,7 +666,15 @@ const VoiceChat: React.FC = () => {
 
   const safeStartListening = useCallback(() => {
     if (!SpeechRecognition) return;
-    if (isListeningRef.current || isLoadingRef.current || isSpeakingRef.current) return;
+    if (
+      isListeningRef.current ||
+      isLoadingRef.current ||
+      isSpeakingRef.current ||
+      turnActiveRef.current ||
+      ttsPlayingRef.current ||
+      ttsQueueRef.current.length > 0 ||
+      !streamDoneRef.current
+    ) return;
     if (stoppedByUserRef.current) return;
     stopCurrentRecognitionQuietly();
     resetTranscriptBuffers();
