@@ -638,13 +638,18 @@ const VoiceChat: React.FC = () => {
     recognition.onend = () => {
       setIsListening(false);
       isListeningRef.current = false;
-      if (handsFreeRef.current && !stoppedByUserRef.current && !isLoadingRef.current && !isSpeakingRef.current) {
+      const turnBusy =
+        isLoadingRef.current ||
+        isSpeakingRef.current ||
+        turnActiveRef.current ||
+        ttsPlayingRef.current ||
+        ttsQueueRef.current.length > 0 ||
+        !streamDoneRef.current;
+      if (handsFreeRef.current && !stoppedByUserRef.current && !turnBusy) {
         const stable = normalizeTranscript(finalTranscriptRef.current);
         if (stable && !submittingRef.current) flushPendingTranscript();
         else {
-          window.setTimeout(() => {
-            if (!isSpeakingRef.current && !isLoadingRef.current) safeStartListening();
-          }, 250);
+          window.setTimeout(() => safeStartListening(), 250);
         }
       } else {
         const stable = normalizeTranscript(finalTranscriptRef.current);
@@ -661,7 +666,16 @@ const VoiceChat: React.FC = () => {
 
   const safeStartListening = useCallback(() => {
     if (!SpeechRecognition) return;
-    if (isListeningRef.current || isLoadingRef.current || isSpeakingRef.current) return;
+    if (
+      isListeningRef.current ||
+      isLoadingRef.current ||
+      isSpeakingRef.current ||
+      turnActiveRef.current ||
+      submittingRef.current ||
+      ttsPlayingRef.current ||
+      ttsQueueRef.current.length > 0 ||
+      !streamDoneRef.current
+    ) return;
     if (stoppedByUserRef.current) return;
     stopCurrentRecognitionQuietly();
     resetTranscriptBuffers();
