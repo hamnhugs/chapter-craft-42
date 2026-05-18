@@ -7,6 +7,7 @@ import { isEmbeddingModel } from "@/lib/utils";
 const DEFAULT_MODEL = "google/gemini-2.5-flash";
 const DEFAULT_DEEP_RESEARCH_MODEL = "google/gemini-2.5-pro";
 const DEFAULT_TTS_RATE = 1.05;
+const DEFAULT_HANDS_FREE_TTS_RATE = 1.0;
 
 interface ChatSettings {
   apiKey: string;
