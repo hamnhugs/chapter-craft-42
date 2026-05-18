@@ -372,6 +372,7 @@ const VoiceChat: React.FC = () => {
         .then((buffer) => {
           ttsAbortersRef.current.delete(controller);
           ttsPendingSynthRef.current -= 1;
+          ttsRetryRef.current.delete(text);
           if (ttsCancelledRef.current) return;
           const blob = new Blob([buffer], { type: "audio/mpeg" });
           const url = URL.createObjectURL(blob);
