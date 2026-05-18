@@ -130,7 +130,7 @@ export async function updateKnowledgeEntry(id: string, updates: { title?: string
   if (error) throw error;
 }
 
-export async function extractKnowledge(messages: { role: string; content: string }[], sourceBookId?: string): Promise<any> {
+export async function extractKnowledge(messages: { role: string; content: string }[], sourceBookId?: string, wikiId?: string | null): Promise<any> {
   const { data: { session } } = await supabase.auth.getSession();
   const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/knowledge-extract`, {
     method: "POST",
