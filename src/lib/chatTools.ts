@@ -338,11 +338,15 @@ export async function executeChatTool(
         const q = String(args.query || "").trim();
         if (!q) return { result: { error: "Empty query" }, event: { name, summary: "Empty query", ok: false } };
         const limit = Math.min(25, Math.max(1, Number(args.limit) || 10));
-        const { data, error } = await supabase
+        const { data: settings } = await supabase.from("user_settings").select("active_wiki_id" as any).maybeSingle();
+        const activeWikiId = (settings as any)?.active_wiki_id || null;
+        let query = supabase
           .from("knowledge_entries")
-          .select("id, title, content, entry_type, confidence, source_book_id, tags")
+          .select("id, title, content, entry_type, confidence, source_book_id, tags, wiki_id" as any)
           .or(`title.ilike.%${q}%,content.ilike.%${q}%`)
           .limit(limit);
+        if (activeWikiId) query = query.eq("wiki_id" as any, activeWikiId);
+        const { data, error } = await query;
         if (error) throw error;
         const entries = (data || []).map((e: any) => ({
           id: e.id,
@@ -351,7 +355,7 @@ export async function executeChatTool(
           confidence: e.confidence,
           snippet: (e.content || "").slice(0, 400),
         }));
-        return { result: entries, event: { name, summary: `Searched wiki for "${q}" — ${entries.length} hit(s)`, ok: true } };
+        return { result: entries, event: { name, summary: `Searched wiki for "${q}" — ${entries.length} hit(s)${activeWikiId ? " in active wiki" : ""}`, ok: true } };
       }
       case "web_search": {
         const q = String(args.query || "").trim();
