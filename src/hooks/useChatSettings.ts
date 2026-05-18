@@ -97,6 +97,8 @@ export function useChatSettings() {
         custom_system_prompt: next.customSystemPrompt || "",
         burplexity_api_token: next.burplexityApiToken || "",
         inworld_api_key: next.inworldApiKey || "",
+        inworld_enabled: next.inworldEnabled,
+        inworld_voice_id: next.inworldVoiceId || "",
       };
       const { error } = await supabase
         .from("user_settings")
