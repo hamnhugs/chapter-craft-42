@@ -56,9 +56,7 @@ const VoiceChat: React.FC = () => {
   const [voiceQuickSearchModel, setVoiceQuickSearchModel] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_MODEL_KEY) || "");
   const [pendingSearchCount, setPendingSearchCount] = useState(0);
 
-  // Inworld TTS state (API key now lives in useChatSettings -> Supabase)
-  const [inworldVoiceId, setInworldVoiceIdState] = useState(() => localStorage.getItem(INWORLD_VOICE_ID_KEY) || "");
-  const [inworldEnabled, setInworldEnabled] = useState(() => localStorage.getItem(INWORLD_ENABLED_KEY) === "true");
+  // Inworld TTS state (API key, toggle, and voice ID all live in useChatSettings -> Supabase)
   const [inworldVoices, setInworldVoices] = useState<InworldVoice[]>([]);
   const [loadingVoices, setLoadingVoices] = useState(false);
   const inworldAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -117,8 +115,8 @@ const VoiceChat: React.FC = () => {
   };
 
   const {
-    apiKey, savedModels, selectedModel, deepResearchModel, voiceModel, ttsRate, customSystemPrompt, burplexityApiToken, inworldApiKey, loaded: settingsLoaded,
-    saveApiKey: persistApiKey, setSelectedModel, setDeepResearchModel, setVoiceModel, setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey,
+    apiKey, savedModels, selectedModel, deepResearchModel, voiceModel, ttsRate, customSystemPrompt, burplexityApiToken, inworldApiKey, inworldEnabled, inworldVoiceId, loaded: settingsLoaded,
+    saveApiKey: persistApiKey, setSelectedModel, setDeepResearchModel, setVoiceModel, setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey, setInworldEnabled, setInworldVoiceId: setInworldVoiceIdState,
     addModel: addModelToSettings, removeModel: removeModelFromSettings,
   } = useChatSettings() as any;
   const [newModelInput, setNewModelInput] = useState("");
@@ -194,8 +192,6 @@ const VoiceChat: React.FC = () => {
   useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
   useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
   useEffect(() => { localStorage.setItem(VOICE_ENABLED_KEY, String(ttsEnabled)); }, [ttsEnabled]);
-  useEffect(() => { localStorage.setItem(INWORLD_VOICE_ID_KEY, inworldVoiceId); }, [inworldVoiceId]);
-  useEffect(() => { localStorage.setItem(INWORLD_ENABLED_KEY, String(inworldEnabled)); }, [inworldEnabled]);
 
   // One-time migration: localStorage -> account-synced setting
   const migratedRef = useRef(false);
@@ -208,7 +204,13 @@ const VoiceChat: React.FC = () => {
     const legacyInworld = localStorage.getItem(INWORLD_API_KEY_KEY);
     if (legacyInworld && !inworldApiKey) setInworldApiKey(legacyInworld);
     if (legacyInworld) localStorage.removeItem(INWORLD_API_KEY_KEY);
-  }, [settingsLoaded, apiKey, persistApiKey, inworldApiKey, setInworldApiKey]);
+    const legacyVoiceId = localStorage.getItem(INWORLD_VOICE_ID_KEY);
+    if (legacyVoiceId && !inworldVoiceId) setInworldVoiceIdState(legacyVoiceId);
+    if (legacyVoiceId) localStorage.removeItem(INWORLD_VOICE_ID_KEY);
+    const legacyEnabled = localStorage.getItem(INWORLD_ENABLED_KEY);
+    if (legacyEnabled === "true" && !inworldEnabled) setInworldEnabled(true);
+    if (legacyEnabled !== null) localStorage.removeItem(INWORLD_ENABLED_KEY);
+  }, [settingsLoaded, apiKey, persistApiKey, inworldApiKey, setInworldApiKey, inworldVoiceId, setInworldVoiceIdState, inworldEnabled, setInworldEnabled]);
 
   // Load Inworld voices once the key is known
   const inworldVoiceLoadedRef = useRef(false);
@@ -276,7 +278,9 @@ const VoiceChat: React.FC = () => {
     try {
       const voices = await fetchInworldVoices(key.trim());
       setInworldVoices(voices);
-      if (!inworldVoiceId) {
+      // Only auto-pick when no voice is saved AND settings have finished loading
+      // (avoids clobbering the user's saved selection while the DB round-trip is still in flight).
+      if (settingsLoaded && !inworldVoiceId) {
         setInworldVoiceIdState(voices[0]?.voice_id || "Ashley");
       }
     } catch (err: any) {
@@ -284,7 +288,7 @@ const VoiceChat: React.FC = () => {
     } finally {
       setLoadingVoices(false);
     }
-  }, [inworldVoiceId]);
+  }, [inworldVoiceId, settingsLoaded, setInworldVoiceIdState]);
 
   const saveInworldKey = (key: string) => {
     setInworldApiKey(key.trim());
@@ -306,6 +310,8 @@ const VoiceChat: React.FC = () => {
   const ttsAudioQueueRef = useRef<{ url: string }[]>([]);
   const ttsPendingSynthRef = useRef(0);
   const ttsAbortersRef = useRef<Set<AbortController>>(new Set());
+  const ttsRetryRef = useRef<Map<string, number>>(new Map());
+  const ttsErrorToastedThisTurnRef = useRef(false);
   const ttsPlayingRef = useRef(false);
   const streamDoneRef = useRef(true);
   const ttsCancelledRef = useRef(false);
@@ -366,6 +372,7 @@ const VoiceChat: React.FC = () => {
         .then((buffer) => {
           ttsAbortersRef.current.delete(controller);
           ttsPendingSynthRef.current -= 1;
+          ttsRetryRef.current.delete(text);
           if (ttsCancelledRef.current) return;
           const blob = new Blob([buffer], { type: "audio/mpeg" });
           const url = URL.createObjectURL(blob);
@@ -379,20 +386,23 @@ const VoiceChat: React.FC = () => {
           if (ttsCancelledRef.current) return;
           if ((err as any)?.name === "AbortError") return;
           console.error("Inworld TTS error:", err);
-          // Fallback: speak this chunk via browser TTS inline, then continue.
-          ttsPlayingRef.current = true;
-          setIsSpeaking(true);
-          isSpeakingRef.current = true;
-          const u = new SpeechSynthesisUtterance(text);
-          u.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
-          const done = () => {
-            ttsPlayingRef.current = false;
+          // Retry up to 2 times to ride out transient errors / cold starts.
+          const tries = (ttsRetryRef.current.get(text) || 0) + 1;
+          ttsRetryRef.current.set(text, tries);
+          if (tries <= 2) {
+            ttsQueueRef.current.unshift(text); // retry same chunk first
+            window.setTimeout(() => pumpSynthRef.current(), 250 * tries);
+          } else {
+            ttsRetryRef.current.delete(text);
+            // Skip the chunk rather than silently switching to the system voice mid-reply.
+            if (!ttsErrorToastedThisTurnRef.current) {
+              ttsErrorToastedThisTurnRef.current = true;
+              toast.error("Inworld TTS hiccup — skipping a sentence");
+            }
             pumpPlayRef.current();
             pumpSynthRef.current();
             maybeFinishTurn();
-          };
-          u.onend = done; u.onerror = done;
-          synthRef.current.speak(u);
+          }
         });
     }
   }, [inworldEnabled, inworldApiKey, inworldVoiceId, ttsRate, maybeFinishTurn]);
@@ -444,13 +454,23 @@ const VoiceChat: React.FC = () => {
   // Legacy name kept so the rest of the file (which only references playNextChunk indirectly) keeps working.
   const playNextChunk = pumpPlay;
 
+  const pendingPreLoadSpeakRef = useRef<string[]>([]);
   const enqueueSpeak = useCallback((chunk: string) => {
     if (!ttsEnabled) return;
     const t = stripMarkdownForTts(chunk);
     if (!t) return;
     ttsCancelledRef.current = false;
+    ttsErrorToastedThisTurnRef.current = false;
     streamDoneRef.current = false;
     muteMicForTts();
+
+    // If settings haven't loaded yet, buffer the chunk so we don't accidentally
+    // fall through to browser TTS just because inworldApiKey/voiceId hadn't
+    // been hydrated from the DB yet. We'll flush as soon as settings load.
+    if (!settingsLoaded) {
+      pendingPreLoadSpeakRef.current.push(t);
+      return;
+    }
 
     if (inworldEnabled && inworldApiKey && inworldVoiceId) {
       ttsQueueRef.current.push(t);
@@ -470,7 +490,26 @@ const VoiceChat: React.FC = () => {
       u.onend = done; u.onerror = done;
       synthRef.current.speak(u);
     }
-  }, [ttsEnabled, muteMicForTts, inworldEnabled, inworldApiKey, inworldVoiceId, ttsRate, pumpSynth, pumpPlay, maybeFinishTurn]);
+  }, [ttsEnabled, muteMicForTts, settingsLoaded, inworldEnabled, inworldApiKey, inworldVoiceId, ttsRate, pumpSynth, pumpPlay, maybeFinishTurn]);
+
+  // Flush any pre-load speech buffer once settings are available.
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    const buffered = pendingPreLoadSpeakRef.current;
+    if (!buffered.length) return;
+    pendingPreLoadSpeakRef.current = [];
+    if (inworldEnabled && inworldApiKey && inworldVoiceId) {
+      for (const t of buffered) ttsQueueRef.current.push(t);
+      pumpSynth();
+      pumpPlay();
+    } else {
+      for (const t of buffered) {
+        const u = new SpeechSynthesisUtterance(t);
+        u.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
+        synthRef.current.speak(u);
+      }
+    }
+  }, [settingsLoaded, inworldEnabled, inworldApiKey, inworldVoiceId, ttsRate, pumpSynth, pumpPlay]);
 
   const markTtsStreamDone = useCallback(() => {
     streamDoneRef.current = true;
@@ -492,6 +531,9 @@ const VoiceChat: React.FC = () => {
   const stopSpeaking = () => {
     ttsCancelledRef.current = true;
     ttsQueueRef.current = [];
+    pendingPreLoadSpeakRef.current = [];
+    ttsRetryRef.current.clear();
+    ttsErrorToastedThisTurnRef.current = false;
     // Abort in-flight syntheses
     for (const c of ttsAbortersRef.current) { try { c.abort(); } catch {} }
     ttsAbortersRef.current.clear();

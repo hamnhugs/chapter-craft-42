@@ -20,6 +20,8 @@ interface ChatSettings {
   customSystemPrompt: string;
   burplexityApiToken: string;
   inworldApiKey: string;
+  inworldEnabled: boolean;
+  inworldVoiceId: string;
 }
 
 const defaults: ChatSettings = {
@@ -34,6 +36,8 @@ const defaults: ChatSettings = {
   customSystemPrompt: "",
   burplexityApiToken: "",
   inworldApiKey: "",
+  inworldEnabled: false,
+  inworldVoiceId: "",
 };
 
 export function useChatSettings() {
@@ -67,6 +71,8 @@ export function useChatSettings() {
           customSystemPrompt: (data as any).custom_system_prompt || "",
           burplexityApiToken: (data as any).burplexity_api_token || "",
           inworldApiKey: (data as any).inworld_api_key || "",
+          inworldEnabled: !!(data as any).inworld_enabled,
+          inworldVoiceId: (data as any).inworld_voice_id || "",
         });
       }
       setLoaded(true);
@@ -91,6 +97,8 @@ export function useChatSettings() {
         custom_system_prompt: next.customSystemPrompt || "",
         burplexity_api_token: next.burplexityApiToken || "",
         inworld_api_key: next.inworldApiKey || "",
+        inworld_enabled: next.inworldEnabled,
+        inworld_voice_id: next.inworldVoiceId || "",
       };
       const { error } = await supabase
         .from("user_settings")
@@ -150,6 +158,8 @@ export function useChatSettings() {
     setCustomSystemPrompt: (p: string) => update({ customSystemPrompt: p }),
     setBurplexityApiToken: (t: string) => update({ burplexityApiToken: t.trim() }),
     setInworldApiKey: (k: string) => update({ inworldApiKey: k.trim() }),
+    setInworldEnabled: (v: boolean) => update({ inworldEnabled: v }),
+    setInworldVoiceId: (v: string) => update({ inworldVoiceId: v }),
     addModel,
     removeModel,
     setNewModelInput: undefined, // handled in component

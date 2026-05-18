@@ -1,74 +1,66 @@
-# Speed up Inworld (API) TTS in the Voice tab
+## What's actually broken
 
-## Goal
+Two independent bugs in `src/components/VoiceChat.tsx` produce the symptom "Inworld settings don't persist and randomly switch to default TTS mid-chat":
 
-Reduce time-to-first-audio and remove dead gaps between sentences when hands-free uses the Inworld API. No changes to the listening/turn-taking workflow already in place.
+### Bug 1 — Silent fallback to browser TTS on a single synth failure
+In `pumpSynth()` (lines ~376–396), if any single sentence's call to `synthesizeSpeech()` rejects (transient 5xx from Inworld, brief network blip, edge cold-start timeout, abort race), the catch block speaks that chunk via `SpeechSynthesisUtterance` (the OS/browser default voice). The rest of the reply then continues in Inworld, so the user hears the AI suddenly switch voices mid-sentence and assumes the Inworld setting flipped off.
 
-## Why it's slow today
+### Bug 2 — `inworldEnabled` and `inworldVoiceId` are localStorage-only
+- `inworldApiKey` lives in `user_settings` (DB, persistent across devices/sessions). ✅
+- `inworldEnabled` and `inworldVoiceId` live **only** in `localStorage` (keys `inworld_tts_enabled`, `inworld_voice_id`). ❌
 
-In `src/components/VoiceChat.tsx` (`playNextChunk`):
-1. Synthesis is **strictly serial** — the next chunk's `synthesizeSpeech()` HTTP call only fires after the previous chunk's `audio.onended`. Every sentence eats a full network round-trip before it plays.
-2. The edge function (`supabase/functions/inworld-tts/index.ts`) calls Inworld's **non-streaming** `tts/v1/voice` endpoint, waits for the full MP3, base64-decodes it, then returns. First byte to client only after Inworld finishes the whole sentence.
-3. MP3 is requested at 48 kHz — larger payload + slower server-side encode than needed for speech.
-4. First call after idle hits an edge-function cold start.
-5. A fresh `new Audio()` is created per chunk; on some browsers that adds extra setup latency.
+Consequences:
+- Cleared site data, private window, new device, or PWA cache eviction → both revert to defaults (`enabled=false`, `voiceId=""`).
+- On every fresh mount, `inworldApiKey` is `""` until `useChatSettings` finishes its DB round-trip. If a reply starts streaming during that window, `enqueueSpeak`'s gate `inworldEnabled && inworldApiKey && inworldVoiceId` is false and the whole reply uses browser TTS, looking like the setting "switched."
+- Voice ID also gets auto-reassigned to `voices[0]?.voice_id || "Ashley"` inside `loadInworldVoices` whenever `inworldVoiceId` is falsy at load time — which can clobber the user's choice if local storage is ever empty at boot.
 
-## Fix (4 layers, all reversible)
+## Fix
 
-### 1. Client-side TTS prefetch pipeline (biggest win, no API change)
+### 1. Move Inworld toggle + voice ID into `user_settings`
 
-In `playNextChunk` / `enqueueSpeak`, decouple **synthesis** from **playback**:
+Add two columns to `user_settings` via migration:
+- `inworld_enabled boolean NOT NULL DEFAULT false`
+- `inworld_voice_id text NOT NULL DEFAULT ''`
 
-- Add `ttsAudioQueueRef: { url: string }[]` next to `ttsQueueRef` (text queue).
-- New `synthesizeAhead()` worker: while `inFlightCount < 2`, pop the next text chunk, call `synthesizeSpeech`, push the resulting blob URL onto `ttsAudioQueueRef`. Kick it whenever `enqueueSpeak` adds text or a chunk finishes playing.
-- `playNextChunk` now pulls from `ttsAudioQueueRef`. If empty but text queue has items and a synth is in flight, just wait — `onended` of the currently-playing audio still drives the next call.
-- Cap concurrency at 2 (configurable const `TTS_PREFETCH_CONCURRENCY`) so we don't hammer Inworld.
-- Cancellation: `stopSpeaking()` revokes all queued blob URLs and aborts in-flight fetches via an `AbortController` per request.
+Extend `src/hooks/useChatSettings.ts`:
+- Read both fields in the load block.
+- Add to the upsert payload.
+- Expose `inworldEnabled`, `inworldVoiceId`, `setInworldEnabled`, `setInworldVoiceId`.
+- Keep defaults in the `defaults` object.
 
-Result: while sentence N is playing, sentence N+1 (and often N+2) are already synthesized — inter-sentence gap collapses from ~500–1500 ms to near zero.
+Update `src/components/VoiceChat.tsx`:
+- Replace the two local `useState` + `localStorage` effects with the hook values.
+- Remove the `INWORLD_VOICE_ID_KEY` / `INWORLD_ENABLED_KEY` constants and their persistence effects.
+- One-time migration: on mount, if hook values are empty and legacy localStorage keys exist, copy them into the hook (via setters) and `removeItem` from localStorage. Mirrors the existing legacy-API-key migration already in the file.
+- In `loadInworldVoices`, only auto-pick `voices[0]` when `inworldVoiceId` is empty **and** there's no saved value coming from the DB (i.e. after `settingsLoaded` is true and the field is still ""). Never overwrite a saved selection.
 
-### 2. True audio streaming from the edge function (first-token win)
+### 2. Stop silently falling back to browser TTS mid-reply
 
-Update `supabase/functions/inworld-tts/index.ts` POST handler:
+In `pumpSynth()`'s `.catch` (lines ~376–396):
+- Remove the inline `SpeechSynthesisUtterance` fallback.
+- Replace with: retry the same chunk once (re-push to the front of `ttsQueueRef`, increment a per-chunk retry counter stored in a `WeakMap`/parallel `Map<string, number>`, cap at 2 retries). If it still fails, drop the chunk, log to console, and surface a single throttled `toast.error("Inworld TTS hiccup — skipping a sentence")` per turn.
+- Reasoning: a one-off transient error should never silently change the voice. Retrying covers the cold-start / network-blip case; skipping a sentence is far less jarring than a voice swap and keeps Inworld as the only voice for the whole turn.
 
-- Switch from `tts/v1/voice` to Inworld's streaming endpoint `tts/v1/voice:stream` (returns NDJSON of base64 audio chunks).
-- Return a `ReadableStream` to the client: decode each chunk's base64 → push raw MP3 bytes to the response stream. `Content-Type: audio/mpeg`, `Transfer-Encoding: chunked`.
-- Keep the existing non-streaming code path as a fallback if the stream endpoint errors.
+### 3. Defer first chunk until settings have loaded
 
-Add a new client helper `synthesizeSpeechStream()` in `src/lib/inworldTts.ts` that returns the `Response` so the caller can feed it to `MediaSource` (preferred) or, on Safari/iOS where MSE for MP3 is flaky, fall back to buffering the whole `arrayBuffer()` (current behavior).
+In `enqueueSpeak` (line ~447):
+- If `!settingsLoaded`, push the chunk to `ttsQueueRef` and an `awaitingSettingsRef` flag; on the `settingsLoaded` transition, run `pumpSynth()` / `pumpPlay()` once.
+- This eliminates the "first turn after refresh uses browser TTS because the DB hadn't responded yet" race.
 
-In `playNextChunk`, when MSE is supported: create the `<audio>` immediately, attach a `MediaSource`, append bytes as they arrive, and call `audio.play()` as soon as the first chunk is buffered. First audible word now starts within ~150–300 ms of Inworld's first byte instead of waiting for the whole sentence.
+### 4. Keep everything else exactly as-is
 
-### 3. Lighter audio config
-
-In the edge function payload:
-- `audioEncoding: "MP3"`, `sampleRateHertz: 24000` (was 48000). 24 kHz is more than enough for speech, halves payload and shortens server-side encode. Keep 48 kHz as a settings-driven override later if anyone complains, but default to 24 kHz.
-
-### 4. Cold-start + connection warmup
-
-- On mount of `VoiceChat`, when hands-free is enabled OR when the user opens the settings sheet, fire a one-time `HEAD`/tiny `GET /voices` to the `inworld-tts` function to warm the isolate. Already implemented partially (`loadInworldVoices`); just make sure it runs once at mount when `inworldEnabled && inworldApiKey && inworldVoiceId` so the very first turn isn't the cold one.
-- Add `<link rel="preconnect" href="https://ktzaysdkdkocqhewwtnn.supabase.co" crossorigin>` to `index.html` so the TLS handshake to the functions host is done before the user finishes their first sentence.
-- Reuse a single persistent `inworldAudioRef` `<audio>` element across chunks (already mostly the case — just stop re-creating with `new Audio()` and instead set `.src` on the persistent element).
+Not touched: hands-free turn-taking (`turnActiveRef`, `safeStartListening`, silence timers, mic mute), sentence streaming `onDelta`, `submit()`, voice model selector, `ttsRate`, browser-TTS path for users who haven't enabled Inworld (still works as a deliberate, user-chosen mode), settings UI layout, `ChatContext`, `buildChatSystemPrompt`, edge function, `inworldTts.ts` client.
 
 ## Files touched
 
-- `src/components/VoiceChat.tsx` — add prefetch queue, persistent audio element, MSE playback path, AbortController wiring. **No changes** to `turnActiveRef`, `safeStartListening`, mic mute/unmute, silence timers, or any submit/onDelta logic.
-- `src/lib/inworldTts.ts` — add `synthesizeSpeechStream()` returning the raw `Response`; keep `synthesizeSpeech()` unchanged for fallback and non-streaming callers.
-- `supabase/functions/inworld-tts/index.ts` — POST handler: try streaming endpoint, return `ReadableStream`; switch sample rate default to 24000; keep existing non-streaming branch as fallback on error.
-- `index.html` — single `<link rel="preconnect">` line.
-
-## Explicitly NOT touched
-
-- Hands-free turn-taking logic (`turnActiveRef`, `safeStartListening`, silence/post-TTS timers, mic mute/unmute).
-- Sentence-streaming `onDelta` regex / `enqueueSpeak` call sites.
-- Voice model selector, voice ID picker, settings UI, `useChatSettings`, `ChatContext`, `buildChatSystemPrompt`.
-- Browser TTS fallback, non-hands-free push-to-talk, Chat tab, dictation, notes, knowledge, migrations.
+- `supabase/migrations/<new>.sql` — add two columns to `user_settings`.
+- `src/hooks/useChatSettings.ts` — load/save/expose `inworldEnabled` + `inworldVoiceId`.
+- `src/components/VoiceChat.tsx` — swap localStorage for hook values, add legacy-key migration, remove silent browser-TTS fallback in `pumpSynth` (replace with retry + skip), defer `enqueueSpeak` until `settingsLoaded`.
 
 ## Verification
 
-1. Hands-free on, ask a multi-sentence question. First audio should start noticeably sooner (target <800 ms after the first sentence is enqueued vs. current ~1.5–2.5 s).
-2. Inter-sentence pauses should be effectively gone — playback feels continuous.
-3. Tapping the mic stop button mid-reply still cancels cleanly (no orphan audio, no leaked blob URLs).
-4. Mic does not re-arm while TTS is playing (existing `turnActiveRef` guarantees unchanged).
-5. If Inworld's streaming endpoint or MSE is unsupported, code falls back to current behavior with zero user-visible regressions.
-6. Browser TTS path (Inworld off) behaves exactly as today.
+1. Enable Inworld + pick a voice. Hard-refresh. Toggle and voice still selected before any DB request resolves (they hydrate from DB, plus optimistic localStorage migration covers the legacy case).
+2. Sign in on a second device/browser → Inworld toggle + voice carry over.
+3. Throttle network in DevTools and ask a multi-sentence question. Voice stays Inworld throughout; no mid-reply switch to system voice. If a sentence truly can't synthesize after retry, you see one toast and that sentence is skipped — every other sentence is still Inworld.
+4. First message after a cold page load uses Inworld (not browser TTS) because `enqueueSpeak` waits for `settingsLoaded`.
+5. Browser-TTS-only users (Inworld off) behave identically to today.

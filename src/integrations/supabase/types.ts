@@ -503,6 +503,8 @@ export type Database = {
           deep_research_model: string | null
           id: string
           inworld_api_key: string
+          inworld_enabled: boolean
+          inworld_voice_id: string
           is_recording_mode: boolean
           openrouter_api_key: string | null
           saved_models: Json | null
@@ -521,6 +523,8 @@ export type Database = {
           deep_research_model?: string | null
           id?: string
           inworld_api_key?: string
+          inworld_enabled?: boolean
+          inworld_voice_id?: string
           is_recording_mode?: boolean
           openrouter_api_key?: string | null
           saved_models?: Json | null
@@ -539,6 +543,8 @@ export type Database = {
           deep_research_model?: string | null
           id?: string
           inworld_api_key?: string
+          inworld_enabled?: boolean
+          inworld_voice_id?: string
           is_recording_mode?: boolean
           openrouter_api_key?: string | null
           saved_models?: Json | null
