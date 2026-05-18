@@ -172,7 +172,7 @@ export async function ingestBook(bookId: string, wikiId?: string | null): Promis
       "Content-Type": "application/json",
       Authorization: `Bearer ${session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
     },
-    body: JSON.stringify({ book_id: bookId }),
+    body: JSON.stringify({ book_id: bookId, wiki_id: wikiId }),
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ error: "Ingest failed" }));
