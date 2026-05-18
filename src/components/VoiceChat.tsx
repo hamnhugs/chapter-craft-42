@@ -204,7 +204,13 @@ const VoiceChat: React.FC = () => {
     const legacyInworld = localStorage.getItem(INWORLD_API_KEY_KEY);
     if (legacyInworld && !inworldApiKey) setInworldApiKey(legacyInworld);
     if (legacyInworld) localStorage.removeItem(INWORLD_API_KEY_KEY);
-  }, [settingsLoaded, apiKey, persistApiKey, inworldApiKey, setInworldApiKey]);
+    const legacyVoiceId = localStorage.getItem(INWORLD_VOICE_ID_KEY);
+    if (legacyVoiceId && !inworldVoiceId) setInworldVoiceIdState(legacyVoiceId);
+    if (legacyVoiceId) localStorage.removeItem(INWORLD_VOICE_ID_KEY);
+    const legacyEnabled = localStorage.getItem(INWORLD_ENABLED_KEY);
+    if (legacyEnabled === "true" && !inworldEnabled) setInworldEnabled(true);
+    if (legacyEnabled !== null) localStorage.removeItem(INWORLD_ENABLED_KEY);
+  }, [settingsLoaded, apiKey, persistApiKey, inworldApiKey, setInworldApiKey, inworldVoiceId, setInworldVoiceIdState, inworldEnabled, setInworldEnabled]);
 
   // Load Inworld voices once the key is known
   const inworldVoiceLoadedRef = useRef(false);
