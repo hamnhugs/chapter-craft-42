@@ -164,7 +164,7 @@ export async function runLint(): Promise<LintResult> {
   return resp.json();
 }
 
-export async function ingestBook(bookId: string): Promise<any> {
+export async function ingestBook(bookId: string, wikiId?: string | null): Promise<any> {
   const { data: { session } } = await supabase.auth.getSession();
   const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/knowledge-ingest`, {
     method: "POST",
