@@ -71,6 +71,8 @@ export function useChatSettings() {
           customSystemPrompt: (data as any).custom_system_prompt || "",
           burplexityApiToken: (data as any).burplexity_api_token || "",
           inworldApiKey: (data as any).inworld_api_key || "",
+          inworldEnabled: !!(data as any).inworld_enabled,
+          inworldVoiceId: (data as any).inworld_voice_id || "",
         });
       }
       setLoaded(true);
