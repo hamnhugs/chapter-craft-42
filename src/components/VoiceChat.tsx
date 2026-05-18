@@ -385,20 +385,23 @@ const VoiceChat: React.FC = () => {
           if (ttsCancelledRef.current) return;
           if ((err as any)?.name === "AbortError") return;
           console.error("Inworld TTS error:", err);
-          // Fallback: speak this chunk via browser TTS inline, then continue.
-          ttsPlayingRef.current = true;
-          setIsSpeaking(true);
-          isSpeakingRef.current = true;
-          const u = new SpeechSynthesisUtterance(text);
-          u.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
-          const done = () => {
-            ttsPlayingRef.current = false;
+          // Retry up to 2 times to ride out transient errors / cold starts.
+          const tries = (ttsRetryRef.current.get(text) || 0) + 1;
+          ttsRetryRef.current.set(text, tries);
+          if (tries <= 2) {
+            ttsQueueRef.current.unshift(text); // retry same chunk first
+            window.setTimeout(() => pumpSynthRef.current(), 250 * tries);
+          } else {
+            ttsRetryRef.current.delete(text);
+            // Skip the chunk rather than silently switching to the system voice mid-reply.
+            if (!ttsErrorToastedThisTurnRef.current) {
+              ttsErrorToastedThisTurnRef.current = true;
+              toast.error("Inworld TTS hiccup — skipping a sentence");
+            }
             pumpPlayRef.current();
             pumpSynthRef.current();
             maybeFinishTurn();
-          };
-          u.onend = done; u.onerror = done;
-          synthRef.current.speak(u);
+          }
         });
     }
   }, [inworldEnabled, inworldApiKey, inworldVoiceId, ttsRate, maybeFinishTurn]);
