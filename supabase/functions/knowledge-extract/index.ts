@@ -348,6 +348,7 @@ Rules:
         key_facts: newKeyFacts,
         total_conversations: 1,
       });
+    }
 
     // Fire-and-forget: generate halfvec(1536) embeddings for new entries
     const newIds = savedEntries.filter((e) => e.id && e.action === "ADDED").map((e) => e.id);
@@ -360,6 +361,16 @@ Rules:
         }).catch((err) => console.warn("embed-entries fire-and-forget failed:", err));
       } catch (err) { console.warn("embed-entries dispatch error:", err); }
     }
+
+    return new Response(JSON.stringify({
+      entries: savedEntries.map((e) => ({ ...e, embedding: undefined })),
+      summary: extracted.conversation_summary,
+      key_facts: newKeyFacts,
+      splits,
+      conflicts: conflictCount,
+    }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
 
   } catch (e) {
     console.error("knowledge-extract error:", e);
