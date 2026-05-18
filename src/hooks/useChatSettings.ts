@@ -16,6 +16,7 @@ interface ChatSettings {
   deepResearchModel: string;
   voiceModel: string; // "" = same as selectedModel
   ttsRate: number;
+  handsFreeTtsRate: number;
   autoReadReplies: boolean;
   wikiModel: string; // "" = use default Gemini gateway
   customSystemPrompt: string;
