@@ -2,22 +2,30 @@ import React, { createContext, useContext, useState, useCallback, useEffect } fr
 import { BookDocument, Chapter } from "@/types/library";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { Wiki, fetchWikis, fetchActiveWikiId, loadWiki as loadWikiApi, createWiki } from "@/lib/wikisApi";
+
+type TabId = "library" | "viewer" | "chat" | "wiki" | "wikis" | "video" | "voice" | "chapterize";
 
 interface AppState {
   books: BookDocument[];
   activeBookId: string | null;
-  activeTab: "library" | "viewer" | "chat" | "wiki" | "video" | "voice" | "chapterize";
+  activeTab: TabId;
+  wikis: Wiki[];
+  activeWikiId: string | null;
+  activeWiki: Wiki | undefined;
   addBook: (book: BookDocument, sourceFile?: File) => Promise<void>;
   removeBook: (id: string) => void;
   setActiveBook: (id: string) => void;
   setActiveBookSilent: (id: string) => void;
-  setActiveTab: (tab: "library" | "viewer" | "chat" | "wiki" | "video" | "voice" | "chapterize") => void;
+  setActiveTab: (tab: TabId) => void;
   addChapter: (bookId: string, chapter: Chapter) => Promise<void>;
   updateChapter: (bookId: string, chapterId: string, name: string) => void;
   removeChapter: (bookId: string, chapterId: string) => void;
   updateBookTitle: (bookId: string, newTitle: string) => void;
   getActiveBook: () => BookDocument | undefined;
   loadBookFile: (bookId: string) => Promise<string>;
+  refreshWikis: () => Promise<void>;
+  setActiveWiki: (wikiId: string) => Promise<void>;
   signOut: () => void;
 }
 
