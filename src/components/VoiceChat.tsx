@@ -31,9 +31,9 @@ const SEARCH_INTENT_RE =
   /\b(search|look up|look for|find|google|what is|what are|who is|who are|tell me about|research|check online|latest|current|news about)\b/i;
 
 // Tunable latency knobs for hands-free voice flow
-const SILENCE_INTERIM_MS = 1100; // wait after last interim chunk before sending
-const SILENCE_FINAL_MS = 700;    // wait after a final result before sending
-const POST_TTS_DELAY_MS = 400;   // mic restart grace after TTS ends
+const SILENCE_INTERIM_MS = 3000; // wait after last interim chunk before sending (gives ~3s mid-sentence pause)
+const SILENCE_FINAL_MS = 3000;   // wait after a final result before sending
+const POST_TTS_DELAY_MS = 600;   // mic restart grace after TTS ends (covers speaker tail)
 const MIN_SENTENCE_LEN = 14;     // don't ship tiny fragments to TTS
 
 const stripMarkdownForTts = (s: string) =>
