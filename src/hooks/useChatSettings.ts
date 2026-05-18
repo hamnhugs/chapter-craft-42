@@ -33,6 +33,7 @@ const defaults: ChatSettings = {
   deepResearchModel: DEFAULT_DEEP_RESEARCH_MODEL,
   voiceModel: "",
   ttsRate: DEFAULT_TTS_RATE,
+  handsFreeTtsRate: DEFAULT_HANDS_FREE_TTS_RATE,
   autoReadReplies: false,
   wikiModel: "",
   customSystemPrompt: "",
