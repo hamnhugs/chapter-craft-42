@@ -98,6 +98,7 @@ export function useChatSettings() {
         deep_research_model: next.deepResearchModel,
         voice_model: next.voiceModel || null,
         tts_rate: next.ttsRate,
+        hands_free_tts_rate: next.handsFreeTtsRate,
         auto_read_replies: next.autoReadReplies,
         wiki_model: next.wikiModel || null,
         custom_system_prompt: next.customSystemPrompt || "",
