@@ -56,9 +56,7 @@ const VoiceChat: React.FC = () => {
   const [voiceQuickSearchModel, setVoiceQuickSearchModel] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_MODEL_KEY) || "");
   const [pendingSearchCount, setPendingSearchCount] = useState(0);
 
-  // Inworld TTS state (API key now lives in useChatSettings -> Supabase)
-  const [inworldVoiceId, setInworldVoiceIdState] = useState(() => localStorage.getItem(INWORLD_VOICE_ID_KEY) || "");
-  const [inworldEnabled, setInworldEnabled] = useState(() => localStorage.getItem(INWORLD_ENABLED_KEY) === "true");
+  // Inworld TTS state (API key, toggle, and voice ID all live in useChatSettings -> Supabase)
   const [inworldVoices, setInworldVoices] = useState<InworldVoice[]>([]);
   const [loadingVoices, setLoadingVoices] = useState(false);
   const inworldAudioRef = useRef<HTMLAudioElement | null>(null);
