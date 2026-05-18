@@ -20,6 +20,8 @@ interface ChatSettings {
   customSystemPrompt: string;
   burplexityApiToken: string;
   inworldApiKey: string;
+  inworldEnabled: boolean;
+  inworldVoiceId: string;
 }
 
 const defaults: ChatSettings = {
