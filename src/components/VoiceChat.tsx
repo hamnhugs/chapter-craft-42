@@ -278,7 +278,9 @@ const VoiceChat: React.FC = () => {
     try {
       const voices = await fetchInworldVoices(key.trim());
       setInworldVoices(voices);
-      if (!inworldVoiceId) {
+      // Only auto-pick when no voice is saved AND settings have finished loading
+      // (avoids clobbering the user's saved selection while the DB round-trip is still in flight).
+      if (settingsLoaded && !inworldVoiceId) {
         setInworldVoiceIdState(voices[0]?.voice_id || "Ashley");
       }
     } catch (err: any) {
@@ -286,7 +288,7 @@ const VoiceChat: React.FC = () => {
     } finally {
       setLoadingVoices(false);
     }
-  }, [inworldVoiceId]);
+  }, [inworldVoiceId, settingsLoaded, setInworldVoiceIdState]);
 
   const saveInworldKey = (key: string) => {
     setInworldApiKey(key.trim());
