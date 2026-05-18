@@ -454,13 +454,23 @@ const VoiceChat: React.FC = () => {
   // Legacy name kept so the rest of the file (which only references playNextChunk indirectly) keeps working.
   const playNextChunk = pumpPlay;
 
+  const pendingPreLoadSpeakRef = useRef<string[]>([]);
   const enqueueSpeak = useCallback((chunk: string) => {
     if (!ttsEnabled) return;
     const t = stripMarkdownForTts(chunk);
     if (!t) return;
     ttsCancelledRef.current = false;
+    ttsErrorToastedThisTurnRef.current = false;
     streamDoneRef.current = false;
     muteMicForTts();
+
+    // If settings haven't loaded yet, buffer the chunk so we don't accidentally
+    // fall through to browser TTS just because inworldApiKey/voiceId hadn't
+    // been hydrated from the DB yet. We'll flush as soon as settings load.
+    if (!settingsLoaded) {
+      pendingPreLoadSpeakRef.current.push(t);
+      return;
+    }
 
     if (inworldEnabled && inworldApiKey && inworldVoiceId) {
       ttsQueueRef.current.push(t);
@@ -480,7 +490,26 @@ const VoiceChat: React.FC = () => {
       u.onend = done; u.onerror = done;
       synthRef.current.speak(u);
     }
-  }, [ttsEnabled, muteMicForTts, inworldEnabled, inworldApiKey, inworldVoiceId, ttsRate, pumpSynth, pumpPlay, maybeFinishTurn]);
+  }, [ttsEnabled, muteMicForTts, settingsLoaded, inworldEnabled, inworldApiKey, inworldVoiceId, ttsRate, pumpSynth, pumpPlay, maybeFinishTurn]);
+
+  // Flush any pre-load speech buffer once settings are available.
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    const buffered = pendingPreLoadSpeakRef.current;
+    if (!buffered.length) return;
+    pendingPreLoadSpeakRef.current = [];
+    if (inworldEnabled && inworldApiKey && inworldVoiceId) {
+      for (const t of buffered) ttsQueueRef.current.push(t);
+      pumpSynth();
+      pumpPlay();
+    } else {
+      for (const t of buffered) {
+        const u = new SpeechSynthesisUtterance(t);
+        u.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
+        synthRef.current.speak(u);
+      }
+    }
+  }, [settingsLoaded, inworldEnabled, inworldApiKey, inworldVoiceId, ttsRate, pumpSynth, pumpPlay]);
 
   const markTtsStreamDone = useCallback(() => {
     streamDoneRef.current = true;
