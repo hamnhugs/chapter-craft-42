@@ -1,61 +1,40 @@
-## Bundle received
+## Remaining work (continuing Option A: side-by-side `embedding_v2`)
 
-All 15 files extracted. Before applying, two real conflicts need a decision — silently proceeding would break existing features.
+Database + new files are already in place. Five items left:
 
----
+### 1. `Index.tsx` — surface wikis in the shell
+- Add a "Wikis" tab/route that renders `<WikiLibrary />`
+- Add active-wiki badge + `<WikiQuickSwitcher />` in the header (Cmd/Ctrl+K)
+- Pull `activeWiki` from `useApp()`; no business-logic changes
 
-## 🔴 Blocker 1: Embedding column collision
+### 2. `knowledge-extract` edge function — wiki-aware extraction
+- Accept optional `wiki_id` in the request body; fall back to `user_settings.active_wiki_id`
+- Scope existing dedup lookup to that `wiki_id`
+- Stamp `wiki_id` on every inserted `knowledge_entries` row
+- After insert, fire-and-forget call to `embed-entries` for the new IDs
+- Preserve all current Inworld/lint/consolidate behavior
 
-Your `knowledge_entries.embedding` column already exists as **`vector(768)`** (Gemini, used by `_shared/embed.ts`, `match_knowledge`, `hybrid_search_knowledge`, the existing `knowledge-retrieve` and `knowledge-embed` functions).
+### 3. `knowledge-ingest` edge function — same wiki plumbing
+- Same `wiki_id` param + `active_wiki_id` fallback
+- Wiki-scoped dedup, `wiki_id` stamped on inserts, post-insert embed call
 
-Migration `0002` does `ADD COLUMN IF NOT EXISTS embedding halfvec(1536)` — because the column already exists, **this silently no-ops**, and then every new `embed-entries` / `search-knowledge` / `wiki-embed.ts` call will fail when it tries to write 1536-dim vectors into a 768-dim column.
+### 4. Chat threading
+- `ChatPanel.tsx`: read `activeWikiId` / `activeWiki` from `useApp()`, show "Your Knowledge Wiki: <name>" heading, pass `wiki_id` to extract/ingest calls
+- `buildChatSystemPrompt.ts`: include the active wiki name + a hint that retrieval is scoped to it
+- Wire `searchKnowledge` (from `wikisApi`/`knowledgeApi`) into the existing retrieval tool path, filtered by `activeWikiId`
 
-### Options
+### 5. Deploy + smoke tests
+- Deploy: `embed-entries`, `search-knowledge`, `knowledge-extract`, `knowledge-ingest`
+- Smoke tests via `curl_edge_functions`:
+  1. **Backfill check** — `read_query` confirms every existing user has a default wiki and `active_wiki_id` set
+  2. **embed-entries** — call on 1–2 recent entry IDs, confirm `embedding_v2` populated and `embedding_model` stamped
+  3. **search-knowledge** — query with a known phrase, confirm hits scoped to active wiki
+  4. **End-to-end** — create a new wiki via UI flow (or direct insert), run ingest with that `wiki_id`, confirm entries land in the right wiki and become searchable
+- Report results inline; if any step fails, stop and surface the error rather than looping
 
-**A. Side-by-side (safest, recommended)** — Rename the new column to `embedding_v2 halfvec(1536)`, point all 4 new/updated functions and the `match_knowledge_entries` RPC at `embedding_v2`. Old retrieval keeps working untouched. Cost: a bit of code patching in the bundle files, two columns on the table.
+### Notes / non-goals
+- No changes to existing 768-dim `embedding` column or `match_knowledge` / `hybrid_search_knowledge` — old retrieval keeps working
+- No new secrets (LOVABLE_API_KEY already covers embeddings via the gateway)
+- Types regen deferred; `as any` casts stay until you run `supabase gen types` locally
 
-**B. Cutover** — Drop existing `embedding` column (+ the two RPCs that depend on it) and recreate as `halfvec(1536)`. Then re-embed everything via `embed-entries`. Breaks `knowledge-retrieve` / `knowledge-embed` / `hybrid_search_knowledge` until they're rewritten. Existing 768-dim embeddings are lost.
-
-**C. Park the search feature** — Apply everything *except* migration `0002`'s embedding pieces and the `embed-entries` / `search-knowledge` functions. Wikis + bridges + meta-wiki still work; semantic search across wikis is deferred.
-
----
-
-## 🟡 Blocker 2: All 5 overwrite files have diverged
-
-The bundle's overwrites are based on an older snapshot. Current files are larger (Inworld TTS persistence, wiki-conflict chat tools, etc. landed since):
-
-| File | Bundle | Current |
-|---|---|---|
-| ChatPanel.tsx | 396 | 512 |
-| WikiPanel.tsx | 718 | 787 |
-| AppContext.tsx | 465 | 463 |
-| Index.tsx | 126 | 217 |
-| knowledgeApi.ts | 261 | 302 |
-
-Straight overwrite would wipe: Inworld TTS UI hooks in ChatPanel, recent WikiPanel features, and added `knowledgeApi` exports (conflicts, sleep-cycle, etc.).
-
-**Plan:** I will **merge, not overwrite** — keep all current code intact and only graft in the wiki additions called out in your notes (B) and (C):
-- `wiki_id` param + `active_wiki_id` fallback in extract/ingest
-- wiki-scoped dedup, `wiki_id` stamped on inserts, auto-embed call
-- `activeWikiId`/`activeWiki` from `useApp` threaded into ChatPanel
-- "Your Knowledge Wiki: [name]" heading in system prompt
-- New `wikisApi` exports + `WikiLibrary` / `WikiQuickSwitcher` wired into `Index`/`AppContext`
-
----
-
-## Execution sequence (after you pick A/B/C)
-
-1. **Migration 0001** (wikis table, `wiki_id` column, backfill "My Wiki" for existing users, set `active_wiki_id`) — clean, no conflicts.
-2. **Migration 0002** — applied per your choice above (A patches column name to `embedding_v2`; B drops+recreates; C skips).
-3. **Drop in 7 new files** as-is: `wiki-embed.ts`, `embed-entries/`, `search-knowledge/`, `wikisApi.ts`, `WikiLibrary.tsx`, `WikiQuickSwitcher.tsx`.
-4. **Merge** the 5 overwrite files into current versions (additions only — nothing removed).
-5. **Deploy** edge functions: `embed-entries`, `search-knowledge`, `knowledge-extract`, `knowledge-ingest`.
-6. **Smoke tests:**
-   - SQL check: every existing user has a "My Wiki" + `active_wiki_id` set + all entries have `wiki_id`.
-   - `POST /embed-entries { backfill: true, limit: 50 }` → embeddings populate (option A only — uses `embedding_v2`).
-   - `POST /search-knowledge { query: "...", limit: 5 }` → ranked results with `wiki_name`.
-7. **Report back** with results / any failures.
-
----
-
-**Which option for the embedding column — A, B, or C?** Once you answer I'll execute end-to-end.
+Approve and I'll execute steps 1–5 in order.
