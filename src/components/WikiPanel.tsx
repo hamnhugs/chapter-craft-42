@@ -24,7 +24,7 @@ import { useChatSettings } from "@/hooks/useChatSettings";
 type WikiView = "entries" | "detail" | "lint" | "conflicts" | "episodic" | "queue";
 
 const WikiPanel: React.FC = () => {
-  const { books, activeBookId } = useApp();
+  const { books, activeBookId, activeWikiId } = useApp();
   const [entries, setEntries] = useState<KnowledgeEntry[]>([]);
   const [graph, setGraph] = useState<MemoryGraphEdge[]>([]);
   const [loading, setLoading] = useState(true);
