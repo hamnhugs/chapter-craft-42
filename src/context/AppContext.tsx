@@ -52,8 +52,35 @@ const getStoragePathsForBook = (userId: string, bookId: string, fileName: string
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [books, setBooks] = useState<BookDocument[]>([]);
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"library" | "viewer" | "chat" | "wiki" | "video" | "voice" | "chapterize">("library");
+  const [activeTab, setActiveTab] = useState<TabId>("library");
+  const [wikis, setWikis] = useState<Wiki[]>([]);
+  const [activeWikiId, setActiveWikiId] = useState<string | null>(null);
   const { user, signOut } = useAuth();
+
+  const refreshWikis = useCallback(async () => {
+    if (!user) { setWikis([]); setActiveWikiId(null); return; }
+    try {
+      let [list, activeId] = await Promise.all([fetchWikis(), fetchActiveWikiId()]);
+      if (list.length === 0) {
+        const created = await createWiki({ name: "My Wiki", description: "Your default wiki — extracted knowledge lives here." });
+        await loadWikiApi(created.id);
+        list = [created]; activeId = created.id;
+      } else if (!activeId) {
+        const fallback = list[0];
+        await loadWikiApi(fallback.id);
+        activeId = fallback.id;
+      }
+      setWikis(list); setActiveWikiId(activeId);
+    } catch (err) { console.error("Failed to load wikis:", err); }
+  }, [user]);
+
+  useEffect(() => { refreshWikis(); }, [refreshWikis]);
+
+  const setActiveWiki = useCallback(async (wikiId: string) => {
+    await loadWikiApi(wikiId);
+    setActiveWikiId(wikiId);
+    setWikis((prev) => prev.map((w) => (w.id === wikiId ? { ...w, last_loaded_at: new Date().toISOString() } : w)));
+  }, []);
 
   const getAuthenticatedUserId = useCallback(async () => {
     if (user?.id) return user.id;
