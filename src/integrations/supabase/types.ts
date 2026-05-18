@@ -564,6 +564,7 @@ export type Database = {
           created_at: string
           custom_system_prompt: string | null
           deep_research_model: string | null
+          hands_free_tts_rate: number
           id: string
           inworld_api_key: string
           inworld_enabled: boolean
@@ -585,6 +586,7 @@ export type Database = {
           created_at?: string
           custom_system_prompt?: string | null
           deep_research_model?: string | null
+          hands_free_tts_rate?: number
           id?: string
           inworld_api_key?: string
           inworld_enabled?: boolean
@@ -606,6 +608,7 @@ export type Database = {
           created_at?: string
           custom_system_prompt?: string | null
           deep_research_model?: string | null
+          hands_free_tts_rate?: number
           id?: string
           inworld_api_key?: string
           inworld_enabled?: boolean

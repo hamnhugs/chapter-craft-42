@@ -31,9 +31,9 @@ const SEARCH_INTENT_RE =
   /\b(search|look up|look for|find|google|what is|what are|who is|who are|tell me about|research|check online|latest|current|news about)\b/i;
 
 // Tunable latency knobs for hands-free voice flow
-const SILENCE_INTERIM_MS = 1100; // wait after last interim chunk before sending
-const SILENCE_FINAL_MS = 700;    // wait after a final result before sending
-const POST_TTS_DELAY_MS = 400;   // mic restart grace after TTS ends
+const SILENCE_INTERIM_MS = 3000; // wait after last interim chunk before sending (gives ~3s mid-sentence pause)
+const SILENCE_FINAL_MS = 3000;   // wait after a final result before sending
+const POST_TTS_DELAY_MS = 600;   // mic restart grace after TTS ends (covers speaker tail)
 const MIN_SENTENCE_LEN = 14;     // don't ship tiny fragments to TTS
 
 const stripMarkdownForTts = (s: string) =>
@@ -115,10 +115,13 @@ const VoiceChat: React.FC = () => {
   };
 
   const {
-    apiKey, savedModels, selectedModel, deepResearchModel, voiceModel, ttsRate, customSystemPrompt, burplexityApiToken, inworldApiKey, inworldEnabled, inworldVoiceId, loaded: settingsLoaded,
-    saveApiKey: persistApiKey, setSelectedModel, setDeepResearchModel, setVoiceModel, setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey, setInworldEnabled, setInworldVoiceId: setInworldVoiceIdState,
+    apiKey, savedModels, selectedModel, deepResearchModel, voiceModel, ttsRate, handsFreeTtsRate, customSystemPrompt, burplexityApiToken, inworldApiKey, inworldEnabled, inworldVoiceId, loaded: settingsLoaded,
+    saveApiKey: persistApiKey, setSelectedModel, setDeepResearchModel, setVoiceModel, setHandsFreeTtsRate, setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey, setInworldEnabled, setInworldVoiceId: setInworldVoiceIdState,
     addModel: addModelToSettings, removeModel: removeModelFromSettings,
   } = useChatSettings() as any;
+  // In hands-free mode use a separate (faster) playback rate so the chat-tab
+  // slider doesn't slow replies and cause a mic feedback loop.
+  const effectiveTtsRate = handsFree ? (handsFreeTtsRate || 1.0) : (ttsRate || 1.05);
   const [newModelInput, setNewModelInput] = useState("");
   const [promptDraft, setPromptDraft] = useState("");
   useEffect(() => { setPromptDraft(customSystemPrompt || ""); }, [customSystemPrompt, showSettings]);
@@ -405,7 +408,7 @@ const VoiceChat: React.FC = () => {
           }
         });
     }
-  }, [inworldEnabled, inworldApiKey, inworldVoiceId, ttsRate, maybeFinishTurn]);
+  }, [inworldEnabled, inworldApiKey, inworldVoiceId, effectiveTtsRate, maybeFinishTurn]);
 
   const pumpPlay = useCallback(() => {
     if (ttsPlayingRef.current) return;
@@ -434,7 +437,7 @@ const VoiceChat: React.FC = () => {
       try { audio.pause(); } catch {}
     }
     audio.src = next.url;
-    audio.playbackRate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
+    audio.playbackRate = Math.min(2, Math.max(0.5, effectiveTtsRate));
     const cleanup = () => {
       try { URL.revokeObjectURL(next.url); } catch {}
       ttsPlayingRef.current = false;
@@ -445,7 +448,7 @@ const VoiceChat: React.FC = () => {
     audio.onended = cleanup;
     audio.onerror = cleanup;
     audio.play().catch(cleanup);
-  }, [ttsRate, maybeFinishTurn]);
+  }, [effectiveTtsRate, maybeFinishTurn]);
 
   // Keep refs pointing at the latest pump fns so promise callbacks can call them.
   useEffect(() => { pumpSynthRef.current = pumpSynth; }, [pumpSynth]);
@@ -482,7 +485,7 @@ const VoiceChat: React.FC = () => {
       setIsSpeaking(true);
       isSpeakingRef.current = true;
       const u = new SpeechSynthesisUtterance(t);
-      u.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
+      u.rate = Math.min(2, Math.max(0.5, effectiveTtsRate));
       const done = () => {
         ttsPlayingRef.current = false;
         maybeFinishTurn();
@@ -490,7 +493,7 @@ const VoiceChat: React.FC = () => {
       u.onend = done; u.onerror = done;
       synthRef.current.speak(u);
     }
-  }, [ttsEnabled, muteMicForTts, settingsLoaded, inworldEnabled, inworldApiKey, inworldVoiceId, ttsRate, pumpSynth, pumpPlay, maybeFinishTurn]);
+  }, [ttsEnabled, muteMicForTts, settingsLoaded, inworldEnabled, inworldApiKey, inworldVoiceId, effectiveTtsRate, pumpSynth, pumpPlay, maybeFinishTurn]);
 
   // Flush any pre-load speech buffer once settings are available.
   useEffect(() => {
@@ -505,11 +508,11 @@ const VoiceChat: React.FC = () => {
     } else {
       for (const t of buffered) {
         const u = new SpeechSynthesisUtterance(t);
-        u.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
+        u.rate = Math.min(2, Math.max(0.5, effectiveTtsRate));
         synthRef.current.speak(u);
       }
     }
-  }, [settingsLoaded, inworldEnabled, inworldApiKey, inworldVoiceId, ttsRate, pumpSynth, pumpPlay]);
+  }, [settingsLoaded, inworldEnabled, inworldApiKey, inworldVoiceId, effectiveTtsRate, pumpSynth, pumpPlay]);
 
   const markTtsStreamDone = useCallback(() => {
     streamDoneRef.current = true;
@@ -573,11 +576,11 @@ const VoiceChat: React.FC = () => {
         md += `_Completed in ${result.elapsed_ms}ms${result.backend ? ` via ${result.backend}` : ""}_`;
       }
       injectDisplayMessage(md);
-      if (ttsEnabled) ttsSpeak("Search results are ready", { rate: ttsRate });
+      if (ttsEnabled) ttsSpeak("Search results are ready", { rate: effectiveTtsRate });
     } finally {
       setPendingSearchCount((c) => c - 1);
     }
-  }, [burplexityApiToken, injectDisplayMessage, ttsEnabled, ttsRate]);
+  }, [burplexityApiToken, injectDisplayMessage, ttsEnabled, effectiveTtsRate]);
 
   const submit = useCallback(async (text: string) => {
     if (!text.trim()) return;
@@ -1049,6 +1052,19 @@ const VoiceChat: React.FC = () => {
                 <select value={voiceQuickSearchModel || selectedModel} onChange={(e) => setVoiceQuickSearchModel(e.target.value)} className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40">
                   {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
                 </select>
+              </div>
+              <div className="flex flex-col gap-1.5 min-w-0 sm:col-span-2">
+                <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center justify-between">
+                  <span><span className="material-symbols-outlined text-xs align-middle mr-1">speed</span>Hands-free Playback Speed</span>
+                  <span className="text-primary normal-case tracking-normal">{(handsFreeTtsRate || 1.0).toFixed(2)}×</span>
+                </label>
+                <input
+                  type="range" min={0.9} max={1.4} step={0.05}
+                  value={handsFreeTtsRate || 1.0}
+                  onChange={(e) => setHandsFreeTtsRate(parseFloat(e.target.value))}
+                  className="w-full accent-primary"
+                />
+                <p className="text-[10px] text-on-surface-variant px-1">Used only in hands-free mode. Independent of the Chat-tab speed so slow playback won't trigger a mic feedback loop.</p>
               </div>
             </section>
             <PromptLibrary scopeHint="voice" />

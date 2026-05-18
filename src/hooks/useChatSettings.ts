@@ -7,6 +7,7 @@ import { isEmbeddingModel } from "@/lib/utils";
 const DEFAULT_MODEL = "google/gemini-2.5-flash";
 const DEFAULT_DEEP_RESEARCH_MODEL = "google/gemini-2.5-pro";
 const DEFAULT_TTS_RATE = 1.05;
+const DEFAULT_HANDS_FREE_TTS_RATE = 1.0;
 
 interface ChatSettings {
   apiKey: string;
@@ -15,6 +16,7 @@ interface ChatSettings {
   deepResearchModel: string;
   voiceModel: string; // "" = same as selectedModel
   ttsRate: number;
+  handsFreeTtsRate: number;
   autoReadReplies: boolean;
   wikiModel: string; // "" = use default Gemini gateway
   customSystemPrompt: string;
@@ -31,6 +33,7 @@ const defaults: ChatSettings = {
   deepResearchModel: DEFAULT_DEEP_RESEARCH_MODEL,
   voiceModel: "",
   ttsRate: DEFAULT_TTS_RATE,
+  handsFreeTtsRate: DEFAULT_HANDS_FREE_TTS_RATE,
   autoReadReplies: false,
   wikiModel: "",
   customSystemPrompt: "",
@@ -66,6 +69,9 @@ export function useChatSettings() {
           ttsRate: typeof (data as any).tts_rate === "number" && (data as any).tts_rate > 0
             ? (data as any).tts_rate
             : DEFAULT_TTS_RATE,
+          handsFreeTtsRate: typeof (data as any).hands_free_tts_rate === "number" && (data as any).hands_free_tts_rate > 0
+            ? (data as any).hands_free_tts_rate
+            : DEFAULT_HANDS_FREE_TTS_RATE,
           autoReadReplies: !!(data as any).auto_read_replies,
           wikiModel: (data as any).wiki_model || "",
           customSystemPrompt: (data as any).custom_system_prompt || "",
@@ -92,6 +98,7 @@ export function useChatSettings() {
         deep_research_model: next.deepResearchModel,
         voice_model: next.voiceModel || null,
         tts_rate: next.ttsRate,
+        hands_free_tts_rate: next.handsFreeTtsRate,
         auto_read_replies: next.autoReadReplies,
         wiki_model: next.wikiModel || null,
         custom_system_prompt: next.customSystemPrompt || "",
@@ -153,6 +160,7 @@ export function useChatSettings() {
     setDeepResearchModel: (m: string) => update({ deepResearchModel: m }),
     setVoiceModel: (m: string) => update({ voiceModel: m }),
     setTtsRate: (r: number) => update({ ttsRate: Math.min(2, Math.max(0.5, r)) }),
+    setHandsFreeTtsRate: (r: number) => update({ handsFreeTtsRate: Math.min(2, Math.max(0.5, r)) }),
     setAutoReadReplies: (v: boolean) => update({ autoReadReplies: v }),
     setWikiModel: (m: string) => update({ wikiModel: m }),
     setCustomSystemPrompt: (p: string) => update({ customSystemPrompt: p }),
