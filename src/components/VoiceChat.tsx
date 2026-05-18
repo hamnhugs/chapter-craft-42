@@ -437,7 +437,7 @@ const VoiceChat: React.FC = () => {
       try { audio.pause(); } catch {}
     }
     audio.src = next.url;
-    audio.playbackRate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
+    audio.playbackRate = Math.min(2, Math.max(0.5, effectiveTtsRate));
     const cleanup = () => {
       try { URL.revokeObjectURL(next.url); } catch {}
       ttsPlayingRef.current = false;
@@ -485,7 +485,7 @@ const VoiceChat: React.FC = () => {
       setIsSpeaking(true);
       isSpeakingRef.current = true;
       const u = new SpeechSynthesisUtterance(t);
-      u.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
+      u.rate = Math.min(2, Math.max(0.5, effectiveTtsRate));
       const done = () => {
         ttsPlayingRef.current = false;
         maybeFinishTurn();
@@ -508,7 +508,7 @@ const VoiceChat: React.FC = () => {
     } else {
       for (const t of buffered) {
         const u = new SpeechSynthesisUtterance(t);
-        u.rate = Math.min(2, Math.max(0.5, ttsRate || 1.05));
+        u.rate = Math.min(2, Math.max(0.5, effectiveTtsRate));
         synthRef.current.speak(u);
       }
     }
@@ -576,7 +576,7 @@ const VoiceChat: React.FC = () => {
         md += `_Completed in ${result.elapsed_ms}ms${result.backend ? ` via ${result.backend}` : ""}_`;
       }
       injectDisplayMessage(md);
-      if (ttsEnabled) ttsSpeak("Search results are ready", { rate: ttsRate });
+      if (ttsEnabled) ttsSpeak("Search results are ready", { rate: effectiveTtsRate });
     } finally {
       setPendingSearchCount((c) => c - 1);
     }
