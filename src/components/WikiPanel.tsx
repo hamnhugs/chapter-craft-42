@@ -54,7 +54,7 @@ const WikiPanel: React.FC = () => {
     setLoading(true);
     try {
       const [e, g, c, mode] = await Promise.all([
-        fetchKnowledgeEntries(),
+        fetchKnowledgeEntries(activeWikiId),
         fetchMemoryGraph(),
         fetchConflicts().catch(() => []),
         getMemoryMode().catch(() => "recording" as MemoryMode),
@@ -68,7 +68,7 @@ const WikiPanel: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeWikiId]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
