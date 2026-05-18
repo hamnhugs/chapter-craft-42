@@ -349,6 +349,20 @@ const ChatPanel: React.FC = () => {
         </div>
       )}
 
+      {/* Active-wiki indicator */}
+      {activeWiki && (
+        <div className="px-4 pt-3 pb-1 flex items-center gap-2 text-xs font-body text-on-surface-variant">
+          <span
+            className="w-2 h-2 rounded-full flex-shrink-0"
+            style={{ backgroundColor: activeWiki.cover_color || "#7C3AED" }}
+            aria-hidden
+          />
+          <span>
+            Your Knowledge Wiki: <span className="font-semibold text-primary">{activeWiki.name}</span>
+          </span>
+        </div>
+      )}
+
       {/* Messages */}
       <div className="flex-1 overflow-auto px-4 py-6 space-y-6 hide-scrollbar">
         {messages.length === 0 && (
