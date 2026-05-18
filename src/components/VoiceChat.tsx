@@ -531,6 +531,9 @@ const VoiceChat: React.FC = () => {
   const stopSpeaking = () => {
     ttsCancelledRef.current = true;
     ttsQueueRef.current = [];
+    pendingPreLoadSpeakRef.current = [];
+    ttsRetryRef.current.clear();
+    ttsErrorToastedThisTurnRef.current = false;
     // Abort in-flight syntheses
     for (const c of ttsAbortersRef.current) { try { c.abort(); } catch {} }
     ttsAbortersRef.current.clear();
