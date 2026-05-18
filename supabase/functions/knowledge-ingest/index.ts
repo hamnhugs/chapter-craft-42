@@ -195,7 +195,8 @@ Already extracted titles (avoid duplicates): ${existingTitles.join(", ") || "(no
           tags: entry.tags || [],
           confidence: Math.min(1, Math.max(0, entry.confidence || 0.8)),
           source_book_id: book_id,
-        })
+          wiki_id: effectiveWikiId,
+        } as any)
         .select("id")
         .single();
 
@@ -229,6 +230,18 @@ Already extracted titles (avoid duplicates): ${existingTitles.join(", ") || "(no
       supabase, user.id,
       savedEntries.map((e) => ({ id: e.id, title: e.title, content: e.content, embedding: e.embedding })),
     );
+
+    // Fire-and-forget: generate halfvec(1536) embeddings for new entries
+    const newIds = savedEntries.filter((e) => e.id).map((e) => e.id);
+    if (newIds.length > 0) {
+      try {
+        fetch(`${supabaseUrl}/functions/v1/embed-entries`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: authHeader },
+          body: JSON.stringify({ entry_ids: newIds }),
+        }).catch((err) => console.warn("embed-entries fire-and-forget failed:", err));
+      } catch (err) { console.warn("embed-entries dispatch error:", err); }
+    }
 
     return new Response(JSON.stringify({
       entries_created: savedEntries.length,
