@@ -583,6 +583,7 @@ export async function executeChatTool(
         if (activate) {
           await supabase.from("user_settings").upsert({ user_id: uid, active_wiki_id: (data as any).id } as any, { onConflict: "user_id" });
         }
+        if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("wiki-active-changed"));
         return { result: { ok: true, id: (data as any).id, name: wname, activated: activate }, event: { name, summary: `Created wiki "${wname}"${activate ? " (active)" : ""}`, ok: true } };
       }
       case "isolate_chapter": {
