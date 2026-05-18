@@ -37,12 +37,19 @@ export async function buildChatSystemPrompt({
     parts.push(`The user's active knowledge wiki is "${activeWikiName}". New knowledge captured this session is scoped to that wiki, and \`search_wiki\` results are biased toward it.`);
   }
   parts.push(
-    "You have these tools: list_books, get_book, get_chapter_text, set_active_book, isolate_chapter, rename_chapter, delete_chapter, list_conflicts, get_conflict, resolve_conflict, update_conflict_status, and TWO search tools:",
+    "You have these tools: list_books, get_book, get_chapter_text, set_active_book, isolate_chapter, rename_chapter, delete_chapter, list_conflicts, get_conflict, resolve_conflict, update_conflict_status, list_wikis, get_active_wiki, switch_wiki, create_wiki, and TWO search tools:",
     "- `search_wiki` → search ONLY the user's locally saved knowledge wiki. Use it for things they've already studied/ingested.",
     "- `web_search` → LIVE INTERNET search via the user's Burplexity instance. Use this WHENEVER the user asks to 'search', 'look up', 'google', 'check online', 'what's the latest', or anything time-sensitive or not in the wiki. You may call both `search_wiki` and `web_search` in the same turn when useful. Don't refuse online searches — call `web_search`.",
+    "When the user asks about which wiki is active, to list wikis, switch to another wiki, or create a new one, USE the wiki tools (`list_wikis`, `get_active_wiki`, `switch_wiki`, `create_wiki`) — never claim a switch happened without calling `switch_wiki`.",
     "When the 'Retrieved Knowledge' section below contains 'contradicts' or 'refutes' edges, surface those conflicts to the user — never silently pick a side.",
     "## Wiki Conflict Resolution",
-    "If the user asks to review, go over, fix, or resolve contradictions/conflicts in their wiki, call `list_conflicts` first (default status='open'). Present them ONE AT A TIME in plain language: summarise both entries (A and B), the AI's rationale, and offer clear options — keep A, keep B, merge into one, edit one to fix it, acknowledge (keep both), or dismiss (false positive). Use `get_conflict` if you need full text. NEVER call `resolve_conflict` with a destructive action (keep_a_delete_b, keep_b_delete_a, merge, edit_a, edit_b) until the user has explicitly approved that exact action for that exact conflict in the current turn — paraphrasing back and getting a 'yes' is fine; assuming is not. After each resolution, briefly confirm what changed and ask whether to move to the next."
+    "If the user asks to review, go over, fix, or resolve contradictions/conflicts in their wiki, call `list_conflicts` first (default status='open'). Present them ONE AT A TIME in plain language: summarise both entries (A and B), the AI's rationale, and offer clear options — keep A, keep B, merge into one, edit one to fix it, acknowledge (keep both), or dismiss (false positive). Use `get_conflict` if you need full text. NEVER call `resolve_conflict` with a destructive action (keep_a_delete_b, keep_b_delete_a, merge, edit_a, edit_b) until the user has explicitly approved that exact action for that exact conflict in the current turn — paraphrasing back and getting a 'yes' is fine; assuming is not. After each resolution, briefly confirm what changed and ask whether to move to the next.",
+    ...(voiceMode ? [
+      "## Voice-mode conflict + wiki rules (CRITICAL)",
+      "You are talking out loud, so the user's spoken reply IS their approval. When the user says 'yes', 'do it', 'keep A', 'keep B', 'merge', 'dismiss', 'acknowledge', or names the action you just offered, IMMEDIATELY call `resolve_conflict` (or `update_conflict_status`) — do not ask again, do not narrate that you did it without calling the tool.",
+      "NEVER say 'done', 'resolved', 'deleted', 'merged', 'switched', or 'created' unless the previous step in this turn was a successful tool call returning ok. If you didn't call the tool, you didn't do it — call the tool now, then speak the confirmation only after it succeeds.",
+      "Same rule for wikis: any 'switch to X', 'open my Y wiki', 'make a new wiki for Z' must trigger `switch_wiki` or `create_wiki`. Never claim a switch happened from narration alone.",
+    ] : [])
   );
 
   // Conversation memory
