@@ -202,6 +202,50 @@ export const CHAT_TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "list_wikis",
+      description: "List all of the user's knowledge wikis with id, name, description, default/meta flags, and current entry count. Use when the user asks 'what wikis do I have' or before switching.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_active_wiki",
+      description: "Return the currently active wiki (the one new knowledge gets saved to and searches are biased toward).",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "switch_wiki",
+      description: "Switch the active wiki by id. Future ingest / search / conflict scope follows the new active wiki. Use after the user explicitly asks to switch.",
+      parameters: {
+        type: "object",
+        properties: { wiki_id: { type: "string" } },
+        required: ["wiki_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_wiki",
+      description: "Create a new wiki. Optionally make it the active wiki immediately.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          description: { type: "string" },
+          activate: { type: "boolean", description: "If true, set this as active after creation. Default true." },
+        },
+        required: ["name"],
+      },
+    },
+  },
 ] as const;
 
 export interface ToolEvent {
