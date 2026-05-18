@@ -32,11 +32,22 @@ serve(async (req) => {
       });
     }
 
-    const { book_id } = await req.json();
+    const { book_id, wiki_id } = await req.json();
     if (!book_id) {
       return new Response(JSON.stringify({ error: "book_id required" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // Resolve wiki_id: explicit param wins, otherwise fall back to user_settings.active_wiki_id
+    let effectiveWikiId: string | null = wiki_id || null;
+    if (!effectiveWikiId) {
+      const { data: settings } = await supabase
+        .from("user_settings")
+        .select("active_wiki_id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      effectiveWikiId = (settings as any)?.active_wiki_id || null;
     }
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
@@ -64,12 +75,14 @@ serve(async (req) => {
       });
     }
 
-    // Fetch existing entries for this book
-    const { data: existingEntries } = await supabase
+    // Fetch existing entries for this book (scoped to wiki when set)
+    let dedupQuery = supabase
       .from("knowledge_entries")
       .select("id, title")
       .eq("user_id", user.id)
       .eq("source_book_id", book_id);
+    if (effectiveWikiId) dedupQuery = dedupQuery.eq("wiki_id", effectiveWikiId);
+    const { data: existingEntries } = await dedupQuery;
 
     const existingTitles = (existingEntries || []).map(e => e.title.toLowerCase());
 
