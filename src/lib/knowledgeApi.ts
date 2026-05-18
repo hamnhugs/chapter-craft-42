@@ -138,7 +138,7 @@ export async function extractKnowledge(messages: { role: string; content: string
       "Content-Type": "application/json",
       Authorization: `Bearer ${session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
     },
-    body: JSON.stringify({ messages, source_book_id: sourceBookId }),
+    body: JSON.stringify({ messages, source_book_id: sourceBookId, wiki_id: wikiId }),
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ error: "Extraction failed" }));
