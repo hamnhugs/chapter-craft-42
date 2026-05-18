@@ -199,6 +199,45 @@ export type Database = {
         }
         Relationships: []
       }
+      entry_bridges: {
+        Row: {
+          created_at: string
+          entry_id: string
+          id: string
+          user_id: string
+          wiki_id: string
+        }
+        Insert: {
+          created_at?: string
+          entry_id: string
+          id?: string
+          user_id: string
+          wiki_id: string
+        }
+        Update: {
+          created_at?: string
+          entry_id?: string
+          id?: string
+          user_id?: string
+          wiki_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "entry_bridges_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "entry_bridges_wiki_id_fkey"
+            columns: ["wiki_id"]
+            isOneToOne: false
+            referencedRelation: "wikis"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       episodic_log: {
         Row: {
           created_at: string
@@ -273,10 +312,12 @@ export type Database = {
           created_at: string
           embedding: string | null
           embedding_model: string | null
+          embedding_v2: unknown
           entry_type: string
           folder: string
           id: string
           is_index: boolean
+          linked_wiki_id: string | null
           maturity: string
           pending_changes: Json
           source_book_id: string | null
@@ -288,6 +329,7 @@ export type Database = {
           user_id: string
           valid_from: string | null
           valid_to: string | null
+          wiki_id: string | null
         }
         Insert: {
           atomicity_warning?: string | null
@@ -296,10 +338,12 @@ export type Database = {
           created_at?: string
           embedding?: string | null
           embedding_model?: string | null
+          embedding_v2?: unknown
           entry_type?: string
           folder?: string
           id?: string
           is_index?: boolean
+          linked_wiki_id?: string | null
           maturity?: string
           pending_changes?: Json
           source_book_id?: string | null
@@ -311,6 +355,7 @@ export type Database = {
           user_id: string
           valid_from?: string | null
           valid_to?: string | null
+          wiki_id?: string | null
         }
         Update: {
           atomicity_warning?: string | null
@@ -319,10 +364,12 @@ export type Database = {
           created_at?: string
           embedding?: string | null
           embedding_model?: string | null
+          embedding_v2?: unknown
           entry_type?: string
           folder?: string
           id?: string
           is_index?: boolean
+          linked_wiki_id?: string | null
           maturity?: string
           pending_changes?: Json
           source_book_id?: string | null
@@ -334,13 +381,28 @@ export type Database = {
           user_id?: string
           valid_from?: string | null
           valid_to?: string | null
+          wiki_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "knowledge_entries_linked_wiki_id_fkey"
+            columns: ["linked_wiki_id"]
+            isOneToOne: false
+            referencedRelation: "wikis"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "knowledge_entries_source_book_id_fkey"
             columns: ["source_book_id"]
             isOneToOne: false
             referencedRelation: "books"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "knowledge_entries_wiki_id_fkey"
+            columns: ["wiki_id"]
+            isOneToOne: false
+            referencedRelation: "wikis"
             referencedColumns: ["id"]
           },
         ]
@@ -496,6 +558,7 @@ export type Database = {
       }
       user_settings: {
         Row: {
+          active_wiki_id: string | null
           auto_read_replies: boolean
           burplexity_api_token: string | null
           created_at: string
@@ -516,6 +579,7 @@ export type Database = {
           wiki_model: string | null
         }
         Insert: {
+          active_wiki_id?: string | null
           auto_read_replies?: boolean
           burplexity_api_token?: string | null
           created_at?: string
@@ -536,6 +600,7 @@ export type Database = {
           wiki_model?: string | null
         }
         Update: {
+          active_wiki_id?: string | null
           auto_read_replies?: boolean
           burplexity_api_token?: string | null
           created_at?: string
@@ -555,7 +620,15 @@ export type Database = {
           voice_model?: string | null
           wiki_model?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "user_settings_active_wiki_id_fkey"
+            columns: ["active_wiki_id"]
+            isOneToOne: false
+            referencedRelation: "wikis"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       video_jobs: {
         Row: {
@@ -673,11 +746,88 @@ export type Database = {
           },
         ]
       }
+      wikis: {
+        Row: {
+          cover_color: string
+          created_at: string
+          description: string
+          id: string
+          is_default: boolean
+          is_meta: boolean
+          last_loaded_at: string | null
+          name: string
+          tags: string[]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          cover_color?: string
+          created_at?: string
+          description?: string
+          id?: string
+          is_default?: boolean
+          is_meta?: boolean
+          last_loaded_at?: string | null
+          name: string
+          tags?: string[]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          cover_color?: string
+          created_at?: string
+          description?: string
+          id?: string
+          is_default?: boolean
+          is_meta?: boolean
+          last_loaded_at?: string | null
+          name?: string
+          tags?: string[]
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
+      entries_for_wiki: {
+        Args: { target_wiki_id: string }
+        Returns: {
+          atomicity_warning: string | null
+          confidence: number
+          content: string
+          created_at: string
+          embedding: string | null
+          embedding_model: string | null
+          embedding_v2: unknown
+          entry_type: string
+          folder: string
+          id: string
+          is_index: boolean
+          linked_wiki_id: string | null
+          maturity: string
+          pending_changes: Json
+          source_book_id: string | null
+          subject: string | null
+          tags: string[]
+          title: string
+          tsv: unknown
+          updated_at: string
+          user_id: string
+          valid_from: string | null
+          valid_to: string | null
+          wiki_id: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "knowledge_entries"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       find_contradictions: {
         Args: { entry_id: string }
         Returns: {
@@ -732,6 +882,25 @@ export type Database = {
           source_book_id: string
           tags: string[]
           title: string
+        }[]
+      }
+      match_knowledge_entries: {
+        Args: {
+          filter_wiki_ids?: string[]
+          match_count: number
+          match_threshold: number
+          query_embedding: unknown
+        }
+        Returns: {
+          confidence: number
+          content: string
+          entry_type: string
+          id: string
+          similarity: number
+          source_book_id: string
+          tags: string[]
+          title: string
+          wiki_id: string
         }[]
       }
     }

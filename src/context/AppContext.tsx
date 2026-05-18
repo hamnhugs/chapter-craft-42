@@ -2,22 +2,30 @@ import React, { createContext, useContext, useState, useCallback, useEffect } fr
 import { BookDocument, Chapter } from "@/types/library";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { Wiki, fetchWikis, fetchActiveWikiId, loadWiki as loadWikiApi, createWiki } from "@/lib/wikisApi";
+
+type TabId = "library" | "viewer" | "chat" | "wiki" | "wikis" | "video" | "voice" | "chapterize";
 
 interface AppState {
   books: BookDocument[];
   activeBookId: string | null;
-  activeTab: "library" | "viewer" | "chat" | "wiki" | "video" | "voice" | "chapterize";
+  activeTab: TabId;
+  wikis: Wiki[];
+  activeWikiId: string | null;
+  activeWiki: Wiki | undefined;
   addBook: (book: BookDocument, sourceFile?: File) => Promise<void>;
   removeBook: (id: string) => void;
   setActiveBook: (id: string) => void;
   setActiveBookSilent: (id: string) => void;
-  setActiveTab: (tab: "library" | "viewer" | "chat" | "wiki" | "video" | "voice" | "chapterize") => void;
+  setActiveTab: (tab: TabId) => void;
   addChapter: (bookId: string, chapter: Chapter) => Promise<void>;
   updateChapter: (bookId: string, chapterId: string, name: string) => void;
   removeChapter: (bookId: string, chapterId: string) => void;
   updateBookTitle: (bookId: string, newTitle: string) => void;
   getActiveBook: () => BookDocument | undefined;
   loadBookFile: (bookId: string) => Promise<string>;
+  refreshWikis: () => Promise<void>;
+  setActiveWiki: (wikiId: string) => Promise<void>;
   signOut: () => void;
 }
 
@@ -44,8 +52,35 @@ const getStoragePathsForBook = (userId: string, bookId: string, fileName: string
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [books, setBooks] = useState<BookDocument[]>([]);
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"library" | "viewer" | "chat" | "wiki" | "video" | "voice" | "chapterize">("library");
+  const [activeTab, setActiveTab] = useState<TabId>("library");
+  const [wikis, setWikis] = useState<Wiki[]>([]);
+  const [activeWikiId, setActiveWikiId] = useState<string | null>(null);
   const { user, signOut } = useAuth();
+
+  const refreshWikis = useCallback(async () => {
+    if (!user) { setWikis([]); setActiveWikiId(null); return; }
+    try {
+      let [list, activeId] = await Promise.all([fetchWikis(), fetchActiveWikiId()]);
+      if (list.length === 0) {
+        const created = await createWiki({ name: "My Wiki", description: "Your default wiki — extracted knowledge lives here." });
+        await loadWikiApi(created.id);
+        list = [created]; activeId = created.id;
+      } else if (!activeId) {
+        const fallback = list[0];
+        await loadWikiApi(fallback.id);
+        activeId = fallback.id;
+      }
+      setWikis(list); setActiveWikiId(activeId);
+    } catch (err) { console.error("Failed to load wikis:", err); }
+  }, [user]);
+
+  useEffect(() => { refreshWikis(); }, [refreshWikis]);
+
+  const setActiveWiki = useCallback(async (wikiId: string) => {
+    await loadWikiApi(wikiId);
+    setActiveWikiId(wikiId);
+    setWikis((prev) => prev.map((w) => (w.id === wikiId ? { ...w, last_loaded_at: new Date().toISOString() } : w)));
+  }, []);
 
   const getAuthenticatedUserId = useCallback(async () => {
     if (user?.id) return user.id;
@@ -430,12 +465,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [user, books]);
 
+  const activeWiki = wikis.find((w) => w.id === activeWikiId);
+
   return (
     <AppContext.Provider
       value={{
         books,
         activeBookId,
         activeTab,
+        wikis,
+        activeWikiId,
+        activeWiki,
         addBook,
         removeBook,
         setActiveBook,
@@ -447,6 +487,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateBookTitle,
         getActiveBook,
         loadBookFile,
+        refreshWikis,
+        setActiveWiki,
         signOut,
       }}
     >
