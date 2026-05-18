@@ -465,12 +465,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [user, books]);
 
+  const activeWiki = wikis.find((w) => w.id === activeWikiId);
+
   return (
     <AppContext.Provider
       value={{
         books,
         activeBookId,
         activeTab,
+        wikis,
+        activeWikiId,
+        activeWiki,
         addBook,
         removeBook,
         setActiveBook,
@@ -482,6 +487,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateBookTitle,
         getActiveBook,
         loadBookFile,
+        refreshWikis,
+        setActiveWiki,
         signOut,
       }}
     >
