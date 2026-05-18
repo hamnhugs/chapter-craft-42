@@ -566,6 +566,7 @@ export async function executeChatTool(
         await supabase.from("wikis" as any).update({ last_loaded_at: new Date().toISOString() } as any).eq("id", wid);
         const { error } = await supabase.from("user_settings").upsert({ user_id: uid, active_wiki_id: wid } as any, { onConflict: "user_id" });
         if (error) throw error;
+        if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("wiki-active-changed"));
         return { result: { ok: true, active_wiki_id: wid, name: (wiki as any).name }, event: { name, summary: `Switched to "${(wiki as any).name}"`, ok: true } };
       }
       case "create_wiki": {
