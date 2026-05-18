@@ -408,19 +408,30 @@ export async function executeChatTool(
         if (error) throw error;
         const ids = Array.from(new Set((conflicts || []).flatMap((c: any) => [c.entry_a, c.entry_b])));
         const { data: ents } = ids.length
-          ? await supabase.from("knowledge_entries").select("id, title, content, entry_type, confidence, source_book_id").in("id", ids)
+          ? await supabase.from("knowledge_entries").select("id, title, content, entry_type, confidence, source_book_id, wiki_id" as any).in("id", ids)
           : { data: [] as any[] };
-        const byId = new Map((ents || []).map((e: any) => [e.id, e]));
+        const byId = new Map(((ents as any[]) || []).map((e: any) => [e.id, e]));
+        // Scope to active wiki when one is set — both entries must live in it (or be unscoped legacy entries).
+        const { data: settings } = await supabase.from("user_settings").select("active_wiki_id" as any).maybeSingle();
+        const activeWikiId = (settings as any)?.active_wiki_id || null;
+        const inScope = (id: string) => {
+          if (!activeWikiId) return true;
+          const e: any = byId.get(id);
+          if (!e) return true; // missing — surface anyway so user knows
+          return !e.wiki_id || e.wiki_id === activeWikiId;
+        };
         const hydrate = (id: string) => {
           const e: any = byId.get(id);
           if (!e) return { id, missing: true };
           return { id, title: e.title, entry_type: e.entry_type, confidence: e.confidence, source_book_id: e.source_book_id, snippet: (e.content || "").slice(0, 500) };
         };
-        const out = (conflicts || []).map((c: any) => ({
-          conflict_id: c.id, kind: c.kind, status: c.status, rationale: c.rationale,
-          entry_a: hydrate(c.entry_a), entry_b: hydrate(c.entry_b),
-        }));
-        return { result: out, event: { name, summary: `Listed ${out.length} ${status} conflict(s)`, ok: true } };
+        const out = (conflicts || [])
+          .filter((c: any) => inScope(c.entry_a) || inScope(c.entry_b))
+          .map((c: any) => ({
+            conflict_id: c.id, kind: c.kind, status: c.status, rationale: c.rationale,
+            entry_a: hydrate(c.entry_a), entry_b: hydrate(c.entry_b),
+          }));
+        return { result: out, event: { name, summary: `Listed ${out.length} ${status} conflict(s)${activeWikiId ? " in active wiki" : ""}`, ok: true } };
       }
       case "get_conflict": {
         const id = String(args.conflict_id || "");
