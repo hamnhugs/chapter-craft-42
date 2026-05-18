@@ -1,56 +1,61 @@
-## Goal
+## Bundle received
 
-Let the user say things like *"let's go through my wiki contradictions"* or *"resolve that contradiction by keeping entry A"* in chat, and have the AI walk them through open conflicts and apply the resolution to the knowledge wiki when they approve.
+All 15 files extracted. Before applying, two real conflicts need a decision — silently proceeding would break existing features.
 
-This is purely additive — new chat tools + system-prompt guidance. No existing feature is removed.
+---
 
-## What changes
+## 🔴 Blocker 1: Embedding column collision
 
-### 1. New chat tools (in `src/lib/chatTools.ts`)
+Your `knowledge_entries.embedding` column already exists as **`vector(768)`** (Gemini, used by `_shared/embed.ts`, `match_knowledge`, `hybrid_search_knowledge`, the existing `knowledge-retrieve` and `knowledge-embed` functions).
 
-Add four tool definitions + handlers, following the existing `executeChatTool` pattern:
+Migration `0002` does `ADD COLUMN IF NOT EXISTS embedding halfvec(1536)` — because the column already exists, **this silently no-ops**, and then every new `embed-entries` / `search-knowledge` / `wiki-embed.ts` call will fail when it tries to write 1536-dim vectors into a 768-dim column.
 
-- **`list_conflicts`** — params: `{ status?: "open"|"acknowledged"|"resolved"|"dismissed" (default "open"), limit?: number (default 10) }`. Returns each conflict with `id`, `kind`, `rationale`, and both entries hydrated (`id`, `title`, `content` snippet, `entry_type`, `confidence`, `source_book_id`) so the model can discuss them without a second round-trip.
-- **`get_conflict`** — params: `{ conflict_id }`. Returns the full text of both entries plus rationale, for deep discussion of one contradiction.
-- **`resolve_conflict`** — params:
-  - `conflict_id` (required)
-  - `action` (required, enum):
-    - `"keep_a_delete_b"` / `"keep_b_delete_a"` — delete the losing entry, mark conflict `resolved`
-    - `"merge"` — requires `merged_title` + `merged_content` (+ optional `merged_tags`); writes them into entry A, deletes entry B, marks resolved
-    - `"edit_a"` / `"edit_b"` — requires `new_title` and/or `new_content` (+ optional `new_tags`); updates that entry, marks resolved
-    - `"acknowledge"` — marks `acknowledged` (both kept, user has seen it)
-    - `"dismiss"` — marks `dismissed` (false positive)
-  - `require_confirmation` defaults to true; the system prompt instructs the model to never call `resolve_conflict` with a destructive `action` until the user has explicitly approved that exact action in the current turn.
-- **`update_conflict_status`** — thin wrapper to set status without editing entries (covers `acknowledge` / `dismiss` quickly).
+### Options
 
-Implementation uses the existing `fetchConflicts`, `updateConflictStatus`, `deleteKnowledgeEntry`, `updateKnowledgeEntry` helpers in `src/lib/knowledgeApi.ts`, plus a direct `supabase.from("knowledge_conflicts").select(...).eq("id", ...).single()` for `get_conflict`. RLS already restricts every row to the current user.
+**A. Side-by-side (safest, recommended)** — Rename the new column to `embedding_v2 halfvec(1536)`, point all 4 new/updated functions and the `match_knowledge_entries` RPC at `embedding_v2`. Old retrieval keeps working untouched. Cost: a bit of code patching in the bundle files, two columns on the table.
 
-Each handler returns a `ToolEvent` with a clear summary (e.g. *"Resolved conflict — kept 'Mitochondria are the powerhouse' and deleted duplicate"*), matching how the existing tools surface in the chat UI.
+**B. Cutover** — Drop existing `embedding` column (+ the two RPCs that depend on it) and recreate as `halfvec(1536)`. Then re-embed everything via `embed-entries`. Breaks `knowledge-retrieve` / `knowledge-embed` / `hybrid_search_knowledge` until they're rewritten. Existing 768-dim embeddings are lost.
 
-### 2. System prompt update (`src/lib/buildChatSystemPrompt.ts`)
+**C. Park the search feature** — Apply everything *except* migration `0002`'s embedding pieces and the `embed-entries` / `search-knowledge` functions. Wikis + bridges + meta-wiki still work; semantic search across wikis is deferred.
 
-Append a short "Conflict resolution" section to the always-on guidance:
+---
 
-- If the user mentions contradictions, conflicts, wiki cleanup, or asks to "go through" them, call `list_conflicts` first and present them in plain language one at a time.
-- For each conflict, summarise both sides, show the AI's reasoning, and propose options (keep one, merge, edit, acknowledge, dismiss).
-- **Never** call `resolve_conflict` with a destructive action (`keep_*`, `merge`, `edit_*`) until the user explicitly approves that specific choice for that specific conflict in the current message. `acknowledge` / `dismiss` may be applied after a clear yes.
-- After each resolution, briefly confirm what changed and ask whether to move to the next one.
+## 🟡 Blocker 2: All 5 overwrite files have diverged
 
-### 3. No DB / no edge function / no UI changes
+The bundle's overwrites are based on an older snapshot. Current files are larger (Inworld TTS persistence, wiki-conflict chat tools, etc. landed since):
 
-- The `knowledge_conflicts` table, statuses, and RLS already exist.
-- `ConflictNotifier` badge and the Wiki → Conflicts tab keep working unchanged; resolutions made via chat will simply make the badge count drop (it already listens to UPDATEs).
-- No edits to `VoiceChat`, `ChatPanel`, `ChatContext`, TTS, hands-free mode, or any other surface.
+| File | Bundle | Current |
+|---|---|---|
+| ChatPanel.tsx | 396 | 512 |
+| WikiPanel.tsx | 718 | 787 |
+| AppContext.tsx | 465 | 463 |
+| Index.tsx | 126 | 217 |
+| knowledgeApi.ts | 261 | 302 |
 
-## Files touched
+Straight overwrite would wipe: Inworld TTS UI hooks in ChatPanel, recent WikiPanel features, and added `knowledgeApi` exports (conflicts, sleep-cycle, etc.).
 
-- `src/lib/chatTools.ts` — add 4 tool definitions + handler cases
-- `src/lib/buildChatSystemPrompt.ts` — add ~6 lines of guidance
+**Plan:** I will **merge, not overwrite** — keep all current code intact and only graft in the wiki additions called out in your notes (B) and (C):
+- `wiki_id` param + `active_wiki_id` fallback in extract/ingest
+- wiki-scoped dedup, `wiki_id` stamped on inserts, auto-embed call
+- `activeWikiId`/`activeWiki` from `useApp` threaded into ChatPanel
+- "Your Knowledge Wiki: [name]" heading in system prompt
+- New `wikisApi` exports + `WikiLibrary` / `WikiQuickSwitcher` wired into `Index`/`AppContext`
 
-## Out of scope (explicitly preserved)
+---
 
-Wiki UI conflict view, badge notifier, Inworld TTS persistence work, voice tab behaviour, ingest/lint/sleep-cycle pipelines, knowledge graph edges — all untouched.
+## Execution sequence (after you pick A/B/C)
 
-## Verification
+1. **Migration 0001** (wikis table, `wiki_id` column, backfill "My Wiki" for existing users, set `active_wiki_id`) — clean, no conflicts.
+2. **Migration 0002** — applied per your choice above (A patches column name to `embedding_v2`; B drops+recreates; C skips).
+3. **Drop in 7 new files** as-is: `wiki-embed.ts`, `embed-entries/`, `search-knowledge/`, `wikisApi.ts`, `WikiLibrary.tsx`, `WikiQuickSwitcher.tsx`.
+4. **Merge** the 5 overwrite files into current versions (additions only — nothing removed).
+5. **Deploy** edge functions: `embed-entries`, `search-knowledge`, `knowledge-extract`, `knowledge-ingest`.
+6. **Smoke tests:**
+   - SQL check: every existing user has a "My Wiki" + `active_wiki_id` set + all entries have `wiki_id`.
+   - `POST /embed-entries { backfill: true, limit: 50 }` → embeddings populate (option A only — uses `embedding_v2`).
+   - `POST /search-knowledge { query: "...", limit: 5 }` → ranked results with `wiki_name`.
+7. **Report back** with results / any failures.
 
-After implementation: open chat, ask *"are there any contradictions in my wiki?"* → AI calls `list_conflicts`, summarises them. Pick one, say *"merge them, keep the merged version titled X"* → AI calls `resolve_conflict` with `action: "merge"`, conflict disappears from the Wiki → Conflicts tab and the bell badge count drops.
+---
+
+**Which option for the embedding column — A, B, or C?** Once you answer I'll execute end-to-end.
