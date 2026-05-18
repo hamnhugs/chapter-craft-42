@@ -95,6 +95,73 @@ export const CHAT_TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "list_conflicts",
+      description:
+        "List knowledge wiki contradictions (conflicts) flagged by the system. Use when the user asks to review, go over, or resolve contradictions/conflicts in their wiki. Each item includes both conflicting entries (a and b) with title + snippet so you can present them.",
+      parameters: {
+        type: "object",
+        properties: {
+          status: { type: "string", enum: ["open", "acknowledged", "resolved", "dismissed"], description: "Default 'open'." },
+          limit: { type: "number", description: "Default 10, max 25." },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_conflict",
+      description: "Fetch full text of both entries in a specific conflict plus the AI's rationale. Use before proposing a resolution if list_conflicts snippets aren't enough.",
+      parameters: {
+        type: "object",
+        properties: { conflict_id: { type: "string" } },
+        required: ["conflict_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "resolve_conflict",
+      description:
+        "Resolve a wiki conflict. NEVER call with a destructive action (keep_a_delete_b, keep_b_delete_a, merge, edit_a, edit_b) until the user has explicitly approved that exact action for that exact conflict in the current turn. 'acknowledge' and 'dismiss' may be applied after a clear yes.",
+      parameters: {
+        type: "object",
+        properties: {
+          conflict_id: { type: "string" },
+          action: {
+            type: "string",
+            enum: ["keep_a_delete_b", "keep_b_delete_a", "merge", "edit_a", "edit_b", "acknowledge", "dismiss"],
+          },
+          merged_title: { type: "string", description: "Required when action='merge'. Written into entry A; entry B is deleted." },
+          merged_content: { type: "string", description: "Required when action='merge'." },
+          merged_tags: { type: "array", items: { type: "string" } },
+          new_title: { type: "string", description: "Used with edit_a/edit_b." },
+          new_content: { type: "string", description: "Used with edit_a/edit_b." },
+          new_tags: { type: "array", items: { type: "string" } },
+        },
+        required: ["conflict_id", "action"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_conflict_status",
+      description: "Set a conflict's status directly (acknowledge or dismiss it) without editing entries.",
+      parameters: {
+        type: "object",
+        properties: {
+          conflict_id: { type: "string" },
+          status: { type: "string", enum: ["open", "acknowledged", "resolved", "dismissed"] },
+        },
+        required: ["conflict_id", "status"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "isolate_chapter",
       description:
         "Create a new chapter in a book by specifying its page range. The chapter text is empty unless extracted separately.",
