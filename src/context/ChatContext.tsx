@@ -49,7 +49,7 @@ const MAX_TOOL_ITERATIONS = 5;
 
 export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
-  const { books, activeBookId, addChapter, updateChapter, removeChapter, setActiveBookSilent } = useApp();
+  const { books, activeBookId, activeWiki, addChapter, updateChapter, removeChapter, setActiveBookSilent } = useApp();
 
   const { apiKey, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken } = useChatSettings();
   const { getActiveBodyForScope, migrate } = usePromptPresets();
@@ -209,6 +209,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         voiceMode: isVoice,
         latestUserQuery: trimmed,
         customSystemPrompt: promptToInject,
+        activeWikiName: activeWiki?.name || null,
       });
 
       const assistantEvents: ToolEvent[] = [];

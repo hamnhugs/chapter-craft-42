@@ -18,7 +18,7 @@ import PromptLibrary from "@/components/PromptLibrary";
 import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL } from "@/lib/chatTools";
 
 const ChatPanel: React.FC = () => {
-  const { books, activeBookId } = useApp();
+  const { books, activeBookId, activeWiki, activeWikiId } = useApp();
   const {
     apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, autoReadReplies, customSystemPrompt, burplexityApiToken, loaded,
     saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setTtsRate, setAutoReadReplies, setCustomSystemPrompt, setBurplexityApiToken,
@@ -135,7 +135,7 @@ const ChatPanel: React.FC = () => {
     if (messages.length < 2) { toast.error("Chat first before saving to wiki"); return; }
     setExtracting(true);
     try {
-      const result = await extractKnowledge(messages.map(m => ({ role: m.role, content: m.content })), activeBookId || undefined);
+      const result = await extractKnowledge(messages.map(m => ({ role: m.role, content: m.content })), activeBookId || undefined, activeWikiId);
       const count = result.entries?.length || 0;
       toast.success(`Saved ${count} knowledge ${count === 1 ? "entry" : "entries"} to your wiki`);
     } catch (err: any) {
