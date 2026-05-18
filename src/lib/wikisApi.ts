@@ -37,7 +37,7 @@ export async function fetchWikisWithStats(): Promise<WikiWithStats[]> {
   ]);
 
   const countMap = new Map<string, number>();
-  for (const row of (counts.data || []) as Array<{ wiki_id: string | null }>) {
+  for (const row of ((counts.data || []) as unknown as Array<{ wiki_id: string | null }>)) {
     if (!row.wiki_id) continue;
     countMap.set(row.wiki_id, (countMap.get(row.wiki_id) || 0) + 1);
   }
