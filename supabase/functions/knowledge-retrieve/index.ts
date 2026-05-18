@@ -123,6 +123,7 @@ serve(async (req) => {
     }
     for (const n of neighbors as any[]) {
       if (n.hop === 0) continue; // already a seed
+      if (allowedNeighborIds && !allowedNeighborIds.has(n.entry_id)) continue;
       const existing = nodeMap.get(n.entry_id);
       const boost = 0.3 / (n.hop + 1);
       if (existing) {
