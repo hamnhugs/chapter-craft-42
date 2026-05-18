@@ -76,6 +76,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   useEffect(() => { refreshWikis(); }, [refreshWikis]);
 
+  // Listen for AI-tool-driven wiki switches/creates to refresh active wiki state live.
+  useEffect(() => {
+    const handler = () => { refreshWikis(); };
+    window.addEventListener("wiki-active-changed", handler);
+    return () => window.removeEventListener("wiki-active-changed", handler);
+  }, [refreshWikis]);
+
   const setActiveWiki = useCallback(async (wikiId: string) => {
     await loadWikiApi(wikiId);
     setActiveWikiId(wikiId);
