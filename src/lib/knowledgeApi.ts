@@ -85,7 +85,16 @@ export interface LintResult {
   stats: { total_entries: number; total_relationships: number; orphan_count: number; avg_confidence: number };
 }
 
-export async function fetchKnowledgeEntries(): Promise<KnowledgeEntry[]> {
+export async function fetchKnowledgeEntries(wikiId?: string | null): Promise<KnowledgeEntry[]> {
+  // When a wiki is selected we want both native entries AND bridged-in entries.
+  // The entries_for_wiki RPC handles the union and keeps RLS clean.
+  if (wikiId) {
+    const { data, error } = await supabase.rpc("entries_for_wiki" as any, {
+      target_wiki_id: wikiId,
+    } as any);
+    if (error) throw error;
+    return (data || []) as unknown as KnowledgeEntry[];
+  }
   const { data, error } = await supabase
     .from("knowledge_entries")
     .select("*")
