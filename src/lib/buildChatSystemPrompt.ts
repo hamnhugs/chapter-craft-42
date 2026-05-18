@@ -69,7 +69,7 @@ export async function buildChatSystemPrompt({
   // GRAPH-AWARE RETRIEVAL — replaces the old "dump 30 entries" approach
   if (latestUserQuery && latestUserQuery.trim().length > 0) {
     try {
-      const retrieval = await retrieveKnowledge(latestUserQuery, { deep: deepResearch });
+      const retrieval = await retrieveKnowledge(latestUserQuery, { deep: deepResearch, wiki_id: activeWikiId ?? null });
       if (retrieval && retrieval.nodes.length > 0) {
         parts.push("", `## Retrieved Knowledge (${retrieval.nodes.length} nodes, ${retrieval.edges.length} edges)`);
         const idToTitle = new Map(retrieval.nodes.map((n: any) => [n.id, n.title]));
