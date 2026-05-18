@@ -14,10 +14,12 @@ interface BuildOpts {
   customSystemPrompt?: string;
   /** Active wiki name — surfaced to the model so it knows which wiki is in focus. */
   activeWikiName?: string | null;
+  /** Active wiki id — scopes retrieval to that wiki (+ bridged entries). */
+  activeWikiId?: string | null;
 }
 
 export async function buildChatSystemPrompt({
-  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeWikiName,
+  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeWikiName, activeWikiId,
 }: BuildOpts): Promise<string> {
   const parts: string[] = [];
 
