@@ -36,6 +36,8 @@ const defaults: ChatSettings = {
   customSystemPrompt: "",
   burplexityApiToken: "",
   inworldApiKey: "",
+  inworldEnabled: false,
+  inworldVoiceId: "",
 };
 
 export function useChatSettings() {
