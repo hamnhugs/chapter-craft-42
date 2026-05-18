@@ -210,6 +210,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         latestUserQuery: trimmed,
         customSystemPrompt: promptToInject,
         activeWikiName: activeWiki?.name || null,
+        activeWikiId: activeWikiId || null,
       });
 
       const assistantEvents: ToolEvent[] = [];
