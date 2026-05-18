@@ -160,6 +160,7 @@ export function useChatSettings() {
     setDeepResearchModel: (m: string) => update({ deepResearchModel: m }),
     setVoiceModel: (m: string) => update({ voiceModel: m }),
     setTtsRate: (r: number) => update({ ttsRate: Math.min(2, Math.max(0.5, r)) }),
+    setHandsFreeTtsRate: (r: number) => update({ handsFreeTtsRate: Math.min(2, Math.max(0.5, r)) }),
     setAutoReadReplies: (v: boolean) => update({ autoReadReplies: v }),
     setWikiModel: (m: string) => update({ wikiModel: m }),
     setCustomSystemPrompt: (p: string) => update({ customSystemPrompt: p }),
