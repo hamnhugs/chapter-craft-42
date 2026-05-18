@@ -32,11 +32,22 @@ serve(async (req) => {
       });
     }
 
-    const { book_id } = await req.json();
+    const { book_id, wiki_id } = await req.json();
     if (!book_id) {
       return new Response(JSON.stringify({ error: "book_id required" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // Resolve wiki_id: explicit param wins, otherwise fall back to user_settings.active_wiki_id
+    let effectiveWikiId: string | null = wiki_id || null;
+    if (!effectiveWikiId) {
+      const { data: settings } = await supabase
+        .from("user_settings")
+        .select("active_wiki_id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      effectiveWikiId = (settings as any)?.active_wiki_id || null;
     }
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
@@ -64,12 +75,14 @@ serve(async (req) => {
       });
     }
 
-    // Fetch existing entries for this book
-    const { data: existingEntries } = await supabase
+    // Fetch existing entries for this book (scoped to wiki when set)
+    let dedupQuery = supabase
       .from("knowledge_entries")
       .select("id, title")
       .eq("user_id", user.id)
       .eq("source_book_id", book_id);
+    if (effectiveWikiId) dedupQuery = dedupQuery.eq("wiki_id", effectiveWikiId);
+    const { data: existingEntries } = await dedupQuery;
 
     const existingTitles = (existingEntries || []).map(e => e.title.toLowerCase());
 
@@ -182,7 +195,8 @@ Already extracted titles (avoid duplicates): ${existingTitles.join(", ") || "(no
           tags: entry.tags || [],
           confidence: Math.min(1, Math.max(0, entry.confidence || 0.8)),
           source_book_id: book_id,
-        })
+          wiki_id: effectiveWikiId,
+        } as any)
         .select("id")
         .single();
 
@@ -216,6 +230,18 @@ Already extracted titles (avoid duplicates): ${existingTitles.join(", ") || "(no
       supabase, user.id,
       savedEntries.map((e) => ({ id: e.id, title: e.title, content: e.content, embedding: e.embedding })),
     );
+
+    // Fire-and-forget: generate halfvec(1536) embeddings for new entries
+    const newIds = savedEntries.filter((e) => e.id).map((e) => e.id);
+    if (newIds.length > 0) {
+      try {
+        fetch(`${supabaseUrl}/functions/v1/embed-entries`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: authHeader },
+          body: JSON.stringify({ entry_ids: newIds }),
+        }).catch((err) => console.warn("embed-entries fire-and-forget failed:", err));
+      } catch (err) { console.warn("embed-entries dispatch error:", err); }
+    }
 
     return new Response(JSON.stringify({
       entries_created: savedEntries.length,

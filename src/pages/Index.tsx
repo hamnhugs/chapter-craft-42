@@ -4,6 +4,8 @@ import PdfViewer from "@/components/PdfViewer";
 import Library from "@/components/Library";
 import ChatPanel from "@/components/ChatPanel";
 import WikiPanel from "@/components/WikiPanel";
+import WikiLibrary from "@/components/WikiLibrary";
+import WikiQuickSwitcher from "@/components/WikiQuickSwitcher";
 import VoiceChat from "@/components/VoiceChat";
 import AutoChapterize from "@/components/AutoChapterize";
 import VideoTranscript from "@/components/VideoTranscript";
@@ -19,6 +21,7 @@ const tabs = [
   { id: "chapterize" as const, icon: "auto_fix_high", label: "Chapterize" },
   { id: "chat" as const, icon: "forum", label: "Chat" },
   { id: "wiki" as const, icon: "menu_book", label: "Wiki" },
+  { id: "wikis" as const, icon: "collections_bookmark", label: "Wikis" },
   { id: "video" as const, icon: "smart_display", label: "Video" },
   { id: "voice" as const, icon: "settings_voice", label: "Voice" },
 ];
@@ -28,7 +31,7 @@ const primaryTabs = PRIMARY_IDS.map((id) => tabs.find((t) => t.id === id)!);
 const moreTabs = tabs.filter((t) => !PRIMARY_IDS.includes(t.id as any));
 
 const Index: React.FC = () => {
-  const { activeTab, setActiveTab, getActiveBook, signOut } = useApp();
+  const { activeTab, setActiveTab, getActiveBook, signOut, activeWiki } = useApp();
   const [moreOpen, setMoreOpen] = useState(false);
   const moreActive = moreTabs.some((t) => t.id === activeTab);
   const activeBook = getActiveBook();
@@ -62,6 +65,20 @@ const Index: React.FC = () => {
         </nav>
 
         <div className="flex items-center gap-2">
+          {activeWiki && (
+            <button
+              onClick={() => setActiveTab("wikis")}
+              title={`Active wiki: ${activeWiki.name} — press ⌘K to switch`}
+              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent/10 hover:bg-accent/20 transition-colors text-xs font-body font-medium text-accent max-w-[180px] truncate"
+            >
+              <span
+                className="w-2 h-2 rounded-full flex-shrink-0"
+                style={{ backgroundColor: activeWiki.cover_color || "#7C3AED" }}
+                aria-hidden
+              />
+              <span className="truncate">{activeWiki.name}</span>
+            </button>
+          )}
           <ConflictNotifier />
           <ThemeSwitcher />
           <button
@@ -82,6 +99,8 @@ const Index: React.FC = () => {
           <ChatPanel />
         ) : activeTab === "wiki" ? (
           <WikiPanel />
+        ) : activeTab === "wikis" ? (
+          <WikiLibrary />
         ) : activeTab === "video" ? (
           <VideoTranscript />
         ) : activeTab === "voice" ? (
@@ -210,6 +229,7 @@ const Index: React.FC = () => {
           </Sheet>
         </div>
       </nav>
+      <WikiQuickSwitcher />
     </div>
   );
 };

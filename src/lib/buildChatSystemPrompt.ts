@@ -12,10 +12,12 @@ interface BuildOpts {
   latestUserQuery?: string;
   /** Free-form user-supplied instructions prepended at the very top. */
   customSystemPrompt?: string;
+  /** Active wiki name — surfaced to the model so it knows which wiki is in focus. */
+  activeWikiName?: string | null;
 }
 
 export async function buildChatSystemPrompt({
-  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt,
+  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeWikiName,
 }: BuildOpts): Promise<string> {
   const parts: string[] = [];
 
@@ -30,6 +32,11 @@ export async function buildChatSystemPrompt({
   }
   parts.push(
     "You are an intelligent reading assistant for the Chapter Craft app with long-term memory and a knowledge graph. You help users understand, analyze, and discuss their books and chapters.",
+  );
+  if (activeWikiName) {
+    parts.push(`The user's active knowledge wiki is "${activeWikiName}". New knowledge captured this session is scoped to that wiki, and \`search_wiki\` results are biased toward it.`);
+  }
+  parts.push(
     "You have these tools: list_books, get_book, get_chapter_text, set_active_book, isolate_chapter, rename_chapter, delete_chapter, list_conflicts, get_conflict, resolve_conflict, update_conflict_status, and TWO search tools:",
     "- `search_wiki` → search ONLY the user's locally saved knowledge wiki. Use it for things they've already studied/ingested.",
     "- `web_search` → LIVE INTERNET search via the user's Burplexity instance. Use this WHENEVER the user asks to 'search', 'look up', 'google', 'check online', 'what's the latest', or anything time-sensitive or not in the wiki. You may call both `search_wiki` and `web_search` in the same turn when useful. Don't refuse online searches — call `web_search`.",

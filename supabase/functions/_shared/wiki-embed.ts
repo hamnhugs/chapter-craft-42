@@ -12,11 +12,22 @@ interface EmbeddingResponse {
 }
 
 export async function embedTexts(apiKey: string, texts: string[]): Promise<number[][]> {
-  const resp = await fetch("https://ai.gateway.lovable.dev/v1/embeddings", {
+  // Lovable AI gateway does not expose /v1/embeddings for all workspaces.
+  // Prefer OpenRouter (OPENROUTER_API_KEY) when present, fall back to gateway.
+  const openrouterKey = Deno.env.get("OPENROUTER_API_KEY");
+  const url = openrouterKey
+    ? "https://openrouter.ai/api/v1/embeddings"
+    : "https://ai.gateway.lovable.dev/v1/embeddings";
+  const auth = openrouterKey || apiKey;
+
+  const resp = await fetch(url, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${auth}`,
       "Content-Type": "application/json",
+      ...(openrouterKey
+        ? { "HTTP-Referer": "https://bookwormstudio.com", "X-Title": "Bookworm Wiki" }
+        : {}),
     },
     body: JSON.stringify({
       model: EMBED_MODEL,
@@ -68,7 +79,7 @@ export async function embedAndStore(
       for (let j = 0; j < batch.length; j++) {
         const { error } = await supabase
           .from("knowledge_entries")
-          .update({ embedding_v2: vectorLiteral(vectors[j]) })
+          .update({ embedding_v2: vectorLiteral(vectors[j]), embedding_model: EMBED_MODEL })
           .eq("id", batch[j].id)
           .eq("user_id", userId);
         if (error) {

@@ -56,7 +56,7 @@ serve(async (req) => {
       });
     }
 
-    const { messages, source_book_id, session_id } = await req.json();
+    const { messages, source_book_id, session_id, wiki_id } = await req.json();
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return new Response(JSON.stringify({ error: "messages array required" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -65,6 +65,17 @@ serve(async (req) => {
     // Derive a stable session id for the episodic log.
     const effectiveSessionId: string = session_id || `sess_${Date.now()}`;
 
+    // Resolve wiki_id: explicit param wins, otherwise fall back to user_settings.active_wiki_id
+    let effectiveWikiId: string | null = wiki_id || null;
+    if (!effectiveWikiId) {
+      const { data: settings } = await supabase
+        .from("user_settings")
+        .select("active_wiki_id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      effectiveWikiId = (settings as any)?.active_wiki_id || null;
+    }
+
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
       return new Response(JSON.stringify({ error: "AI service not configured" }), {
@@ -72,12 +83,14 @@ serve(async (req) => {
       });
     }
 
-    // Fetch existing entries for deduplication
-    const { data: existingEntries } = await supabase
+    // Fetch existing entries for deduplication (scoped to active wiki when set)
+    let dedupQuery = supabase
       .from("knowledge_entries")
       .select("id, title, content, entry_type, tags")
       .eq("user_id", user.id)
       .limit(200);
+    if (effectiveWikiId) dedupQuery = dedupQuery.eq("wiki_id", effectiveWikiId);
+    const { data: existingEntries } = await dedupQuery;
 
     const existingSummary = (existingEntries || [])
       .map(e => `- "${e.title}" (${e.entry_type}): ${e.content.slice(0, 100)}`)
@@ -230,7 +243,8 @@ Rules:
           tags: entry.tags || [],
           confidence: Math.min(1, Math.max(0, entry.confidence || 0.8)),
           source_book_id: source_book_id || null,
-        })
+          wiki_id: effectiveWikiId,
+        } as any)
         .select("id")
         .single();
 
@@ -336,6 +350,18 @@ Rules:
       });
     }
 
+    // Fire-and-forget: generate halfvec(1536) embeddings for new entries
+    const newIds = savedEntries.filter((e) => e.id && e.action === "ADDED").map((e) => e.id);
+    if (newIds.length > 0) {
+      try {
+        fetch(`${supabaseUrl}/functions/v1/embed-entries`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: authHeader },
+          body: JSON.stringify({ entry_ids: newIds }),
+        }).catch((err) => console.warn("embed-entries fire-and-forget failed:", err));
+      } catch (err) { console.warn("embed-entries dispatch error:", err); }
+    }
+
     return new Response(JSON.stringify({
       entries: savedEntries.map((e) => ({ ...e, embedding: undefined })),
       summary: extracted.conversation_summary,
@@ -345,6 +371,7 @@ Rules:
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+
   } catch (e) {
     console.error("knowledge-extract error:", e);
     return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error" }), {
