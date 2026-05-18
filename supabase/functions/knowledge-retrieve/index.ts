@@ -23,7 +23,7 @@ serve(async (req) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return json({ error: "Unauthorized" }, 401);
 
-    const { query, depth = 2, match_count = 12, deep = false } = await req.json();
+    const { query, depth = 2, match_count = 12, deep = false, wiki_id = null } = await req.json();
     if (!query || typeof query !== "string") {
       return json({ error: "query (string) required" }, 400);
     }
@@ -56,6 +56,25 @@ serve(async (req) => {
       seeds = (data || []).map((r: any, i: number) => ({ ...r, score: 1 / (50 + i) }));
     }
 
+    // 2b. Wiki scoping: keep only entries native to or bridged into the active wiki.
+    // wiki_id === null preserves legacy all-entries behavior.
+    if (wiki_id && seeds.length > 0) {
+      const ids = seeds.map((s: any) => s.id);
+      const { data: scoped } = await supabase
+        .from("knowledge_entries")
+        .select("id, wiki_id")
+        .in("id", ids)
+        .or(`wiki_id.eq.${wiki_id},wiki_id.is.null`);
+      const allowed = new Set((scoped || []).map((r: any) => r.id));
+      const { data: bridged } = await supabase
+        .from("entry_bridges")
+        .select("entry_id")
+        .eq("wiki_id", wiki_id)
+        .in("entry_id", ids);
+      for (const b of (bridged || []) as any[]) allowed.add(b.entry_id);
+      seeds = seeds.filter((s: any) => allowed.has(s.id));
+    }
+
     if (seeds.length === 0) {
       return json({ nodes: [], edges: [] });
     }
@@ -69,6 +88,24 @@ serve(async (req) => {
       classes: ["structural"],
     });
     const neighbors = neighborsRaw || [];
+
+    // 3b. Wiki scoping for neighbors
+    let allowedNeighborIds: Set<string> | null = null;
+    if (wiki_id && neighbors.length > 0) {
+      const nIds = (neighbors as any[]).map((n: any) => n.entry_id);
+      const { data: scoped } = await supabase
+        .from("knowledge_entries")
+        .select("id, wiki_id")
+        .in("id", nIds)
+        .or(`wiki_id.eq.${wiki_id},wiki_id.is.null`);
+      allowedNeighborIds = new Set((scoped || []).map((r: any) => r.id));
+      const { data: bridged } = await supabase
+        .from("entry_bridges")
+        .select("entry_id")
+        .eq("wiki_id", wiki_id)
+        .in("entry_id", nIds);
+      for (const b of (bridged || []) as any[]) allowedNeighborIds.add(b.entry_id);
+    }
 
     // 4. Build node map, applying graph boost
     const nodeMap = new Map<string, any>();
@@ -86,6 +123,7 @@ serve(async (req) => {
     }
     for (const n of neighbors as any[]) {
       if (n.hop === 0) continue; // already a seed
+      if (allowedNeighborIds && !allowedNeighborIds.has(n.entry_id)) continue;
       const existing = nodeMap.get(n.entry_id);
       const boost = 0.3 / (n.hop + 1);
       if (existing) {

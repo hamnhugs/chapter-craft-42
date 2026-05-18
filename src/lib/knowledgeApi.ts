@@ -223,7 +223,7 @@ async function callEdge(fnName: string, body: unknown): Promise<any> {
 
 export async function retrieveKnowledge(
   query: string,
-  opts: { depth?: number; match_count?: number; deep?: boolean } = {},
+  opts: { depth?: number; match_count?: number; deep?: boolean; wiki_id?: string | null } = {},
 ): Promise<RetrievalResult> {
   return callEdge("knowledge-retrieve", { query, ...opts });
 }

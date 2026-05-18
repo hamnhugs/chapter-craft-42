@@ -14,10 +14,12 @@ interface BuildOpts {
   customSystemPrompt?: string;
   /** Active wiki name — surfaced to the model so it knows which wiki is in focus. */
   activeWikiName?: string | null;
+  /** Active wiki id — scopes retrieval to that wiki (+ bridged entries). */
+  activeWikiId?: string | null;
 }
 
 export async function buildChatSystemPrompt({
-  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeWikiName,
+  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeWikiName, activeWikiId,
 }: BuildOpts): Promise<string> {
   const parts: string[] = [];
 
@@ -67,7 +69,7 @@ export async function buildChatSystemPrompt({
   // GRAPH-AWARE RETRIEVAL — replaces the old "dump 30 entries" approach
   if (latestUserQuery && latestUserQuery.trim().length > 0) {
     try {
-      const retrieval = await retrieveKnowledge(latestUserQuery, { deep: deepResearch });
+      const retrieval = await retrieveKnowledge(latestUserQuery, { deep: deepResearch, wiki_id: activeWikiId ?? null });
       if (retrieval && retrieval.nodes.length > 0) {
         parts.push("", `## Retrieved Knowledge (${retrieval.nodes.length} nodes, ${retrieval.edges.length} edges)`);
         const idToTitle = new Map(retrieval.nodes.map((n: any) => [n.id, n.title]));
@@ -90,7 +92,7 @@ export async function buildChatSystemPrompt({
     } catch (err) {
       console.warn("retrieveKnowledge failed, falling back to legacy dump:", err);
       // Fallback: small legacy dump so chat still works if retrieval errors
-      const knowledgeEntries = await fetchKnowledgeEntries().catch(() => []);
+      const knowledgeEntries = await fetchKnowledgeEntries(activeWikiId ?? null).catch(() => []);
       if (knowledgeEntries.length > 0) {
         parts.push("", "## Your Knowledge Wiki (fallback)");
         const relevant = selectedBook
