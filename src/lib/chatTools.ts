@@ -510,6 +510,65 @@ export async function executeChatTool(
         if (error) throw error;
         return { result: { ok: true, status }, event: { name, summary: `Conflict → ${status}`, ok: true } };
       }
+      case "list_wikis": {
+        const { data: userData } = await supabase.auth.getUser();
+        const uid = userData.user?.id;
+        if (!uid) return { result: { error: "Not signed in" }, event: { name, summary: "Not signed in", ok: false } };
+        const [{ data: wikis, error: wErr }, { data: settings }, { data: counts }] = await Promise.all([
+          supabase.from("wikis" as any).select("id, name, description, is_default, is_meta, created_at, updated_at").order("updated_at", { ascending: false }),
+          supabase.from("user_settings").select("active_wiki_id" as any).maybeSingle(),
+          supabase.from("knowledge_entries").select("wiki_id" as any),
+        ]);
+        if (wErr) throw wErr;
+        const activeId = (settings as any)?.active_wiki_id || null;
+        const countMap = new Map<string, number>();
+        for (const r of ((counts as any[]) || [])) {
+          if (!r?.wiki_id) continue;
+          countMap.set(r.wiki_id, (countMap.get(r.wiki_id) || 0) + 1);
+        }
+        const out = ((wikis as any[]) || []).map((w) => ({
+          id: w.id, name: w.name, description: w.description, is_default: w.is_default, is_meta: w.is_meta,
+          is_active: w.id === activeId, entry_count: countMap.get(w.id) || 0,
+        }));
+        return { result: out, event: { name, summary: `Listed ${out.length} wiki(s)`, ok: true } };
+      }
+      case "get_active_wiki": {
+        const { data: settings } = await supabase.from("user_settings").select("active_wiki_id" as any).maybeSingle();
+        const activeId = (settings as any)?.active_wiki_id || null;
+        if (!activeId) return { result: { active_wiki_id: null }, event: { name, summary: "No active wiki set", ok: true } };
+        const { data: wiki } = await supabase.from("wikis" as any).select("id, name, description, is_default, is_meta").eq("id", activeId).maybeSingle();
+        return { result: { active_wiki_id: activeId, wiki: wiki || null }, event: { name, summary: `Active wiki: ${(wiki as any)?.name || activeId.slice(0, 8)}`, ok: true } };
+      }
+      case "switch_wiki": {
+        const wid = String(args.wiki_id || "");
+        if (!wid) return { result: { error: "wiki_id required" }, event: { name, summary: "Missing wiki_id", ok: false } };
+        const { data: userData } = await supabase.auth.getUser();
+        const uid = userData.user?.id;
+        if (!uid) return { result: { error: "Not signed in" }, event: { name, summary: "Not signed in", ok: false } };
+        const { data: wiki, error: wErr } = await supabase.from("wikis" as any).select("id, name").eq("id", wid).maybeSingle();
+        if (wErr) throw wErr;
+        if (!wiki) return { result: { error: "Wiki not found" }, event: { name, summary: "Wiki not found", ok: false } };
+        await supabase.from("wikis" as any).update({ last_loaded_at: new Date().toISOString() } as any).eq("id", wid);
+        const { error } = await supabase.from("user_settings").upsert({ user_id: uid, active_wiki_id: wid } as any, { onConflict: "user_id" });
+        if (error) throw error;
+        return { result: { ok: true, active_wiki_id: wid, name: (wiki as any).name }, event: { name, summary: `Switched to "${(wiki as any).name}"`, ok: true } };
+      }
+      case "create_wiki": {
+        const wname = String(args.name || "").trim();
+        if (!wname) return { result: { error: "name required" }, event: { name, summary: "Missing name", ok: false } };
+        const { data: userData } = await supabase.auth.getUser();
+        const uid = userData.user?.id;
+        if (!uid) return { result: { error: "Not signed in" }, event: { name, summary: "Not signed in", ok: false } };
+        const { data, error } = await supabase.from("wikis" as any).insert({
+          user_id: uid, name: wname, description: String(args.description || ""), tags: [],
+        } as any).select().single();
+        if (error || !data) throw error || new Error("Create failed");
+        const activate = args.activate !== false;
+        if (activate) {
+          await supabase.from("user_settings").upsert({ user_id: uid, active_wiki_id: (data as any).id } as any, { onConflict: "user_id" });
+        }
+        return { result: { ok: true, id: (data as any).id, name: wname, activated: activate }, event: { name, summary: `Created wiki "${wname}"${activate ? " (active)" : ""}`, ok: true } };
+      }
       case "isolate_chapter": {
         const book = deps.books.find((b) => b.id === args.book_id);
         if (!book) return { result: { error: "Book not found" }, event: { name, summary: "Book not found", ok: false } };
