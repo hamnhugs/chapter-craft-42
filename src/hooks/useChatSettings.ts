@@ -158,6 +158,8 @@ export function useChatSettings() {
     setCustomSystemPrompt: (p: string) => update({ customSystemPrompt: p }),
     setBurplexityApiToken: (t: string) => update({ burplexityApiToken: t.trim() }),
     setInworldApiKey: (k: string) => update({ inworldApiKey: k.trim() }),
+    setInworldEnabled: (v: boolean) => update({ inworldEnabled: v }),
+    setInworldVoiceId: (v: string) => update({ inworldVoiceId: v }),
     addModel,
     removeModel,
     setNewModelInput: undefined, // handled in component
