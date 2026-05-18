@@ -92,7 +92,7 @@ export async function buildChatSystemPrompt({
     } catch (err) {
       console.warn("retrieveKnowledge failed, falling back to legacy dump:", err);
       // Fallback: small legacy dump so chat still works if retrieval errors
-      const knowledgeEntries = await fetchKnowledgeEntries().catch(() => []);
+      const knowledgeEntries = await fetchKnowledgeEntries(activeWikiId ?? null).catch(() => []);
       if (knowledgeEntries.length > 0) {
         parts.push("", "## Your Knowledge Wiki (fallback)");
         const relevant = selectedBook
