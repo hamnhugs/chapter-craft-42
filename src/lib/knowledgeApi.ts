@@ -309,3 +309,121 @@ export async function triggerSleepCycle(): Promise<SleepCycleReport> {
   return callEdge("knowledge-consolidate", {});
 }
 
+
+// ─── Multi-wiki additions ────────────────────────────────────────────────────
+
+export interface SemanticSearchMatch {
+  id: string;
+  wiki_id: string | null;
+  title: string;
+  content: string;
+  entry_type: string;
+  tags: string[];
+  confidence: number;
+  source_book_id: string | null;
+  similarity: number;
+  wiki_name: string | null;
+  wiki_color: string | null;
+}
+
+export async function searchKnowledge(input: {
+  query: string;
+  wiki_ids?: string[] | null;
+  threshold?: number;
+  limit?: number;
+}): Promise<SemanticSearchMatch[]> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/search-knowledge`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+    },
+    body: JSON.stringify(input),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ error: "Search failed" }));
+    throw new Error(err.error || `Error ${resp.status}`);
+  }
+  const data = await resp.json();
+  return (data.matches || []) as SemanticSearchMatch[];
+}
+
+export async function embedEntries(input: { entry_ids?: string[]; backfill?: boolean; limit?: number }): Promise<{ embedded: number; attempted: number }> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/embed-entries`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+    },
+    body: JSON.stringify(input),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ error: "Embedding failed" }));
+    throw new Error(err.error || `Error ${resp.status}`);
+  }
+  return resp.json();
+}
+
+export interface EntryBridge {
+  id: string;
+  user_id: string;
+  entry_id: string;
+  wiki_id: string;
+  created_at: string;
+}
+
+export async function fetchBridgesForEntry(entryId: string): Promise<EntryBridge[]> {
+  const { data, error } = await supabase
+    .from("entry_bridges" as any)
+    .select("*")
+    .eq("entry_id", entryId);
+  if (error) throw error;
+  return (data || []) as unknown as EntryBridge[];
+}
+
+export async function bridgeEntryToWiki(entryId: string, wikiId: string): Promise<void> {
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData.user) throw new Error("Not signed in");
+  const { error } = await supabase
+    .from("entry_bridges" as any)
+    .insert({ entry_id: entryId, wiki_id: wikiId, user_id: userData.user.id } as any);
+  if (error) throw error;
+}
+
+export async function unbridgeEntryFromWiki(entryId: string, wikiId: string): Promise<void> {
+  const { error } = await supabase
+    .from("entry_bridges" as any)
+    .delete()
+    .eq("entry_id", entryId)
+    .eq("wiki_id", wikiId);
+  if (error) throw error;
+}
+
+export async function createWikiPointerEntry(input: {
+  wiki_id: string;
+  linked_wiki_id: string;
+  title: string;
+  content?: string;
+  tags?: string[];
+}): Promise<KnowledgeEntry> {
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData.user) throw new Error("Not signed in");
+  const { data, error } = await supabase
+    .from("knowledge_entries")
+    .insert({
+      user_id: userData.user.id,
+      wiki_id: input.wiki_id,
+      linked_wiki_id: input.linked_wiki_id,
+      title: input.title,
+      content: input.content || "",
+      entry_type: "concept",
+      tags: input.tags || [],
+      confidence: 1,
+    } as any)
+    .select()
+    .single();
+  if (error || !data) throw error || new Error("Failed to create pointer");
+  return data as unknown as KnowledgeEntry;
+}
