@@ -408,7 +408,7 @@ const VoiceChat: React.FC = () => {
           }
         });
     }
-  }, [inworldEnabled, inworldApiKey, inworldVoiceId, ttsRate, maybeFinishTurn]);
+  }, [inworldEnabled, inworldApiKey, inworldVoiceId, effectiveTtsRate, maybeFinishTurn]);
 
   const pumpPlay = useCallback(() => {
     if (ttsPlayingRef.current) return;
@@ -448,7 +448,7 @@ const VoiceChat: React.FC = () => {
     audio.onended = cleanup;
     audio.onerror = cleanup;
     audio.play().catch(cleanup);
-  }, [ttsRate, maybeFinishTurn]);
+  }, [effectiveTtsRate, maybeFinishTurn]);
 
   // Keep refs pointing at the latest pump fns so promise callbacks can call them.
   useEffect(() => { pumpSynthRef.current = pumpSynth; }, [pumpSynth]);
@@ -493,7 +493,7 @@ const VoiceChat: React.FC = () => {
       u.onend = done; u.onerror = done;
       synthRef.current.speak(u);
     }
-  }, [ttsEnabled, muteMicForTts, settingsLoaded, inworldEnabled, inworldApiKey, inworldVoiceId, ttsRate, pumpSynth, pumpPlay, maybeFinishTurn]);
+  }, [ttsEnabled, muteMicForTts, settingsLoaded, inworldEnabled, inworldApiKey, inworldVoiceId, effectiveTtsRate, pumpSynth, pumpPlay, maybeFinishTurn]);
 
   // Flush any pre-load speech buffer once settings are available.
   useEffect(() => {
@@ -512,7 +512,7 @@ const VoiceChat: React.FC = () => {
         synthRef.current.speak(u);
       }
     }
-  }, [settingsLoaded, inworldEnabled, inworldApiKey, inworldVoiceId, ttsRate, pumpSynth, pumpPlay]);
+  }, [settingsLoaded, inworldEnabled, inworldApiKey, inworldVoiceId, effectiveTtsRate, pumpSynth, pumpPlay]);
 
   const markTtsStreamDone = useCallback(() => {
     streamDoneRef.current = true;
@@ -580,7 +580,7 @@ const VoiceChat: React.FC = () => {
     } finally {
       setPendingSearchCount((c) => c - 1);
     }
-  }, [burplexityApiToken, injectDisplayMessage, ttsEnabled, ttsRate]);
+  }, [burplexityApiToken, injectDisplayMessage, ttsEnabled, effectiveTtsRate]);
 
   const submit = useCallback(async (text: string) => {
     if (!text.trim()) return;
