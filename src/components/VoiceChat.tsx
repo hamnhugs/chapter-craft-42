@@ -310,6 +310,8 @@ const VoiceChat: React.FC = () => {
   const ttsAudioQueueRef = useRef<{ url: string }[]>([]);
   const ttsPendingSynthRef = useRef(0);
   const ttsAbortersRef = useRef<Set<AbortController>>(new Set());
+  const ttsRetryRef = useRef<Map<string, number>>(new Map());
+  const ttsErrorToastedThisTurnRef = useRef(false);
   const ttsPlayingRef = useRef(false);
   const streamDoneRef = useRef(true);
   const ttsCancelledRef = useRef(false);
