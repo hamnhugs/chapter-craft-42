@@ -23,7 +23,7 @@ serve(async (req) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return json({ error: "Unauthorized" }, 401);
 
-    const { query, depth = 2, match_count = 12, deep = false } = await req.json();
+    const { query, depth = 2, match_count = 12, deep = false, wiki_id = null } = await req.json();
     if (!query || typeof query !== "string") {
       return json({ error: "query (string) required" }, 400);
     }
