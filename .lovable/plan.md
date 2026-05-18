@@ -1,66 +1,56 @@
-## What's actually broken
+## Goal
 
-Two independent bugs in `src/components/VoiceChat.tsx` produce the symptom "Inworld settings don't persist and randomly switch to default TTS mid-chat":
+Let the user say things like *"let's go through my wiki contradictions"* or *"resolve that contradiction by keeping entry A"* in chat, and have the AI walk them through open conflicts and apply the resolution to the knowledge wiki when they approve.
 
-### Bug 1 — Silent fallback to browser TTS on a single synth failure
-In `pumpSynth()` (lines ~376–396), if any single sentence's call to `synthesizeSpeech()` rejects (transient 5xx from Inworld, brief network blip, edge cold-start timeout, abort race), the catch block speaks that chunk via `SpeechSynthesisUtterance` (the OS/browser default voice). The rest of the reply then continues in Inworld, so the user hears the AI suddenly switch voices mid-sentence and assumes the Inworld setting flipped off.
+This is purely additive — new chat tools + system-prompt guidance. No existing feature is removed.
 
-### Bug 2 — `inworldEnabled` and `inworldVoiceId` are localStorage-only
-- `inworldApiKey` lives in `user_settings` (DB, persistent across devices/sessions). ✅
-- `inworldEnabled` and `inworldVoiceId` live **only** in `localStorage` (keys `inworld_tts_enabled`, `inworld_voice_id`). ❌
+## What changes
 
-Consequences:
-- Cleared site data, private window, new device, or PWA cache eviction → both revert to defaults (`enabled=false`, `voiceId=""`).
-- On every fresh mount, `inworldApiKey` is `""` until `useChatSettings` finishes its DB round-trip. If a reply starts streaming during that window, `enqueueSpeak`'s gate `inworldEnabled && inworldApiKey && inworldVoiceId` is false and the whole reply uses browser TTS, looking like the setting "switched."
-- Voice ID also gets auto-reassigned to `voices[0]?.voice_id || "Ashley"` inside `loadInworldVoices` whenever `inworldVoiceId` is falsy at load time — which can clobber the user's choice if local storage is ever empty at boot.
+### 1. New chat tools (in `src/lib/chatTools.ts`)
 
-## Fix
+Add four tool definitions + handlers, following the existing `executeChatTool` pattern:
 
-### 1. Move Inworld toggle + voice ID into `user_settings`
+- **`list_conflicts`** — params: `{ status?: "open"|"acknowledged"|"resolved"|"dismissed" (default "open"), limit?: number (default 10) }`. Returns each conflict with `id`, `kind`, `rationale`, and both entries hydrated (`id`, `title`, `content` snippet, `entry_type`, `confidence`, `source_book_id`) so the model can discuss them without a second round-trip.
+- **`get_conflict`** — params: `{ conflict_id }`. Returns the full text of both entries plus rationale, for deep discussion of one contradiction.
+- **`resolve_conflict`** — params:
+  - `conflict_id` (required)
+  - `action` (required, enum):
+    - `"keep_a_delete_b"` / `"keep_b_delete_a"` — delete the losing entry, mark conflict `resolved`
+    - `"merge"` — requires `merged_title` + `merged_content` (+ optional `merged_tags`); writes them into entry A, deletes entry B, marks resolved
+    - `"edit_a"` / `"edit_b"` — requires `new_title` and/or `new_content` (+ optional `new_tags`); updates that entry, marks resolved
+    - `"acknowledge"` — marks `acknowledged` (both kept, user has seen it)
+    - `"dismiss"` — marks `dismissed` (false positive)
+  - `require_confirmation` defaults to true; the system prompt instructs the model to never call `resolve_conflict` with a destructive `action` until the user has explicitly approved that exact action in the current turn.
+- **`update_conflict_status`** — thin wrapper to set status without editing entries (covers `acknowledge` / `dismiss` quickly).
 
-Add two columns to `user_settings` via migration:
-- `inworld_enabled boolean NOT NULL DEFAULT false`
-- `inworld_voice_id text NOT NULL DEFAULT ''`
+Implementation uses the existing `fetchConflicts`, `updateConflictStatus`, `deleteKnowledgeEntry`, `updateKnowledgeEntry` helpers in `src/lib/knowledgeApi.ts`, plus a direct `supabase.from("knowledge_conflicts").select(...).eq("id", ...).single()` for `get_conflict`. RLS already restricts every row to the current user.
 
-Extend `src/hooks/useChatSettings.ts`:
-- Read both fields in the load block.
-- Add to the upsert payload.
-- Expose `inworldEnabled`, `inworldVoiceId`, `setInworldEnabled`, `setInworldVoiceId`.
-- Keep defaults in the `defaults` object.
+Each handler returns a `ToolEvent` with a clear summary (e.g. *"Resolved conflict — kept 'Mitochondria are the powerhouse' and deleted duplicate"*), matching how the existing tools surface in the chat UI.
 
-Update `src/components/VoiceChat.tsx`:
-- Replace the two local `useState` + `localStorage` effects with the hook values.
-- Remove the `INWORLD_VOICE_ID_KEY` / `INWORLD_ENABLED_KEY` constants and their persistence effects.
-- One-time migration: on mount, if hook values are empty and legacy localStorage keys exist, copy them into the hook (via setters) and `removeItem` from localStorage. Mirrors the existing legacy-API-key migration already in the file.
-- In `loadInworldVoices`, only auto-pick `voices[0]` when `inworldVoiceId` is empty **and** there's no saved value coming from the DB (i.e. after `settingsLoaded` is true and the field is still ""). Never overwrite a saved selection.
+### 2. System prompt update (`src/lib/buildChatSystemPrompt.ts`)
 
-### 2. Stop silently falling back to browser TTS mid-reply
+Append a short "Conflict resolution" section to the always-on guidance:
 
-In `pumpSynth()`'s `.catch` (lines ~376–396):
-- Remove the inline `SpeechSynthesisUtterance` fallback.
-- Replace with: retry the same chunk once (re-push to the front of `ttsQueueRef`, increment a per-chunk retry counter stored in a `WeakMap`/parallel `Map<string, number>`, cap at 2 retries). If it still fails, drop the chunk, log to console, and surface a single throttled `toast.error("Inworld TTS hiccup — skipping a sentence")` per turn.
-- Reasoning: a one-off transient error should never silently change the voice. Retrying covers the cold-start / network-blip case; skipping a sentence is far less jarring than a voice swap and keeps Inworld as the only voice for the whole turn.
+- If the user mentions contradictions, conflicts, wiki cleanup, or asks to "go through" them, call `list_conflicts` first and present them in plain language one at a time.
+- For each conflict, summarise both sides, show the AI's reasoning, and propose options (keep one, merge, edit, acknowledge, dismiss).
+- **Never** call `resolve_conflict` with a destructive action (`keep_*`, `merge`, `edit_*`) until the user explicitly approves that specific choice for that specific conflict in the current message. `acknowledge` / `dismiss` may be applied after a clear yes.
+- After each resolution, briefly confirm what changed and ask whether to move to the next one.
 
-### 3. Defer first chunk until settings have loaded
+### 3. No DB / no edge function / no UI changes
 
-In `enqueueSpeak` (line ~447):
-- If `!settingsLoaded`, push the chunk to `ttsQueueRef` and an `awaitingSettingsRef` flag; on the `settingsLoaded` transition, run `pumpSynth()` / `pumpPlay()` once.
-- This eliminates the "first turn after refresh uses browser TTS because the DB hadn't responded yet" race.
-
-### 4. Keep everything else exactly as-is
-
-Not touched: hands-free turn-taking (`turnActiveRef`, `safeStartListening`, silence timers, mic mute), sentence streaming `onDelta`, `submit()`, voice model selector, `ttsRate`, browser-TTS path for users who haven't enabled Inworld (still works as a deliberate, user-chosen mode), settings UI layout, `ChatContext`, `buildChatSystemPrompt`, edge function, `inworldTts.ts` client.
+- The `knowledge_conflicts` table, statuses, and RLS already exist.
+- `ConflictNotifier` badge and the Wiki → Conflicts tab keep working unchanged; resolutions made via chat will simply make the badge count drop (it already listens to UPDATEs).
+- No edits to `VoiceChat`, `ChatPanel`, `ChatContext`, TTS, hands-free mode, or any other surface.
 
 ## Files touched
 
-- `supabase/migrations/<new>.sql` — add two columns to `user_settings`.
-- `src/hooks/useChatSettings.ts` — load/save/expose `inworldEnabled` + `inworldVoiceId`.
-- `src/components/VoiceChat.tsx` — swap localStorage for hook values, add legacy-key migration, remove silent browser-TTS fallback in `pumpSynth` (replace with retry + skip), defer `enqueueSpeak` until `settingsLoaded`.
+- `src/lib/chatTools.ts` — add 4 tool definitions + handler cases
+- `src/lib/buildChatSystemPrompt.ts` — add ~6 lines of guidance
+
+## Out of scope (explicitly preserved)
+
+Wiki UI conflict view, badge notifier, Inworld TTS persistence work, voice tab behaviour, ingest/lint/sleep-cycle pipelines, knowledge graph edges — all untouched.
 
 ## Verification
 
-1. Enable Inworld + pick a voice. Hard-refresh. Toggle and voice still selected before any DB request resolves (they hydrate from DB, plus optimistic localStorage migration covers the legacy case).
-2. Sign in on a second device/browser → Inworld toggle + voice carry over.
-3. Throttle network in DevTools and ask a multi-sentence question. Voice stays Inworld throughout; no mid-reply switch to system voice. If a sentence truly can't synthesize after retry, you see one toast and that sentence is skipped — every other sentence is still Inworld.
-4. First message after a cold page load uses Inworld (not browser TTS) because `enqueueSpeak` waits for `settingsLoaded`.
-5. Browser-TTS-only users (Inworld off) behave identically to today.
+After implementation: open chat, ask *"are there any contradictions in my wiki?"* → AI calls `list_conflicts`, summarises them. Pick one, say *"merge them, keep the merged version titled X"* → AI calls `resolve_conflict` with `action: "merge"`, conflict disappears from the Wiki → Conflicts tab and the bell badge count drops.
