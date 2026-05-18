@@ -192,8 +192,6 @@ const VoiceChat: React.FC = () => {
   useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
   useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
   useEffect(() => { localStorage.setItem(VOICE_ENABLED_KEY, String(ttsEnabled)); }, [ttsEnabled]);
-  useEffect(() => { localStorage.setItem(INWORLD_VOICE_ID_KEY, inworldVoiceId); }, [inworldVoiceId]);
-  useEffect(() => { localStorage.setItem(INWORLD_ENABLED_KEY, String(inworldEnabled)); }, [inworldEnabled]);
 
   // One-time migration: localStorage -> account-synced setting
   const migratedRef = useRef(false);
