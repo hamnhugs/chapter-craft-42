@@ -69,6 +69,9 @@ export function useChatSettings() {
           ttsRate: typeof (data as any).tts_rate === "number" && (data as any).tts_rate > 0
             ? (data as any).tts_rate
             : DEFAULT_TTS_RATE,
+          handsFreeTtsRate: typeof (data as any).hands_free_tts_rate === "number" && (data as any).hands_free_tts_rate > 0
+            ? (data as any).hands_free_tts_rate
+            : DEFAULT_HANDS_FREE_TTS_RATE,
           autoReadReplies: !!(data as any).auto_read_replies,
           wikiModel: (data as any).wiki_model || "",
           customSystemPrompt: (data as any).custom_system_prompt || "",
