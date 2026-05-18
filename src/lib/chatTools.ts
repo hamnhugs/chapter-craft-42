@@ -340,13 +340,13 @@ export async function executeChatTool(
         const limit = Math.min(25, Math.max(1, Number(args.limit) || 10));
         const { data: settings } = await supabase.from("user_settings").select("active_wiki_id" as any).maybeSingle();
         const activeWikiId = (settings as any)?.active_wiki_id || null;
-        let query = supabase
+        let q1: any = supabase
           .from("knowledge_entries")
-          .select("id, title, content, entry_type, confidence, source_book_id, tags, wiki_id" as any)
+          .select("id, title, content, entry_type, confidence, source_book_id, tags, wiki_id")
           .or(`title.ilike.%${q}%,content.ilike.%${q}%`)
           .limit(limit);
-        if (activeWikiId) query = query.eq("wiki_id" as any, activeWikiId);
-        const { data, error } = await query;
+        if (activeWikiId) q1 = q1.eq("wiki_id", activeWikiId);
+        const { data, error } = await q1;
         if (error) throw error;
         const entries = (data || []).map((e: any) => ({
           id: e.id,
