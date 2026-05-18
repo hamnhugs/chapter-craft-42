@@ -1053,6 +1053,19 @@ const VoiceChat: React.FC = () => {
                   {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
                 </select>
               </div>
+              <div className="flex flex-col gap-1.5 min-w-0 sm:col-span-2">
+                <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center justify-between">
+                  <span><span className="material-symbols-outlined text-xs align-middle mr-1">speed</span>Hands-free Playback Speed</span>
+                  <span className="text-primary normal-case tracking-normal">{(handsFreeTtsRate || 1.0).toFixed(2)}×</span>
+                </label>
+                <input
+                  type="range" min={0.9} max={1.4} step={0.05}
+                  value={handsFreeTtsRate || 1.0}
+                  onChange={(e) => setHandsFreeTtsRate(parseFloat(e.target.value))}
+                  className="w-full accent-primary"
+                />
+                <p className="text-[10px] text-on-surface-variant px-1">Used only in hands-free mode. Independent of the Chat-tab speed so slow playback won't trigger a mic feedback loop.</p>
+              </div>
             </section>
             <PromptLibrary scopeHint="voice" />
             <section className="p-3 rounded-xl bg-surface-container-low">
