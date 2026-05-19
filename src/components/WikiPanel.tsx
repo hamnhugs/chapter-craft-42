@@ -107,7 +107,7 @@ const WikiPanel: React.FC = () => {
     setSleepCycleRunning(true);
     setSleepCycleReport(null);
     try {
-      const report = await triggerSleepCycle();
+      const report = await triggerSleepCycle(scopeWikiId);
       setSleepCycleReport(report);
       toast.success(`Sleep Cycle complete — ${report.phases.consolidate.edges_created} edges created, ${report.phases.prune.orphans.length} orphans queued`);
       await loadData();
@@ -120,7 +120,7 @@ const WikiPanel: React.FC = () => {
 
   const handleLoadEpisodic = async () => {
     try {
-      const log = await fetchEpisodicLog(30);
+      const log = await fetchEpisodicLog(30, scopeWikiId);
       setEpisodicLog(log);
       setView("episodic");
     } catch (err: any) {
@@ -130,7 +130,7 @@ const WikiPanel: React.FC = () => {
 
   const handleLoadQueue = async () => {
     try {
-      const items = await fetchConsolidationQueue();
+      const items = await fetchConsolidationQueue(false, scopeWikiId);
       setQueueItems(items);
       setView("queue");
     } catch (err: any) {
