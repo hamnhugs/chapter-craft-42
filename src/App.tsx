@@ -49,6 +49,14 @@ const App = () => (
                   }
                 />
                 <Route
+                  path="/wiki-controls-guide"
+                  element={
+                    <ProtectedRoute>
+                      <WikiControlsGuide />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
                   path="/"
                   element={
                     <ProtectedRoute>
