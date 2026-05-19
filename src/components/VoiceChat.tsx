@@ -252,16 +252,6 @@ const VoiceChat: React.FC = () => {
     };
   }, []);
 
-  // Pause hands-free when tab is hidden
-  useEffect(() => {
-    const onVis = () => {
-      if (document.hidden && handsFreeRef.current) {
-        stopHandsFree("Paused (tab hidden)");
-      }
-    };
-    document.addEventListener("visibilitychange", onVis);
-    return () => document.removeEventListener("visibilitychange", onVis);
-  }, []);
 
   const saveApiKey = (key: string) => { persistApiKey(key); setShowSettings(false); };
 
