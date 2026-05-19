@@ -256,13 +256,78 @@ const WikiPanel: React.FC = () => {
       <main className="max-w-7xl mx-auto px-6 py-12 pb-32 w-full">
         {/* Header */}
         <section className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
-          <div className="space-y-2">
-            <div className="flex items-center gap-3 mb-1">
-              <span className="px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded text-[10px] font-bold tracking-widest uppercase">Knowledge Base</span>
-              <span className="text-on-surface-variant text-sm font-medium">{entries.length} entries indexed</span>
+          <div className="space-y-3 min-w-0">
+            <div className="flex items-center gap-3 mb-1 flex-wrap">
+              <span className="px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded text-[10px] font-bold tracking-widest uppercase">
+                {scope === "wiki" ? "Active Wiki" : "All Wikis"}
+              </span>
+              <span className="text-on-surface-variant text-sm font-medium">
+                {entries.length} entries{scope === "wiki" && activeWiki ? " in scope" : " indexed"}
+              </span>
+              {/* Scope toggle: "This wiki" vs "All wikis" */}
+              <div className="inline-flex items-center rounded-full border border-outline-variant/30 bg-surface-container-low overflow-hidden text-[11px] font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setScope("wiki")}
+                  disabled={!activeWikiId}
+                  className={`px-3 py-1 transition-colors ${scope === "wiki" ? "bg-primary-container text-on-primary-container" : "text-on-surface-variant hover:bg-surface-container-high"} disabled:opacity-40`}
+                  title="Show only data from the currently loaded wiki"
+                >
+                  This wiki
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScope("all")}
+                  className={`px-3 py-1 transition-colors ${scope === "all" ? "bg-primary-container text-on-primary-container" : "text-on-surface-variant hover:bg-surface-container-high"}`}
+                  title="Show everything across all your wikis"
+                >
+                  All wikis
+                </button>
+              </div>
             </div>
-            <h2 className="font-headline font-bold text-5xl md:text-6xl text-primary tracking-tight">Knowledge Wiki</h2>
-            <p className="text-on-surface-variant max-w-xl text-lg italic font-headline">"The sum of all acquired insights, meticulously categorized."</p>
+            <div className="flex items-center gap-3 flex-wrap">
+              {activeWiki && (
+                <span
+                  aria-hidden
+                  className="inline-block w-3.5 h-3.5 rounded-full border border-outline-variant/30 shrink-0"
+                  style={{ backgroundColor: activeWiki.cover_color || "#7C3AED" }}
+                />
+              )}
+              <h2 className="font-headline font-bold text-5xl md:text-6xl text-primary tracking-tight truncate">
+                {scope === "all" ? "Knowledge Wiki" : (activeWiki?.name || "Knowledge Wiki")}
+              </h2>
+              {/* In-tab wiki switcher */}
+              {wikis.length > 1 && (
+                <Select
+                  value={activeWikiId || ""}
+                  onValueChange={async (v) => {
+                    if (!v || v === activeWikiId) return;
+                    try {
+                      await setActiveWiki(v);
+                      toast.success("Wiki loaded");
+                    } catch (err: any) {
+                      toast.error(err.message || "Failed to switch wiki");
+                    }
+                  }}
+                >
+                  <SelectTrigger className="w-[200px] h-9 text-xs">
+                    <SelectValue placeholder="Switch wiki…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {wikis.map((w) => (
+                      <SelectItem key={w.id} value={w.id}>
+                        {w.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+            <p className="text-on-surface-variant max-w-xl text-lg italic font-headline">
+              {scope === "all"
+                ? `"The sum of all acquired insights, meticulously categorized."`
+                : (activeWiki?.description?.trim() || `"The sum of all acquired insights, meticulously categorized."`)}
+            </p>
           </div>
           <div className="flex gap-3 flex-wrap">
             {view !== "entries" && (
