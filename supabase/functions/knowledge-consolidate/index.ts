@@ -266,12 +266,15 @@ async function reconsolidate(
 
 // ── Phase 3: Pruning (orphan detection) ────────────────────────────────────────
 
-async function prune(supabase: any, userId: string): Promise<{ orphans: string[] }> {
-  // Nodes with zero edges in either direction.
-  const { data: allEdges } = await supabase
+async function prune(supabase: any, userId: string, wikiId: string | null): Promise<{ orphans: string[] }> {
+  // Nodes with zero edges in either direction (scoped to wiki when provided).
+  let edgesQuery = supabase
     .from("memory_graph")
     .select("source_entry_id, target_entry_id")
     .eq("user_id", userId);
+  const { data: allEdges } = wikiId
+    ? await supabase.rpc("memory_graph_for_wiki", { target_wiki_id: wikiId })
+    : await edgesQuery;
 
   const connected = new Set<string>();
   for (const e of (allEdges || []) as any[]) {
@@ -279,10 +282,12 @@ async function prune(supabase: any, userId: string): Promise<{ orphans: string[]
     connected.add(e.target_entry_id);
   }
 
-  const { data: allEntries } = await supabase
+  let entriesQuery = supabase
     .from("knowledge_entries")
     .select("id, title")
     .eq("user_id", userId);
+  if (wikiId) entriesQuery = entriesQuery.eq("wiki_id", wikiId);
+  const { data: allEntries } = await entriesQuery;
 
   const orphanIds: string[] = [];
   for (const entry of (allEntries || []) as any[]) {
