@@ -1200,16 +1200,8 @@ const VoiceChat: React.FC = () => {
                 </button>
 
                 {/* Row 1 (mobile): primary toggles */}
-                <div className="order-2 sm:order-1 grid grid-cols-3 gap-2 w-full sm:w-auto sm:flex sm:gap-3">
-                  <button
-                    onClick={toggleHandsFree}
-                    aria-pressed={handsFree}
-                    className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-2 sm:px-4 py-2.5 rounded-2xl sm:rounded-full transition-all text-xs sm:text-sm font-medium ${handsFree ? "bg-primary-container text-on-primary-container shadow-md" : "bg-surface-container-high text-on-surface-variant hover:text-primary"}`}
-                    title="Hands-free conversation"
-                  >
-                    <span className="material-symbols-outlined text-lg sm:text-base">all_inclusive</span>
-                    <span className="leading-none">{handsFree ? "On" : "Hands-free"}</span>
-                  </button>
+                <div className="order-2 sm:order-1 grid grid-cols-2 gap-2 w-full sm:w-auto sm:flex sm:gap-3">
+
 
                   <button
                     onClick={() => setVoiceQuickSearch(!voiceQuickSearch)}
