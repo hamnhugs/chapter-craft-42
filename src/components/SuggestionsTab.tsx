@@ -211,8 +211,26 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
             </span>
             <Switch checked={enabled} onCheckedChange={handleToggle} />
           </div>
-        </div>
       </div>
+
+      {wasAutoPaused && !enabled && (
+        <div className="bg-error-container/40 text-foreground rounded-2xl p-4 border border-outline-variant/20 flex items-start justify-between gap-3">
+          <div className="text-sm">
+            <div className="font-bold">Smart Filing was paused automatically</div>
+            <p className="text-on-surface-variant pt-0.5">
+              You dismissed most recent suggestions. Toggle it back on whenever you want fresh routing help.
+            </p>
+          </div>
+          <button
+            onClick={() => setWasAutoPaused(false)}
+            className="p-1 rounded-lg hover:bg-surface-container"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+
 
       {/* List */}
       {loading ? (
