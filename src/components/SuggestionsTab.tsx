@@ -211,7 +211,9 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
             </span>
             <Switch checked={enabled} onCheckedChange={handleToggle} />
           </div>
+        </div>
       </div>
+
 
       {wasAutoPaused && !enabled && (
         <div className="bg-error-container/40 text-foreground rounded-2xl p-4 border border-outline-variant/20 flex items-start justify-between gap-3">
