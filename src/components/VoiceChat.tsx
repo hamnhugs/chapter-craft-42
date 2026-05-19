@@ -578,7 +578,7 @@ const VoiceChat: React.FC = () => {
 
       // Sentence-streaming TTS: speak each completed sentence as soon as the
       // model produces it, instead of waiting for the entire reply. The first
-      // audible word lands seconds earlier in hands-free mode.
+      // audible word lands seconds earlier.
       let spokenCursor = 0;
       const sentenceRe = /[^.!?\n]+[.!?\n]+\s*/g;
       const onDelta = ttsEnabled
