@@ -756,29 +756,6 @@ const VoiceChat: React.FC = () => {
     setInterimTranscript("");
   };
 
-  const stopHandsFree = (msg?: string) => {
-    setHandsFree(false);
-    stopListening();
-    stopSpeaking();
-    if (msg) toast(msg);
-  };
-
-  const toggleHandsFree = () => {
-    if (handsFree) {
-      stopHandsFree();
-    } else {
-      if (!SpeechRecognition) { toast.error("Speech recognition not supported. Try Chrome."); return; }
-      if (!apiKey) { toast.error("Set your API key first"); setShowSettings(true); return; }
-      setHandsFree(true);
-      stoppedByUserRef.current = false;
-      window.setTimeout(() => {
-        try { recognitionRef.current?.stop(); } catch {}
-        window.setTimeout(() => startListening(), 100);
-      }, 0);
-      toast.success("Hands-free on — just talk");
-    }
-  };
-
   const handleSaveToWiki = async () => {
     if (messages.length < 2) { toast.error("Chat first"); return; }
     setExtracting(true);
@@ -791,6 +768,26 @@ const VoiceChat: React.FC = () => {
 
   const handleClear = () => { stopSpeaking(); clearChat(); };
 
+  // Quick sanity-check: synth one short phrase via Inworld and play it.
+  const [testingVoice, setTestingVoice] = useState(false);
+  const testInworldVoice = async () => {
+    if (!inworldApiKey) { toast.error("Save an Inworld API key first"); return; }
+    if (!inworldVoiceId) { toast.error("Pick a voice first"); return; }
+    setTestingVoice(true);
+    try {
+      const buf = await synthesizeSpeech("Testing one, two, three.", inworldApiKey, inworldVoiceId);
+      const url = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
+      const audio = new Audio(url);
+      audio.onended = audio.onerror = () => { try { URL.revokeObjectURL(url); } catch {} };
+      await audio.play();
+      toast.success("Voice working");
+    } catch (err: any) {
+      toast.error(`Inworld TTS failed: ${err?.message || err}`);
+    } finally {
+      setTestingVoice(false);
+    }
+  };
+
   const statusLabel = isListening
     ? "Listening…"
     : isLoading
@@ -799,8 +796,6 @@ const VoiceChat: React.FC = () => {
     ? "Speaking…"
     : pendingSearchCount > 0
     ? `🔍 Searching… (${pendingSearchCount})`
-    : handsFree
-    ? "Hands-free paused"
     : "Tap to talk";
 
   return (
