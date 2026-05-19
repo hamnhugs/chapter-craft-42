@@ -92,6 +92,7 @@ async function reconsolidate(
   userId: string,
   lovableKey: string,
   llm: { url: string; headers: Record<string, string>; model: string },
+  wikiId: string | null,
 ): Promise<{ processed: number; edges_created: number; conflicts_inserted: number }> {
 
   // Pull a batch from the queue using FOR UPDATE SKIP LOCKED for concurrency safety.
@@ -105,14 +106,16 @@ async function reconsolidate(
     return { processed: 0, edges_created: 0, conflicts_inserted: 0 };
   }
 
-  // Fetch Core nodes (high vibrancy) to anchor new edges.
-  const { data: coreNodes } = await supabase
+  // Fetch Core nodes (high vibrancy) to anchor new edges. Scope to wiki when provided.
+  let coreQuery = supabase
     .from("knowledge_entries")
     .select("id, title, content, vibrancy, entry_type")
     .eq("user_id", userId)
     .gte("vibrancy", 0.70)
     .order("vibrancy", { ascending: false })
     .limit(20);
+  if (wikiId) coreQuery = coreQuery.eq("wiki_id", wikiId);
+  const { data: coreNodes } = await coreQuery;
 
   const cores = (coreNodes || []) as Array<{
     id: string; title: string; content: string; vibrancy: number; entry_type: string;
