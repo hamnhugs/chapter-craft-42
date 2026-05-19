@@ -1,47 +1,54 @@
-## Wiki Tab Controls Guide
+## Remove Hands-Free + Fix Inworld TTS
 
-Add a pulsing "What do these controls do?" chip in the Wiki tab header (matching the Wikis-tab memory link) that opens a new `/wiki-controls-guide` page explaining every control in plain language.
+Two independent changes in this turn. Everything else in the Voice tab stays exactly as it is.
 
-### 1. New route + page
+---
 
-- Add `/wiki-controls-guide` route in `App.tsx` (protected, same pattern as `/memory-guide`).
-- Create `src/pages/WikiControlsGuide.tsx` styled like `MemoryGuide.tsx` (editorial, warm tones, sticky back bar saying "Back to Wiki").
+### Part A — Remove Hands-Free mode (Voice tab only)
 
-### 2. Plain-English explanations
+Surgical removal. The Chat tab and all other voice features are untouched.
 
-Group controls into sections. For each, a one-line analogy + 2–3 sentences of "what it does / when to use it." No jargon.
+**`src/components/VoiceChat.tsx`** — remove only the hands-free pieces:
+- `HANDS_FREE_KEY` constant.
+- `handsFree` state, `handsFreeRef`, the localStorage round-trip useEffect.
+- `toggleHandsFree`, `stopHandsFree` functions.
+- The Hands-free toggle button in the controls row.
+- The "Hands-free Playback Speed" slider + label + helper text in the settings dialog.
+- All `handsFreeRef.current` branches in:
+  - the "pause when tab hidden" effect → can be removed entirely.
+  - speech-recognition setup: `recognition.continuous = false`, single-turn behavior restored.
+  - the streaming `onDelta`/`onDone` paths: collapse to the non-hands-free branch.
+  - the silence-timer auto-send block → removed; manual mic + Enter remain.
+- Status/placeholder strings ("Hands-free paused", "— say something", "turn on Hands-free…") rewritten to the simple single-turn copy.
+- `effectiveTtsRate` simplified to `ttsRate || 1.05`.
 
-**Scope & identity**
-- **This wiki vs. All wikis** — "Are you looking at one notebook, or every notebook stacked together?" Pick "This wiki" for focused work; "All wikis" to see everything you've ever saved.
-- **Wiki switcher dropdown** — Jump straight to another wiki without leaving this page.
+**`src/hooks/useChatSettings.ts`** — leave the `hands_free_tts_rate` DB column alone (no migration churn) but drop `handsFreeTtsRate` from the destructure in `VoiceChat.tsx`. The setter still exists for safety; it's just unused.
 
-**Daily controls**
-- **Conflicts** — Cards that disagree with each other. Click to review and pick the right one. The number badge = how many need your attention.
-- **Recording / Retrieval mode** — Recording lets the AI add new cards as you chat. Retrieval is read-only — useful when you just want answers without growing the wiki.
+Net: no other feature touched (mic, text input, TTS toggle, voice model, Inworld toggle, voice picker, book context, prompt presets, system prompt, model picker, etc.).
 
-**Maintenance (run occasionally)**
-- **Sleep Cycle** — Like sleeping on it. The system links lonely cards, merges duplicates, and tidies the web. Run it after a busy day of adding stuff.
-- **Health Check** — Scans for problems (broken links, weird entries) and surfaces them. Run it when things feel off.
-- **Reindex** — Rebuilds the search index so semantic search stays accurate. Run if search results feel stale.
-- **Refresh** — Reload the page's data from the server.
+---
 
-**Browse what's happened**
-- **Episodes** — A diary of past chat sessions. Helps you remember what you talked about.
-- **Queue** — Cards waiting in line for the next Sleep Cycle to process.
+### Part B — Make Inworld TTS reliable
 
-**Settings (gear icon)**
-- Pick the AI model used for this wiki, manage advanced options.
+The current edge function already matches the documented `POST /tts/v1/voice` shape. Two real bugs + one UX gap explain why it "doesn't work properly":
 
-**Filters (in entries list)**
-- Filter cards by type: concept, entity, fact, summary, etc.
+**Bug 1 — API key detection is too strict.**
+`basicAuth()` uses regex `/^[A-Za-z0-9+/]+=+$/` which **requires `=` padding**. Inworld keys copied from the portal are pre-encoded Base64 but sometimes lack padding, so the function silently double-encodes them and Inworld returns 401.
 
-### 3. Link from `WikiPanel.tsx`
+Fix: detect a `:` in the trimmed key → treat as raw `key:secret` and base64-encode. Otherwise treat as already-Base64 Basic credentials and use verbatim. Strip any leading `Basic ` the user may have pasted.
 
-Insert the same animated pulsing chip used on the Wikis page, just below the wiki description line (around line 330). Same component pattern: `HelpCircle` + label + `ArrowRight`, with `animate-pulse-glow` and `animate-icon-wiggle`. Label: **"What do these controls do?"**
+**Bug 2 — Schema drift to current docs.**
+Add the now-recommended fields so TTS-2 behaves correctly:
+- `deliveryMode: "BALANCED"` (TTS-2 replaced `temperature` with this).
+- `applyTextNormalization: "ON"`.
 
-### Files touched
-- `src/App.tsx` — add route.
-- `src/pages/WikiControlsGuide.tsx` — new page.
-- `src/components/WikiPanel.tsx` — add the chip link.
+Keep MP3 / 24 kHz default (browser plays MP3 directly via the existing client path).
 
-No features removed. No backend changes.
+**UX gap — no feedback when it fails.**
+Add a small **"Test voice"** button in the Inworld settings card of `VoiceChat.tsx`. Calls `synthesizeSpeech("Testing one two three.", …)` and plays the result. On failure it surfaces the raw Inworld error in a toast so the user (and we) can see what's wrong instantly.
+
+**Files touched**
+- `supabase/functions/inworld-tts/index.ts` — `basicAuth()` rewrite, add `deliveryMode` + `applyTextNormalization`, keep current error-bubbling.
+- `src/components/VoiceChat.tsx` — the Test-voice button in the Inworld settings block.
+
+No DB migrations. No secrets needed (key already lives in `user_settings.inworld_api_key`). No other files changed.
