@@ -24,16 +24,23 @@ interface Props {
 
 const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
   const [reroutes, setReroutes] = useState<RerouteSuggestion[]>([]);
+  const [proposals, setProposals] = useState<WikiProposal[]>([]);
   const [loading, setLoading] = useState(true);
   const [enabled, setEnabled] = useState(false);
   const [acting, setActing] = useState<string | null>(null);
   const [recomputing, setRecomputing] = useState(false);
+  const [sweeping, setSweeping] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [r, en] = await Promise.all([fetchPendingReroutes(), getSmartFilingEnabled()]);
+      const [r, p, en] = await Promise.all([
+        fetchPendingReroutes(),
+        fetchPendingProposals(),
+        getSmartFilingEnabled(),
+      ]);
       setReroutes(r);
+      setProposals(p);
       setEnabled(en);
     } catch (err: any) {
       toast.error(err.message || "Failed to load suggestions");
@@ -50,7 +57,6 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
       await setSmartFilingEnabled(next);
       if (next) {
         toast.success("Smart Filing turned on");
-        // Kick off centroid build so future entries can be routed.
         await handleRecompute();
       } else {
         toast.success("Smart Filing turned off");
@@ -60,6 +66,7 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
       toast.error(err.message || "Failed to update setting");
     }
   };
+
 
   const handleRecompute = async () => {
     setRecomputing(true);
