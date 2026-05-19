@@ -258,6 +258,8 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
           >
             {drifting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Activity className="w-3.5 h-3.5" />}
             Check drift
+          </button>
+
 
           <button
             onClick={handleRecompute}
