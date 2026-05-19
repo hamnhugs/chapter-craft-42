@@ -178,7 +178,13 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
             <p className="text-sm text-on-surface-variant max-w-md">
               Suggests where new knowledge fits best — and proposes brand-new wikis when a theme appears. Nothing moves without your tap.
             </p>
+            {accuracy && accuracy.total >= 5 && (
+              <p className="text-xs text-on-surface-variant pt-1 font-bold">
+                Routing accuracy: {Math.round((accuracy.accepted / accuracy.total) * 100)}% accepted over last {accuracy.total}
+              </p>
+            )}
           </div>
+
         </div>
         <div className="flex items-center gap-3">
           <button
