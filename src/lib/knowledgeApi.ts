@@ -235,8 +235,11 @@ export async function retrieveKnowledge(
   return callEdge("knowledge-retrieve", { query, ...opts });
 }
 
-export async function reindexEmbeddings(all_missing = true): Promise<{ updated: number; failed: number; total: number }> {
-  return callEdge("knowledge-embed", { all_missing });
+export async function reindexEmbeddings(
+  all_missing = true,
+  wikiId?: string | null,
+): Promise<{ updated: number; failed: number; total: number }> {
+  return callEdge("knowledge-embed", { all_missing, wiki_id: wikiId ?? null });
 }
 
 // ---- Conflict management ----
