@@ -497,12 +497,7 @@ const VoiceChat: React.FC = () => {
 
   // Single-shot speak (used outside of streaming, e.g. replay or short replies)
   const speak = useCallback((text: string) => {
-    if (!ttsEnabled) {
-      if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
-      }
-      return;
-    }
+    if (!ttsEnabled) return;
     enqueueSpeak(text);
     markTtsStreamDone();
   }, [ttsEnabled, enqueueSpeak, markTtsStreamDone]);
