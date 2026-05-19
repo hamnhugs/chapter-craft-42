@@ -323,6 +323,11 @@ serve(async (req) => {
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) return json({ error: "AI service not configured" }, 500);
 
+    // Optional wiki scope. When provided, consolidation only considers entries
+    // in that wiki for both anchoring (cores) and orphan pruning.
+    const body = await req.json().catch(() => ({}));
+    const wikiId: string | null = body?.wiki_id ?? null;
+
     const llm = await resolveWikiLlm(supabase, user.id);
 
     const t0 = Date.now();
@@ -331,10 +336,10 @@ serve(async (req) => {
     const rerankResult     = await rerank(supabase, user.id);
 
     // Phase 2
-    const consolidateResult = await reconsolidate(supabase, user.id, LOVABLE_API_KEY, llm);
+    const consolidateResult = await reconsolidate(supabase, user.id, LOVABLE_API_KEY, llm, wikiId);
 
     // Phase 3
-    const pruneResult      = await prune(supabase, user.id);
+    const pruneResult      = await prune(supabase, user.id, wikiId);
 
     // Record last run time.
     await supabase
