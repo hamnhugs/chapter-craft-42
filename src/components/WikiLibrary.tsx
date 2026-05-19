@@ -23,6 +23,7 @@ import {
 } from "@/lib/wikisApi";
 import { searchKnowledge, SemanticSearchMatch, embedEntries, fetchKnowledgeEntries } from "@/lib/knowledgeApi";
 import { supabase } from "@/integrations/supabase/client";
+import SuggestionsTab from "@/components/SuggestionsTab";
 
 type ViewMode = "compact" | "gallery";
 
