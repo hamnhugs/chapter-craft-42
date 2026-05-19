@@ -27,7 +27,7 @@ serve(async (req) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return json({ error: "Unauthorized" }, 401);
 
-    const { entry_ids, all_missing, force } = await req.json().catch(() => ({}));
+    const { entry_ids, all_missing, force, wiki_id } = await req.json().catch(() => ({}));
 
     let query = supabase
       .from("knowledge_entries")
@@ -38,6 +38,7 @@ serve(async (req) => {
       query = query.in("id", entry_ids);
     } else if (all_missing) {
       if (!force) query = query.is("embedding", null);
+      if (wiki_id) query = query.eq("wiki_id", wiki_id);
     } else {
       return json({ error: "Provide entry_ids[] or all_missing:true" }, 400);
     }
