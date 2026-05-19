@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { Loader2, ArrowRight, X, Check, Sparkles, RefreshCw } from "lucide-react";
+import { Loader2, ArrowRight, X, Check, Sparkles, RefreshCw, BookPlus } from "lucide-react";
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -10,7 +10,13 @@ import {
   getSmartFilingEnabled,
   setSmartFilingEnabled,
   recomputeCentroids,
+  WikiProposal,
+  fetchPendingProposals,
+  acceptProposal,
+  dismissProposal,
+  runIncubatorSweep,
 } from "@/lib/smartFilingApi";
+
 
 interface Props {
   onChanged?: () => void;
