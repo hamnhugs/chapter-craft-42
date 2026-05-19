@@ -181,7 +181,6 @@ const VoiceChat: React.FC = () => {
     setIsListening(false);
   };
 
-  useEffect(() => { handsFreeRef.current = handsFree; localStorage.setItem(HANDS_FREE_KEY, String(handsFree)); }, [handsFree]);
   useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
   useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
   useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
