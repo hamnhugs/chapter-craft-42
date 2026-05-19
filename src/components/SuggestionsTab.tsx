@@ -94,6 +94,20 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
     }
   };
 
+  const handleDismiss = async (s: RerouteSuggestion, kept: boolean) => {
+    setActing(s.id);
+    try {
+      await dismissReroute(s.id, kept);
+      setReroutes((prev) => prev.filter((x) => x.id !== s.id));
+    } catch (err: any) {
+      toast.error(err.message || "Dismiss failed");
+    } finally {
+      setActing(null);
+    }
+  };
+
+
+
   const handleSweep = async () => {
     setSweeping(true);
     try {
