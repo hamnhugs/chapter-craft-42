@@ -1,41 +1,25 @@
-## Memory System Guide Page
+## Make memory guide link pop + slim down New Wiki button
 
-Add a dedicated route and page that explains the wiki memory system in plain language, linked from the Wikis library.
+### 1. Animate the "How the memory system works" link (WikiLibrary.tsx)
 
-### 1. New Route: `/memory-guide`
+Currently it sits as a muted accent link below the quote — easy to miss. Upgrade it to a small pill chip with:
+- Background tint (`bg-accent/10`), accent border, slight shadow so it reads as an interactive call-to-attention rather than body text.
+- Continuous **subtle pulse glow** (custom keyframe on the ring/shadow) so the eye catches it without being noisy.
+- A **gently bouncing/shimmering icon** (HelpCircle or Sparkles) — small horizontal nudge or rotation loop.
+- Hover: scale-105 + brighter background (uses existing `hover-scale` utility pattern).
+- Respect `prefers-reduced-motion`: animation disabled via Tailwind's `motion-safe:` prefix.
 
-Add a new route in `App.tsx` (HashRouter) for `/memory-guide`. Render it inside `ProtectedRoute` so it requires auth, but render it *outside* the main `AppProvider`/`ChatProvider` shell since it is a standalone informational page. Include a simple back-navigation header.
+Add one keyframe + animation entry to `tailwind.config.ts` (e.g. `pulse-glow`) since the existing `pulse` class is too aggressive.
 
-### 2. New Page: `src/pages/MemoryGuide.tsx`
+### 2. Shrink the "New Wiki" button without shrinking its text
 
-Create a clean, editorial-style page that explains the five memory layers using everyday analogies:
+Reduce padding only — keep `font-bold` text at its current `text-sm`-equivalent size:
+- `px-6 py-3` → `px-4 py-2`
+- Icon `Plus` from `w-5 h-5` → `w-4 h-4`
+- Keep label text, shadow, color, active:scale-95 behavior.
 
-- **Working Memory** → "Your desk" — temporary, holds what you're actively looking at right now. Clears when you leave.
-- **Episodic Memory** → "A diary" — a log of every conversation you've had with the AI. Lets you pick up where you left off.
-- **Semantic Memory** → "A filing cabinet with webs" — facts, concepts, and people stored as cards that are linked together. The AI can jump from card to card to answer questions.
-- **Procedural Memory** → "Recipe cards" — step-by-step instructions and how-to knowledge.
-- **Consolidation / Sleep Cycle** → "Night cleanup crew" — a background process that finds lonely cards, links them to neighbors, and resolves contradictions so the wiki stays tidy.
+### Files touched
+- `src/components/WikiLibrary.tsx` — link markup + button padding.
+- `tailwind.config.ts` — add `pulse-glow` keyframe + animation.
 
-Also explain in simple terms:
-- What a **wiki** is (a themed bucket for your cards)
-- What **entries** are (individual cards with facts)
-- What the **memory graph** is (the web of links between cards)
-- What **conflicts** are (when two cards disagree)
-- What **vibrancy** means (how recently/often a card was used — popular cards stay bright)
-
-Tone: friendly, encouraging, no jargon. Use short paragraphs and visual sections.
-
-### 3. Link from `WikiLibrary.tsx`
-
-Insert a small text link in the Wikis page header area (next to the "New Wiki" button, or below the quote line) labeled "How the memory system works". Use React Router `<Link to="/memory-guide">`.
-
-### 4. Design
-
-- Match the app's editorial aesthetic: warm cream/amber tones, `font-headline` for section titles, `font-body` for body text.
-- Use the existing color tokens (surface-container, primary-container, etc.).
-- Add a simple sticky top bar with a back arrow and "Back to Wikis" link.
-
-### Technical notes
-- No backend changes needed.
-- No new dependencies needed.
-- Keep the page static/read-only; no state or data fetching.
+No features removed. No backend or routing changes.
