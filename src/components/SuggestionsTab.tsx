@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { Loader2, ArrowRight, X, Check, Sparkles, RefreshCw, BookPlus } from "lucide-react";
+import { Loader2, ArrowRight, X, Check, Sparkles, RefreshCw, BookPlus, Activity, Split, Edit3 } from "lucide-react";
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -16,7 +16,13 @@ import {
   dismissProposal,
   runIncubatorSweep,
   fetchRoutingAccuracy,
+  WikiHealthAlert,
+  fetchHealthAlerts,
+  runDriftCheck,
+  acceptRename,
+  dismissHealthAlert,
 } from "@/lib/smartFilingApi";
+
 
 
 
