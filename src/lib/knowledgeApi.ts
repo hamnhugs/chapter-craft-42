@@ -103,7 +103,14 @@ export async function fetchKnowledgeEntries(wikiId?: string | null): Promise<Kno
   return (data || []) as unknown as KnowledgeEntry[];
 }
 
-export async function fetchMemoryGraph(): Promise<MemoryGraphEdge[]> {
+export async function fetchMemoryGraph(wikiId?: string | null): Promise<MemoryGraphEdge[]> {
+  if (wikiId) {
+    const { data, error } = await supabase.rpc("memory_graph_for_wiki" as any, {
+      target_wiki_id: wikiId,
+    } as any);
+    if (error) throw error;
+    return (data || []) as unknown as MemoryGraphEdge[];
+  }
   const { data, error } = await supabase
     .from("memory_graph")
     .select("*");
