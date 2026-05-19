@@ -255,7 +255,19 @@ export interface KnowledgeConflict {
   updated_at: string;
 }
 
-export async function fetchConflicts(status?: KnowledgeConflict["status"]): Promise<KnowledgeConflict[]> {
+export async function fetchConflicts(
+  status?: KnowledgeConflict["status"],
+  wikiId?: string | null,
+): Promise<KnowledgeConflict[]> {
+  if (wikiId) {
+    const { data, error } = await supabase.rpc("conflicts_for_wiki" as any, {
+      target_wiki_id: wikiId,
+    } as any);
+    if (error) throw error;
+    let rows = (data || []) as unknown as KnowledgeConflict[];
+    if (status) rows = rows.filter((c) => c.status === status);
+    return rows.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  }
   let q = supabase.from("knowledge_conflicts").select("*").order("created_at", { ascending: false });
   if (status) q = q.eq("status", status);
   const { data, error } = await q;
