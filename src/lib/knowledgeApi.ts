@@ -154,7 +154,7 @@ export async function extractKnowledge(messages: { role: string; content: string
   return resp.json();
 }
 
-export async function runLint(): Promise<LintResult> {
+export async function runLint(wikiId?: string | null): Promise<LintResult> {
   const { data: { session } } = await supabase.auth.getSession();
   const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/knowledge-lint`, {
     method: "POST",
@@ -162,7 +162,7 @@ export async function runLint(): Promise<LintResult> {
       "Content-Type": "application/json",
       Authorization: `Bearer ${session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
     },
-    body: JSON.stringify({}),
+    body: JSON.stringify({ wiki_id: wikiId ?? null }),
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ error: "Lint failed" }));
