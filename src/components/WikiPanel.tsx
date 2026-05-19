@@ -187,7 +187,7 @@ const WikiPanel: React.FC = () => {
 
   const handleLint = async () => {
     setLintLoading(true);
-    try { const result = await runLint(); setLintResult(result); setView("lint"); }
+    try { const result = await runLint(scopeWikiId); setLintResult(result); setView("lint"); }
     catch (err: any) { toast.error(err.message); }
     finally { setLintLoading(false); }
   };
@@ -195,7 +195,7 @@ const WikiPanel: React.FC = () => {
   const handleIngest = async (bookId: string) => {
     setIngestLoading(true);
     try {
-      const result = await ingestBook(bookId);
+      const result = await ingestBook(bookId, activeWikiId);
       toast.success(`Extracted ${result.entries_created} entries${result.splits ? `, split ${result.splits}` : ""}${result.conflicts ? `, ${result.conflicts} conflict(s) flagged` : ""}`);
       loadData();
     }
@@ -206,7 +206,7 @@ const WikiPanel: React.FC = () => {
   const handleReindex = async () => {
     setReindexing(true);
     try {
-      const res = await reindexEmbeddings(true);
+      const res = await reindexEmbeddings(true, scopeWikiId);
       if (!res || res.total === 0) {
         toast.success("All entries already have embeddings.");
       } else if (res.updated === 0 && res.failed > 0) {
