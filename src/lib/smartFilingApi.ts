@@ -98,3 +98,80 @@ export async function recomputeCentroids(): Promise<{ recomputed: number; total_
   if (error) throw error;
   return data as any;
 }
+
+// ── Phase 2: Wiki proposals ─────────────────────────────────────────────
+
+export interface WikiProposal {
+  id: string;
+  proposed_name: string;
+  rationale: string;
+  sample_titles: string[];
+  member_entry_ids: string[];
+  status: "pending" | "accepted" | "dismissed" | "expired";
+  created_at: string;
+}
+
+export async function fetchPendingProposals(): Promise<WikiProposal[]> {
+  const { data, error } = await supabase
+    .from("wiki_proposals")
+    .select("*")
+    .eq("status", "pending")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data as any[]) || [];
+}
+
+export async function acceptProposal(p: WikiProposal): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not signed in");
+
+  // Create the new wiki
+  const { data: newWiki, error: wikiErr } = await supabase
+    .from("wikis")
+    .insert({
+      user_id: user.id,
+      name: p.proposed_name,
+      description: p.rationale,
+    })
+    .select("id")
+    .single();
+  if (wikiErr || !newWiki) throw wikiErr || new Error("Wiki create failed");
+
+  // Move member entries into the new wiki
+  if (p.member_entry_ids.length > 0) {
+    await supabase
+      .from("knowledge_entries")
+      .update({ wiki_id: newWiki.id })
+      .in("id", p.member_entry_ids);
+
+    // Clear them from incubator
+    await supabase
+      .from("incubator_entries")
+      .update({ status: "promoted" })
+      .in("entry_id", p.member_entry_ids);
+  }
+
+  // Mark proposal accepted
+  await supabase
+    .from("wiki_proposals")
+    .update({ status: "accepted" })
+    .eq("id", p.id);
+
+  // Kick off centroid recompute (fire and forget)
+  supabase.functions.invoke("recompute-centroids", { body: {} }).catch(() => {});
+}
+
+export async function dismissProposal(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("wiki_proposals")
+    .update({ status: "dismissed" })
+    .eq("id", id);
+  if (error) throw error;
+}
+
+export async function runIncubatorSweep(): Promise<any> {
+  const { data, error } = await supabase.functions.invoke("incubator-sweep", { body: {} });
+  if (error) throw error;
+  return data;
+}
+
