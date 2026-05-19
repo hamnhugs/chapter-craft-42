@@ -346,113 +346,155 @@ const WikiLibrary: React.FC = () => {
           </div>
         </section>
 
-        {/* Cross-wiki semantic search */}
-        <div className="mb-6 relative">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-on-surface-variant" />
-          <input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search across all wikis (semantic — try a question or topic)…"
-            className="w-full bg-surface-container-low border-none rounded-xl py-4 pl-12 pr-12 focus:ring-1 focus:ring-primary/40 placeholder:text-on-surface-variant/50 text-foreground text-base transition-all shadow-inner"
-          />
-          {searching && (
-            <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-on-surface-variant animate-spin" />
-          )}
-          {!searching && searchQuery && (
-            <button
-              onClick={() => setSearchQuery("")}
-              className="absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-foreground"
-            >
-              <span className="material-symbols-outlined">close</span>
-            </button>
-          )}
+        {/* Tab switcher: Wikis | Suggestions */}
+        <div className="mb-6 flex items-center gap-2 border-b border-outline-variant/20">
+          <button
+            onClick={() => setActiveView("wikis")}
+            className={`px-4 py-3 text-sm font-bold transition-colors relative ${
+              activeView === "wikis"
+                ? "text-primary"
+                : "text-on-surface-variant hover:text-foreground"
+            }`}
+          >
+            Wikis
+            {activeView === "wikis" && (
+              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-t" />
+            )}
+          </button>
+          <button
+            onClick={() => setActiveView("suggestions")}
+            className={`px-4 py-3 text-sm font-bold transition-colors relative flex items-center gap-2 ${
+              activeView === "suggestions"
+                ? "text-primary"
+                : "text-on-surface-variant hover:text-foreground"
+            }`}
+          >
+            Suggestions
+            {pendingCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full bg-primary-container text-on-primary-container text-[10px] font-bold min-w-[20px] text-center">
+                {pendingCount}
+              </span>
+            )}
+            {activeView === "suggestions" && (
+              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-t" />
+            )}
+          </button>
         </div>
 
-        {/* Search results */}
-        {searchResults !== null && (
-          <SearchResults
-            results={searchResults}
-            wikis={wikisWithStats}
-            activeWikiId={activeWikiId}
-            onJumpToWiki={async (wikiId) => {
-              await setActiveWiki(wikiId);
-              setSearchQuery("");
-              setActiveTab("wiki");
-            }}
-            onBackfill={handleBackfill}
-            backfilling={backfilling}
-          />
-        )}
+        {activeView === "suggestions" ? (
+          <SuggestionsTab onChanged={loadPendingCount} />
+        ) : (
+          <>
+            {/* Cross-wiki semantic search */}
+            <div className="mb-6 relative">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-on-surface-variant" />
+              <input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search across all wikis (semantic — try a question or topic)…"
+                className="w-full bg-surface-container-low border-none rounded-xl py-4 pl-12 pr-12 focus:ring-1 focus:ring-primary/40 placeholder:text-on-surface-variant/50 text-foreground text-base transition-all shadow-inner"
+              />
+              {searching && (
+                <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-on-surface-variant animate-spin" />
+              )}
+              {!searching && searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-foreground"
+                >
+                  <span className="material-symbols-outlined">close</span>
+                </button>
+              )}
+            </div>
 
-        {/* Tag filter pills */}
-        {searchResults === null && allTags.length > 0 && (
-          <div className="flex items-center gap-3 mb-6 overflow-x-auto pb-2 hide-scrollbar">
-            <button
-              onClick={() => setTagFilter(null)}
-              className={`px-4 py-2 rounded-full text-xs font-bold transition-colors capitalize ${
-                tagFilter === null
-                  ? "bg-secondary-container text-on-secondary-container ring-1 ring-primary/20"
-                  : "hover:bg-surface-container-high text-on-surface-variant"
-              }`}
-            >
-              All
-            </button>
-            {allTags.map((tag) => (
-              <button
-                key={tag}
-                onClick={() => setTagFilter(tag)}
-                className={`px-4 py-2 rounded-full text-xs font-bold transition-colors ${
-                  tagFilter === tag
-                    ? "bg-secondary-container text-on-secondary-container ring-1 ring-primary/20"
-                    : "hover:bg-surface-container-high text-on-surface-variant"
-                }`}
-              >
-                {tag}
-              </button>
-            ))}
-          </div>
-        )}
+            {/* Search results */}
+            {searchResults !== null && (
+              <SearchResults
+                results={searchResults}
+                wikis={wikisWithStats}
+                activeWikiId={activeWikiId}
+                onJumpToWiki={async (wikiId) => {
+                  await setActiveWiki(wikiId);
+                  setSearchQuery("");
+                  setActiveTab("wiki");
+                }}
+                onBackfill={handleBackfill}
+                backfilling={backfilling}
+              />
+            )}
 
-        {/* Content */}
-        {searchResults === null && (
-          loading && wikisWithStats.length === 0 ? (
-            <div className="flex items-center justify-center py-20">
-              <Loader2 className="w-8 h-8 animate-spin text-on-surface-variant" />
-            </div>
-          ) : filtered.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant gap-3">
-              <span className="material-symbols-outlined text-5xl">menu_book</span>
-              <p className="text-sm text-center">
-                {wikisWithStats.length === 0
-                  ? "You have no wikis yet. Create one to get started."
-                  : "No wikis match this tag."}
-              </p>
-            </div>
-          ) : viewMode === "compact" ? (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-              {filtered.map((wiki) => (
-                <WikiCardCompact
-                  key={wiki.id}
-                  wiki={wiki}
-                  isActive={wiki.id === activeWikiId}
-                  onClick={() => setSelected(wiki)}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filtered.map((wiki) => (
-                <WikiCardGallery
-                  key={wiki.id}
-                  wiki={wiki}
-                  isActive={wiki.id === activeWikiId}
-                  onClick={() => setSelected(wiki)}
-                />
-              ))}
-            </div>
-          )
+            {/* Tag filter pills */}
+            {searchResults === null && allTags.length > 0 && (
+              <div className="flex items-center gap-3 mb-6 overflow-x-auto pb-2 hide-scrollbar">
+                <button
+                  onClick={() => setTagFilter(null)}
+                  className={`px-4 py-2 rounded-full text-xs font-bold transition-colors capitalize ${
+                    tagFilter === null
+                      ? "bg-secondary-container text-on-secondary-container ring-1 ring-primary/20"
+                      : "hover:bg-surface-container-high text-on-surface-variant"
+                  }`}
+                >
+                  All
+                </button>
+                {allTags.map((tag) => (
+                  <button
+                    key={tag}
+                    onClick={() => setTagFilter(tag)}
+                    className={`px-4 py-2 rounded-full text-xs font-bold transition-colors ${
+                      tagFilter === tag
+                        ? "bg-secondary-container text-on-secondary-container ring-1 ring-primary/20"
+                        : "hover:bg-surface-container-high text-on-surface-variant"
+                    }`}
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Content */}
+            {searchResults === null && (
+              loading && wikisWithStats.length === 0 ? (
+                <div className="flex items-center justify-center py-20">
+                  <Loader2 className="w-8 h-8 animate-spin text-on-surface-variant" />
+                </div>
+              ) : filtered.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant gap-3">
+                  <span className="material-symbols-outlined text-5xl">menu_book</span>
+                  <p className="text-sm text-center">
+                    {wikisWithStats.length === 0
+                      ? "You have no wikis yet. Create one to get started."
+                      : "No wikis match this tag."}
+                  </p>
+                </div>
+              ) : viewMode === "compact" ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                  {filtered.map((wiki) => (
+                    <WikiCardCompact
+                      key={wiki.id}
+                      wiki={wiki}
+                      isActive={wiki.id === activeWikiId}
+                      onClick={() => setSelected(wiki)}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {filtered.map((wiki) => (
+                    <WikiCardGallery
+                      key={wiki.id}
+                      wiki={wiki}
+                      isActive={wiki.id === activeWikiId}
+                      onClick={() => setSelected(wiki)}
+                    />
+                  ))}
+                </div>
+              )
+            )}
+          </>
         )}
       </main>
+
 
       {/* Info / load dialog */}
       <Dialog open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
