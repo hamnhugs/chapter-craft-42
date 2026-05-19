@@ -913,10 +913,21 @@ const VoiceChat: React.FC = () => {
                         Retry loading voices
                       </Button>
                     )}
+                    {inworldVoices.length > 0 && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={testInworldVoice}
+                        disabled={testingVoice || !inworldVoiceId}
+                        title="Play a short test phrase with the selected voice"
+                      >
+                        {testingVoice ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Test voice"}
+                      </Button>
+                    )}
                   </div>
                 )}
                 <p className="text-[10px] text-on-surface-variant px-1">
-                  When enabled, AI replies are spoken using an Inworld character voice instead of the browser&apos;s built-in TTS.
+                  When enabled, AI replies are spoken using an Inworld character voice instead of the browser&apos;s built-in TTS. Use <em>Test voice</em> to confirm the key and voice work — any error from Inworld will appear in a toast.
                 </p>
               </div>
 
