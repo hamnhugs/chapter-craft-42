@@ -313,10 +313,11 @@ const WikiLibrary: React.FC = () => {
             </p>
             <Link
               to="/memory-guide"
-              className="inline-flex items-center gap-1.5 text-sm font-body font-medium text-accent hover:underline mt-2"
+              className="group inline-flex items-center gap-1.5 mt-3 px-3 py-1.5 rounded-full bg-accent/10 border border-accent/30 text-sm font-body font-semibold text-accent hover:bg-accent/20 hover:scale-105 transition-all motion-safe:animate-pulse-glow"
             >
-              <HelpCircle className="w-4 h-4" />
+              <HelpCircle className="w-4 h-4 motion-safe:animate-icon-wiggle" />
               How the memory system works
+              <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
             </Link>
           </div>
 
@@ -349,9 +350,9 @@ const WikiLibrary: React.FC = () => {
 
             <button
               onClick={openCreate}
-              className="flex items-center gap-2 bg-primary-container text-on-primary-container px-6 py-3 rounded-xl font-bold active:scale-95 transition-transform shadow-lg"
+              className="flex items-center gap-1.5 bg-primary-container text-on-primary-container px-3 py-1.5 rounded-lg font-bold text-sm active:scale-95 transition-transform shadow-md"
             >
-              <Plus className="w-5 h-5" />
+              <Plus className="w-4 h-4" />
               <span>New Wiki</span>
             </button>
           </div>
