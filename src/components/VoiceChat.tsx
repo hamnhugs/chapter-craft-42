@@ -19,7 +19,6 @@ import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/i
 
 const LEGACY_OPENROUTER_STORAGE_KEY = "openrouter_api_key";
 const VOICE_ENABLED_KEY = "voice_tts_enabled";
-const HANDS_FREE_KEY = "voice_hands_free";
 const NOTES_PANEL_OPEN_KEY = "voice_notes_panel_open";
 const VOICE_QUICK_SEARCH_KEY = "voice_quick_search";
 const VOICE_QUICK_SEARCH_MODEL_KEY = "voice_quick_search_model";
@@ -30,11 +29,7 @@ const INWORLD_ENABLED_KEY = "inworld_tts_enabled";
 const SEARCH_INTENT_RE =
   /\b(search|look up|look for|find|google|what is|what are|who is|who are|tell me about|research|check online|latest|current|news about)\b/i;
 
-// Tunable latency knobs for hands-free voice flow
-const SILENCE_INTERIM_MS = 3000; // wait after last interim chunk before sending (gives ~3s mid-sentence pause)
-const SILENCE_FINAL_MS = 3000;   // wait after a final result before sending
-const POST_TTS_DELAY_MS = 600;   // mic restart grace after TTS ends (covers speaker tail)
-const MIN_SENTENCE_LEN = 14;     // don't ship tiny fragments to TTS
+const MIN_SENTENCE_LEN = 14; // don't ship tiny fragments to TTS
 
 const stripMarkdownForTts = (s: string) =>
   s.replace(/[#*_`~[\]()>|]/g, "").replace(/\n+/g, ". ").replace(/\s+/g, " ").trim();
