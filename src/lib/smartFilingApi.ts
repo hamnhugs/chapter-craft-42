@@ -98,3 +98,141 @@ export async function recomputeCentroids(): Promise<{ recomputed: number; total_
   if (error) throw error;
   return data as any;
 }
+
+// ── Phase 2: Wiki proposals ─────────────────────────────────────────────
+
+export interface WikiProposal {
+  id: string;
+  proposed_name: string;
+  rationale: string;
+  sample_titles: string[];
+  member_entry_ids: string[];
+  status: "pending" | "accepted" | "dismissed" | "expired";
+  created_at: string;
+}
+
+export async function fetchPendingProposals(): Promise<WikiProposal[]> {
+  const { data, error } = await supabase
+    .from("wiki_proposals")
+    .select("*")
+    .eq("status", "pending")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data as any[]) || [];
+}
+
+export async function acceptProposal(p: WikiProposal): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not signed in");
+
+  // Create the new wiki
+  const { data: newWiki, error: wikiErr } = await supabase
+    .from("wikis")
+    .insert({
+      user_id: user.id,
+      name: p.proposed_name,
+      description: p.rationale,
+    })
+    .select("id")
+    .single();
+  if (wikiErr || !newWiki) throw wikiErr || new Error("Wiki create failed");
+
+  // Move member entries into the new wiki
+  if (p.member_entry_ids.length > 0) {
+    await supabase
+      .from("knowledge_entries")
+      .update({ wiki_id: newWiki.id })
+      .in("id", p.member_entry_ids);
+
+    // Clear them from incubator
+    await supabase
+      .from("incubator_entries")
+      .update({ status: "promoted" })
+      .in("entry_id", p.member_entry_ids);
+  }
+
+  // Mark proposal accepted
+  await supabase
+    .from("wiki_proposals")
+    .update({ status: "accepted" })
+    .eq("id", p.id);
+
+  // Kick off centroid recompute (fire and forget)
+  supabase.functions.invoke("recompute-centroids", { body: {} }).catch(() => {});
+}
+
+export async function dismissProposal(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("wiki_proposals")
+    .update({ status: "dismissed" })
+    .eq("id", id);
+  if (error) throw error;
+}
+
+export async function runIncubatorSweep(): Promise<any> {
+  const { data, error } = await supabase.functions.invoke("incubator-sweep", { body: {} });
+  if (error) throw error;
+  return data;
+}
+
+
+// ── Phase 3: routing accuracy stat ──────────────────────────────────────
+
+export async function fetchRoutingAccuracy(): Promise<{ accepted: number; total: number } | null> {
+  const { data } = await supabase
+    .from("reroute_suggestions")
+    .select("status")
+    .in("status", ["accepted", "dismissed"])
+    .order("updated_at", { ascending: false })
+    .limit(20);
+  if (!data || data.length === 0) return null;
+  const accepted = data.filter((d: any) => d.status === "accepted").length;
+  return { accepted, total: data.length };
+}
+
+// ── Phase 4: Wiki health alerts ────────────────────────────────────────
+
+export interface WikiHealthAlert {
+  id: string;
+  wiki_id: string;
+  kind: "split" | "rename";
+  rationale: string;
+  suggestion: any;
+  status: "pending" | "accepted" | "dismissed";
+  created_at: string;
+  wiki_name?: string;
+}
+
+export async function fetchHealthAlerts(): Promise<WikiHealthAlert[]> {
+  const { data, error } = await supabase
+    .from("wiki_health_alerts")
+    .select("*")
+    .eq("status", "pending")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  const list = (data as any[]) || [];
+  if (list.length === 0) return [];
+  const wikiIds = Array.from(new Set(list.map((a) => a.wiki_id)));
+  const { data: wikis } = await supabase.from("wikis").select("id, name").in("id", wikiIds);
+  const map = new Map((wikis || []).map((w: any) => [w.id, w.name]));
+  return list.map((a) => ({ ...a, wiki_name: map.get(a.wiki_id) || "Unknown" }));
+}
+
+export async function runDriftCheck(): Promise<{ checked: number; alerts: number }> {
+  const { data, error } = await supabase.functions.invoke("wiki-drift-check", { body: {} });
+  if (error) throw error;
+  return data as any;
+}
+
+export async function acceptRename(a: WikiHealthAlert): Promise<void> {
+  const proposed = a.suggestion?.proposed_name;
+  if (!proposed) throw new Error("No proposed name");
+  const { error } = await supabase.from("wikis").update({ name: proposed }).eq("id", a.wiki_id);
+  if (error) throw error;
+  await supabase.from("wiki_health_alerts").update({ status: "accepted" }).eq("id", a.id);
+}
+
+export async function dismissHealthAlert(id: string): Promise<void> {
+  const { error } = await supabase.from("wiki_health_alerts").update({ status: "dismissed" }).eq("id", id);
+  if (error) throw error;
+}

@@ -136,9 +136,11 @@ serve(async (req) => {
         } catch { /* ignore */ }
 
         // Decision tree
-        let action: "assimilate_active" | "reroute" = "assimilate_active";
+        const novelty_threshold = (activeRow?.novelty_threshold as number) ?? best.novelty_threshold ?? 0.55;
+        let action: "assimilate_active" | "reroute" | "incubate" = "assimilate_active";
         let proposedWikiId: string | null = null;
         let createReroute = false;
+        let incubate = false;
 
         if (s_active >= confident) {
           action = "assimilate_active";
@@ -150,6 +152,10 @@ serve(async (req) => {
           action = "reroute";
           proposedWikiId = best.wiki_id;
           createReroute = true;
+        } else if (s_max < novelty_threshold) {
+          // No wiki is a good home — drop into incubator for clustering.
+          action = "incubate";
+          incubate = true;
         } else {
           action = "assimilate_active";
         }
@@ -181,12 +187,25 @@ serve(async (req) => {
           });
         }
 
+        // Park in incubator (idempotent via unique index on user_id,entry_id)
+        if (incubate) {
+          const reason = `No strong fit (best ${(s_max * 100).toFixed(0)}% < novelty ${(novelty_threshold * 100).toFixed(0)}%)`;
+          await supabase.from("incubator_entries").upsert({
+            user_id: user.id,
+            entry_id: entryId,
+            embedding,
+            reason,
+            status: "pending",
+          }, { onConflict: "user_id,entry_id" });
+        }
+
         results.push({ entry_id: entryId, action, s_max, s_active, s_2nd, novelty });
       } catch (err) {
         console.error("smart-file entry error:", err);
         results.push({ entry_id: entryId, error: err instanceof Error ? err.message : String(err) });
       }
     }
+
 
     return json({ count: results.length, results });
   } catch (e) {

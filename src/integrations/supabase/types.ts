@@ -268,6 +268,42 @@ export type Database = {
         }
         Relationships: []
       }
+      incubator_entries: {
+        Row: {
+          cluster_id: string | null
+          created_at: string
+          embedding: unknown
+          entry_id: string
+          expires_at: string
+          id: string
+          reason: string
+          status: string
+          user_id: string
+        }
+        Insert: {
+          cluster_id?: string | null
+          created_at?: string
+          embedding: unknown
+          entry_id: string
+          expires_at?: string
+          id?: string
+          reason?: string
+          status?: string
+          user_id: string
+        }
+        Update: {
+          cluster_id?: string | null
+          created_at?: string
+          embedding?: unknown
+          entry_id?: string
+          expires_at?: string
+          id?: string
+          reason?: string
+          status?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       knowledge_conflicts: {
         Row: {
           created_at: string
@@ -844,6 +880,42 @@ export type Database = {
           },
         ]
       }
+      wiki_health_alerts: {
+        Row: {
+          created_at: string
+          id: string
+          kind: string
+          rationale: string
+          status: string
+          suggestion: Json
+          updated_at: string
+          user_id: string
+          wiki_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          kind: string
+          rationale?: string
+          status?: string
+          suggestion?: Json
+          updated_at?: string
+          user_id: string
+          wiki_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          kind?: string
+          rationale?: string
+          status?: string
+          suggestion?: Json
+          updated_at?: string
+          user_id?: string
+          wiki_id?: string
+        }
+        Relationships: []
+      }
       wiki_log: {
         Row: {
           created_at: string
@@ -870,6 +942,42 @@ export type Database = {
           id?: string
           operation?: string
           summary?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      wiki_proposals: {
+        Row: {
+          created_at: string
+          id: string
+          member_entry_ids: string[]
+          proposed_name: string
+          rationale: string
+          sample_titles: string[]
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          member_entry_ids?: string[]
+          proposed_name: string
+          rationale?: string
+          sample_titles?: string[]
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          member_entry_ids?: string[]
+          proposed_name?: string
+          rationale?: string
+          sample_titles?: string[]
+          status?: string
+          updated_at?: string
           user_id?: string
         }
         Relationships: []

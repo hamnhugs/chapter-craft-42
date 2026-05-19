@@ -76,18 +76,21 @@ const WikiLibrary: React.FC = () => {
   const [formIsMeta, setFormIsMeta] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  // Load pending suggestion count for badge.
+  // Load pending suggestion count for badge (reroutes + wiki proposals).
   const loadPendingCount = useCallback(async () => {
     try {
-      const { count } = await supabase
-        .from("reroute_suggestions")
-        .select("id", { count: "exact", head: true })
-        .eq("status", "pending");
-      setPendingCount(count ?? 0);
+      const [{ count: rCount }, { count: pCount }, { count: hCount }] = await Promise.all([
+        supabase.from("reroute_suggestions").select("id", { count: "exact", head: true }).eq("status", "pending"),
+        supabase.from("wiki_proposals").select("id", { count: "exact", head: true }).eq("status", "pending"),
+        supabase.from("wiki_health_alerts").select("id", { count: "exact", head: true }).eq("status", "pending"),
+      ]);
+      setPendingCount((rCount ?? 0) + (pCount ?? 0) + (hCount ?? 0));
+
     } catch {
       setPendingCount(0);
     }
   }, []);
+
   useEffect(() => { loadPendingCount(); }, [loadPendingCount, activeView]);
 
   const load = useCallback(async () => {
