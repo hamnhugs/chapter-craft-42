@@ -955,7 +955,7 @@ const VoiceChat: React.FC = () => {
                   <option value="">Same as Chat model</option>
                   {savedModels.map((m: string) => (<option key={m} value={m}>{m}</option>))}
                 </select>
-                <p className="text-[10px] text-on-surface-variant px-1">Used only in the Voice tab. Pick a fast model (e.g. <code>google/gemini-2.5-flash-lite</code>) for snappier hands-free replies.</p>
+                <p className="text-[10px] text-on-surface-variant px-1">Used only in the Voice tab. Pick a fast model (e.g. <code>google/gemini-2.5-flash-lite</code>) for snappier replies.</p>
               </div>
               <div className="flex flex-col gap-1.5 min-w-0">
                 <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
