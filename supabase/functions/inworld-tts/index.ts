@@ -108,6 +108,8 @@ Deno.serve(async (req) => {
             audioEncoding: "MP3",
             sampleRateHertz: sampleRate,
           },
+          deliveryMode: "BALANCED",
+          applyTextNormalization: "ON",
         }),
       });
 
