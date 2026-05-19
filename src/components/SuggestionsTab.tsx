@@ -38,6 +38,8 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
   const [acting, setActing] = useState<string | null>(null);
   const [recomputing, setRecomputing] = useState(false);
   const [sweeping, setSweeping] = useState(false);
+  const [drifting, setDrifting] = useState(false);
+  const [healthAlerts, setHealthAlerts] = useState<WikiHealthAlert[]>([]);
   const [accuracy, setAccuracy] = useState<{ accepted: number; total: number } | null>(null);
   const [wasAutoPaused, setWasAutoPaused] = useState(false);
 
@@ -45,21 +47,24 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
     setLoading(true);
     try {
       const prevEnabled = enabled;
-      const [r, p, en, acc] = await Promise.all([
+      const [r, p, en, acc, h] = await Promise.all([
         fetchPendingReroutes(),
         fetchPendingProposals(),
         getSmartFilingEnabled(),
         fetchRoutingAccuracy(),
+        fetchHealthAlerts(),
       ]);
       setReroutes(r);
       setProposals(p);
       setEnabled(en);
       setAccuracy(acc);
+      setHealthAlerts(h);
       if (prevEnabled && !en && acc && acc.total >= 10 && acc.accepted / acc.total < 0.3) {
         setWasAutoPaused(true);
       }
     } catch (err: any) {
       toast.error(err.message || "Failed to load suggestions");
+
     } finally {
       setLoading(false);
     }
