@@ -79,11 +79,13 @@ const WikiLibrary: React.FC = () => {
   // Load pending suggestion count for badge (reroutes + wiki proposals).
   const loadPendingCount = useCallback(async () => {
     try {
-      const [{ count: rCount }, { count: pCount }] = await Promise.all([
+      const [{ count: rCount }, { count: pCount }, { count: hCount }] = await Promise.all([
         supabase.from("reroute_suggestions").select("id", { count: "exact", head: true }).eq("status", "pending"),
         supabase.from("wiki_proposals").select("id", { count: "exact", head: true }).eq("status", "pending"),
+        supabase.from("wiki_health_alerts").select("id", { count: "exact", head: true }).eq("status", "pending"),
       ]);
-      setPendingCount((rCount ?? 0) + (pCount ?? 0));
+      setPendingCount((rCount ?? 0) + (pCount ?? 0) + (hCount ?? 0));
+
     } catch {
       setPendingCount(0);
     }
