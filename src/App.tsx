@@ -10,6 +10,7 @@ import { useAuth } from "@/hooks/useAuth";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import MemoryGuide from "./pages/MemoryGuide";
+import WikiControlsGuide from "./pages/WikiControlsGuide";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
