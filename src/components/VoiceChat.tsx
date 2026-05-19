@@ -581,7 +581,7 @@ const VoiceChat: React.FC = () => {
       // audible word lands seconds earlier in hands-free mode.
       let spokenCursor = 0;
       const sentenceRe = /[^.!?\n]+[.!?\n]+\s*/g;
-      const onDelta = handsFreeRef.current && ttsEnabled
+      const onDelta = ttsEnabled
         ? (full: string) => {
             const tail = full.slice(spokenCursor);
             sentenceRe.lastIndex = 0;
@@ -607,7 +607,6 @@ const VoiceChat: React.FC = () => {
 
       if (reply) {
         if (onDelta) {
-          // Flush any remainder past the last sentence boundary.
           const remainder = reply.slice(spokenCursor).trim();
           if (remainder) enqueueSpeak(remainder);
           markTtsStreamDone();
@@ -615,13 +614,9 @@ const VoiceChat: React.FC = () => {
           speak(reply);
         }
       } else {
-        // No reply produced — end the turn cleanly.
         streamDoneRef.current = true;
         isSpeakingRef.current = false;
         turnActiveRef.current = false;
-        if (handsFreeRef.current && !stoppedByUserRef.current) {
-          window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
-        }
       }
     } catch {
       streamDoneRef.current = true;
@@ -629,9 +624,6 @@ const VoiceChat: React.FC = () => {
       ttsPlayingRef.current = false;
       isSpeakingRef.current = false;
       turnActiveRef.current = false;
-      if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS + 200);
-      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiKey, messages.length, sendMessage, speak, voiceQuickSearch, burplexityApiToken, runBackgroundSearch, voiceModel, ttsEnabled, enqueueSpeak, markTtsStreamDone]);
