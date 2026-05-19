@@ -282,12 +282,21 @@ export async function updateConflictStatus(id: string, status: KnowledgeConflict
 
 // ── Layer 2: Episodic log ──────────────────────────────────────────────────────
 
-export async function fetchEpisodicLog(limit = 20): Promise<EpisodicLogEntry[]> {
-  const { data, error } = await supabase
+export async function fetchEpisodicLog(
+  limit = 20,
+  wikiId?: string | null,
+): Promise<EpisodicLogEntry[]> {
+  let q = supabase
     .from("episodic_log")
     .select("*")
     .order("created_at", { ascending: false })
     .limit(limit);
+  if (wikiId) {
+    // Include rows tagged to this wiki, plus legacy untagged rows (wiki_id IS NULL)
+    // so older episodes don't disappear when scoping.
+    q = q.or(`wiki_id.eq.${wikiId},wiki_id.is.null`);
+  }
+  const { data, error } = await q;
   if (error) throw error;
   return (data || []) as unknown as EpisodicLogEntry[];
 }
