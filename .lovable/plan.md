@@ -1,25 +1,47 @@
-## Make memory guide link pop + slim down New Wiki button
+## Wiki Tab Controls Guide
 
-### 1. Animate the "How the memory system works" link (WikiLibrary.tsx)
+Add a pulsing "What do these controls do?" chip in the Wiki tab header (matching the Wikis-tab memory link) that opens a new `/wiki-controls-guide` page explaining every control in plain language.
 
-Currently it sits as a muted accent link below the quote — easy to miss. Upgrade it to a small pill chip with:
-- Background tint (`bg-accent/10`), accent border, slight shadow so it reads as an interactive call-to-attention rather than body text.
-- Continuous **subtle pulse glow** (custom keyframe on the ring/shadow) so the eye catches it without being noisy.
-- A **gently bouncing/shimmering icon** (HelpCircle or Sparkles) — small horizontal nudge or rotation loop.
-- Hover: scale-105 + brighter background (uses existing `hover-scale` utility pattern).
-- Respect `prefers-reduced-motion`: animation disabled via Tailwind's `motion-safe:` prefix.
+### 1. New route + page
 
-Add one keyframe + animation entry to `tailwind.config.ts` (e.g. `pulse-glow`) since the existing `pulse` class is too aggressive.
+- Add `/wiki-controls-guide` route in `App.tsx` (protected, same pattern as `/memory-guide`).
+- Create `src/pages/WikiControlsGuide.tsx` styled like `MemoryGuide.tsx` (editorial, warm tones, sticky back bar saying "Back to Wiki").
 
-### 2. Shrink the "New Wiki" button without shrinking its text
+### 2. Plain-English explanations
 
-Reduce padding only — keep `font-bold` text at its current `text-sm`-equivalent size:
-- `px-6 py-3` → `px-4 py-2`
-- Icon `Plus` from `w-5 h-5` → `w-4 h-4`
-- Keep label text, shadow, color, active:scale-95 behavior.
+Group controls into sections. For each, a one-line analogy + 2–3 sentences of "what it does / when to use it." No jargon.
+
+**Scope & identity**
+- **This wiki vs. All wikis** — "Are you looking at one notebook, or every notebook stacked together?" Pick "This wiki" for focused work; "All wikis" to see everything you've ever saved.
+- **Wiki switcher dropdown** — Jump straight to another wiki without leaving this page.
+
+**Daily controls**
+- **Conflicts** — Cards that disagree with each other. Click to review and pick the right one. The number badge = how many need your attention.
+- **Recording / Retrieval mode** — Recording lets the AI add new cards as you chat. Retrieval is read-only — useful when you just want answers without growing the wiki.
+
+**Maintenance (run occasionally)**
+- **Sleep Cycle** — Like sleeping on it. The system links lonely cards, merges duplicates, and tidies the web. Run it after a busy day of adding stuff.
+- **Health Check** — Scans for problems (broken links, weird entries) and surfaces them. Run it when things feel off.
+- **Reindex** — Rebuilds the search index so semantic search stays accurate. Run if search results feel stale.
+- **Refresh** — Reload the page's data from the server.
+
+**Browse what's happened**
+- **Episodes** — A diary of past chat sessions. Helps you remember what you talked about.
+- **Queue** — Cards waiting in line for the next Sleep Cycle to process.
+
+**Settings (gear icon)**
+- Pick the AI model used for this wiki, manage advanced options.
+
+**Filters (in entries list)**
+- Filter cards by type: concept, entity, fact, summary, etc.
+
+### 3. Link from `WikiPanel.tsx`
+
+Insert the same animated pulsing chip used on the Wikis page, just below the wiki description line (around line 330). Same component pattern: `HelpCircle` + label + `ArrowRight`, with `animate-pulse-glow` and `animate-icon-wiggle`. Label: **"What do these controls do?"**
 
 ### Files touched
-- `src/components/WikiLibrary.tsx` — link markup + button padding.
-- `tailwind.config.ts` — add `pulse-glow` keyframe + animation.
+- `src/App.tsx` — add route.
+- `src/pages/WikiControlsGuide.tsx` — new page.
+- `src/components/WikiPanel.tsx` — add the chip link.
 
-No features removed. No backend or routing changes.
+No features removed. No backend changes.
