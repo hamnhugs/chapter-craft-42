@@ -92,6 +92,7 @@ async function reconsolidate(
   userId: string,
   lovableKey: string,
   llm: { url: string; headers: Record<string, string>; model: string },
+  wikiId: string | null,
 ): Promise<{ processed: number; edges_created: number; conflicts_inserted: number }> {
 
   // Pull a batch from the queue using FOR UPDATE SKIP LOCKED for concurrency safety.
@@ -105,14 +106,16 @@ async function reconsolidate(
     return { processed: 0, edges_created: 0, conflicts_inserted: 0 };
   }
 
-  // Fetch Core nodes (high vibrancy) to anchor new edges.
-  const { data: coreNodes } = await supabase
+  // Fetch Core nodes (high vibrancy) to anchor new edges. Scope to wiki when provided.
+  let coreQuery = supabase
     .from("knowledge_entries")
     .select("id, title, content, vibrancy, entry_type")
     .eq("user_id", userId)
     .gte("vibrancy", 0.70)
     .order("vibrancy", { ascending: false })
     .limit(20);
+  if (wikiId) coreQuery = coreQuery.eq("wiki_id", wikiId);
+  const { data: coreNodes } = await coreQuery;
 
   const cores = (coreNodes || []) as Array<{
     id: string; title: string; content: string; vibrancy: number; entry_type: string;
@@ -263,12 +266,15 @@ async function reconsolidate(
 
 // ── Phase 3: Pruning (orphan detection) ────────────────────────────────────────
 
-async function prune(supabase: any, userId: string): Promise<{ orphans: string[] }> {
-  // Nodes with zero edges in either direction.
-  const { data: allEdges } = await supabase
+async function prune(supabase: any, userId: string, wikiId: string | null): Promise<{ orphans: string[] }> {
+  // Nodes with zero edges in either direction (scoped to wiki when provided).
+  let edgesQuery = supabase
     .from("memory_graph")
     .select("source_entry_id, target_entry_id")
     .eq("user_id", userId);
+  const { data: allEdges } = wikiId
+    ? await supabase.rpc("memory_graph_for_wiki", { target_wiki_id: wikiId })
+    : await edgesQuery;
 
   const connected = new Set<string>();
   for (const e of (allEdges || []) as any[]) {
@@ -276,10 +282,12 @@ async function prune(supabase: any, userId: string): Promise<{ orphans: string[]
     connected.add(e.target_entry_id);
   }
 
-  const { data: allEntries } = await supabase
+  let entriesQuery = supabase
     .from("knowledge_entries")
     .select("id, title")
     .eq("user_id", userId);
+  if (wikiId) entriesQuery = entriesQuery.eq("wiki_id", wikiId);
+  const { data: allEntries } = await entriesQuery;
 
   const orphanIds: string[] = [];
   for (const entry of (allEntries || []) as any[]) {
@@ -315,6 +323,11 @@ serve(async (req) => {
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) return json({ error: "AI service not configured" }, 500);
 
+    // Optional wiki scope. When provided, consolidation only considers entries
+    // in that wiki for both anchoring (cores) and orphan pruning.
+    const body = await req.json().catch(() => ({}));
+    const wikiId: string | null = body?.wiki_id ?? null;
+
     const llm = await resolveWikiLlm(supabase, user.id);
 
     const t0 = Date.now();
@@ -323,10 +336,10 @@ serve(async (req) => {
     const rerankResult     = await rerank(supabase, user.id);
 
     // Phase 2
-    const consolidateResult = await reconsolidate(supabase, user.id, LOVABLE_API_KEY, llm);
+    const consolidateResult = await reconsolidate(supabase, user.id, LOVABLE_API_KEY, llm, wikiId);
 
     // Phase 3
-    const pruneResult      = await prune(supabase, user.id);
+    const pruneResult      = await prune(supabase, user.id, wikiId);
 
     // Record last run time.
     await supabase

@@ -318,6 +318,7 @@ Rules:
       extracted.conversation_summary || "",
       newKeyFacts,
       savedEntries.length,
+      effectiveWikiId,
     );
 
     // Legacy rolling summary update (kept for WikiPanel backward compat).

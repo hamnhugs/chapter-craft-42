@@ -38,11 +38,31 @@ serve(async (req) => {
       });
     }
 
-    // Fetch all user's knowledge entries and graph
-    const [{ data: entries }, { data: graph }] = await Promise.all([
-      supabase.from("knowledge_entries").select("*").eq("user_id", user.id).order("created_at"),
-      supabase.from("memory_graph").select("*").eq("user_id", user.id),
-    ]);
+    // Parse optional scope: { wiki_id?: string|null }. When provided, lint only
+    // entries (and edges) inside that wiki. When omitted/null → global behaviour.
+    const body = await req.json().catch(() => ({}));
+    const wikiId: string | null = body?.wiki_id ?? null;
+
+    // Fetch entries (optionally scoped to a wiki via entries_for_wiki RPC) and
+    // the matching subset of memory_graph edges.
+    let entries: any[] | null = null;
+    let graph: any[] | null = null;
+
+    if (wikiId) {
+      const [{ data: e }, { data: g }] = await Promise.all([
+        supabase.rpc("entries_for_wiki", { target_wiki_id: wikiId }),
+        supabase.rpc("memory_graph_for_wiki", { target_wiki_id: wikiId }),
+      ]);
+      entries = (e as any[]) || [];
+      graph = (g as any[]) || [];
+    } else {
+      const [{ data: e }, { data: g }] = await Promise.all([
+        supabase.from("knowledge_entries").select("*").eq("user_id", user.id).order("created_at"),
+        supabase.from("memory_graph").select("*").eq("user_id", user.id),
+      ]);
+      entries = e;
+      graph = g;
+    }
 
     if (!entries || entries.length === 0) {
       return new Response(JSON.stringify({

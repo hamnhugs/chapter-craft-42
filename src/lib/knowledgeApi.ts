@@ -103,7 +103,14 @@ export async function fetchKnowledgeEntries(wikiId?: string | null): Promise<Kno
   return (data || []) as unknown as KnowledgeEntry[];
 }
 
-export async function fetchMemoryGraph(): Promise<MemoryGraphEdge[]> {
+export async function fetchMemoryGraph(wikiId?: string | null): Promise<MemoryGraphEdge[]> {
+  if (wikiId) {
+    const { data, error } = await supabase.rpc("memory_graph_for_wiki" as any, {
+      target_wiki_id: wikiId,
+    } as any);
+    if (error) throw error;
+    return (data || []) as unknown as MemoryGraphEdge[];
+  }
   const { data, error } = await supabase
     .from("memory_graph")
     .select("*");
@@ -147,7 +154,7 @@ export async function extractKnowledge(messages: { role: string; content: string
   return resp.json();
 }
 
-export async function runLint(): Promise<LintResult> {
+export async function runLint(wikiId?: string | null): Promise<LintResult> {
   const { data: { session } } = await supabase.auth.getSession();
   const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/knowledge-lint`, {
     method: "POST",
@@ -155,7 +162,7 @@ export async function runLint(): Promise<LintResult> {
       "Content-Type": "application/json",
       Authorization: `Bearer ${session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
     },
-    body: JSON.stringify({}),
+    body: JSON.stringify({ wiki_id: wikiId ?? null }),
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ error: "Lint failed" }));
@@ -228,8 +235,11 @@ export async function retrieveKnowledge(
   return callEdge("knowledge-retrieve", { query, ...opts });
 }
 
-export async function reindexEmbeddings(all_missing = true): Promise<{ updated: number; failed: number; total: number }> {
-  return callEdge("knowledge-embed", { all_missing });
+export async function reindexEmbeddings(
+  all_missing = true,
+  wikiId?: string | null,
+): Promise<{ updated: number; failed: number; total: number }> {
+  return callEdge("knowledge-embed", { all_missing, wiki_id: wikiId ?? null });
 }
 
 // ---- Conflict management ----
@@ -245,7 +255,19 @@ export interface KnowledgeConflict {
   updated_at: string;
 }
 
-export async function fetchConflicts(status?: KnowledgeConflict["status"]): Promise<KnowledgeConflict[]> {
+export async function fetchConflicts(
+  status?: KnowledgeConflict["status"],
+  wikiId?: string | null,
+): Promise<KnowledgeConflict[]> {
+  if (wikiId) {
+    const { data, error } = await supabase.rpc("conflicts_for_wiki" as any, {
+      target_wiki_id: wikiId,
+    } as any);
+    if (error) throw error;
+    let rows = (data || []) as unknown as KnowledgeConflict[];
+    if (status) rows = rows.filter((c) => c.status === status);
+    return rows.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  }
   let q = supabase.from("knowledge_conflicts").select("*").order("created_at", { ascending: false });
   if (status) q = q.eq("status", status);
   const { data, error } = await q;
@@ -260,12 +282,21 @@ export async function updateConflictStatus(id: string, status: KnowledgeConflict
 
 // ── Layer 2: Episodic log ──────────────────────────────────────────────────────
 
-export async function fetchEpisodicLog(limit = 20): Promise<EpisodicLogEntry[]> {
-  const { data, error } = await supabase
+export async function fetchEpisodicLog(
+  limit = 20,
+  wikiId?: string | null,
+): Promise<EpisodicLogEntry[]> {
+  let q = supabase
     .from("episodic_log")
     .select("*")
     .order("created_at", { ascending: false })
     .limit(limit);
+  if (wikiId) {
+    // Include rows tagged to this wiki, plus legacy untagged rows (wiki_id IS NULL)
+    // so older episodes don't disappear when scoping.
+    q = q.or(`wiki_id.eq.${wikiId},wiki_id.is.null`);
+  }
+  const { data, error } = await q;
   if (error) throw error;
   return (data || []) as unknown as EpisodicLogEntry[];
 }
@@ -291,7 +322,22 @@ export async function setMemoryMode(mode: MemoryMode): Promise<void> {
 
 // ── Layer 5: Consolidation queue ──────────────────────────────────────────────
 
-export async function fetchConsolidationQueue(includingProcessed = false): Promise<ConsolidationQueueItem[]> {
+export async function fetchConsolidationQueue(
+  includingProcessed = false,
+  wikiId?: string | null,
+): Promise<ConsolidationQueueItem[]> {
+  if (wikiId) {
+    const { data, error } = await supabase.rpc("consolidation_queue_for_wiki" as any, {
+      target_wiki_id: wikiId,
+    } as any);
+    if (error) throw error;
+    let rows = (data || []) as unknown as ConsolidationQueueItem[];
+    if (!includingProcessed) rows = rows.filter((r) => !r.processed_at);
+    return rows.sort((a, b) => {
+      if (a.priority !== b.priority) return a.priority - b.priority;
+      return a.created_at < b.created_at ? -1 : 1;
+    });
+  }
   let q = supabase
     .from("consolidation_queue")
     .select("*")
@@ -305,8 +351,8 @@ export async function fetchConsolidationQueue(includingProcessed = false): Promi
 
 // ── Sleep Cycle ────────────────────────────────────────────────────────────────
 
-export async function triggerSleepCycle(): Promise<SleepCycleReport> {
-  return callEdge("knowledge-consolidate", {});
+export async function triggerSleepCycle(wikiId?: string | null): Promise<SleepCycleReport> {
+  return callEdge("knowledge-consolidate", { wiki_id: wikiId ?? null });
 }
 
 

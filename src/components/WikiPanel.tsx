@@ -24,7 +24,7 @@ import { useChatSettings } from "@/hooks/useChatSettings";
 type WikiView = "entries" | "detail" | "lint" | "conflicts" | "episodic" | "queue";
 
 const WikiPanel: React.FC = () => {
-  const { books, activeBookId, activeWikiId } = useApp();
+  const { books, activeBookId, activeWikiId, wikis, setActiveWiki } = useApp();
   const [entries, setEntries] = useState<KnowledgeEntry[]>([]);
   const [graph, setGraph] = useState<MemoryGraphEdge[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,15 +48,22 @@ const WikiPanel: React.FC = () => {
   const [sleepCycleReport, setSleepCycleReport] = useState<SleepCycleReport | null>(null);
   const [episodicLog, setEpisodicLog] = useState<EpisodicLogEntry[]>([]);
   const [queueItems, setQueueItems] = useState<ConsolidationQueueItem[]>([]);
+  // Scope toggle: when "wiki", every panel / action is bound to the active wiki.
+  // When "all", we keep the legacy global view (cross-wiki graph, conflicts, etc.).
+  const [scope, setScope] = useState<"wiki" | "all">("wiki");
   const { savedModels, wikiModel, setWikiModel, apiKey: openrouterKey } = useChatSettings();
+
+  const activeWiki = wikis.find((w) => w.id === activeWikiId) || null;
+  // The id we pass to scoped APIs. Null means "all wikis" / global.
+  const scopeWikiId: string | null = scope === "wiki" ? activeWikiId : null;
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const [e, g, c, mode] = await Promise.all([
-        fetchKnowledgeEntries(activeWikiId),
-        fetchMemoryGraph(),
-        fetchConflicts().catch(() => []),
+        fetchKnowledgeEntries(scopeWikiId),
+        fetchMemoryGraph(scopeWikiId),
+        fetchConflicts(undefined, scopeWikiId).catch(() => []),
         getMemoryMode().catch(() => "recording" as MemoryMode),
       ]);
       setEntries(e);
@@ -68,7 +75,7 @@ const WikiPanel: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [activeWikiId]);
+  }, [scopeWikiId]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -100,7 +107,7 @@ const WikiPanel: React.FC = () => {
     setSleepCycleRunning(true);
     setSleepCycleReport(null);
     try {
-      const report = await triggerSleepCycle();
+      const report = await triggerSleepCycle(scopeWikiId);
       setSleepCycleReport(report);
       toast.success(`Sleep Cycle complete — ${report.phases.consolidate.edges_created} edges created, ${report.phases.prune.orphans.length} orphans queued`);
       await loadData();
@@ -113,7 +120,7 @@ const WikiPanel: React.FC = () => {
 
   const handleLoadEpisodic = async () => {
     try {
-      const log = await fetchEpisodicLog(30);
+      const log = await fetchEpisodicLog(30, scopeWikiId);
       setEpisodicLog(log);
       setView("episodic");
     } catch (err: any) {
@@ -123,7 +130,7 @@ const WikiPanel: React.FC = () => {
 
   const handleLoadQueue = async () => {
     try {
-      const items = await fetchConsolidationQueue();
+      const items = await fetchConsolidationQueue(false, scopeWikiId);
       setQueueItems(items);
       setView("queue");
     } catch (err: any) {
@@ -180,7 +187,7 @@ const WikiPanel: React.FC = () => {
 
   const handleLint = async () => {
     setLintLoading(true);
-    try { const result = await runLint(); setLintResult(result); setView("lint"); }
+    try { const result = await runLint(scopeWikiId); setLintResult(result); setView("lint"); }
     catch (err: any) { toast.error(err.message); }
     finally { setLintLoading(false); }
   };
@@ -188,7 +195,7 @@ const WikiPanel: React.FC = () => {
   const handleIngest = async (bookId: string) => {
     setIngestLoading(true);
     try {
-      const result = await ingestBook(bookId);
+      const result = await ingestBook(bookId, activeWikiId);
       toast.success(`Extracted ${result.entries_created} entries${result.splits ? `, split ${result.splits}` : ""}${result.conflicts ? `, ${result.conflicts} conflict(s) flagged` : ""}`);
       loadData();
     }
@@ -199,7 +206,7 @@ const WikiPanel: React.FC = () => {
   const handleReindex = async () => {
     setReindexing(true);
     try {
-      const res = await reindexEmbeddings(true);
+      const res = await reindexEmbeddings(true, scopeWikiId);
       if (!res || res.total === 0) {
         toast.success("All entries already have embeddings.");
       } else if (res.updated === 0 && res.failed > 0) {
@@ -249,13 +256,78 @@ const WikiPanel: React.FC = () => {
       <main className="max-w-7xl mx-auto px-6 py-12 pb-32 w-full">
         {/* Header */}
         <section className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
-          <div className="space-y-2">
-            <div className="flex items-center gap-3 mb-1">
-              <span className="px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded text-[10px] font-bold tracking-widest uppercase">Knowledge Base</span>
-              <span className="text-on-surface-variant text-sm font-medium">{entries.length} entries indexed</span>
+          <div className="space-y-3 min-w-0">
+            <div className="flex items-center gap-3 mb-1 flex-wrap">
+              <span className="px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded text-[10px] font-bold tracking-widest uppercase">
+                {scope === "wiki" ? "Active Wiki" : "All Wikis"}
+              </span>
+              <span className="text-on-surface-variant text-sm font-medium">
+                {entries.length} entries{scope === "wiki" && activeWiki ? " in scope" : " indexed"}
+              </span>
+              {/* Scope toggle: "This wiki" vs "All wikis" */}
+              <div className="inline-flex items-center rounded-full border border-outline-variant/30 bg-surface-container-low overflow-hidden text-[11px] font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setScope("wiki")}
+                  disabled={!activeWikiId}
+                  className={`px-3 py-1 transition-colors ${scope === "wiki" ? "bg-primary-container text-on-primary-container" : "text-on-surface-variant hover:bg-surface-container-high"} disabled:opacity-40`}
+                  title="Show only data from the currently loaded wiki"
+                >
+                  This wiki
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScope("all")}
+                  className={`px-3 py-1 transition-colors ${scope === "all" ? "bg-primary-container text-on-primary-container" : "text-on-surface-variant hover:bg-surface-container-high"}`}
+                  title="Show everything across all your wikis"
+                >
+                  All wikis
+                </button>
+              </div>
             </div>
-            <h2 className="font-headline font-bold text-5xl md:text-6xl text-primary tracking-tight">Knowledge Wiki</h2>
-            <p className="text-on-surface-variant max-w-xl text-lg italic font-headline">"The sum of all acquired insights, meticulously categorized."</p>
+            <div className="flex items-center gap-3 flex-wrap">
+              {activeWiki && (
+                <span
+                  aria-hidden
+                  className="inline-block w-3.5 h-3.5 rounded-full border border-outline-variant/30 shrink-0"
+                  style={{ backgroundColor: activeWiki.cover_color || "#7C3AED" }}
+                />
+              )}
+              <h2 className="font-headline font-bold text-5xl md:text-6xl text-primary tracking-tight truncate">
+                {scope === "all" ? "Knowledge Wiki" : (activeWiki?.name || "Knowledge Wiki")}
+              </h2>
+              {/* In-tab wiki switcher */}
+              {wikis.length > 1 && (
+                <Select
+                  value={activeWikiId || ""}
+                  onValueChange={async (v) => {
+                    if (!v || v === activeWikiId) return;
+                    try {
+                      await setActiveWiki(v);
+                      toast.success("Wiki loaded");
+                    } catch (err: any) {
+                      toast.error(err.message || "Failed to switch wiki");
+                    }
+                  }}
+                >
+                  <SelectTrigger className="w-[200px] h-9 text-xs">
+                    <SelectValue placeholder="Switch wiki…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {wikis.map((w) => (
+                      <SelectItem key={w.id} value={w.id}>
+                        {w.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+            <p className="text-on-surface-variant max-w-xl text-lg italic font-headline">
+              {scope === "all"
+                ? `"The sum of all acquired insights, meticulously categorized."`
+                : (activeWiki?.description?.trim() || `"The sum of all acquired insights, meticulously categorized."`)}
+            </p>
           </div>
           <div className="flex gap-3 flex-wrap">
             {view !== "entries" && (
