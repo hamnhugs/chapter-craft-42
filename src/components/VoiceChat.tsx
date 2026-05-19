@@ -1031,7 +1031,7 @@ const VoiceChat: React.FC = () => {
             </div>
             <p className="font-headline font-bold text-xl text-foreground">Voice Chat</p>
             <p className="text-sm text-center max-w-md">
-              {selectedBook ? `Ready to discuss "${selectedBook.title}". Tap the mic, type below, or turn on Hands-free to just talk.` : "Tap the mic, type below, or turn on Hands-free for a continuous conversation."}
+              {selectedBook ? `Ready to discuss "${selectedBook.title}". Tap the mic or type below.` : "Tap the mic or type below to start a conversation."}
             </p>
             {!SpeechRecognition && <p className="text-xs text-destructive">⚠️ Use Chrome or Edge for speech recognition.</p>}
             {!apiKey && (
