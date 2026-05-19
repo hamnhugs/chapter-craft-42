@@ -189,3 +189,50 @@ export async function fetchRoutingAccuracy(): Promise<{ accepted: number; total:
   const accepted = data.filter((d: any) => d.status === "accepted").length;
   return { accepted, total: data.length };
 }
+
+// ── Phase 4: Wiki health alerts ────────────────────────────────────────
+
+export interface WikiHealthAlert {
+  id: string;
+  wiki_id: string;
+  kind: "split" | "rename";
+  rationale: string;
+  suggestion: any;
+  status: "pending" | "accepted" | "dismissed";
+  created_at: string;
+  wiki_name?: string;
+}
+
+export async function fetchHealthAlerts(): Promise<WikiHealthAlert[]> {
+  const { data, error } = await supabase
+    .from("wiki_health_alerts")
+    .select("*")
+    .eq("status", "pending")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  const list = (data as any[]) || [];
+  if (list.length === 0) return [];
+  const wikiIds = Array.from(new Set(list.map((a) => a.wiki_id)));
+  const { data: wikis } = await supabase.from("wikis").select("id, name").in("id", wikiIds);
+  const map = new Map((wikis || []).map((w: any) => [w.id, w.name]));
+  return list.map((a) => ({ ...a, wiki_name: map.get(a.wiki_id) || "Unknown" }));
+}
+
+export async function runDriftCheck(): Promise<{ checked: number; alerts: number }> {
+  const { data, error } = await supabase.functions.invoke("wiki-drift-check", { body: {} });
+  if (error) throw error;
+  return data as any;
+}
+
+export async function acceptRename(a: WikiHealthAlert): Promise<void> {
+  const proposed = a.suggestion?.proposed_name;
+  if (!proposed) throw new Error("No proposed name");
+  const { error } = await supabase.from("wikis").update({ name: proposed }).eq("id", a.wiki_id);
+  if (error) throw error;
+  await supabase.from("wiki_health_alerts").update({ status: "accepted" }).eq("id", a.id);
+}
+
+export async function dismissHealthAlert(id: string): Promise<void> {
+  const { error } = await supabase.from("wiki_health_alerts").update({ status: "dismissed" }).eq("id", id);
+  if (error) throw error;
+}
