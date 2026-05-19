@@ -68,18 +68,79 @@ serve(async (req) => {
       for (let i = 0; i < dim; i++) mean[i] /= vectors.length;
       const centroidStr = "[" + mean.join(",") + "]";
 
+      // ── Phase 3: adaptive thresholds per wiki ───────────────────────
+      let confidentThreshold = 0.78;
+      let noveltyThreshold = 0.55;
+      try {
+        const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+        const { data: decisions } = await supabase
+          .from("routing_decisions")
+          .select("s_max, s_active, proposed_action, final_wiki_id, proposed_wiki_id, user_corrected")
+          .eq("user_id", user.id)
+          .gte("created_at", since)
+          .or(`final_wiki_id.eq.${w.id},proposed_wiki_id.eq.${w.id}`);
+        if (decisions && decisions.length >= 8) {
+          // p60 of s_max where user kept the destination (proposed accepted OR active assimilate)
+          const keptScores = (decisions as any[])
+            .filter((d) => !d.user_corrected && d.s_max > 0)
+            .map((d) => d.s_max as number)
+            .sort((a, b) => a - b);
+          if (keptScores.length >= 5) {
+            const p60 = keptScores[Math.floor(keptScores.length * 0.6)];
+            confidentThreshold = clamp(p60, 0.65, 0.92);
+          }
+          // p20 of s_max for entries that should have incubated (low scores)
+          const incubateScores = (decisions as any[])
+            .filter((d) => d.proposed_action === "incubate")
+            .map((d) => d.s_max as number)
+            .sort((a, b) => a - b);
+          if (incubateScores.length >= 3) {
+            const p20 = incubateScores[Math.floor(incubateScores.length * 0.2)];
+            noveltyThreshold = clamp(p20, 0.40, 0.65);
+          }
+        }
+      } catch (e) {
+        console.error("threshold learn failed for wiki", w.id, e);
+      }
+
       await supabase.from("wiki_centroids").upsert({
         wiki_id: w.id,
         user_id: user.id,
         centroid: centroidStr,
         entry_count: vectors.length,
+        confident_threshold: confidentThreshold,
+        novelty_threshold: noveltyThreshold,
         last_recomputed_at: new Date().toISOString(),
       }, { onConflict: "wiki_id" });
 
       recomputed++;
     }
 
+    // ── Auto-pause if recent reject rate > 70% over last 20 ─────────────
+    try {
+      const { data: recent } = await supabase
+        .from("reroute_suggestions")
+        .select("status")
+        .eq("user_id", user.id)
+        .in("status", ["accepted", "dismissed"])
+        .order("updated_at", { ascending: false })
+        .limit(20);
+      if (recent && recent.length >= 10) {
+        const rejects = (recent as any[]).filter((r) => r.status === "dismissed").length;
+        if (rejects / recent.length > 0.7) {
+          await supabase
+            .from("user_settings")
+            .update({ smart_filing_enabled: false })
+            .eq("user_id", user.id);
+          return json({ recomputed, total_wikis: wikis.length, auto_paused: true });
+        }
+      }
+    } catch (e) {
+      console.error("auto-pause check failed:", e);
+    }
+
     return json({ recomputed, total_wikis: wikis.length });
+
   } catch (e) {
     console.error("recompute-centroids error:", e);
     return json({ error: e instanceof Error ? e.message : "Unknown error" }, 500);
