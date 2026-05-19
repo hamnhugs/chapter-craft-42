@@ -21,3 +21,7 @@ verify_jwt = false
 [functions.recompute-centroids]
 verify_jwt = false
 
+[functions.incubator-sweep]
+verify_jwt = false
+
+
