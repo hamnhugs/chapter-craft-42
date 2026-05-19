@@ -322,7 +322,22 @@ export async function setMemoryMode(mode: MemoryMode): Promise<void> {
 
 // ── Layer 5: Consolidation queue ──────────────────────────────────────────────
 
-export async function fetchConsolidationQueue(includingProcessed = false): Promise<ConsolidationQueueItem[]> {
+export async function fetchConsolidationQueue(
+  includingProcessed = false,
+  wikiId?: string | null,
+): Promise<ConsolidationQueueItem[]> {
+  if (wikiId) {
+    const { data, error } = await supabase.rpc("consolidation_queue_for_wiki" as any, {
+      target_wiki_id: wikiId,
+    } as any);
+    if (error) throw error;
+    let rows = (data || []) as unknown as ConsolidationQueueItem[];
+    if (!includingProcessed) rows = rows.filter((r) => !r.processed_at);
+    return rows.sort((a, b) => {
+      if (a.priority !== b.priority) return a.priority - b.priority;
+      return a.created_at < b.created_at ? -1 : 1;
+    });
+  }
   let q = supabase
     .from("consolidation_queue")
     .select("*")
@@ -336,8 +351,8 @@ export async function fetchConsolidationQueue(includingProcessed = false): Promi
 
 // ── Sleep Cycle ────────────────────────────────────────────────────────────────
 
-export async function triggerSleepCycle(): Promise<SleepCycleReport> {
-  return callEdge("knowledge-consolidate", {});
+export async function triggerSleepCycle(wikiId?: string | null): Promise<SleepCycleReport> {
+  return callEdge("knowledge-consolidate", { wiki_id: wikiId ?? null });
 }
 
 
