@@ -1,61 +1,93 @@
-# Smart Filing — Phases 2–4
+# Fix: Wiki tab doesn't reflect the loaded wiki
 
-Phase 1 (Reroute MVP) shipped. Here's what to build next, in order.
+## Root cause
 
-## Phase 2 — Incubator (new-wiki proposals)
+The Wiki tab (`WikiPanel`) only filters **entries** by `activeWikiId`. Everything else it shows — memory graph, conflicts, episodic log, consolidation queue, plus side-effect actions (Sleep Cycle, Reindex, Health Check / Lint) — runs **globally across all wikis**. There is also no visible indicator of which wiki is loaded (the header always says "Knowledge Wiki"). The net effect: switching wikis silently changes the entry list under the hood but the panel still looks like the "original" (default) wiki, because the graph, conflicts, episodes, queue, and header are identical.
 
-**Goal:** when a new entry doesn't fit any existing wiki well, hold it aside, cluster siblings, and propose a brand-new wiki once a real cluster forms.
+Sales Wiki actually has 6 entries assigned and My Wiki has 79 — the data is partitioned correctly. The UI just doesn't expose it.
 
-- New tables
-  - `incubator_entries` — entry_id, embedding (halfvec 1536), reason, created_at, expires_at (14-day TTL), status (`pending` | `clustered` | `expired` | `promoted`)
-  - `wiki_proposals` — proposed_name, member_entry_ids[], rationale, sample_titles[], status (`pending` | `accepted` | `dismissed`)
-- `smart-file` extension: when `s_max < novelty_threshold` (default 0.55) and not a confident assimilate, write to `incubator_entries` instead of forcing a reroute.
-- New scheduled edge function `incubator-sweep` (hourly, pg_cron)
-  - Pull pending incubator rows for each user
-  - HDBSCAN-lite clustering on embeddings (min cluster size 5)
-  - For each cluster: call Gemini 2.5 Flash with self-consistency n=5 to propose a wiki name; only keep names that survive ≥3 of 5 runs AND pass the 0.82 cosine name-collision gate against existing wiki names
-  - Insert `wiki_proposals` row; mark members `clustered`
-  - Expire rows past TTL
-- Suggestions tab gets a second card type: "New wiki proposal" with sample titles preview, Accept / Dismiss.
-- Accept → create wiki, move members, run `recompute-centroids` for the new wiki.
+No features get removed; everything becomes wiki-scoped with an explicit "All wikis" escape hatch where it makes sense.
 
-**Cold-start guard:** incubator stays dormant until ≥2 wikis with ≥10 entries each (same gate as Phase 1).
+## What changes
 
-## Phase 3 — Learning loop
+### 1. Wiki identity in the header (`WikiPanel.tsx`)
+- Replace static "Knowledge Wiki" title with the active wiki's `name`, with `description` as the subtitle and a small `cover_color` swatch.
+- Add an inline **wiki switcher** (shadcn `Select` or `Popover` + command list) next to the title — driven by `wikis` + `setActiveWiki` from `AppContext`. Lets the user change wikis without leaving the tab.
+- Show an "entries: N · bridged: M · last loaded: …" meta row.
+- Empty state: when the active wiki has 0 entries, render a clear "This wiki is empty — ingest a book or switch wikis" card instead of looking identical to a populated one.
 
-**Goal:** thresholds adapt to the user instead of staying at defaults.
+### 2. Scope all data fetches to the active wiki
+Extend `knowledgeApi.ts` to accept an optional `wikiId` and filter accordingly. All callers in `WikiPanel` pass `activeWikiId`.
 
-- `recompute-centroids` extension: after each run, look at the last 90 days of `routing_decisions` for that wiki and adjust per-wiki:
-  - `confident_threshold` ← p60 of similarity scores where user kept the suggested wiki
-  - `novelty_threshold` ← p20 of similarity scores where user accepted a new-wiki proposal
-  - Clamp to `[0.65, 0.92]` and `[0.40, 0.65]` respectively
-- Track acceptance/rejection rates per suggestion type; if reject rate >70% over last 20 suggestions, auto-pause Smart Filing and surface a banner explaining why.
-- Add a "Routing accuracy" mini-stat to the Suggestions tab header (e.g. "82% of recent suggestions accepted").
+- **`fetchMemoryGraph(wikiId?)`** — filter edges whose `source_entry_id` *and* `target_entry_id` are in `entries_for_wiki(wikiId)`. Implement as a new SQL function `memory_graph_for_wiki(target_wiki_id uuid)` (SECURITY INVOKER, `auth.uid()` scoped) returning the same shape as the table. Avoids large client-side joins.
+- **`fetchConflicts(wikiId?, status?)`** — same pattern via `conflicts_for_wiki(target_wiki_id)` joining on `entry_a`/`entry_b`.
+- **`fetchEpisodicLog(limit, wikiId?)`** — add nullable `wiki_id` column to `episodic_log` (already user-scoped). New rows record their wiki; old rows return when `wikiId` is null OR matches. UI shows a small "global" badge for legacy null rows.
+- **`fetchConsolidationQueue(includingProcessed, wikiId?)`** — filter via join on `entry_id → knowledge_entries.wiki_id` (or `entries_for_wiki` for bridges).
+- **`runLint(wikiId?)`**, **`reindexEmbeddings(all_missing, wikiId?)`**, **`triggerSleepCycle(wikiId?)`** — forward `wiki_id` to their edge functions; functions filter their working set by `wiki_id` when provided, otherwise keep current global behaviour. Default invocation from `WikiPanel` always passes the active wiki.
+- **`ingestBook`** — already accepts `wikiId`; verify the panel always passes `activeWikiId` (currently does).
 
-## Phase 4 — Drift detection
+### 3. Optional "All wikis" scope toggle
+Small segmented control in the header: `This wiki` (default) ↔ `All wikis`. Passing `null` to the new APIs preserves today's global behaviour for power users who want the cross-wiki view. Persist preference per-session in `useState` (not in DB).
 
-**Goal:** notice when a wiki's contents have wandered from its name/description and offer a split or rename.
+### 4. Wiki-scoped counters / badges
+- Conflicts button badge counts only open conflicts in the active wiki (under current scope).
+- Episodes / Queue counts respect scope.
+- Sleep Cycle report continues to render verbatim from the edge function response.
 
-- Nightly job `wiki-drift-check`
-  - For each wiki: compute cluster cohesion (avg pairwise cosine within wiki) and bimodality (silhouette on k=2 split)
-  - If silhouette > 0.35 AND wiki has ≥30 entries → propose a split with two candidate names (same self-consistency naming as Phase 2)
-  - If centroid has drifted >0.25 cosine from the embedding of the wiki's name+description → propose a rename
-- Surface in Suggestions tab as a third card type: "Wiki health" with Split / Rename / Dismiss actions.
+### 5. Loading & error UX
+- Show a skeleton while `activeWikiId` is `null` (initial bootstrap) rather than running fetches with `null` and rendering an empty graph.
+- If `setActiveWiki` fails, surface the toast and don't switch tabs (already mostly handled in `WikiLibrary.handleLoad`).
+
+## Technical details
+
+**New SQL functions** (one migration, all `SECURITY INVOKER`, `set search_path = public`):
+
+```sql
+create or replace function public.memory_graph_for_wiki(target_wiki_id uuid)
+returns setof public.memory_graph
+language sql stable
+as $$
+  with scope as (select id from public.entries_for_wiki(target_wiki_id))
+  select g.* from public.memory_graph g
+  where g.user_id = auth.uid()
+    and g.source_entry_id in (select id from scope)
+    and g.target_entry_id in (select id from scope);
+$$;
+
+create or replace function public.conflicts_for_wiki(target_wiki_id uuid)
+returns setof public.knowledge_conflicts
+language sql stable
+as $$
+  with scope as (select id from public.entries_for_wiki(target_wiki_id))
+  select c.* from public.knowledge_conflicts c
+  where c.user_id = auth.uid()
+    and (c.entry_a in (select id from scope) or c.entry_b in (select id from scope));
+$$;
+```
+
+**Schema additions:**
+- `alter table episodic_log add column wiki_id uuid` (nullable; index on `(user_id, wiki_id, created_at desc)`).
+- Update the writer (the `sleep-cycle` / consolidation paths that insert into `episodic_log`) to stamp `wiki_id` from the triggering context. Old rows stay null and surface in both scopes.
+
+**Edge functions to update** (add optional `wiki_id` body param, default global):
+- `lint-knowledge` (or whichever powers `runLint`) — filter `knowledge_entries` query by `wiki_id`.
+- `reindex-embeddings` — same filter.
+- `sleep-cycle` — pass `wiki_id` through to its consolidation/prune queries; stamp `episodic_log.wiki_id` on insert.
+
+**Frontend:**
+- `WikiPanel`: header rewrite (title = active wiki name, switcher, scope toggle), all `loadData` calls pass `activeWikiId`, count badges respect scope.
+- `knowledgeApi.ts`: extend signatures; default arguments preserve current behaviour for any other callers (chat tools etc.). Audit `src/lib/chatTools.ts` and `src/lib/buildChatSystemPrompt.ts` — leave their calls untouched (they should remain global or already pass a wiki).
+
+**Why not just rename the title?** Because the *data* shown (graph, conflicts, episodes, queue) doesn't change between wikis today — the panel would still misrepresent reality. Scoping the fetches is the actual fix; the header update makes the scoping legible.
+
+## Out of scope
+- No removal of global views — preserved via the scope toggle.
+- No changes to `WikiLibrary`, Smart Filing pipeline, or chat ingest.
+- No change to RLS policies (the new SQL functions rely on existing per-row policies via `auth.uid()`).
 
 ## Build order
-
-1. Phase 2 tables + `smart-file` incubator branch
-2. `incubator-sweep` edge function + pg_cron schedule
-3. Suggestions tab — new-wiki proposal card + accept flow
-4. Phase 3 learning loop in `recompute-centroids`
-5. Phase 3 auto-pause + accuracy stat
-6. Phase 4 drift check + UI card
-
-Each phase ships independently and is gated by the same cold-start rule. Suggestion cap stays at 10 total across all card types.
-
-## Technical notes
-
-- All new tables: RLS by `user_id`, halfvec(1536) for embeddings, indexes on `(user_id, status)`.
-- Self-consistency naming uses `google/gemini-2.5-flash` (cheap, fast); falls back to `gemini-2.5-flash-lite` if rate-limited.
-- pg_cron schedules go through the insert tool (not migrations) so they don't run on remixes.
-- No new secrets needed — Lovable AI Gateway covers all LLM calls.
+1. Migration: new SQL functions + `episodic_log.wiki_id` column + index.
+2. Edge function updates (`lint`, `reindex`, `sleep-cycle`) to accept & honour `wiki_id`.
+3. `knowledgeApi.ts` signature extensions.
+4. `WikiPanel` header rewrite + scoped fetches + scope toggle.
+5. Manual QA: load each wiki, confirm entries / graph / conflicts / episodes / queue all change; toggle "All wikis" and confirm prior global behaviour returns.
