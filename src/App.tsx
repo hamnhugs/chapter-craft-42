@@ -9,6 +9,7 @@ import { ThemeProvider } from "@/context/ThemeContext";
 import { useAuth } from "@/hooks/useAuth";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
+import MemoryGuide from "./pages/MemoryGuide";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -38,6 +39,14 @@ const App = () => (
             <ChatProvider>
               <Routes>
                 <Route path="/auth" element={<AuthRoute />} />
+                <Route
+                  path="/memory-guide"
+                  element={
+                    <ProtectedRoute>
+                      <MemoryGuide />
+                    </ProtectedRoute>
+                  }
+                />
                 <Route
                   path="/"
                   element={
