@@ -55,6 +55,8 @@ const WikiLibrary: React.FC = () => {
   const [selected, setSelected] = useState<WikiWithStats | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [activeView, setActiveView] = useState<"wikis" | "suggestions">("wikis");
+  const [pendingCount, setPendingCount] = useState(0);
 
   // Cross-wiki semantic search state
   const [searchQuery, setSearchQuery] = useState("");
@@ -73,6 +75,20 @@ const WikiLibrary: React.FC = () => {
   const [formTags, setFormTags] = useState("");
   const [formIsMeta, setFormIsMeta] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  // Load pending suggestion count for badge.
+  const loadPendingCount = useCallback(async () => {
+    try {
+      const { count } = await supabase
+        .from("reroute_suggestions")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "pending");
+      setPendingCount(count ?? 0);
+    } catch {
+      setPendingCount(0);
+    }
+  }, []);
+  useEffect(() => { loadPendingCount(); }, [loadPendingCount, activeView]);
 
   const load = useCallback(async () => {
     setLoading(true);
