@@ -32,24 +32,33 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
   const [acting, setActing] = useState<string | null>(null);
   const [recomputing, setRecomputing] = useState(false);
   const [sweeping, setSweeping] = useState(false);
+  const [accuracy, setAccuracy] = useState<{ accepted: number; total: number } | null>(null);
+  const [wasAutoPaused, setWasAutoPaused] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [r, p, en] = await Promise.all([
+      const prevEnabled = enabled;
+      const [r, p, en, acc] = await Promise.all([
         fetchPendingReroutes(),
         fetchPendingProposals(),
         getSmartFilingEnabled(),
+        fetchRoutingAccuracy(),
       ]);
       setReroutes(r);
       setProposals(p);
       setEnabled(en);
+      setAccuracy(acc);
+      if (prevEnabled && !en && acc && acc.total >= 10 && acc.accepted / acc.total < 0.3) {
+        setWasAutoPaused(true);
+      }
     } catch (err: any) {
       toast.error(err.message || "Failed to load suggestions");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [enabled]);
+
 
   useEffect(() => { load(); }, [load]);
 
