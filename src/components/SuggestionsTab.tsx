@@ -315,7 +315,58 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
         </div>
       ) : (
         <div className="space-y-6">
+          {/* Wiki health alerts */}
+          {healthAlerts.length > 0 && (
+            <div className="space-y-3">
+              <div className="text-xs font-bold uppercase tracking-widest text-on-surface-variant px-1">
+                Wiki Health · {healthAlerts.length}
+              </div>
+              {healthAlerts.map((a) => (
+                <div key={a.id} className="bg-surface-container-low rounded-2xl p-5 border border-outline-variant/10 space-y-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {a.kind === "split" ? <Split className="w-4 h-4 text-on-primary-container" /> : <Edit3 className="w-4 h-4 text-on-primary-container" />}
+                    <div className="font-headline font-bold text-foreground">
+                      {a.kind === "split" ? `Split "${a.wiki_name}"` : `Rename "${a.wiki_name}"`}
+                    </div>
+                  </div>
+                  <p className="text-sm text-on-surface-variant">{a.rationale}</p>
+                  {a.kind === "rename" && a.suggestion?.proposed_name && (
+                    <div className="text-sm text-foreground">
+                      Suggested name: <span className="font-bold">{a.suggestion.proposed_name}</span>
+                    </div>
+                  )}
+                  {a.kind === "split" && (a.suggestion?.name_a || a.suggestion?.name_b) && (
+                    <div className="text-sm text-foreground">
+                      Suggested halves: <span className="font-bold">{a.suggestion.name_a}</span> &nbsp;/&nbsp; <span className="font-bold">{a.suggestion.name_b}</span>
+                    </div>
+                  )}
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    {a.kind === "rename" && (
+                      <button
+                        onClick={() => handleAcceptRename(a)}
+                        disabled={acting === a.id}
+                        className="flex-1 flex items-center justify-center gap-2 bg-primary-container text-on-primary-container px-4 py-2.5 rounded-xl font-bold text-sm active:scale-95 transition-transform disabled:opacity-50"
+                      >
+                        {acting === a.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                        Apply rename
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleDismissHealth(a)}
+                      disabled={acting === a.id}
+                      className={`${a.kind === "rename" ? "" : "flex-1"} px-3 py-2.5 rounded-xl text-on-surface-variant hover:bg-surface-container disabled:opacity-50 font-bold text-sm flex items-center justify-center gap-2`}
+                      title="Dismiss"
+                    >
+                      <X className="w-4 h-4" /> Dismiss
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* New wiki proposals */}
+
           {proposals.length > 0 && (
             <div className="space-y-3">
               <div className="text-xs font-bold uppercase tracking-widest text-on-surface-variant px-1">
