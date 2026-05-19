@@ -175,3 +175,17 @@ export async function runIncubatorSweep(): Promise<any> {
   return data;
 }
 
+
+// ── Phase 3: routing accuracy stat ──────────────────────────────────────
+
+export async function fetchRoutingAccuracy(): Promise<{ accepted: number; total: number } | null> {
+  const { data } = await supabase
+    .from("reroute_suggestions")
+    .select("status")
+    .in("status", ["accepted", "dismissed"])
+    .order("updated_at", { ascending: false })
+    .limit(20);
+  if (!data || data.length === 0) return null;
+  const accepted = data.filter((d: any) => d.status === "accepted").length;
+  return { accepted, total: data.length };
+}
