@@ -318,10 +318,6 @@ const VoiceChat: React.FC = () => {
     setIsSpeaking(false);
     isSpeakingRef.current = false;
     turnActiveRef.current = false;
-    if (handsFreeRef.current && !stoppedByUserRef.current) {
-      window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const maybeFinishTurn = useCallback(() => {
