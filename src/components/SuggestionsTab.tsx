@@ -251,6 +251,15 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
             Check incubator
           </button>
           <button
+            onClick={handleDrift}
+            disabled={drifting}
+            className="text-xs font-bold text-on-surface-variant hover:text-foreground flex items-center gap-1.5 px-3 py-2 rounded-lg hover:bg-surface-container disabled:opacity-50"
+            title="Check wikis for drift (split / rename suggestions)"
+          >
+            {drifting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Activity className="w-3.5 h-3.5" />}
+            Check drift
+
+          <button
             onClick={handleRecompute}
             disabled={recomputing}
             className="text-xs font-bold text-on-surface-variant hover:text-foreground flex items-center gap-1.5 px-3 py-2 rounded-lg hover:bg-surface-container disabled:opacity-50"
