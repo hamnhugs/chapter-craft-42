@@ -16,7 +16,8 @@ import {
   fetchEpisodicLog, getMemoryMode, setMemoryMode, triggerSleepCycle,
   fetchConsolidationQueue, ConsolidationQueueItem,
 } from "@/lib/knowledgeApi";
-import { Loader2 } from "lucide-react";
+import { Loader2, HelpCircle, ArrowRight } from "lucide-react";
+import { Link } from "react-router-dom";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useChatSettings } from "@/hooks/useChatSettings";
@@ -328,6 +329,14 @@ const WikiPanel: React.FC = () => {
                 ? `"The sum of all acquired insights, meticulously categorized."`
                 : (activeWiki?.description?.trim() || `"The sum of all acquired insights, meticulously categorized."`)}
             </p>
+            <Link
+              to="/wiki-controls-guide"
+              className="group inline-flex items-center gap-1.5 mt-3 px-3 py-1.5 rounded-full bg-accent/10 border border-accent/30 text-sm font-body font-semibold text-accent hover:bg-accent/20 hover:scale-105 transition-all motion-safe:animate-pulse-glow"
+            >
+              <HelpCircle className="w-4 h-4 motion-safe:animate-icon-wiggle" />
+              What do these controls do?
+              <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
+            </Link>
           </div>
           <div className="flex gap-3 flex-wrap">
             {view !== "entries" && (
