@@ -24,7 +24,7 @@ import { useChatSettings } from "@/hooks/useChatSettings";
 type WikiView = "entries" | "detail" | "lint" | "conflicts" | "episodic" | "queue";
 
 const WikiPanel: React.FC = () => {
-  const { books, activeBookId, activeWikiId } = useApp();
+  const { books, activeBookId, activeWikiId, wikis, setActiveWiki } = useApp();
   const [entries, setEntries] = useState<KnowledgeEntry[]>([]);
   const [graph, setGraph] = useState<MemoryGraphEdge[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,15 +48,22 @@ const WikiPanel: React.FC = () => {
   const [sleepCycleReport, setSleepCycleReport] = useState<SleepCycleReport | null>(null);
   const [episodicLog, setEpisodicLog] = useState<EpisodicLogEntry[]>([]);
   const [queueItems, setQueueItems] = useState<ConsolidationQueueItem[]>([]);
+  // Scope toggle: when "wiki", every panel / action is bound to the active wiki.
+  // When "all", we keep the legacy global view (cross-wiki graph, conflicts, etc.).
+  const [scope, setScope] = useState<"wiki" | "all">("wiki");
   const { savedModels, wikiModel, setWikiModel, apiKey: openrouterKey } = useChatSettings();
+
+  const activeWiki = wikis.find((w) => w.id === activeWikiId) || null;
+  // The id we pass to scoped APIs. Null means "all wikis" / global.
+  const scopeWikiId: string | null = scope === "wiki" ? activeWikiId : null;
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const [e, g, c, mode] = await Promise.all([
-        fetchKnowledgeEntries(activeWikiId),
-        fetchMemoryGraph(),
-        fetchConflicts().catch(() => []),
+        fetchKnowledgeEntries(scopeWikiId),
+        fetchMemoryGraph(scopeWikiId),
+        fetchConflicts(undefined, scopeWikiId).catch(() => []),
         getMemoryMode().catch(() => "recording" as MemoryMode),
       ]);
       setEntries(e);
@@ -68,7 +75,7 @@ const WikiPanel: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [activeWikiId]);
+  }, [scopeWikiId]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
