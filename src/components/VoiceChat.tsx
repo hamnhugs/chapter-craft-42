@@ -19,7 +19,6 @@ import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/i
 
 const LEGACY_OPENROUTER_STORAGE_KEY = "openrouter_api_key";
 const VOICE_ENABLED_KEY = "voice_tts_enabled";
-const HANDS_FREE_KEY = "voice_hands_free";
 const NOTES_PANEL_OPEN_KEY = "voice_notes_panel_open";
 const VOICE_QUICK_SEARCH_KEY = "voice_quick_search";
 const VOICE_QUICK_SEARCH_MODEL_KEY = "voice_quick_search_model";
@@ -30,11 +29,7 @@ const INWORLD_ENABLED_KEY = "inworld_tts_enabled";
 const SEARCH_INTENT_RE =
   /\b(search|look up|look for|find|google|what is|what are|who is|who are|tell me about|research|check online|latest|current|news about)\b/i;
 
-// Tunable latency knobs for hands-free voice flow
-const SILENCE_INTERIM_MS = 3000; // wait after last interim chunk before sending (gives ~3s mid-sentence pause)
-const SILENCE_FINAL_MS = 3000;   // wait after a final result before sending
-const POST_TTS_DELAY_MS = 600;   // mic restart grace after TTS ends (covers speaker tail)
-const MIN_SENTENCE_LEN = 14;     // don't ship tiny fragments to TTS
+const MIN_SENTENCE_LEN = 14; // don't ship tiny fragments to TTS
 
 const stripMarkdownForTts = (s: string) =>
   s.replace(/[#*_`~[\]()>|]/g, "").replace(/\n+/g, ". ").replace(/\s+/g, " ").trim();
@@ -50,7 +45,6 @@ const VoiceChat: React.FC = () => {
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [ttsEnabled, setTtsEnabled] = useState(() => localStorage.getItem(VOICE_ENABLED_KEY) !== "false");
-  const [handsFree, setHandsFree] = useState(() => localStorage.getItem(HANDS_FREE_KEY) === "true");
   const [notesPanelOpen, setNotesPanelOpen] = useState(() => localStorage.getItem(NOTES_PANEL_OPEN_KEY) === "true");
   const [voiceQuickSearch, setVoiceQuickSearch] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_KEY) === "true");
   const [voiceQuickSearchModel, setVoiceQuickSearchModel] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_MODEL_KEY) || "");
@@ -115,13 +109,11 @@ const VoiceChat: React.FC = () => {
   };
 
   const {
-    apiKey, savedModels, selectedModel, deepResearchModel, voiceModel, ttsRate, handsFreeTtsRate, customSystemPrompt, burplexityApiToken, inworldApiKey, inworldEnabled, inworldVoiceId, loaded: settingsLoaded,
-    saveApiKey: persistApiKey, setSelectedModel, setDeepResearchModel, setVoiceModel, setHandsFreeTtsRate, setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey, setInworldEnabled, setInworldVoiceId: setInworldVoiceIdState,
+    apiKey, savedModels, selectedModel, deepResearchModel, voiceModel, ttsRate, customSystemPrompt, burplexityApiToken, inworldApiKey, inworldEnabled, inworldVoiceId, loaded: settingsLoaded,
+    saveApiKey: persistApiKey, setSelectedModel, setDeepResearchModel, setVoiceModel, setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey, setInworldEnabled, setInworldVoiceId: setInworldVoiceIdState,
     addModel: addModelToSettings, removeModel: removeModelFromSettings,
   } = useChatSettings() as any;
-  // In hands-free mode use a separate (faster) playback rate so the chat-tab
-  // slider doesn't slow replies and cause a mic feedback loop.
-  const effectiveTtsRate = handsFree ? (handsFreeTtsRate || 1.0) : (ttsRate || 1.05);
+  const effectiveTtsRate = ttsRate || 1.05;
   const [newModelInput, setNewModelInput] = useState("");
   const [promptDraft, setPromptDraft] = useState("");
   useEffect(() => { setPromptDraft(customSystemPrompt || ""); }, [customSystemPrompt, showSettings]);
@@ -138,7 +130,6 @@ const VoiceChat: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
-  const handsFreeRef = useRef(handsFree);
   const isLoadingRef = useRef(false);
   const isSpeakingRef = useRef(false);
   const isListeningRef = useRef(false);
@@ -190,7 +181,6 @@ const VoiceChat: React.FC = () => {
     setIsListening(false);
   };
 
-  useEffect(() => { handsFreeRef.current = handsFree; localStorage.setItem(HANDS_FREE_KEY, String(handsFree)); }, [handsFree]);
   useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
   useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
   useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
@@ -262,16 +252,6 @@ const VoiceChat: React.FC = () => {
     };
   }, []);
 
-  // Pause hands-free when tab is hidden
-  useEffect(() => {
-    const onVis = () => {
-      if (document.hidden && handsFreeRef.current) {
-        stopHandsFree("Paused (tab hidden)");
-      }
-    };
-    document.addEventListener("visibilitychange", onVis);
-    return () => document.removeEventListener("visibilitychange", onVis);
-  }, []);
 
   const saveApiKey = (key: string) => { persistApiKey(key); setShowSettings(false); };
 
@@ -338,10 +318,6 @@ const VoiceChat: React.FC = () => {
     setIsSpeaking(false);
     isSpeakingRef.current = false;
     turnActiveRef.current = false;
-    if (handsFreeRef.current && !stoppedByUserRef.current) {
-      window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const maybeFinishTurn = useCallback(() => {
@@ -521,12 +497,7 @@ const VoiceChat: React.FC = () => {
 
   // Single-shot speak (used outside of streaming, e.g. replay or short replies)
   const speak = useCallback((text: string) => {
-    if (!ttsEnabled) {
-      if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
-      }
-      return;
-    }
+    if (!ttsEnabled) return;
     enqueueSpeak(text);
     markTtsStreamDone();
   }, [ttsEnabled, enqueueSpeak, markTtsStreamDone]);
@@ -607,10 +578,10 @@ const VoiceChat: React.FC = () => {
 
       // Sentence-streaming TTS: speak each completed sentence as soon as the
       // model produces it, instead of waiting for the entire reply. The first
-      // audible word lands seconds earlier in hands-free mode.
+      // audible word lands seconds earlier.
       let spokenCursor = 0;
       const sentenceRe = /[^.!?\n]+[.!?\n]+\s*/g;
-      const onDelta = handsFreeRef.current && ttsEnabled
+      const onDelta = ttsEnabled
         ? (full: string) => {
             const tail = full.slice(spokenCursor);
             sentenceRe.lastIndex = 0;
@@ -636,7 +607,6 @@ const VoiceChat: React.FC = () => {
 
       if (reply) {
         if (onDelta) {
-          // Flush any remainder past the last sentence boundary.
           const remainder = reply.slice(spokenCursor).trim();
           if (remainder) enqueueSpeak(remainder);
           markTtsStreamDone();
@@ -644,13 +614,9 @@ const VoiceChat: React.FC = () => {
           speak(reply);
         }
       } else {
-        // No reply produced — end the turn cleanly.
         streamDoneRef.current = true;
         isSpeakingRef.current = false;
         turnActiveRef.current = false;
-        if (handsFreeRef.current && !stoppedByUserRef.current) {
-          window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS);
-        }
       }
     } catch {
       streamDoneRef.current = true;
@@ -658,9 +624,6 @@ const VoiceChat: React.FC = () => {
       ttsPlayingRef.current = false;
       isSpeakingRef.current = false;
       turnActiveRef.current = false;
-      if (handsFreeRef.current && !stoppedByUserRef.current) {
-        window.setTimeout(() => safeStartListening(), POST_TTS_DELAY_MS + 200);
-      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiKey, messages.length, sendMessage, speak, voiceQuickSearch, burplexityApiToken, runBackgroundSearch, voiceModel, ttsEnabled, enqueueSpeak, markTtsStreamDone]);
@@ -685,7 +648,7 @@ const VoiceChat: React.FC = () => {
 
   const buildRecognition = useCallback(() => {
     const recognition = new SpeechRecognition();
-    recognition.continuous = handsFreeRef.current;
+    recognition.continuous = false;
     recognition.interimResults = true;
     recognition.lang = "en-US";
 
@@ -720,24 +683,12 @@ const VoiceChat: React.FC = () => {
       const stable = mergeTranscriptPieces(finalPieces);
       const interim = mergeTranscriptPieces(interimPieces);
       const sawNewFinal = Boolean(stable) && stable !== finalTranscriptRef.current;
-      const hasInterim = Boolean(interim);
 
       finalTranscriptRef.current = stable;
       previousFinalLengthRef.current = stable.length;
       setInterimTranscript(mergeTranscriptPieces([stable, interim]));
 
-      // Hands-free: only send after a real pause. Reset the silence timer on
-      // ANY activity (new final OR ongoing interim) so we wait for the user
-      // to actually stop talking before submitting.
-      if (handsFreeRef.current) {
-        if (sawNewFinal || hasInterim) {
-          if (sendTimerRef.current) window.clearTimeout(sendTimerRef.current);
-          if (stable) {
-            const delay = hasInterim ? SILENCE_INTERIM_MS : SILENCE_FINAL_MS;
-            sendTimerRef.current = window.setTimeout(() => flushPendingTranscript(), delay);
-          }
-        }
-      } else if (sawNewFinal) {
+      if (sawNewFinal) {
         if (sendTimerRef.current) window.clearTimeout(sendTimerRef.current);
         sendTimerRef.current = window.setTimeout(() => flushPendingTranscript(), 700);
       }
@@ -748,7 +699,6 @@ const VoiceChat: React.FC = () => {
       if (!benign) {
         toast.error(`Mic error: ${event.error}`);
         stoppedByUserRef.current = true;
-        setHandsFree(false);
       }
       setIsListening(false);
     };
@@ -756,26 +706,11 @@ const VoiceChat: React.FC = () => {
     recognition.onend = () => {
       setIsListening(false);
       isListeningRef.current = false;
-      const turnBusy =
-        isLoadingRef.current ||
-        isSpeakingRef.current ||
-        turnActiveRef.current ||
-        ttsPlayingRef.current ||
-        ttsQueueRef.current.length > 0 || ttsAudioQueueRef.current.length > 0 || ttsPendingSynthRef.current > 0 ||
-        !streamDoneRef.current;
-      if (handsFreeRef.current && !stoppedByUserRef.current && !turnBusy) {
-        const stable = normalizeTranscript(finalTranscriptRef.current);
-        if (stable && !submittingRef.current) flushPendingTranscript();
-        else {
-          window.setTimeout(() => safeStartListening(), 250);
-        }
+      const stable = normalizeTranscript(finalTranscriptRef.current);
+      if (stable && !stoppedByUserRef.current && !submittingRef.current) {
+        flushPendingTranscript();
       } else {
-        const stable = normalizeTranscript(finalTranscriptRef.current);
-        if (!handsFreeRef.current && stable && !stoppedByUserRef.current && !submittingRef.current) {
-          flushPendingTranscript();
-        } else {
-          setInterimTranscript("");
-        }
+        setInterimTranscript("");
       }
     };
 
@@ -821,29 +756,6 @@ const VoiceChat: React.FC = () => {
     setInterimTranscript("");
   };
 
-  const stopHandsFree = (msg?: string) => {
-    setHandsFree(false);
-    stopListening();
-    stopSpeaking();
-    if (msg) toast(msg);
-  };
-
-  const toggleHandsFree = () => {
-    if (handsFree) {
-      stopHandsFree();
-    } else {
-      if (!SpeechRecognition) { toast.error("Speech recognition not supported. Try Chrome."); return; }
-      if (!apiKey) { toast.error("Set your API key first"); setShowSettings(true); return; }
-      setHandsFree(true);
-      stoppedByUserRef.current = false;
-      window.setTimeout(() => {
-        try { recognitionRef.current?.stop(); } catch {}
-        window.setTimeout(() => startListening(), 100);
-      }, 0);
-      toast.success("Hands-free on — just talk");
-    }
-  };
-
   const handleSaveToWiki = async () => {
     if (messages.length < 2) { toast.error("Chat first"); return; }
     setExtracting(true);
@@ -856,6 +768,26 @@ const VoiceChat: React.FC = () => {
 
   const handleClear = () => { stopSpeaking(); clearChat(); };
 
+  // Quick sanity-check: synth one short phrase via Inworld and play it.
+  const [testingVoice, setTestingVoice] = useState(false);
+  const testInworldVoice = async () => {
+    if (!inworldApiKey) { toast.error("Save an Inworld API key first"); return; }
+    if (!inworldVoiceId) { toast.error("Pick a voice first"); return; }
+    setTestingVoice(true);
+    try {
+      const buf = await synthesizeSpeech("Testing one, two, three.", inworldApiKey, inworldVoiceId);
+      const url = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
+      const audio = new Audio(url);
+      audio.onended = audio.onerror = () => { try { URL.revokeObjectURL(url); } catch {} };
+      await audio.play();
+      toast.success("Voice working");
+    } catch (err: any) {
+      toast.error(`Inworld TTS failed: ${err?.message || err}`);
+    } finally {
+      setTestingVoice(false);
+    }
+  };
+
   const statusLabel = isListening
     ? "Listening…"
     : isLoading
@@ -864,8 +796,6 @@ const VoiceChat: React.FC = () => {
     ? "Speaking…"
     : pendingSearchCount > 0
     ? `🔍 Searching… (${pendingSearchCount})`
-    : handsFree
-    ? "Hands-free paused"
     : "Tap to talk";
 
   return (
@@ -983,10 +913,21 @@ const VoiceChat: React.FC = () => {
                         Retry loading voices
                       </Button>
                     )}
+                    {inworldVoices.length > 0 && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={testInworldVoice}
+                        disabled={testingVoice || !inworldVoiceId}
+                        title="Play a short test phrase with the selected voice"
+                      >
+                        {testingVoice ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Test voice"}
+                      </Button>
+                    )}
                   </div>
                 )}
                 <p className="text-[10px] text-on-surface-variant px-1">
-                  When enabled, AI replies are spoken using an Inworld character voice instead of the browser&apos;s built-in TTS.
+                  When enabled, AI replies are spoken using an Inworld character voice instead of the browser&apos;s built-in TTS. Use <em>Test voice</em> to confirm the key and voice work — any error from Inworld will appear in a toast.
                 </p>
               </div>
 
@@ -1025,7 +966,7 @@ const VoiceChat: React.FC = () => {
                   <option value="">Same as Chat model</option>
                   {savedModels.map((m: string) => (<option key={m} value={m}>{m}</option>))}
                 </select>
-                <p className="text-[10px] text-on-surface-variant px-1">Used only in the Voice tab. Pick a fast model (e.g. <code>google/gemini-2.5-flash-lite</code>) for snappier hands-free replies.</p>
+                <p className="text-[10px] text-on-surface-variant px-1">Used only in the Voice tab. Pick a fast model (e.g. <code>google/gemini-2.5-flash-lite</code>) for snappier replies.</p>
               </div>
               <div className="flex flex-col gap-1.5 min-w-0">
                 <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
@@ -1052,19 +993,6 @@ const VoiceChat: React.FC = () => {
                 <select value={voiceQuickSearchModel || selectedModel} onChange={(e) => setVoiceQuickSearchModel(e.target.value)} className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40">
                   {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
                 </select>
-              </div>
-              <div className="flex flex-col gap-1.5 min-w-0 sm:col-span-2">
-                <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center justify-between">
-                  <span><span className="material-symbols-outlined text-xs align-middle mr-1">speed</span>Hands-free Playback Speed</span>
-                  <span className="text-primary normal-case tracking-normal">{(handsFreeTtsRate || 1.0).toFixed(2)}×</span>
-                </label>
-                <input
-                  type="range" min={0.9} max={1.4} step={0.05}
-                  value={handsFreeTtsRate || 1.0}
-                  onChange={(e) => setHandsFreeTtsRate(parseFloat(e.target.value))}
-                  className="w-full accent-primary"
-                />
-                <p className="text-[10px] text-on-surface-variant px-1">Used only in hands-free mode. Independent of the Chat-tab speed so slow playback won't trigger a mic feedback loop.</p>
               </div>
             </section>
             <PromptLibrary scopeHint="voice" />
@@ -1114,7 +1042,7 @@ const VoiceChat: React.FC = () => {
             </div>
             <p className="font-headline font-bold text-xl text-foreground">Voice Chat</p>
             <p className="text-sm text-center max-w-md">
-              {selectedBook ? `Ready to discuss "${selectedBook.title}". Tap the mic, type below, or turn on Hands-free to just talk.` : "Tap the mic, type below, or turn on Hands-free for a continuous conversation."}
+              {selectedBook ? `Ready to discuss "${selectedBook.title}". Tap the mic or type below.` : "Tap the mic or type below to start a conversation."}
             </p>
             {!SpeechRecognition && <p className="text-xs text-destructive">⚠️ Use Chrome or Edge for speech recognition.</p>}
             {!apiKey && (
@@ -1283,16 +1211,8 @@ const VoiceChat: React.FC = () => {
                 </button>
 
                 {/* Row 1 (mobile): primary toggles */}
-                <div className="order-2 sm:order-1 grid grid-cols-3 gap-2 w-full sm:w-auto sm:flex sm:gap-3">
-                  <button
-                    onClick={toggleHandsFree}
-                    aria-pressed={handsFree}
-                    className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-2 sm:px-4 py-2.5 rounded-2xl sm:rounded-full transition-all text-xs sm:text-sm font-medium ${handsFree ? "bg-primary-container text-on-primary-container shadow-md" : "bg-surface-container-high text-on-surface-variant hover:text-primary"}`}
-                    title="Hands-free conversation"
-                  >
-                    <span className="material-symbols-outlined text-lg sm:text-base">all_inclusive</span>
-                    <span className="leading-none">{handsFree ? "On" : "Hands-free"}</span>
-                  </button>
+                <div className="order-2 sm:order-1 grid grid-cols-2 gap-2 w-full sm:w-auto sm:flex sm:gap-3">
+
 
                   <button
                     onClick={() => setVoiceQuickSearch(!voiceQuickSearch)}
@@ -1360,7 +1280,6 @@ const VoiceChat: React.FC = () => {
               </div>
               <p className="text-xs text-on-surface-variant text-center mt-3">
                 {statusLabel}
-                {handsFree && !isListening && !isLoading && !isSpeaking && " — say something"}
               </p>
             </div>
           </div>

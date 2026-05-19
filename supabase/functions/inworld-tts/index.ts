@@ -10,10 +10,16 @@ const corsHeaders = {
 
 const INWORLD_BASE = "https://api.inworld.ai";
 
-function basicAuth(key: string): string {
-  const trimmed = key.trim();
-  if (/^[A-Za-z0-9+/]+=+$/.test(trimmed)) return `Basic ${trimmed}`;
-  return `Basic ${btoa(`${trimmed}:`)}`;
+function basicAuth(rawKey: string): string {
+  let key = rawKey.trim();
+  // Tolerate users pasting "Basic xxxx" or "Authorization: Basic xxxx".
+  key = key.replace(/^authorization:\s*/i, "");
+  if (/^basic\s+/i.test(key)) key = key.replace(/^basic\s+/i, "").trim();
+  // If the key contains a colon it's a raw "id:secret" pair → encode it.
+  if (key.includes(":")) return `Basic ${btoa(key)}`;
+  // Otherwise treat it as the pre-encoded Base64 credential the Inworld
+  // portal gives you (padded or unpadded — don't re-encode it).
+  return `Basic ${key}`;
 }
 
 function jsonError(message: string, status = 400) {
@@ -102,6 +108,8 @@ Deno.serve(async (req) => {
             audioEncoding: "MP3",
             sampleRateHertz: sampleRate,
           },
+          deliveryMode: "BALANCED",
+          applyTextNormalization: "ON",
         }),
       });
 
