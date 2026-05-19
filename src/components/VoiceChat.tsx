@@ -1269,7 +1269,6 @@ const VoiceChat: React.FC = () => {
               </div>
               <p className="text-xs text-on-surface-variant text-center mt-3">
                 {statusLabel}
-                {handsFree && !isListening && !isLoading && !isSpeaking && " — say something"}
               </p>
             </div>
           </div>
