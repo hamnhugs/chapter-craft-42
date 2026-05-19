@@ -45,7 +45,6 @@ const VoiceChat: React.FC = () => {
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [ttsEnabled, setTtsEnabled] = useState(() => localStorage.getItem(VOICE_ENABLED_KEY) !== "false");
-  const [handsFree, setHandsFree] = useState(() => localStorage.getItem(HANDS_FREE_KEY) === "true");
   const [notesPanelOpen, setNotesPanelOpen] = useState(() => localStorage.getItem(NOTES_PANEL_OPEN_KEY) === "true");
   const [voiceQuickSearch, setVoiceQuickSearch] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_KEY) === "true");
   const [voiceQuickSearchModel, setVoiceQuickSearchModel] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_MODEL_KEY) || "");
