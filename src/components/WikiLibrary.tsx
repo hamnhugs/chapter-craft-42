@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { Loader2, Plus, Check, Search, Sparkles, ArrowRight } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Loader2, Plus, Check, Search, Sparkles, ArrowRight, HelpCircle } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -310,6 +311,13 @@ const WikiLibrary: React.FC = () => {
             <p className="text-on-surface-variant max-w-xl text-lg italic font-headline">
               "Many minds, one library. Choose where to think."
             </p>
+            <Link
+              to="/memory-guide"
+              className="inline-flex items-center gap-1.5 text-sm font-body font-medium text-accent hover:underline mt-2"
+            >
+              <HelpCircle className="w-4 h-4" />
+              How the memory system works
+            </Link>
           </div>
 
           <div className="flex gap-3 items-center">
