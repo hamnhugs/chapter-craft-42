@@ -73,6 +73,18 @@ serve(async (req) => {
 
     const embedded = await embedAndStore(supabase, LOVABLE_API_KEY, entries as any, user.id);
 
+    // Fire-and-forget: hand off to smart-file for routing analysis.
+    const embeddedIds = (entries as any[]).map((e) => e.id);
+    if (embeddedIds.length > 0) {
+      try {
+        fetch(`${supabaseUrl}/functions/v1/smart-file`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: authHeader },
+          body: JSON.stringify({ entry_ids: embeddedIds }),
+        }).catch((err) => console.warn("smart-file fire-and-forget failed:", err));
+      } catch (err) { console.warn("smart-file dispatch error:", err); }
+    }
+
     return new Response(
       JSON.stringify({ embedded, attempted: entries.length }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },

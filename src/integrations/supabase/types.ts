@@ -529,6 +529,131 @@ export type Database = {
         }
         Relationships: []
       }
+      reroute_suggestions: {
+        Row: {
+          created_at: string
+          entry_id: string
+          from_wiki_id: string
+          id: string
+          reason: string
+          status: string
+          to_wiki_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          entry_id: string
+          from_wiki_id: string
+          id?: string
+          reason?: string
+          status?: string
+          to_wiki_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          entry_id?: string
+          from_wiki_id?: string
+          id?: string
+          reason?: string
+          status?: string
+          to_wiki_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reroute_suggestions_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reroute_suggestions_from_wiki_id_fkey"
+            columns: ["from_wiki_id"]
+            isOneToOne: false
+            referencedRelation: "wikis"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reroute_suggestions_to_wiki_id_fkey"
+            columns: ["to_wiki_id"]
+            isOneToOne: false
+            referencedRelation: "wikis"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      routing_decisions: {
+        Row: {
+          created_at: string
+          entry_id: string
+          final_wiki_id: string | null
+          id: string
+          novelty: number | null
+          proposed_action: string
+          proposed_wiki_id: string | null
+          s_2nd: number | null
+          s_active: number | null
+          s_max: number | null
+          user_corrected: boolean
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          entry_id: string
+          final_wiki_id?: string | null
+          id?: string
+          novelty?: number | null
+          proposed_action: string
+          proposed_wiki_id?: string | null
+          s_2nd?: number | null
+          s_active?: number | null
+          s_max?: number | null
+          user_corrected?: boolean
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          entry_id?: string
+          final_wiki_id?: string | null
+          id?: string
+          novelty?: number | null
+          proposed_action?: string
+          proposed_wiki_id?: string | null
+          s_2nd?: number | null
+          s_active?: number | null
+          s_max?: number | null
+          user_corrected?: boolean
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "routing_decisions_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "routing_decisions_final_wiki_id_fkey"
+            columns: ["final_wiki_id"]
+            isOneToOne: false
+            referencedRelation: "wikis"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "routing_decisions_proposed_wiki_id_fkey"
+            columns: ["proposed_wiki_id"]
+            isOneToOne: false
+            referencedRelation: "wikis"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       subject_progress: {
         Row: {
           id: string
@@ -573,6 +698,7 @@ export type Database = {
           openrouter_api_key: string | null
           saved_models: Json | null
           selected_model: string | null
+          smart_filing_enabled: boolean
           tts_rate: number
           updated_at: string
           user_id: string
@@ -595,6 +721,7 @@ export type Database = {
           openrouter_api_key?: string | null
           saved_models?: Json | null
           selected_model?: string | null
+          smart_filing_enabled?: boolean
           tts_rate?: number
           updated_at?: string
           user_id: string
@@ -617,6 +744,7 @@ export type Database = {
           openrouter_api_key?: string | null
           saved_models?: Json | null
           selected_model?: string | null
+          smart_filing_enabled?: boolean
           tts_rate?: number
           updated_at?: string
           user_id?: string
@@ -677,6 +805,44 @@ export type Database = {
           word_count?: number | null
         }
         Relationships: []
+      }
+      wiki_centroids: {
+        Row: {
+          centroid: unknown
+          confident_threshold: number
+          entry_count: number
+          last_recomputed_at: string
+          novelty_threshold: number
+          user_id: string
+          wiki_id: string
+        }
+        Insert: {
+          centroid: unknown
+          confident_threshold?: number
+          entry_count?: number
+          last_recomputed_at?: string
+          novelty_threshold?: number
+          user_id: string
+          wiki_id: string
+        }
+        Update: {
+          centroid?: unknown
+          confident_threshold?: number
+          entry_count?: number
+          last_recomputed_at?: string
+          novelty_threshold?: number
+          user_id?: string
+          wiki_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wiki_centroids_wiki_id_fkey"
+            columns: ["wiki_id"]
+            isOneToOne: true
+            referencedRelation: "wikis"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       wiki_log: {
         Row: {
@@ -903,6 +1069,15 @@ export type Database = {
           source_book_id: string
           tags: string[]
           title: string
+          wiki_id: string
+        }[]
+      }
+      score_entry_against_wikis: {
+        Args: { query_embedding: unknown }
+        Returns: {
+          confident_threshold: number
+          novelty_threshold: number
+          similarity: number
           wiki_id: string
         }[]
       }

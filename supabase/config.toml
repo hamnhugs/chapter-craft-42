@@ -14,3 +14,10 @@ verify_jwt = false
 
 [functions.knowledge-consolidate]
 verify_jwt = false
+
+[functions.smart-file]
+verify_jwt = false
+
+[functions.recompute-centroids]
+verify_jwt = false
+
