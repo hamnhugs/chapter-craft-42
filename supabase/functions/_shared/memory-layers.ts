@@ -117,6 +117,7 @@ export async function logEpisode(
   summary: string,
   keyFacts: string[],
   entryCount: number,
+  wikiId: string | null = null,
 ): Promise<void> {
   await supabase.from("episodic_log").insert({
     user_id:     userId,
@@ -124,6 +125,7 @@ export async function logEpisode(
     summary:     summary.slice(0, 2000),
     key_facts:   keyFacts.slice(0, 30),
     entry_count: entryCount,
+    wiki_id:     wikiId,
   });
 }
 
