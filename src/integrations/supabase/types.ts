@@ -247,6 +247,7 @@ export type Database = {
           session_id: string
           summary: string | null
           user_id: string
+          wiki_id: string | null
         }
         Insert: {
           created_at?: string
@@ -256,6 +257,7 @@ export type Database = {
           session_id: string
           summary?: string | null
           user_id: string
+          wiki_id?: string | null
         }
         Update: {
           created_at?: string
@@ -265,6 +267,7 @@ export type Database = {
           session_id?: string
           summary?: string | null
           user_id?: string
+          wiki_id?: string | null
         }
         Relationships: []
       }
@@ -1070,6 +1073,45 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      conflicts_for_wiki: {
+        Args: { target_wiki_id: string }
+        Returns: {
+          created_at: string
+          entry_a: string
+          entry_b: string
+          id: string
+          kind: string
+          rationale: string
+          status: string
+          updated_at: string
+          user_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "knowledge_conflicts"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      consolidation_queue_for_wiki: {
+        Args: { target_wiki_id: string }
+        Returns: {
+          created_at: string
+          entry_id: string | null
+          id: string
+          pending_data: Json | null
+          priority: number
+          processed_at: string | null
+          reason: string
+          user_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "consolidation_queue"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       entries_for_wiki: {
         Args: { target_wiki_id: string }
         Returns: {
@@ -1179,6 +1221,26 @@ export type Database = {
           title: string
           wiki_id: string
         }[]
+      }
+      memory_graph_for_wiki: {
+        Args: { target_wiki_id: string }
+        Returns: {
+          created_at: string
+          created_by: string
+          edge_class: string | null
+          id: string
+          relationship: string
+          source_entry_id: string
+          target_entry_id: string
+          user_id: string
+          weight: number
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "memory_graph"
+          isOneToOne: false
+          isSetofReturn: true
+        }
       }
       score_entry_against_wikis: {
         Args: { query_embedding: unknown }
