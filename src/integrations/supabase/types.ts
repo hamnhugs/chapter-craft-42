@@ -880,6 +880,42 @@ export type Database = {
           },
         ]
       }
+      wiki_health_alerts: {
+        Row: {
+          created_at: string
+          id: string
+          kind: string
+          rationale: string
+          status: string
+          suggestion: Json
+          updated_at: string
+          user_id: string
+          wiki_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          kind: string
+          rationale?: string
+          status?: string
+          suggestion?: Json
+          updated_at?: string
+          user_id: string
+          wiki_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          kind?: string
+          rationale?: string
+          status?: string
+          suggestion?: Json
+          updated_at?: string
+          user_id?: string
+          wiki_id?: string
+        }
+        Relationships: []
+      }
       wiki_log: {
         Row: {
           created_at: string
