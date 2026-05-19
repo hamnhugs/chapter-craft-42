@@ -174,7 +174,50 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
     }
   };
 
-  const totalCount = reroutes.length + proposals.length;
+  const handleDrift = async () => {
+    setDrifting(true);
+    try {
+      const res = await runDriftCheck();
+      if (res.alerts > 0) toast.success(`Found ${res.alerts} health ${res.alerts === 1 ? "alert" : "alerts"}`);
+      else toast.info("All wikis look healthy");
+      await load();
+    } catch (err: any) {
+      toast.error(err.message || "Drift check failed");
+    } finally {
+      setDrifting(false);
+    }
+  };
+
+  const handleAcceptRename = async (a: WikiHealthAlert) => {
+    setActing(a.id);
+    try {
+      await acceptRename(a);
+      toast.success(`Renamed to "${a.suggestion?.proposed_name}"`);
+      setHealthAlerts((prev) => prev.filter((x) => x.id !== a.id));
+      window.dispatchEvent(new Event("wikis-changed"));
+      onChanged?.();
+    } catch (err: any) {
+      toast.error(err.message || "Rename failed");
+    } finally {
+      setActing(null);
+    }
+  };
+
+  const handleDismissHealth = async (a: WikiHealthAlert) => {
+    setActing(a.id);
+    try {
+      await dismissHealthAlert(a.id);
+      setHealthAlerts((prev) => prev.filter((x) => x.id !== a.id));
+    } catch (err: any) {
+      toast.error(err.message || "Dismiss failed");
+    } finally {
+      setActing(null);
+    }
+  };
+
+  const totalCount = reroutes.length + proposals.length + healthAlerts.length;
+
+
 
   return (
     <div className="space-y-6">
