@@ -648,7 +648,7 @@ const VoiceChat: React.FC = () => {
 
   const buildRecognition = useCallback(() => {
     const recognition = new SpeechRecognition();
-    recognition.continuous = handsFreeRef.current;
+    recognition.continuous = false;
     recognition.interimResults = true;
     recognition.lang = "en-US";
 
@@ -683,24 +683,12 @@ const VoiceChat: React.FC = () => {
       const stable = mergeTranscriptPieces(finalPieces);
       const interim = mergeTranscriptPieces(interimPieces);
       const sawNewFinal = Boolean(stable) && stable !== finalTranscriptRef.current;
-      const hasInterim = Boolean(interim);
 
       finalTranscriptRef.current = stable;
       previousFinalLengthRef.current = stable.length;
       setInterimTranscript(mergeTranscriptPieces([stable, interim]));
 
-      // Hands-free: only send after a real pause. Reset the silence timer on
-      // ANY activity (new final OR ongoing interim) so we wait for the user
-      // to actually stop talking before submitting.
-      if (handsFreeRef.current) {
-        if (sawNewFinal || hasInterim) {
-          if (sendTimerRef.current) window.clearTimeout(sendTimerRef.current);
-          if (stable) {
-            const delay = hasInterim ? SILENCE_INTERIM_MS : SILENCE_FINAL_MS;
-            sendTimerRef.current = window.setTimeout(() => flushPendingTranscript(), delay);
-          }
-        }
-      } else if (sawNewFinal) {
+      if (sawNewFinal) {
         if (sendTimerRef.current) window.clearTimeout(sendTimerRef.current);
         sendTimerRef.current = window.setTimeout(() => flushPendingTranscript(), 700);
       }
@@ -711,7 +699,6 @@ const VoiceChat: React.FC = () => {
       if (!benign) {
         toast.error(`Mic error: ${event.error}`);
         stoppedByUserRef.current = true;
-        setHandsFree(false);
       }
       setIsListening(false);
     };
@@ -719,26 +706,11 @@ const VoiceChat: React.FC = () => {
     recognition.onend = () => {
       setIsListening(false);
       isListeningRef.current = false;
-      const turnBusy =
-        isLoadingRef.current ||
-        isSpeakingRef.current ||
-        turnActiveRef.current ||
-        ttsPlayingRef.current ||
-        ttsQueueRef.current.length > 0 || ttsAudioQueueRef.current.length > 0 || ttsPendingSynthRef.current > 0 ||
-        !streamDoneRef.current;
-      if (handsFreeRef.current && !stoppedByUserRef.current && !turnBusy) {
-        const stable = normalizeTranscript(finalTranscriptRef.current);
-        if (stable && !submittingRef.current) flushPendingTranscript();
-        else {
-          window.setTimeout(() => safeStartListening(), 250);
-        }
+      const stable = normalizeTranscript(finalTranscriptRef.current);
+      if (stable && !stoppedByUserRef.current && !submittingRef.current) {
+        flushPendingTranscript();
       } else {
-        const stable = normalizeTranscript(finalTranscriptRef.current);
-        if (!handsFreeRef.current && stable && !stoppedByUserRef.current && !submittingRef.current) {
-          flushPendingTranscript();
-        } else {
-          setInterimTranscript("");
-        }
+        setInterimTranscript("");
       }
     };
 
