@@ -159,6 +159,11 @@ function parseVector(raw: any): number[] | null {
   return null;
 }
 
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+
 function json(body: any, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
