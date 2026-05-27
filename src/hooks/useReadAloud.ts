@@ -26,8 +26,9 @@ export interface ReadAloudController {
   /** Id of the message currently being spoken, or null. */
   speakingId: string | null;
   isSpeaking: boolean;
-  /** Speak a block of text. Pass a stable id to drive toggle/stop UI. */
-  speak: (text: string, opts?: { id?: string }) => void;
+  /** Speak a block of text. Pass a stable id to drive toggle/stop UI, and an
+   *  onEnd callback fired when playback finishes naturally (not on stop()). */
+  speak: (text: string, opts?: { id?: string; onEnd?: () => void }) => void;
   /** Stop any in-flight synthesis/playback. */
   stop: () => void;
 }
@@ -60,20 +61,22 @@ export function useReadAloud(): ReadAloudController {
     setSpeakingId(null);
   }, []);
 
-  const browserSpeak = useCallback((text: string, id: string) => {
+  const browserSpeak = useCallback((text: string, id: string, onEnd?: () => void) => {
     const synth = synthRef.current;
-    if (!synth) { clearId(id); return; }
+    if (!synth) { clearId(id); onEnd?.(); return; }
     try { synth.cancel(); } catch { /* no-op */ }
     const u = new SpeechSynthesisUtterance(text);
     u.rate = Math.min(2, Math.max(0.5, rate));
-    u.onend = () => clearId(id);
-    u.onerror = () => clearId(id);
+    const fin = () => { clearId(id); onEnd?.(); };
+    u.onend = fin;
+    u.onerror = fin;
     synth.speak(u);
   }, [rate, clearId]);
 
-  const speak = useCallback((text: string, opts?: { id?: string }) => {
+  const speak = useCallback((text: string, opts?: { id?: string; onEnd?: () => void }) => {
     const clean = stripMarkdownForTts(text);
-    if (!clean) return;
+    const onEnd = opts?.onEnd;
+    if (!clean) { onEnd?.(); return; }
     stop();
     const id = opts?.id || `speak-${Date.now()}`;
     setSpeakingId(id);
@@ -95,6 +98,7 @@ export function useReadAloud(): ReadAloudController {
           const done = () => {
             try { URL.revokeObjectURL(url); } catch { /* no-op */ }
             clearId(id);
+            onEnd?.();
           };
           audio.onended = done;
           audio.onerror = done;
@@ -103,12 +107,12 @@ export function useReadAloud(): ReadAloudController {
         .catch(() => {
           // Transparent fallback to the browser voice on any Inworld error.
           if (controller.signal.aborted) return;
-          browserSpeak(clean, id);
+          browserSpeak(clean, id, onEnd);
         });
       return;
     }
 
-    browserSpeak(clean, id);
+    browserSpeak(clean, id, onEnd);
   }, [inworldEnabled, inworldApiKey, inworldVoiceId, rate, stop, browserSpeak, clearId]);
 
   useEffect(() => () => stop(), [stop]);

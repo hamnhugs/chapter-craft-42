@@ -12,6 +12,7 @@ import { extractKnowledge } from "@/lib/knowledgeApi";
 import { Loader2, StickyNote, BookmarkPlus } from "lucide-react";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { useReadAloud } from "@/hooks/useReadAloud";
+import { useHandsFree } from "@/hooks/useHandsFree";
 import { isEmbeddingModel } from "@/lib/utils";
 import { useDictation } from "@/hooks/useDictation";
 import PromptLibrary from "@/components/PromptLibrary";
@@ -33,6 +34,11 @@ const ChatPanel: React.FC = () => {
   } = useChatSettings();
   const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort } = useChat();
   const { speakingId, speak, stop: stopSpeaking } = useReadAloud();
+  const handsFree = useHandsFree({
+    onUtterance: (text) => sendMessage(text, { voiceMode: true, modelOverride: voiceModel || undefined }),
+    speak: (text, opts) => speak(text, opts),
+    stopSpeaking,
+  });
 
   const [input, setInput] = useState("");
   const [showSettings, setShowSettings] = useState(false);
@@ -148,6 +154,7 @@ const ChatPanel: React.FC = () => {
 
   useEffect(() => {
     if (!autoReadReplies || isLoading) return;
+    if (handsFree.active) return; // hands-free speaks replies itself — don't double up
     const last = messages[messages.length - 1];
     if (!last || last.role !== "assistant") return;
     const id = last.id || `chat-${messages.length - 1}`;
@@ -155,7 +162,7 @@ const ChatPanel: React.FC = () => {
     if (!last.content || !last.content.trim()) return;
     autoReadRef.current.lastId = id;
     speak(last.content, { id: `chat-${last.id || messages.length - 1}` });
-  }, [messages, isLoading, autoReadReplies, speak]);
+  }, [messages, isLoading, autoReadReplies, speak, handsFree.active]);
 
   // ----- Selection capture → save to notes (anywhere in the transcript) -----
   useEffect(() => {
@@ -760,6 +767,18 @@ const ChatPanel: React.FC = () => {
       {/* Input Area */}
       <div className="px-4 pb-4 pt-2">
         <div className="bg-surface-container-low/90 backdrop-blur-xl p-3 rounded-2xl shadow-2xl border border-outline-variant/10 flex flex-col gap-3 max-w-4xl mx-auto">
+          {handsFree.active && (
+            <div className="flex items-center gap-2 px-2 text-xs text-on-surface-variant">
+              <span className={`material-symbols-outlined text-base ${handsFree.state === "listening" ? "text-destructive animate-pulse" : "text-primary-container"}`}>
+                {handsFree.state === "listening" ? "mic" : handsFree.state === "thinking" ? "more_horiz" : handsFree.state === "speaking" ? "graphic_eq" : "record_voice_over"}
+              </span>
+              <span className="font-medium">
+                {handsFree.state === "listening" ? "Listening — just talk" : handsFree.state === "thinking" ? "Thinking…" : handsFree.state === "speaking" ? "Speaking…" : "Hands-free on"}
+              </span>
+              {handsFree.interim && <span className="italic truncate">“{handsFree.interim}”</span>}
+              <button onClick={handsFree.stop} className="ml-auto text-[10px] font-bold uppercase tracking-widest text-on-surface-variant hover:text-destructive">Stop</button>
+            </div>
+          )}
           <div className="flex items-end gap-3">
             <div className="flex-grow relative">
               <Textarea
@@ -820,6 +839,11 @@ const ChatPanel: React.FC = () => {
               <button onClick={() => { if (autoReadReplies) stopSpeaking(); setAutoReadReplies(!autoReadReplies); }} className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${autoReadReplies ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`} title="Read replies aloud">
                 <span className="material-symbols-outlined text-sm" style={autoReadReplies ? { fontVariationSettings: "'FILL' 1" } : {}}>{autoReadReplies ? "volume_up" : "volume_off"}</span> Read Aloud {autoReadReplies ? "ON" : "OFF"}
               </button>
+              {handsFree.supported && (
+                <button onClick={handsFree.toggle} aria-pressed={handsFree.active} className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${handsFree.active ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`} title="Hands-free conversation — just talk">
+                  <span className="material-symbols-outlined text-sm" style={handsFree.active ? { fontVariationSettings: "'FILL' 1" } : {}}>{handsFree.active ? "graphic_eq" : "record_voice_over"}</span> Hands-free {handsFree.active ? "ON" : "OFF"}
+                </button>
+              )}
               {burplexityApiToken && (
                 <button
                   onClick={handleDeepWebSearch}
