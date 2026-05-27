@@ -31,7 +31,7 @@ const ChatPanel: React.FC = () => {
     apiKey, savedModels, selectedModel, deepResearchModel, voiceModel, ttsRate, autoReadReplies, customSystemPrompt, burplexityApiToken, inworldApiKey, inworldEnabled, inworldVoiceId, loaded,
     saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setVoiceModel, setTtsRate, setAutoReadReplies, setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey, setInworldEnabled, setInworldVoiceId,
   } = useChatSettings();
-  const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, injectDisplayMessage, clearChat } = useChat();
+  const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort } = useChat();
   const { speakingId, speak, stop: stopSpeaking } = useReadAloud();
 
   const [input, setInput] = useState("");
@@ -79,6 +79,21 @@ const ChatPanel: React.FC = () => {
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
   useEffect(() => { setPromptDraft(customSystemPrompt || ""); }, [customSystemPrompt, showSettings]);
+
+  // Autogrow the composer up to ~10 lines, then scroll internally.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
+  }, [input]);
+
+  // Keep focus in the composer after a reply finishes streaming.
+  const prevLoadingRef = useRef(false);
+  useEffect(() => {
+    if (prevLoadingRef.current && !isLoading) inputRef.current?.focus();
+    prevLoadingRef.current = isLoading;
+  }, [isLoading]);
 
   // ESC + click-outside to close the settings panel.
   useEffect(() => {
@@ -335,6 +350,7 @@ const ChatPanel: React.FC = () => {
   };
 
   const handleSend = async () => {
+    if (isLoading) return; // a reply is streaming — use Stop first
     const text = input.trim();
     if (!text) return;
     if (!apiKey) { toast.error("Please set your OpenRouter API key first"); setShowSettings(true); return; }
@@ -749,7 +765,7 @@ const ChatPanel: React.FC = () => {
               <Textarea
                 ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown}
                 placeholder={dictation.isListening ? "Listening… speak now" : apiKey ? "Ask about your books..." : "Set your OpenRouter API key to start chatting"}
-                rows={1} className="bg-surface-container-high border-none rounded-xl text-foreground py-3 pl-4 pr-20 focus:ring-1 focus:ring-primary/40 resize-none min-h-[50px] max-h-[120px]" disabled={isLoading}
+                rows={1} className="bg-surface-container-high border-none rounded-xl text-foreground py-3 pl-4 pr-20 focus:ring-1 focus:ring-primary/40 resize-none min-h-[50px] max-h-[220px] overflow-y-auto"
               />
               {dictation.supported && (
                 <button
@@ -764,13 +780,26 @@ const ChatPanel: React.FC = () => {
                   </span>
                 </button>
               )}
-              <button
-                onClick={handleSend}
-                disabled={isLoading || !input.trim()}
-                className="absolute right-2 bottom-2 p-1.5 bg-primary-container text-on-primary-container rounded-lg hover:brightness-110 active:scale-90 transition-all disabled:opacity-50"
-              >
-                <span className="material-symbols-outlined text-lg">send</span>
-              </button>
+              {isLoading ? (
+                <button
+                  onClick={() => abort()}
+                  title="Stop generating"
+                  aria-label="Stop generating"
+                  className="absolute right-2 bottom-2 p-1.5 bg-destructive text-destructive-foreground rounded-lg hover:brightness-110 active:scale-90 transition-all"
+                >
+                  <span className="material-symbols-outlined text-lg">stop</span>
+                </button>
+              ) : (
+                <button
+                  onClick={handleSend}
+                  disabled={!input.trim()}
+                  title="Send"
+                  aria-label="Send"
+                  className="absolute right-2 bottom-2 p-1.5 bg-primary-container text-on-primary-container rounded-lg hover:brightness-110 active:scale-90 transition-all disabled:opacity-50"
+                >
+                  <span className="material-symbols-outlined text-lg">send</span>
+                </button>
+              )}
             </div>
             {messages.length >= 2 && (
               <button
@@ -787,6 +816,9 @@ const ChatPanel: React.FC = () => {
             <div className="flex gap-4 flex-wrap">
               <button onClick={() => setChatDeepResearch(!chatDeepResearch)} className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${chatDeepResearch ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`}>
                 <span className="material-symbols-outlined text-sm" style={chatDeepResearch ? { fontVariationSettings: "'FILL' 1" } : {}}>science</span> Deep Research {chatDeepResearch ? "ON" : "OFF"}
+              </button>
+              <button onClick={() => { if (autoReadReplies) stopSpeaking(); setAutoReadReplies(!autoReadReplies); }} className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${autoReadReplies ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`} title="Read replies aloud">
+                <span className="material-symbols-outlined text-sm" style={autoReadReplies ? { fontVariationSettings: "'FILL' 1" } : {}}>{autoReadReplies ? "volume_up" : "volume_off"}</span> Read Aloud {autoReadReplies ? "ON" : "OFF"}
               </button>
               {burplexityApiToken && (
                 <button
