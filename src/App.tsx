@@ -7,6 +7,7 @@ import { AppProvider } from "@/context/AppContext";
 import { ChatProvider } from "@/context/ChatContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { useAuth } from "@/hooks/useAuth";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import MemoryGuide from "./pages/MemoryGuide";
@@ -35,6 +36,7 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
         <Sonner />
+        <ErrorBoundary>
         <HashRouter>
           <AppProvider>
             <ChatProvider>
@@ -69,6 +71,7 @@ const App = () => (
             </ChatProvider>
           </AppProvider>
         </HashRouter>
+        </ErrorBoundary>
       </TooltipProvider>
     </ThemeProvider>
   </QueryClientProvider>

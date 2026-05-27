@@ -16,7 +16,7 @@ import { isEmbeddingModel } from "@/lib/utils";
 import { useDictation } from "@/hooks/useDictation";
 import PromptLibrary from "@/components/PromptLibrary";
 import VoiceNotesPanel, { appendVoiceNote } from "@/components/VoiceNotesPanel";
-import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations } from "@/lib/chatTools";
+import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations, isSearchRateLimited } from "@/lib/chatTools";
 import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
 
 const VOICE_QUICK_SEARCH_KEY = "voice_quick_search";
@@ -297,7 +297,13 @@ const ChatPanel: React.FC = () => {
         body: JSON.stringify({ query, save_to_wiki: false }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) { toast.error(j?.error || "Web search failed"); return; }
+      if (!r.ok) {
+        const msg = j?.error || `HTTP ${r.status}`;
+        toast.error(isSearchRateLimited(r.status, msg)
+          ? "Web search is busy (rate-limited). Try again in a moment."
+          : msg);
+        return;
+      }
       const cites = pickCitations(j);
       let md = `🔎 **Web Search Results for:** "${query}"\n\n`;
       if (j.answer) md += `${j.answer}\n\n`;

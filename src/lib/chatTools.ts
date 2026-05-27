@@ -17,6 +17,17 @@ const BURPLEXITY_QUICK_SEARCH_URL = "https://tmagmbmitnvcwubxcwoc.supabase.co/fu
 // Burplexity's response shape has varied over time. Accept several common
 // field names so a backend rename doesn't silently zero out the source list
 // (the "0 source(s)" symptom). `citations` is still tried first for back-compat.
+// True when a search-backend response looks rate-limited (HTTP 429, or a 5xx
+// whose body mentions a 429/rate-limit — e.g. bot-ask wraps an upstream
+// OpenRouter 429 in its own 500). Lets us show a calm "try again" message
+// instead of a scary raw error.
+export function isSearchRateLimited(status: number, message?: string): boolean {
+  if (status === 429) return true;
+  return /\b429\b|rate.?limit|temporarily|too many requests/i.test(message || "");
+}
+
+const RATE_LIMIT_MESSAGE = "The web search service is busy (rate-limited). Please try again in a moment.";
+
 export function pickCitations(j: any): Array<{ title: string; url: string; snippet: string }> {
   const raw = j?.citations ?? j?.sources ?? j?.results ?? j?.references ?? [];
   if (!Array.isArray(raw)) return [];
@@ -391,6 +402,12 @@ export async function executeChatTool(
           const j = await r.json().catch(() => ({}));
           if (!r.ok) {
             const msg = j?.error || `HTTP ${r.status}`;
+            if (isSearchRateLimited(r.status, msg)) {
+              return {
+                result: { error: RATE_LIMIT_MESSAGE },
+                event: { name, summary: "Web search rate-limited — try again shortly", ok: false },
+              };
+            }
             return {
               result: { error: `Burplexity search failed: ${msg}` },
               event: { name, summary: `Web search failed: ${msg}`, ok: false },
