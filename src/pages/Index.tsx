@@ -17,7 +17,7 @@ import { useTheme } from "@/context/ThemeContext";
 
 // Navigation — Craft Workshop theme
 // Workflow reads left-to-right: Vault → Study → Forge → Counsel (intake & processing)
-//                                  then → Codex → Tomes (knowledge building)
+//                                  then → Codex → ​BRAIN (knowledge building)
 // Secondary intake tools (Reel, Echo) live in the More sheet.
 // When Voice merges into Counsel, Echo tab is removed and Counsel absorbs it.
 const tabs = [
@@ -26,7 +26,7 @@ const tabs = [
   { id: "chapterize" as const, icon: "bolt", label: "Forge" },
   { id: "chat" as const, icon: "psychology", label: "Counsel" },
   { id: "wiki" as const, icon: "menu_book", label: "Codex" },
-  { id: "wikis" as const, icon: "collections_bookmark", label: "Tomes" },
+  { id: "wikis" as const, icon: "collections_bookmark", label: "​BRAIN" },
   { id: "video" as const, icon: "smart_display", label: "Reel" },
   { id: "voice" as const, icon: "mic", label: "Echo" },
 ];
@@ -61,10 +61,10 @@ const Index: React.FC = () => {
               )}
               <button
                 onClick={() => setActiveTab(tab.id)}
-                className={`font-body font-medium text-sm transition-colors ${
+                className={`font-body font-medium transition-colors ${
                   activeTab === tab.id
-                    ? "text-accent border-b-2 border-accent pb-1"
-                    : "text-secondary hover:text-primary"
+                    ? "text-accent border-b-2 border-accent pb-1 text-xl"
+                    : "text-secondary hover:text-primary text-sm"
                 }`}
               >
                 {tab.id === "viewer" && activeBook ? activeBook.title : tab.label}
