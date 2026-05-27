@@ -34,10 +34,12 @@ const ChatPanel: React.FC = () => {
   } = useChatSettings();
   const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort } = useChat();
   const { speakingId, speak, stop: stopSpeaking } = useReadAloud();
+  const [bargeInEnabled, setBargeInEnabled] = useState(() => localStorage.getItem("hands_free_barge_in") === "true");
   const handsFree = useHandsFree({
     onUtterance: (text) => sendMessage(text, { voiceMode: true, modelOverride: voiceModel || undefined }),
     speak: (text, opts) => speak(text, opts),
     stopSpeaking,
+    bargeIn: bargeInEnabled,
   });
 
   const [input, setInput] = useState("");
@@ -66,6 +68,7 @@ const ChatPanel: React.FC = () => {
 
   useEffect(() => { localStorage.setItem(VOICE_QUICK_SEARCH_KEY, String(voiceQuickSearch)); }, [voiceQuickSearch]);
   useEffect(() => { localStorage.setItem(VOICE_QUICK_SEARCH_MODEL_KEY, voiceQuickSearchModel); }, [voiceQuickSearchModel]);
+  useEffect(() => { localStorage.setItem("hands_free_barge_in", String(bargeInEnabled)); }, [bargeInEnabled]);
 
   const dictation = useDictation({
     onInterim: (text) => {
@@ -612,7 +615,17 @@ const ChatPanel: React.FC = () => {
                 <option value="">Same as Active model</option>
                 {savedModels.map((m: string) => (<option key={m} value={m}>{m}</option>))}
               </select>
-              <p className="text-[10px] text-on-surface-variant px-1">Pick a fast model (e.g. <code>google/gemini-2.5-flash-lite</code>) for snappier spoken replies. Used by hands-free voice (coming next).</p>
+              <p className="text-[10px] text-on-surface-variant px-1">Pick a fast model (e.g. <code>google/gemini-2.5-flash-lite</code>) for snappier spoken replies. Used by hands-free voice.</p>
+            </div>
+            <div className="flex flex-col gap-1.5 lg:col-span-2">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
+                <span className="material-symbols-outlined text-xs align-middle mr-1">front_hand</span>Barge-in (interrupt the assistant)
+              </label>
+              <div className="flex items-center justify-between gap-3 bg-surface-container-high rounded-lg py-3 px-4 border border-outline-variant/10">
+                <span className="text-sm text-primary">{bargeInEnabled ? "On — talk over replies to interrupt" : "Off — turn-based (no echo)"}</span>
+                <Switch checked={bargeInEnabled} onCheckedChange={setBargeInEnabled} aria-label="Enable barge-in" />
+              </div>
+              <p className="text-[10px] text-on-surface-variant px-1">When on, hands-free keeps listening while the assistant speaks and stops it the moment you start talking (uses on-device voice detection). Headphones give the most reliable results. When off, the mic is closed during playback to avoid echo.</p>
             </div>
           </section>
 
