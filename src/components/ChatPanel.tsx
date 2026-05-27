@@ -372,7 +372,7 @@ const ChatPanel: React.FC = () => {
             <p className="text-sm text-center max-w-md">
               {selectedBook
                 ? `Ready to discuss "${selectedBook.title}". ${selectedBook.chapters.length > 0 ? `${selectedBook.chapters.length} chapter(s) loaded.` : "No chapters isolated yet."}`
-                : "Select a book in Study, then come here to counsel with the AI about it."}
+                : "Select a book in Read, then come here to counsel with the AI about it."}
             </p>
             {!apiKey && loaded && (
               <button onClick={() => setShowSettings(true)} className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-lg text-primary text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all">
