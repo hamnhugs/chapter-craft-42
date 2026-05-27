@@ -212,7 +212,7 @@ const Library: React.FC = () => {
 
   return (
     <div className="h-full flex flex-col animate-fade-in overflow-auto">
-      <main className="max-w-7xl mx-auto px-6 py-12 flex flex-col gap-12 w-full">
+      <main className="cc-container max-w-7xl mx-auto px-6 py-12 flex flex-col gap-12 w-full">
         {/* Header Section */}
         <section className="flex flex-col md:flex-row md:items-end justify-between gap-6">
           <div className="space-y-2">
@@ -331,7 +331,7 @@ const Library: React.FC = () => {
             <p className="text-sm mt-1">Upload documents to get started</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="book-grid">
             {sortedBooks.map((book, i) => (
               <BookCard
                 key={book.id}

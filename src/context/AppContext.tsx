@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
+import { flushSync } from "react-dom";
 import { BookDocument, Chapter } from "@/types/library";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -56,6 +57,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [wikis, setWikis] = useState<Wiki[]>([]);
   const [activeWikiId, setActiveWikiId] = useState<string | null>(null);
   const { user, signOut } = useAuth();
+
+  // Navigate between tabs with a View Transitions cross-fade where supported.
+  // flushSync forces React to commit the new tab inside the transition's
+  // snapshot callback. Falls back to a plain update on older engines or when
+  // the user prefers reduced motion.
+  const navigateTab = useCallback((tab: TabId) => {
+    const doc = document as Document & {
+      startViewTransition?: (cb: () => void) => unknown;
+    };
+    const reduceMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (typeof doc.startViewTransition === "function" && !reduceMotion) {
+      doc.startViewTransition(() => flushSync(() => setActiveTab(tab)));
+    } else {
+      setActiveTab(tab);
+    }
+  }, []);
 
   const refreshWikis = useCallback(async () => {
     if (!user) { setWikis([]); setActiveWikiId(null); return; }
@@ -348,8 +367,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const setActiveBook = useCallback((id: string) => {
     setActiveBookId(id);
-    setActiveTab("viewer");
-  }, []);
+    navigateTab("viewer");
+  }, [navigateTab]);
 
   const setActiveBookSilent = useCallback((id: string) => {
     setActiveBookId(id);
@@ -487,7 +506,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         removeBook,
         setActiveBook,
         setActiveBookSilent,
-        setActiveTab,
+        setActiveTab: navigateTab,
         addChapter,
         updateChapter,
         removeChapter,

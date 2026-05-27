@@ -566,3 +566,205 @@
 [data-theme="dexters-lab"] [data-book-card]:hover::after {
   transform: translateY(0);
 }
+
+/* =====================================================================
+   AURORA (2026) — liquid-glass slate + chromatic @property accent
+   Forward-looking theme. HSL token contract lives in themes.ts; the
+   oklch-native pipeline, animated hue, mesh background and glass
+   surfaces live here. Everything degrades cleanly on older engines.
+   ===================================================================== */
+
+/* Registered animated custom property — typed as an angle so the browser
+   can interpolate the accent hue smoothly. Unsupported engines ignore it
+   and fall back to the static --accent token from themes.ts. */
+@property --aurora-hue {
+  syntax: '<angle>';
+  inherits: true;
+  initial-value: 220deg;
+}
+@keyframes aurora-hue-cycle {
+  from { --aurora-hue: 220deg; }
+  to   { --aurora-hue: 580deg; }
+}
+
+:root[data-theme="aurora"] {
+  /* oklch-native tokens — consume directly (no hsl() wrapper) */
+  --aur-ink:      oklch(0.18 0.04 260);
+  --aur-paper:    oklch(0.95 0.02  90);
+  --aur-glass:    oklch(0.26 0.04 260 / 0.55);
+  --aur-glass-hi: oklch(0.32 0.05 260 / 0.65);
+  --aur-line:     oklch(0.50 0.04 260 / 0.35);
+  --aur-mint:     oklch(0.86 0.13 175);
+  --aur-cyan:     oklch(0.78 0.13 210);
+  --aur-lilac:    oklch(0.78 0.16 295);
+  --aur-peach:    oklch(0.82 0.14  50);
+  --aur-rose:     oklch(0.74 0.20  20);
+
+  /* Animated chromatic accent driven by the registered @property hue */
+  --aur-accent: oklch(0.78 0.16 var(--aurora-hue));
+
+  /* Five-stop chromatic mesh, oklch stops so in-between colours stay
+     perceptually uniform as the hue cycles. */
+  --aur-mesh:
+    radial-gradient(at 20% 20%, oklch(0.78 0.16 var(--aurora-hue))                  0%, transparent 50%),
+    radial-gradient(at 80% 30%, oklch(0.76 0.15 calc(var(--aurora-hue) + 80deg))    0%, transparent 55%),
+    radial-gradient(at 70% 80%, oklch(0.74 0.17 calc(var(--aurora-hue) + 160deg))   0%, transparent 50%),
+    radial-gradient(at 20% 90%, oklch(0.72 0.18 calc(var(--aurora-hue) + 240deg))   0%, transparent 60%),
+    var(--aur-ink);
+
+  animation: aurora-hue-cycle 24s linear infinite;
+}
+
+/* Drifting chromatic mesh as the page canvas */
+[data-theme="aurora"] body {
+  background: var(--aur-mesh) !important;
+  background-attachment: fixed;
+}
+
+/* Liquid-glass cards — the surfaces the app actually paints */
+[data-theme="aurora"] .bg-card,
+[data-theme="aurora"] [data-aur-glass],
+[data-theme="aurora"] .bg-surface-container,
+[data-theme="aurora"] .bg-surface-container-low,
+[data-theme="aurora"] .bg-surface-container-high {
+  background: var(--aur-glass) !important;
+  border: 1px solid var(--aur-line);
+  border-radius: 18px;
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in oklab, white 18%, transparent),
+    inset 0 0 0 1px color-mix(in oklab, white 4%, transparent),
+    0 24px 60px -24px color-mix(in oklab, black 70%, transparent);
+}
+
+/* Dialogs / popovers / menus — brighter glass */
+[data-theme="aurora"] [role="dialog"],
+[data-theme="aurora"] [role="menu"],
+[data-theme="aurora"] [data-radix-popper-content-wrapper] > * {
+  background: var(--aur-glass-hi) !important;
+  border: 1px solid var(--aur-line) !important;
+  border-radius: 18px !important;
+  backdrop-filter: blur(32px) saturate(180%);
+  -webkit-backdrop-filter: blur(32px) saturate(180%);
+}
+
+/* Chromatic glass primary buttons */
+[data-theme="aurora"] button.bg-primary,
+[data-theme="aurora"] button.bg-accent,
+[data-theme="aurora"] button[data-sticker-btn] {
+  background:
+    radial-gradient(120% 120% at 30% 0%, color-mix(in oklab, white 24%, transparent), transparent 60%),
+    var(--aur-accent) !important;
+  color: var(--aur-ink) !important;
+  border: 1px solid color-mix(in oklab, white 28%, transparent) !important;
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in oklab, white 40%, transparent),
+    0 8px 24px -8px color-mix(in oklab, var(--aur-accent) 65%, transparent);
+  transition: transform 180ms cubic-bezier(.2,.8,.2,1), box-shadow 220ms ease;
+}
+[data-theme="aurora"] button.bg-primary:hover,
+[data-theme="aurora"] button.bg-accent:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in oklab, white 40%, transparent),
+    0 14px 32px -8px color-mix(in oklab, var(--aur-accent) 75%, transparent);
+}
+[data-theme="aurora"] button.bg-primary:active,
+[data-theme="aurora"] button.bg-accent:active { transform: translateY(0); }
+
+/* Selection + focus */
+[data-theme="aurora"] ::selection {
+  background: color-mix(in oklab, var(--aur-accent) 60%, transparent);
+  color: var(--aur-paper);
+}
+[data-theme="aurora"] *:focus-visible {
+  outline: 2px solid var(--aur-cyan) !important;
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+/* Active nav tab — chromatic accent bar instead of amber underline */
+[data-theme="aurora"] [data-app-header] nav button.text-accent,
+[data-theme="aurora"] [data-app-header] nav button[aria-current="page"] {
+  border-bottom-color: transparent !important;
+  position: relative;
+  color: var(--aur-paper) !important;
+}
+[data-theme="aurora"] [data-app-header] nav button.text-accent::after,
+[data-theme="aurora"] [data-app-header] nav button[aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: -6px;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--aur-mint), var(--aur-lilac));
+}
+
+/* =====================================================================
+   2026 modern-CSS toolkit — usable in any theme, all @supports-gated
+   ===================================================================== */
+
+/* Balanced headlines, orphan-free paragraphs */
+@supports (text-wrap: balance) {
+  h1, h2, .cc-balance { text-wrap: balance; }
+  p, .cc-pretty { text-wrap: pretty; }
+}
+
+/* Container queries — the book grid responds to its own column width,
+   not the viewport, so it stays correct under future split-pane layouts. */
+.cc-container { container-type: inline-size; container-name: main; }
+.book-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.5rem;
+}
+@supports (container-type: inline-size) {
+  @container main (min-width: 640px)  { .book-grid { grid-template-columns: repeat(2, 1fr); } }
+  @container main (min-width: 1024px) { .book-grid { grid-template-columns: repeat(3, 1fr); } }
+}
+
+/* Liquid-glass surface utility (any theme; really sings under Aurora) */
+.cc-glass {
+  background: color-mix(in oklab, hsl(var(--card)) 60%, transparent);
+  border: 1px solid color-mix(in oklab, hsl(var(--foreground)) 12%, transparent);
+  border-radius: 16px;
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+}
+
+/* View Transitions cross-fade — kicks in when navigation is wrapped in
+   document.startViewTransition (see AppContext.setActiveTab). */
+@supports (view-transition-name: root) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 380ms;
+    animation-timing-function: cubic-bezier(.2,.8,.2,1);
+  }
+  ::view-transition-old(root) { animation-name: cc-vt-out; }
+  ::view-transition-new(root) { animation-name: cc-vt-in; }
+  @keyframes cc-vt-in  { from { opacity: 0; transform: translateY(6px); } }
+  @keyframes cc-vt-out { to   { opacity: 0; transform: translateY(-6px); } }
+}
+
+/* Scroll-driven reading-progress bar — no JS loop. Add a
+   <div class="cc-scroll-progress" /> at the top of a scrolling region. */
+@supports (animation-timeline: scroll()) {
+  .cc-scroll-progress {
+    position: fixed; inset: 0 0 auto 0;
+    height: 3px;
+    background: linear-gradient(90deg, hsl(var(--accent)), hsl(var(--primary)));
+    transform-origin: 0 50%;
+    animation: cc-scroll-grow linear;
+    animation-timeline: scroll(root block);
+    z-index: 100;
+  }
+  @keyframes cc-scroll-grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+}
+
+/* Honour reduced-motion: settle animated tokens */
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="aurora"] { animation: none !important; }
+  ::view-transition-old(root),
+  ::view-transition-new(root) { animation-duration: 1ms !important; }
+}

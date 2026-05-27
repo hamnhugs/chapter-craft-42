@@ -1,7 +1,7 @@
 // Theme registry. Each theme defines HSL token overrides applied to :root
 // via the ThemeProvider, plus optional fonts loaded from Google Fonts.
 
-export type ThemeId = "amber-editorial" | "dexters-lab" | "fruit-stripe";
+export type ThemeId = "amber-editorial" | "dexters-lab" | "fruit-stripe" | "aurora";
 
 export interface ThemeDef {
   id: ThemeId;
@@ -179,6 +179,56 @@ export const THEMES: ThemeDef[] = [
       "--viewer-bg": "48 33% 97%",
       "--toolbar-bg": "0 0% 100%",
       "--book-spine": "355 78% 56%",
+    },
+  },
+  {
+    id: "aurora",
+    name: "Aurora",
+    description: "Liquid-glass slate with a hue-cycling chromatic accent. Apple-Vision-OS frosted glass.",
+    swatch: ["#0e1426", "#9bb4ff", "#f3a7c4"],
+    fonts: {
+      headline: "'Instrument Serif', 'Newsreader', Georgia, serif",
+      body: "'Inter', system-ui, sans-serif",
+      display: "'Instrument Serif', 'Newsreader', Georgia, serif",
+      googleFontsHref:
+        "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&display=swap",
+    },
+    tokens: {
+      // Deep slate-navy canvas
+      "--background": "230 35% 7%",
+      // Warm cream
+      "--foreground": "220 30% 95%",
+      "--card": "230 30% 13%",
+      "--card-foreground": "220 30% 95%",
+      "--popover": "230 35% 11%",
+      "--popover-foreground": "220 30% 95%",
+      "--primary": "220 30% 95%",
+      "--primary-foreground": "230 35% 7%",
+      "--secondary": "220 20% 75%",
+      "--secondary-foreground": "230 35% 7%",
+      "--muted": "230 30% 13%",
+      "--muted-foreground": "220 18% 70%",
+      // Peach pop (overridden by the @property hue cycle where supported)
+      "--accent": "340 85% 70%",
+      "--accent-foreground": "230 35% 7%",
+      "--destructive": "10 90% 70%",
+      "--destructive-foreground": "0 0% 100%",
+      "--border": "225 25% 22%",
+      "--input": "230 30% 13%",
+      "--ring": "340 85% 70%",
+      "--surface-container-lowest": "230 35% 5%",
+      "--surface-container-low": "230 30% 9%",
+      "--surface-container": "230 30% 11%",
+      "--surface-container-high": "230 28% 14%",
+      "--surface-container-highest": "230 25% 18%",
+      "--outline": "225 25% 55%",
+      "--outline-variant": "225 25% 22%",
+      "--on-surface-variant": "220 22% 80%",
+      "--primary-container": "340 85% 70%",
+      "--on-primary-container": "230 35% 7%",
+      "--viewer-bg": "230 35% 7%",
+      "--toolbar-bg": "230 30% 9%",
+      "--book-spine": "340 85% 70%",
     },
   },
 ];
