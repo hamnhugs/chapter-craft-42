@@ -17,7 +17,7 @@ import { useTheme } from "@/context/ThemeContext";
 
 // Navigation — Craft Workshop theme
 // Workflow reads left-to-right: Vault → Study → Forge → Counsel (intake & processing)
-//                                  then → Codex → ​BRAIN (knowledge building)
+//                                  then → Neuron → ​BRAIN (knowledge building)
 // Secondary intake tools (Reel, Echo) live in the More sheet.
 // When Voice merges into Counsel, Echo tab is removed and Counsel absorbs it.
 const tabs = [
@@ -25,7 +25,7 @@ const tabs = [
   { id: "viewer" as const, icon: "auto_stories", label: "Study" },
   { id: "chapterize" as const, icon: "bolt", label: "Forge" },
   { id: "chat" as const, icon: "psychology", label: "Counsel" },
-  { id: "wiki" as const, icon: "menu_book", label: "Codex" },
+  { id: "wiki" as const, icon: "menu_book", label: "Neuron" },
   { id: "wikis" as const, icon: "collections_bookmark", label: "​BRAIN" },
   { id: "video" as const, icon: "smart_display", label: "Reel" },
   { id: "voice" as const, icon: "mic", label: "Echo" },
@@ -77,7 +77,7 @@ const Index: React.FC = () => {
           {activeWiki && (
             <button
               onClick={() => setActiveTab("wikis")}
-              title={`Active codex: ${activeWiki.name} — press ⌘K to switch`}
+              title={`Active neuron: ${activeWiki.name} — press ⌘K to switch`}
               className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent/10 hover:bg-accent/20 transition-colors text-xs font-body font-medium text-accent max-w-[180px] truncate"
             >
               <span
