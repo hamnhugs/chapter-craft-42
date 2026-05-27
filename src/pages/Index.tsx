@@ -6,7 +6,6 @@ import ChatPanel from "@/components/ChatPanel";
 import WikiPanel from "@/components/WikiPanel";
 import WikiLibrary from "@/components/WikiLibrary";
 import WikiQuickSwitcher from "@/components/WikiQuickSwitcher";
-import VoiceChat from "@/components/VoiceChat";
 import AutoChapterize from "@/components/AutoChapterize";
 import VideoTranscript from "@/components/VideoTranscript";
 import ThemeSwitcher from "@/components/ThemeSwitcher";
@@ -18,8 +17,9 @@ import { useTheme } from "@/context/ThemeContext";
 // Navigation — Craft Workshop theme
 // Workflow reads left-to-right: Vault → Read → Forge → Counsel (intake & processing)
 //                                  then → Neuron → ​BRAIN (knowledge building)
-// Secondary intake tools (Reel, Echo) live in the More sheet.
-// When Voice merges into Counsel, Echo tab is removed and Counsel absorbs it.
+// Secondary intake tools (Reel) live in the More sheet.
+// Voice ("Echo") has been merged into Counsel — Counsel is now the single
+// conversational surface (typing + voice + read-aloud + notes).
 const tabs = [
   { id: "library" as const, icon: "archive", label: "Vault" },
   { id: "viewer" as const, icon: "auto_stories", label: "Read" },
@@ -28,7 +28,6 @@ const tabs = [
   { id: "wiki" as const, icon: "menu_book", label: "Neuron" },
   { id: "wikis" as const, icon: "collections_bookmark", label: "​BRAIN" },
   { id: "video" as const, icon: "smart_display", label: "Reel" },
-  { id: "voice" as const, icon: "mic", label: "Echo" },
 ];
 
 const PRIMARY_IDS = ["library", "viewer", "chapterize", "chat"] as const;
@@ -112,8 +111,6 @@ const Index: React.FC = () => {
           <WikiLibrary />
         ) : activeTab === "video" ? (
           <VideoTranscript />
-        ) : activeTab === "voice" ? (
-          <VoiceChat />
         ) : activeTab === "chapterize" ? (
           <AutoChapterize />
         ) : (

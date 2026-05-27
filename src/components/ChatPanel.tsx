@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useApp } from "@/context/AppContext";
 import { useChat } from "@/context/ChatContext";
 import { Button } from "@/components/ui/button";
@@ -9,33 +9,58 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import { extractKnowledge } from "@/lib/knowledgeApi";
-import { Loader2 } from "lucide-react";
+import { Loader2, StickyNote, BookmarkPlus } from "lucide-react";
 import { useChatSettings } from "@/hooks/useChatSettings";
-import { speak, stopSpeaking, subscribeSpeaking, getSpeakingId } from "@/lib/speak";
+import { useReadAloud } from "@/hooks/useReadAloud";
 import { isEmbeddingModel } from "@/lib/utils";
 import { useDictation } from "@/hooks/useDictation";
 import PromptLibrary from "@/components/PromptLibrary";
+import VoiceNotesPanel, { appendVoiceNote } from "@/components/VoiceNotesPanel";
 import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL } from "@/lib/chatTools";
+import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
+
+const VOICE_QUICK_SEARCH_KEY = "voice_quick_search";
+const VOICE_QUICK_SEARCH_MODEL_KEY = "voice_quick_search_model";
+
+const SEARCH_INTENT_RE =
+  /\b(search|look up|look for|find|google|what is|what are|who is|who are|tell me about|research|check online|latest|current|news about)\b/i;
 
 const ChatPanel: React.FC = () => {
   const { books, activeBookId, activeWiki, activeWikiId } = useApp();
   const {
-    apiKey, savedModels, selectedModel, deepResearchModel, ttsRate, autoReadReplies, customSystemPrompt, burplexityApiToken, loaded,
-    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setTtsRate, setAutoReadReplies, setCustomSystemPrompt, setBurplexityApiToken,
+    apiKey, savedModels, selectedModel, deepResearchModel, voiceModel, ttsRate, autoReadReplies, customSystemPrompt, burplexityApiToken, inworldApiKey, inworldEnabled, inworldVoiceId, loaded,
+    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setVoiceModel, setTtsRate, setAutoReadReplies, setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey, setInworldEnabled, setInworldVoiceId,
   } = useChatSettings();
   const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, injectDisplayMessage, clearChat } = useChat();
+  const { speakingId, speak, stop: stopSpeaking } = useReadAloud();
+
   const [input, setInput] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [newModelInput, setNewModelInput] = useState("");
   const [extracting, setExtracting] = useState(false);
   const [deepSearching, setDeepSearching] = useState(false);
   const [digesting, setDigesting] = useState(false);
-  const [speakingId, setSpeakingId] = useState<string | null>(getSpeakingId());
   const [promptDraft, setPromptDraft] = useState("");
+
+  // ---- Voice features absorbed from the former Echo (Voice) tab ----
+  const [notesPanelOpen, setNotesPanelOpen] = useState(false);
+  const [voiceQuickSearch, setVoiceQuickSearch] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_KEY) === "true");
+  const [voiceQuickSearchModel, setVoiceQuickSearchModel] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_MODEL_KEY) || "");
+  const [pendingSearchCount, setPendingSearchCount] = useState(0);
+  const [inworldVoices, setInworldVoices] = useState<InworldVoice[]>([]);
+  const [loadingVoices, setLoadingVoices] = useState(false);
+  const [testingVoice, setTestingVoice] = useState(false);
+  const [selectionCapture, setSelectionCapture] = useState<{ text: string; top: number; left: number } | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const settingsPanelRef = useRef<HTMLDivElement>(null);
   const inputBeforeDictationRef = useRef<string>("");
+
+  useEffect(() => { localStorage.setItem(VOICE_QUICK_SEARCH_KEY, String(voiceQuickSearch)); }, [voiceQuickSearch]);
+  useEffect(() => { localStorage.setItem(VOICE_QUICK_SEARCH_MODEL_KEY, voiceQuickSearchModel); }, [voiceQuickSearchModel]);
+
   const dictation = useDictation({
     onInterim: (text) => {
       setInput((inputBeforeDictationRef.current ? inputBeforeDictationRef.current + " " : "") + text);
@@ -53,8 +78,6 @@ const ChatPanel: React.FC = () => {
   };
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
-  useEffect(() => subscribeSpeaking(setSpeakingId), []);
-  useEffect(() => () => stopSpeaking(), []);
   useEffect(() => { setPromptDraft(customSystemPrompt || ""); }, [customSystemPrompt, showSettings]);
 
   // ESC + click-outside to close the settings panel.
@@ -116,18 +139,112 @@ const ChatPanel: React.FC = () => {
     if (autoReadRef.current.lastId === id) return;
     if (!last.content || !last.content.trim()) return;
     autoReadRef.current.lastId = id;
-    speak(last.content, { id: `chat-${last.id || messages.length - 1}`, rate: ttsRate });
-  }, [messages, isLoading, autoReadReplies, ttsRate]);
+    speak(last.content, { id: `chat-${last.id || messages.length - 1}` });
+  }, [messages, isLoading, autoReadReplies, speak]);
+
+  // ----- Selection capture → save to notes (anywhere in the transcript) -----
+  useEffect(() => {
+    const onSelectionChange = () => {
+      const selection = window.getSelection();
+      const text = selection?.toString().trim() || "";
+      const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+      const container = messagesContainerRef.current;
+      if (!text || !range || !container?.contains(range.commonAncestorContainer)) {
+        setSelectionCapture(null);
+        return;
+      }
+      const rect = range.getBoundingClientRect();
+      setSelectionCapture({
+        text,
+        top: Math.max(88, rect.top - 42),
+        left: Math.min(window.innerWidth - 190, Math.max(12, rect.left + rect.width / 2 - 95)),
+      });
+    };
+    document.addEventListener("selectionchange", onSelectionChange);
+    window.addEventListener("resize", onSelectionChange);
+    return () => {
+      document.removeEventListener("selectionchange", onSelectionChange);
+      window.removeEventListener("resize", onSelectionChange);
+    };
+  }, []);
+
+  // ----- Long-press a bubble to save it as a note (touch) -----
+  const longPressTimer = useRef<number | null>(null);
+  const longPressFiredRef = useRef(false);
+  const startLongPress = (text: string) => {
+    longPressFiredRef.current = false;
+    if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
+    longPressTimer.current = window.setTimeout(async () => {
+      longPressFiredRef.current = true;
+      const note = await appendVoiceNote(text);
+      if (note) {
+        try { (navigator as any).vibrate?.(30); } catch { /* no-op */ }
+        toast.success("Saved to notes");
+        setNotesPanelOpen(true);
+      }
+    }, 500);
+  };
+  const cancelLongPress = () => {
+    if (longPressTimer.current) { window.clearTimeout(longPressTimer.current); longPressTimer.current = null; }
+  };
+  const saveBubbleToNotes = async (text: string) => {
+    const note = await appendVoiceNote(text);
+    if (note) { toast.success("Saved to notes"); setNotesPanelOpen(true); }
+  };
 
   const bubbleId = (msg: { id?: string }, i: number) => `chat-${msg.id || i}`;
   const handleSpeak = (msg: { id?: string; content: string }, i: number) => {
     const id = bubbleId(msg, i);
     if (speakingId === id) { stopSpeaking(); return; }
-    speak(msg.content, { id, rate: ttsRate });
+    speak(msg.content, { id });
   };
 
   const handleSaveApiKey = (key: string) => { saveApiKey(key); setShowSettings(false); };
   const handleAddModel = () => { const m = newModelInput.trim(); if (!m) return; addModel(m); setNewModelInput(""); };
+
+  // ----- Inworld voice management (settings) -----
+  const loadInworldVoices = useCallback(async () => {
+    setLoadingVoices(true);
+    try {
+      const voices = await fetchInworldVoices(inworldApiKey);
+      setInworldVoices(voices);
+      if (loaded && !inworldVoiceId) setInworldVoiceId(voices[0]?.voice_id || "Ashley");
+    } catch (err: any) {
+      toast.error(`Could not load Inworld voices: ${err.message}`);
+    } finally {
+      setLoadingVoices(false);
+    }
+  }, [inworldApiKey, inworldVoiceId, loaded, setInworldVoiceId]);
+
+  const inworldVoiceLoadedRef = useRef(false);
+  useEffect(() => {
+    if (!inworldVoiceLoadedRef.current && inworldApiKey) {
+      inworldVoiceLoadedRef.current = true;
+      loadInworldVoices();
+    }
+  }, [inworldApiKey, loadInworldVoices]);
+
+  const saveInworldKey = (key: string) => {
+    setInworldApiKey(key.trim());
+    if (key.trim()) { inworldVoiceLoadedRef.current = true; loadInworldVoices(); }
+  };
+
+  const testInworldVoice = async () => {
+    if (!inworldVoiceId) { toast.error("Pick a voice first"); return; }
+    setTestingVoice(true);
+    try {
+      const buf = await synthesizeSpeech("Testing one, two, three.", inworldApiKey, inworldVoiceId);
+      const url = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
+      const audio = new Audio(url);
+      audio.onended = audio.onerror = () => { try { URL.revokeObjectURL(url); } catch { /* no-op */ } };
+      await audio.play();
+      toast.success("Voice working");
+    } catch (err: any) {
+      toast.error(`Inworld TTS failed: ${err?.message || err}`);
+    } finally {
+      setTestingVoice(false);
+    }
+  };
 
   const selectedBook = books.find((b) => b.id === activeBookId);
 
@@ -144,6 +261,29 @@ const ChatPanel: React.FC = () => {
       setExtracting(false);
     }
   };
+
+  // Background Quick Search — runs a lightweight web search in the background
+  // and injects the results into the transcript when ready.
+  const runBackgroundSearch = useCallback(async (query: string) => {
+    if (!burplexityApiToken) return;
+    setPendingSearchCount((c) => c + 1);
+    try {
+      const result = await executeQuickSearch(query, burplexityApiToken);
+      if (result.error || !result.citations.length) return;
+      let md = `🔍 **Search Results for:** "${query}"\n\n`;
+      result.citations.forEach((c, i) => {
+        md += `**${i + 1}. ${c.title}**\n${c.url}\n`;
+        if (c.snippet) md += `${c.snippet}\n`;
+        md += "\n";
+      });
+      if (result.elapsed_ms) {
+        md += `_Completed in ${result.elapsed_ms}ms${result.backend ? ` via ${result.backend}` : ""}_`;
+      }
+      injectDisplayMessage(md);
+    } finally {
+      setPendingSearchCount((c) => c - 1);
+    }
+  }, [burplexityApiToken, injectDisplayMessage]);
 
   const handleDeepWebSearch = async () => {
     const query = input.trim();
@@ -192,6 +332,9 @@ const ChatPanel: React.FC = () => {
     if (!text) return;
     if (!apiKey) { toast.error("Please set your OpenRouter API key first"); setShowSettings(true); return; }
     setInput("");
+    if (voiceQuickSearch && burplexityApiToken && SEARCH_INTENT_RE.test(text)) {
+      runBackgroundSearch(text); // intentionally not awaited
+    }
     try { await sendMessage(text); } catch { /* surfaced via toast */ }
   };
 
@@ -200,7 +343,8 @@ const ChatPanel: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full overflow-hidden">
+      <div className="flex flex-col h-full flex-1 min-w-0 relative">
       {/* Settings bar */}
       {showSettings && (
         <div
@@ -218,6 +362,9 @@ const ChatPanel: React.FC = () => {
               <span className="material-symbols-outlined text-[20px]">close</span>
             </button>
           </div>
+
+          {/* ── Models & Keys ── */}
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant/70 px-1">Models &amp; Keys</p>
           <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-3 md:p-4 rounded-xl bg-surface-container-low">
             <div className="flex flex-col gap-1.5">
               <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">OpenRouter API Key</label>
@@ -285,7 +432,10 @@ const ChatPanel: React.FC = () => {
               </div>
             </div>
           </section>
-          <section className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-3 md:p-4 rounded-xl bg-surface-container-low">
+
+          {/* ── Research & Search ── */}
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant/70 px-1">Research &amp; Search</p>
+          <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-3 md:p-4 rounded-xl bg-surface-container-low">
             <div className="flex flex-col gap-1.5">
               <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
                 <span className="material-symbols-outlined text-xs align-middle mr-1">science</span>Deep Research Model
@@ -301,13 +451,36 @@ const ChatPanel: React.FC = () => {
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
+                <span className="material-symbols-outlined text-xs align-middle mr-1">travel_explore</span>Background Quick Search
+              </label>
+              <div className="flex items-center justify-between gap-3 bg-surface-container-high rounded-lg py-3 px-4 border border-outline-variant/10">
+                <span className="text-sm text-primary">{voiceQuickSearch ? "On" : "Off"}</span>
+                <Switch checked={voiceQuickSearch} onCheckedChange={setVoiceQuickSearch} disabled={!burplexityApiToken} aria-label="Background Quick Search" />
+              </div>
+              <p className="text-[10px] text-on-surface-variant px-1">
+                {burplexityApiToken ? "When a message looks like a search, results are fetched in the background and added to the chat." : "Requires a Burplexity API token above."}
+              </p>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Quick Search Model <span className="text-on-surface-variant/60 normal-case tracking-normal">(lightweight preferred)</span></label>
+              <select value={voiceQuickSearchModel || selectedModel} onChange={(e) => setVoiceQuickSearchModel(e.target.value)} className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40">
+                {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
+              </select>
+            </div>
+          </section>
+
+          {/* ── Voice (input + output) ── */}
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant/70 px-1">Voice</p>
+          <section className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-3 md:p-4 rounded-xl bg-surface-container-low">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
                 <span className="material-symbols-outlined text-xs align-middle mr-1">record_voice_over</span>Auto-read replies
               </label>
               <div className="flex items-center justify-between gap-3 bg-surface-container-high rounded-lg py-3 px-4 border border-outline-variant/10">
                 <span className="text-sm text-primary">{autoReadReplies ? "On — replies will be read aloud" : "Off"}</span>
                 <Switch checked={autoReadReplies} onCheckedChange={setAutoReadReplies} aria-label="Auto-read assistant replies" />
               </div>
-              <p className="text-[10px] text-on-surface-variant px-1">Reads each new assistant reply aloud using the playback speed below.</p>
+              <p className="text-[10px] text-on-surface-variant px-1">Reads each new assistant reply aloud using the voice + speed below.</p>
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center justify-between">
@@ -323,9 +496,98 @@ const ChatPanel: React.FC = () => {
                   onValueChange={(v) => setTtsRate(v[0])}
                 />
               </div>
-              <p className="text-[10px] text-on-surface-variant px-1">Used for read-aloud buttons here and replies in Echo.</p>
+              <p className="text-[10px] text-on-surface-variant px-1">Used for read-aloud buttons and auto-read here.</p>
+            </div>
+            <div className="flex flex-col gap-1.5 lg:col-span-2">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center gap-1">
+                <span className="material-symbols-outlined text-xs align-middle">record_voice_over</span>Inworld Voice (TTS Upgrade)
+              </label>
+              <div className="flex items-center justify-between gap-3 bg-surface-container-high rounded-lg py-2.5 px-4">
+                <span className="text-sm text-primary">{inworldEnabled ? "Inworld TTS on" : "Browser TTS"}</span>
+                <Switch
+                  checked={inworldEnabled}
+                  onCheckedChange={setInworldEnabled}
+                  disabled={!inworldApiKey || !inworldVoiceId}
+                  aria-label="Enable Inworld TTS"
+                />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
+                <div className="relative">
+                  <input
+                    className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 pr-10 focus:ring-1 focus:ring-primary/40"
+                    type="password"
+                    placeholder="Inworld API key…"
+                    defaultValue={inworldApiKey}
+                    id="inworld-key-input"
+                    onKeyDown={(e) => { if (e.key === "Enter") saveInworldKey((e.target as HTMLInputElement).value); }}
+                  />
+                  <span className="material-symbols-outlined absolute right-3 top-2.5 text-on-surface-variant text-sm">key</span>
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={() => { const el = document.getElementById("inworld-key-input") as HTMLInputElement; saveInworldKey(el?.value || ""); }}>
+                    Save &amp; Load Voices
+                  </Button>
+                  {inworldApiKey && (
+                    <Button size="sm" variant="destructive" onClick={() => { setInworldApiKey(""); setInworldEnabled(false); setInworldVoices([]); }}>
+                      Remove
+                    </Button>
+                  )}
+                </div>
+              </div>
+              {inworldApiKey && (
+                <div className="flex items-center gap-2 mt-1">
+                  {loadingVoices ? (
+                    <div className="flex items-center gap-2 text-xs text-on-surface-variant">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading voices…
+                    </div>
+                  ) : inworldVoices.length > 0 ? (
+                    <select
+                      value={inworldVoiceId}
+                      onChange={(e) => setInworldVoiceId(e.target.value)}
+                      className="flex-1 bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40"
+                    >
+                      {inworldVoices.map((v) => (
+                        <option key={v.voice_id} value={v.voice_id}>
+                          {v.name}{v.tags?.length ? ` (${v.tags.join(", ")})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <Button size="sm" variant="outline" onClick={loadInworldVoices}>
+                      Retry loading voices
+                    </Button>
+                  )}
+                  {inworldVoices.length > 0 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={testInworldVoice}
+                      disabled={testingVoice || !inworldVoiceId}
+                      title="Play a short test phrase with the selected voice"
+                    >
+                      {testingVoice ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Test voice"}
+                    </Button>
+                  )}
+                </div>
+              )}
+              <p className="text-[10px] text-on-surface-variant px-1">
+                When enabled, read-aloud uses an Inworld character voice instead of the browser&apos;s built-in TTS. Use <em>Test voice</em> to confirm the key and voice work.
+              </p>
+            </div>
+            <div className="flex flex-col gap-1.5 lg:col-span-2">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
+                <span className="material-symbols-outlined text-xs align-middle mr-1">bolt</span>Voice Model <span className="text-on-surface-variant/60 normal-case tracking-normal">(reserved for spoken replies / hands-free)</span>
+              </label>
+              <select value={voiceModel || ""} onChange={(e) => setVoiceModel(e.target.value)} className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40">
+                <option value="">Same as Active model</option>
+                {savedModels.map((m: string) => (<option key={m} value={m}>{m}</option>))}
+              </select>
+              <p className="text-[10px] text-on-surface-variant px-1">Pick a fast model (e.g. <code>google/gemini-2.5-flash-lite</code>) for snappier spoken replies. Used by hands-free voice (coming next).</p>
             </div>
           </section>
+
+          {/* ── Prompts ── */}
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant/70 px-1">Prompts</p>
           <PromptLibrary scopeHint="chat" />
           <section className="p-3 md:p-4 rounded-xl bg-surface-container-low">
             <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center gap-1">
@@ -363,8 +625,24 @@ const ChatPanel: React.FC = () => {
         </div>
       )}
 
+      {/* Selection → save to notes */}
+      {selectionCapture && (
+        <button
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            saveBubbleToNotes(selectionCapture.text);
+            setSelectionCapture(null);
+            window.getSelection()?.removeAllRanges();
+          }}
+          className="fixed z-[60] px-3 py-2 rounded-full bg-primary-container text-on-primary-container text-xs font-semibold shadow-lg flex items-center gap-1.5"
+          style={{ top: selectionCapture.top, left: selectionCapture.left }}
+        >
+          <BookmarkPlus className="w-3.5 h-3.5" /> Save selection
+        </button>
+      )}
+
       {/* Messages */}
-      <div className="flex-1 overflow-auto px-4 py-6 space-y-6 hide-scrollbar">
+      <div ref={messagesContainerRef} className="flex-1 overflow-auto px-4 py-6 space-y-6 hide-scrollbar">
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-on-surface-variant gap-3">
             <span className="material-symbols-outlined text-5xl text-primary-container">auto_stories</span>
@@ -383,7 +661,7 @@ const ChatPanel: React.FC = () => {
         )}
 
         {messages.map((msg, i) => (
-          <div key={msg.id || i} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"} max-w-[85%] ${msg.role === "user" ? "self-end" : ""}`}>
+          <div key={msg.id || i} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"} max-w-[85%] ${msg.role === "user" ? "self-end" : ""} group`}>
             <div className="flex items-center gap-2 mb-2 mx-4">
               {msg.role === "assistant" && <span className="material-symbols-outlined text-primary-container text-lg">auto_stories</span>}
               <span className={`font-headline font-bold text-sm tracking-wide ${msg.role === "user" ? "text-primary" : "text-secondary"}`}>
@@ -400,7 +678,15 @@ const ChatPanel: React.FC = () => {
                 ))}
               </div>
             )}
-            <div className={`relative group ${msg.role === "user" ? "message-bubble-user bg-primary-container text-on-primary-container" : "message-bubble-ai bg-surface-container-high text-foreground border-l-2 border-primary-container/20"} p-5 shadow-sm leading-relaxed`}>
+            <div
+              className={`relative group ${msg.role === "user" ? "message-bubble-user bg-primary-container text-on-primary-container" : "message-bubble-ai bg-surface-container-high text-foreground border-l-2 border-primary-container/20"} p-5 shadow-sm leading-relaxed select-text`}
+              style={{ WebkitTouchCallout: "none" } as React.CSSProperties}
+              onTouchStart={() => startLongPress(msg.content)}
+              onTouchEnd={(e) => { if (longPressFiredRef.current) { e.preventDefault(); } cancelLongPress(); }}
+              onTouchMove={cancelLongPress}
+              onTouchCancel={cancelLongPress}
+              onContextMenu={(e) => { if (longPressFiredRef.current) e.preventDefault(); }}
+            >
               {msg.role === "assistant" ? (
                 <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown>{msg.content}</ReactMarkdown></div>
               ) : (
@@ -417,6 +703,14 @@ const ChatPanel: React.FC = () => {
                   </span>
                 </button>
               )}
+              <button
+                onClick={() => saveBubbleToNotes(msg.content)}
+                className="hidden md:flex absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 transition-opacity items-center justify-center w-7 h-7 rounded-full bg-surface-container-highest text-on-surface-variant hover:text-primary shadow-md"
+                title="Save to notes"
+                aria-label="Save to notes"
+              >
+                <BookmarkPlus className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
         ))}
@@ -497,6 +791,11 @@ const ChatPanel: React.FC = () => {
                   {deepSearching ? <Loader2 className="w-3 h-3 animate-spin" /> : <span className="material-symbols-outlined text-sm">travel_explore</span>} Deep Search
                 </button>
               )}
+              {pendingSearchCount > 0 && (
+                <span className="text-[10px] font-bold uppercase tracking-widest text-primary-container flex items-center gap-1">
+                  <Loader2 className="w-3 h-3 animate-spin" /> Searching ({pendingSearchCount})
+                </span>
+              )}
               {messages.length >= 2 && (
                 <button
                   onClick={handleDigestHistory}
@@ -507,11 +806,19 @@ const ChatPanel: React.FC = () => {
                   {digesting ? <Loader2 className="w-3 h-3 animate-spin" /> : <span className="material-symbols-outlined text-sm">summarize</span>} Digest
                 </button>
               )}
+              <button
+                onClick={() => setNotesPanelOpen((v) => !v)}
+                aria-pressed={notesPanelOpen}
+                className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${notesPanelOpen ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`}
+                title="Notes"
+              >
+                <StickyNote className="w-3.5 h-3.5" /> Notes
+              </button>
               <button id="chat-settings-toggle" onClick={() => setShowSettings(!showSettings)} className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-1 hover:text-primary transition-colors">
                 <span className="material-symbols-outlined text-sm">tune</span> Settings
               </button>
               {messages.length > 0 && (
-                <button onClick={clearChat} className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-1 hover:text-primary transition-colors">
+                <button onClick={() => { stopSpeaking(); clearChat(); }} className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-1 hover:text-primary transition-colors">
                   <span className="material-symbols-outlined text-sm">delete</span> Clear
                 </button>
               )}
@@ -519,6 +826,8 @@ const ChatPanel: React.FC = () => {
           </div>
         </div>
       </div>
+      </div>
+      <VoiceNotesPanel open={notesPanelOpen} onClose={() => setNotesPanelOpen(false)} />
     </div>
   );
 };
