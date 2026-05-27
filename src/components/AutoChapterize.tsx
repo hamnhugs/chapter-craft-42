@@ -941,7 +941,7 @@ const AutoChapterize: React.FC = () => {
           </Select>
           {!model.startsWith("google/") && !model.startsWith("openai/gpt-5") && !apiKey && (
             <p className="text-xs text-primary">
-              This model needs your OpenRouter API key. Add it in the Talk tab settings.
+              This model needs your OpenRouter API key. Add it in the Counsel tab settings.
             </p>
           )}
         </section>
