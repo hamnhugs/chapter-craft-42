@@ -15,16 +15,16 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { useTheme } from "@/context/ThemeContext";
 
 // Navigation — Craft Workshop theme
-// Workflow reads left-to-right: Vault → Read → Forge → Counsel (intake & processing)
+// Workflow reads left-to-right: Vault → Read → Forge → Talk (intake & processing)
 //                                  then → Neuron → ​BRAIN (knowledge building)
 // Secondary intake tools (Reel) live in the More sheet.
-// Voice ("Echo") has been merged into Counsel — Counsel is now the single
+// Voice ("Echo") has been merged into Talk — Talk is now the single
 // conversational surface (typing + voice + read-aloud + notes).
 const tabs = [
   { id: "library" as const, icon: "archive", label: "Vault" },
   { id: "viewer" as const, icon: "auto_stories", label: "Read" },
   { id: "chapterize" as const, icon: "bolt", label: "Forge" },
-  { id: "chat" as const, icon: "psychology", label: "Counsel" },
+  { id: "chat" as const, icon: "psychology", label: "Talk" },
   { id: "wiki" as const, icon: "menu_book", label: "Neuron" },
   { id: "wikis" as const, icon: "collections_bookmark", label: "​BRAIN" },
   { id: "video" as const, icon: "smart_display", label: "Reel" },
@@ -51,7 +51,7 @@ const Index: React.FC = () => {
           <span data-wordmark className="font-display font-bold text-3xl tracking-tight text-primary">​</span>
         </div>
 
-        {/* Desktop nav — zone separator between Counsel (index 3) and Neuron (index 4) */}
+        {/* Desktop nav — zone separator between Talk (index 3) and Neuron (index 4) */}
         <nav className="hidden md:flex items-center gap-8">
           {tabs.map((tab, index) => (
             <React.Fragment key={tab.id}>
@@ -60,10 +60,10 @@ const Index: React.FC = () => {
               )}
               <button
                 onClick={() => setActiveTab(tab.id)}
-                className={`font-body font-medium transition-colors ${
+                className={`font-body transition-colors ${
                   activeTab === tab.id
-                    ? "text-accent border-b-2 border-accent pb-1 text-base"
-                    : "text-secondary hover:text-primary text-sm"
+                    ? "text-accent border-b-2 border-accent pb-1 text-base font-semibold"
+                    : "text-secondary hover:text-primary text-sm font-medium"
                 }`}
               >
                 {tab.id === "viewer" && activeBook ? activeBook.title : tab.label}
