@@ -214,6 +214,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       const assistantEvents: ToolEvent[] = [];
+      // Raw web_search answers captured this turn, surfaced as a "full answer"
+      // card after the model's synthesized reply.
+      const webSearchCards: { answer: string; citations: Array<{ title?: string; url: string; snippet?: string }> }[] = [];
       let assistantText = "";
       setMessages((prev) => [...prev, { role: "assistant", content: "", toolEvents: [] }]);
 
@@ -347,6 +350,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             });
             assistantEvents.push(event);
             updateAssistant();
+            const r = result as any;
+            if (t.name === "web_search" && r && typeof r === "object" && r.answer) {
+              webSearchCards.push({ answer: String(r.answer), citations: Array.isArray(r.citations) ? r.citations : [] });
+            }
             workingMessages.push({
               role: "tool",
               tool_call_id: t.id || `call_${iteration}_${i}`,
@@ -375,6 +382,23 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               return copy;
             });
           }
+        }
+
+        // Surface the complete raw web_search answer(s) + sources as a card
+        // below the model's synthesized reply, so nothing is lost to summarizing.
+        if (webSearchCards.length) {
+          setMessages((prev) => [
+            ...prev,
+            ...webSearchCards.map((card, idx) => {
+              let md = `📄 **Full search answer**\n\n${card.answer}`;
+              if (card.citations.length) {
+                md += `\n\n**Sources:**\n` + card.citations
+                  .map((c, i) => `${i + 1}. ${c.title ? `[${c.title}](${c.url})` : c.url}`)
+                  .join("\n");
+              }
+              return { id: `websearch-card-${Date.now()}-${idx}`, role: "assistant" as const, content: md, displayOnly: true };
+            }),
+          ]);
         }
 
         return assistantText;
