@@ -63,7 +63,7 @@ const Index: React.FC = () => {
                 onClick={() => setActiveTab(tab.id)}
                 className={`font-body font-medium transition-colors ${
                   activeTab === tab.id
-                    ? "text-accent border-b-2 border-accent pb-1 text-xl"
+                    ? "text-accent border-b-2 border-accent pb-1 text-base"
                     : "text-secondary hover:text-primary text-sm"
                 }`}
               >
