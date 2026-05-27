@@ -1,6 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import { BookDocument, Chapter } from "@/types/library";
-import { parseBlocks } from "@/lib/responseBlocks";
+import { parseBlocksVerbose } from "@/lib/responseBlocks";
 
 export interface ToolDeps {
   books: BookDocument[];
@@ -682,13 +682,23 @@ export async function executeChatTool(
         return { result: { ok: true }, event: { name, summary: `Deleted chapter`, ok: true } };
       }
       case "render_blocks": {
-        const blocks = parseBlocks((args as any).blocks ?? args);
+        const { blocks, issues } = parseBlocksVerbose((args as any).blocks ?? args);
         if (!blocks.length) {
-          return { result: { error: "No valid blocks — check the allowed shapes." }, event: { name, summary: "No valid blocks to render", ok: false } };
+          // Hand the validation errors back so the model can fix and re-call.
+          return {
+            result: {
+              error: "No blocks passed validation. Fix the issues and call render_blocks again with the exact whitelisted shapes.",
+              issues: issues.slice(0, 6),
+            },
+            event: { name, summary: "Blocks invalid — asked model to retry", ok: false },
+          };
         }
-        // The blocks are rendered client-side from the tool-call arguments
-        // (see ChatContext); here we just acknowledge to the model.
-        return { result: { ok: true, rendered: blocks.length }, event: { name, summary: `Rendered ${blocks.length} block(s)`, ok: true } };
+        // Blocks are rendered client-side from the tool-call arguments (see
+        // ChatContext); here we acknowledge + report any dropped ones.
+        return {
+          result: { ok: true, rendered: blocks.length, dropped: issues.length, issues: issues.slice(0, 4) },
+          event: { name, summary: `Rendered ${blocks.length} block(s)${issues.length ? `, dropped ${issues.length}` : ""}`, ok: true },
+        };
       }
       default:
         return { result: { error: `Unknown tool ${name}` }, event: { name, summary: `Unknown tool ${name}`, ok: false } };
