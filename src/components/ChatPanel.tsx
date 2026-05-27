@@ -20,6 +20,7 @@ import VoiceNotesPanel, { appendVoiceNote } from "@/components/VoiceNotesPanel";
 import ResponseBlocks from "@/components/ResponseBlocks";
 import ArtifactPanel from "@/components/ArtifactPanel";
 import type { Artifact } from "@/lib/artifacts";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations, isSearchRateLimited } from "@/lib/chatTools";
 import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
 
@@ -107,6 +108,28 @@ const ChatPanel: React.FC = () => {
     if (prevLoadingRef.current && !isLoading) inputRef.current?.focus();
     prevLoadingRef.current = isLoading;
   }, [isLoading]);
+
+  // Accessibility: announce streamed assistant text to screen readers, but
+  // debounced (~2.5s) and only the NEW text since the last announcement, so it
+  // isn't re-read on every token (aria-atomic="false").
+  const [srAnnounce, setSrAnnounce] = useState("");
+  const announcedRef = useRef<{ id: string | null; len: number }>({ id: null, len: 0 });
+  const announceTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== "assistant" || !last.content) return;
+    const id = last.id || `idx-${messages.length - 1}`;
+    if (announcedRef.current.id !== id) announcedRef.current = { id, len: 0 };
+    if (announceTimerRef.current) window.clearTimeout(announceTimerRef.current);
+    announceTimerRef.current = window.setTimeout(() => {
+      const content = last.content || "";
+      if (content.length > announcedRef.current.len) {
+        const delta = content.slice(announcedRef.current.len).trim();
+        announcedRef.current.len = content.length;
+        if (delta) setSrAnnounce(delta);
+      }
+    }, 2500);
+  }, [messages]);
 
   // ESC + click-outside to close the settings panel.
   useEffect(() => {
@@ -351,13 +374,22 @@ const ChatPanel: React.FC = () => {
     }
   };
 
-  const handleDigestHistory = async () => {
+  // Audio Digest: summarize the conversation in a chosen format and (when a
+  // reply isn't already being spoken) read it aloud.
+  const DIGEST_PROMPTS: Record<"brief" | "deep" | "critique", string> = {
+    brief: "Give me a concise digest of our conversation so far: key topics covered, any decisions or conclusions reached, important insights, and open questions remaining.",
+    deep: "Give me a thorough deep-dive digest of our conversation: break down each topic in detail with its full context and reasoning, the connections between ideas, the decisions reached, and all open questions.",
+    critique: "Give me a critical review (critique) of our conversation so far: question the assumptions, point out gaps, weak reasoning, or missing perspectives, and suggest what to reconsider or explore next.",
+  };
+  const handleDigest = async (format: "brief" | "deep" | "critique") => {
     if (messages.length < 2) { toast.error("Nothing to digest yet"); return; }
     setDigesting(true);
     try {
-      await sendMessage(
-        "Please give me a concise digest of our conversation so far: key topics covered, any decisions or conclusions reached, important insights, and open questions remaining."
-      );
+      const reply = await sendMessage(DIGEST_PROMPTS[format]);
+      // Speak it unless a reply is already being spoken (auto-read / hands-free).
+      if (reply && reply.trim() && !autoReadReplies && !handsFree.active) {
+        speak(reply, { id: `digest-${Date.now()}` });
+      }
     } finally {
       setDigesting(false);
     }
@@ -688,8 +720,11 @@ const ChatPanel: React.FC = () => {
         </button>
       )}
 
+      {/* Screen-reader live region: debounced, incremental assistant text */}
+      <div className="sr-only" aria-live="polite" aria-atomic="false">{srAnnounce}</div>
+
       {/* Messages */}
-      <div ref={messagesContainerRef} className="flex-1 overflow-auto px-4 py-6 space-y-6 hide-scrollbar">
+      <div ref={messagesContainerRef} role="log" aria-label="Conversation with The Librarian" aria-live="off" className="flex-1 overflow-auto px-4 py-6 space-y-6 hide-scrollbar">
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-on-surface-variant gap-3">
             <span className="material-symbols-outlined text-5xl text-primary-container">auto_stories</span>
@@ -816,6 +851,7 @@ const ChatPanel: React.FC = () => {
             <div className="flex-grow relative">
               <Textarea
                 ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown}
+                aria-label="Message The Librarian"
                 placeholder={dictation.isListening ? "Listening… speak now" : apiKey ? "Ask about your books..." : "Set your OpenRouter API key to start chatting"}
                 rows={1} className="bg-surface-container-high border-none rounded-xl text-foreground py-3 pl-4 pr-20 focus:ring-1 focus:ring-primary/40 resize-none min-h-[50px] max-h-[220px] overflow-y-auto"
               />
@@ -893,14 +929,28 @@ const ChatPanel: React.FC = () => {
                 </span>
               )}
               {messages.length >= 2 && (
-                <button
-                  onClick={handleDigestHistory}
-                  disabled={digesting || isLoading}
-                  className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-1 hover:text-primary transition-colors disabled:opacity-40"
-                  title="Summarize this conversation"
-                >
-                  {digesting ? <Loader2 className="w-3 h-3 animate-spin" /> : <span className="material-symbols-outlined text-sm">summarize</span>} Digest
-                </button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      disabled={digesting || isLoading}
+                      className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-1 hover:text-primary transition-colors disabled:opacity-40"
+                      title="Digest this conversation (read aloud)"
+                    >
+                      {digesting ? <Loader2 className="w-3 h-3 animate-spin" /> : <span className="material-symbols-outlined text-sm">summarize</span>} Digest
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="min-w-[160px]">
+                    <DropdownMenuItem onClick={() => handleDigest("brief")}>
+                      <span className="material-symbols-outlined text-base mr-2">short_text</span> Brief
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleDigest("deep")}>
+                      <span className="material-symbols-outlined text-base mr-2">menu_book</span> Deep dive
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleDigest("critique")}>
+                      <span className="material-symbols-outlined text-base mr-2">rate_review</span> Critique
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
               <button
                 onClick={() => setNotesPanelOpen((v) => !v)}
