@@ -14,6 +14,21 @@ export interface ToolDeps {
 export const BURPLEXITY_BOT_ASK_URL = "https://tmagmbmitnvcwubxcwoc.supabase.co/functions/v1/bot-ask";
 const BURPLEXITY_QUICK_SEARCH_URL = "https://tmagmbmitnvcwubxcwoc.supabase.co/functions/v1/bot-search-quick";
 
+// Burplexity's response shape has varied over time. Accept several common
+// field names so a backend rename doesn't silently zero out the source list
+// (the "0 source(s)" symptom). `citations` is still tried first for back-compat.
+export function pickCitations(j: any): Array<{ title: string; url: string; snippet: string }> {
+  const raw = j?.citations ?? j?.sources ?? j?.results ?? j?.references ?? [];
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((c: any) => ({
+      title: String(c?.title ?? c?.name ?? c?.url ?? c?.link ?? "Source"),
+      url: String(c?.url ?? c?.link ?? c?.href ?? c?.source ?? ""),
+      snippet: String(c?.snippet ?? c?.text ?? c?.description ?? c?.content ?? "").slice(0, 240),
+    }))
+    .filter((c) => c.url);
+}
+
 export const CHAT_TOOL_DEFINITIONS = [
   {
     type: "function",
@@ -382,9 +397,7 @@ export async function executeChatTool(
             };
           }
           const answer = String(j.answer || "").slice(0, 3500);
-          const citations = Array.isArray(j.citations)
-            ? j.citations.slice(0, 5).map((c: any) => ({ title: c.title, url: c.url, snippet: (c.snippet || "").slice(0, 240) }))
-            : [];
+          const citations = pickCitations(j).slice(0, 5);
           return {
             result: { answer, citations },
             event: { name, summary: `Searched the web for "${q}" — ${citations.length} source(s)`, ok: true },
@@ -663,7 +676,7 @@ export async function executeQuickSearch(
         const j = await fb.json().catch(() => ({}));
         if (!fb.ok) return { citations: [], error: j?.error || `HTTP ${fb.status}` };
         return {
-          citations: Array.isArray(j.citations) ? j.citations : [],
+          citations: pickCitations(j),
           answer: j.answer || "",
           backend: "bot-ask",
         };
@@ -675,7 +688,7 @@ export async function executeQuickSearch(
     const j = await r.json().catch(() => ({}));
     if (!r.ok) return { citations: [], error: j?.error || `HTTP ${r.status}` };
     return {
-      citations: Array.isArray(j.citations) ? j.citations : [],
+      citations: pickCitations(j),
       answer: j.answer || "",
       elapsed_ms: j.elapsed_ms,
       backend: j.backend,

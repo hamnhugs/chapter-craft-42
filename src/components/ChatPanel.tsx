@@ -16,7 +16,7 @@ import { isEmbeddingModel } from "@/lib/utils";
 import { useDictation } from "@/hooks/useDictation";
 import PromptLibrary from "@/components/PromptLibrary";
 import VoiceNotesPanel, { appendVoiceNote } from "@/components/VoiceNotesPanel";
-import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL } from "@/lib/chatTools";
+import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations } from "@/lib/chatTools";
 import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
 
 const VOICE_QUICK_SEARCH_KEY = "voice_quick_search";
@@ -297,12 +297,13 @@ const ChatPanel: React.FC = () => {
         body: JSON.stringify({ query, save_to_wiki: false }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) { toast.error(j?.error || "Deep search failed"); return; }
-      let md = `🔬 **Deep Research Results for:** "${query}"\n\n`;
+      if (!r.ok) { toast.error(j?.error || "Web search failed"); return; }
+      const cites = pickCitations(j);
+      let md = `🔎 **Web Search Results for:** "${query}"\n\n`;
       if (j.answer) md += `${j.answer}\n\n`;
-      if (Array.isArray(j.citations) && j.citations.length) {
+      if (cites.length) {
         md += "**Sources:**\n";
-        j.citations.forEach((c: any, i: number) => {
+        cites.forEach((c, i) => {
           md += `**${i + 1}. ${c.title}**\n${c.url}\n`;
           if (c.snippet) md += `${c.snippet}\n`;
           md += "\n";
@@ -786,9 +787,9 @@ const ChatPanel: React.FC = () => {
                   onClick={handleDeepWebSearch}
                   disabled={deepSearching || !input.trim() || isLoading}
                   className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-1 hover:text-primary transition-colors disabled:opacity-40"
-                  title="Run a deep web search with the current input"
+                  title="Run a one-shot web search on the current input"
                 >
-                  {deepSearching ? <Loader2 className="w-3 h-3 animate-spin" /> : <span className="material-symbols-outlined text-sm">travel_explore</span>} Deep Search
+                  {deepSearching ? <Loader2 className="w-3 h-3 animate-spin" /> : <span className="material-symbols-outlined text-sm">travel_explore</span>} Web Search
                 </button>
               )}
               {pendingSearchCount > 0 && (
