@@ -151,7 +151,7 @@ const VideoTranscript: React.FC = () => {
     <div className="flex flex-col h-full p-6 max-w-2xl mx-auto gap-6">
       {/* Header */}
       <div>
-        <h2 className="font-headline font-bold text-2xl text-primary">Video Transcript</h2>
+        <h2 className="font-headline font-bold text-2xl text-primary">Reel</h2>
         <p className="text-secondary text-sm mt-1">
           Paste a YouTube URL to extract a full raw transcript + downloadable PDF. Saved to your library automatically.
         </p>

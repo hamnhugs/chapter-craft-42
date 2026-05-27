@@ -15,15 +15,20 @@ import StripeBar from "@/components/fruit-stripe/StripeBar";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { useTheme } from "@/context/ThemeContext";
 
+// Navigation — Craft Workshop theme
+// Workflow reads left-to-right: Vault → Study → Forge → Counsel (intake & processing)
+//                                  then → Codex → Tomes (knowledge building)
+// Secondary intake tools (Reel, Echo) live in the More sheet.
+// When Voice merges into Counsel, Echo tab is removed and Counsel absorbs it.
 const tabs = [
-  { id: "library" as const, icon: "library_books", label: "Library" },
-  { id: "viewer" as const, icon: "auto_stories", label: "Reader" },
-  { id: "chapterize" as const, icon: "auto_fix_high", label: "Chapterize" },
-  { id: "chat" as const, icon: "forum", label: "Chat" },
-  { id: "wiki" as const, icon: "menu_book", label: "Wiki" },
-  { id: "wikis" as const, icon: "collections_bookmark", label: "Wikis" },
-  { id: "video" as const, icon: "smart_display", label: "Video" },
-  { id: "voice" as const, icon: "settings_voice", label: "Voice" },
+  { id: "library" as const, icon: "archive", label: "Vault" },
+  { id: "viewer" as const, icon: "auto_stories", label: "Study" },
+  { id: "chapterize" as const, icon: "bolt", label: "Forge" },
+  { id: "chat" as const, icon: "psychology", label: "Counsel" },
+  { id: "wiki" as const, icon: "menu_book", label: "Codex" },
+  { id: "wikis" as const, icon: "collections_bookmark", label: "Tomes" },
+  { id: "video" as const, icon: "smart_display", label: "Reel" },
+  { id: "voice" as const, icon: "mic", label: "Echo" },
 ];
 
 const PRIMARY_IDS = ["library", "viewer", "chapterize", "chat"] as const;
@@ -47,20 +52,24 @@ const Index: React.FC = () => {
           <span data-wordmark className="font-display font-bold text-3xl tracking-tight text-primary">​</span>
         </div>
 
-        {/* Desktop nav */}
+        {/* Desktop nav — zone separator between Counsel (index 3) and Codex (index 4) */}
         <nav className="hidden md:flex items-center gap-8">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`font-body font-medium text-sm transition-colors ${
-                activeTab === tab.id
-                  ? "text-accent border-b-2 border-accent pb-1"
-                  : "text-secondary hover:text-primary"
-              }`}
-            >
-              {tab.id === "viewer" && activeBook ? activeBook.title : tab.label}
-            </button>
+          {tabs.map((tab, index) => (
+            <React.Fragment key={tab.id}>
+              {index === 4 && (
+                <span className="w-px h-4 bg-border/50 flex-shrink-0" aria-hidden />
+              )}
+              <button
+                onClick={() => setActiveTab(tab.id)}
+                className={`font-body font-medium text-sm transition-colors ${
+                  activeTab === tab.id
+                    ? "text-accent border-b-2 border-accent pb-1"
+                    : "text-secondary hover:text-primary"
+                }`}
+              >
+                {tab.id === "viewer" && activeBook ? activeBook.title : tab.label}
+              </button>
+            </React.Fragment>
           ))}
         </nav>
 
@@ -68,7 +77,7 @@ const Index: React.FC = () => {
           {activeWiki && (
             <button
               onClick={() => setActiveTab("wikis")}
-              title={`Active wiki: ${activeWiki.name} — press ⌘K to switch`}
+              title={`Active codex: ${activeWiki.name} — press ⌘K to switch`}
               className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent/10 hover:bg-accent/20 transition-colors text-xs font-body font-medium text-accent max-w-[180px] truncate"
             >
               <span

@@ -323,7 +323,7 @@ const ChatPanel: React.FC = () => {
                   onValueChange={(v) => setTtsRate(v[0])}
                 />
               </div>
-              <p className="text-[10px] text-on-surface-variant px-1">Used for read-aloud buttons here and replies in the Voice tab.</p>
+              <p className="text-[10px] text-on-surface-variant px-1">Used for read-aloud buttons here and replies in Echo.</p>
             </div>
           </section>
           <PromptLibrary scopeHint="chat" />
@@ -372,7 +372,7 @@ const ChatPanel: React.FC = () => {
             <p className="text-sm text-center max-w-md">
               {selectedBook
                 ? `Ready to discuss "${selectedBook.title}". ${selectedBook.chapters.length > 0 ? `${selectedBook.chapters.length} chapter(s) loaded.` : "No chapters isolated yet."}`
-                : "Select a book in the Reader tab, then come here to chat about it."}
+                : "Select a book in Study, then come here to counsel with the AI about it."}
             </p>
             {!apiKey && loaded && (
               <button onClick={() => setShowSettings(true)} className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-lg text-primary text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all">

@@ -649,7 +649,7 @@ const AutoChapterize: React.FC = () => {
         <header className="space-y-2">
           <div className="flex items-center gap-2">
             <Sparkles className="w-6 h-6 text-accent" />
-            <h1 className="font-headline text-3xl font-bold text-primary">Auto-Chapterize</h1>
+            <h1 className="font-headline text-3xl font-bold text-primary">Forge</h1>
           </div>
           <p className="text-sm text-muted-foreground">
             Pick a book, choose a model, and let AI detect every chapter after Chapter 1
@@ -941,7 +941,7 @@ const AutoChapterize: React.FC = () => {
           </Select>
           {!model.startsWith("google/") && !model.startsWith("openai/gpt-5") && !apiKey && (
             <p className="text-xs text-primary">
-              This model needs your OpenRouter API key. Add it in the Chat tab settings.
+              This model needs your OpenRouter API key. Add it in the Counsel tab settings.
             </p>
           )}
         </section>
