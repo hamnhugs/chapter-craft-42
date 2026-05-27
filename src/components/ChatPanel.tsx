@@ -416,20 +416,31 @@ const ChatPanel: React.FC = () => {
       <div className="flex flex-col h-full flex-1 min-w-0 relative">
       {/* Settings bar */}
       {showSettings && (
+        <>
+          {/* Mobile scrim — tap to dismiss the settings sheet */}
+          <div
+            className="md:hidden fixed inset-0 z-[55] bg-black/50 animate-in fade-in-0"
+            aria-hidden
+            onClick={() => setShowSettings(false)}
+          />
         <div
           ref={settingsPanelRef}
-          className="border-b border-outline-variant/10 bg-surface-container-low px-4 py-3 md:py-4 space-y-4 max-h-[60vh] md:max-h-[70vh] overflow-y-auto overscroll-contain"
+          className="space-y-4 overflow-y-auto overscroll-contain bg-surface-container-low fixed inset-x-0 bottom-0 z-[60] max-h-[88vh] rounded-t-2xl border-t border-outline-variant/10 px-4 pt-2 shadow-2xl max-md:animate-in max-md:slide-in-from-bottom max-md:duration-300 md:static md:z-auto md:max-h-[70vh] md:rounded-none md:border-b md:border-t-0 md:py-4 md:shadow-none"
           style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 0.75rem)" }}
         >
-          <div className="sticky top-0 -mx-4 -mt-3 px-4 py-2 bg-surface-container-low/95 backdrop-blur-sm flex items-center justify-between z-10">
-            <span className="text-xs font-semibold uppercase tracking-widest text-on-surface-variant">Settings</span>
-            <button
-              onClick={() => setShowSettings(false)}
-              aria-label="Close settings"
-              className="inline-flex items-center justify-center h-8 w-8 rounded-lg text-on-surface-variant hover:bg-surface-container-high active:scale-95 transition-all"
-            >
-              <span className="material-symbols-outlined text-[20px]">close</span>
-            </button>
+          <div className="sticky top-0 -mx-4 -mt-2 md:-mt-3 px-4 pt-2 pb-2 bg-surface-container-low/95 backdrop-blur-sm z-10">
+            {/* Mobile grab handle */}
+            <div className="md:hidden mx-auto mb-2 h-1.5 w-10 rounded-full bg-outline-variant/40" aria-hidden />
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-widest text-on-surface-variant">Settings</span>
+              <button
+                onClick={() => setShowSettings(false)}
+                aria-label="Close settings"
+                className="inline-flex items-center justify-center h-10 w-10 md:h-8 md:w-8 rounded-lg text-on-surface-variant hover:bg-surface-container-high active:scale-95 transition-all"
+              >
+                <span className="material-symbols-outlined text-[22px] md:text-[20px]">close</span>
+              </button>
+            </div>
           </div>
 
           {/* ── Models & Keys ── */}
@@ -688,6 +699,7 @@ const ChatPanel: React.FC = () => {
             </div>
           </section>
         </div>
+        </>
       )}
 
       {/* Active-wiki indicator */}
@@ -893,15 +905,17 @@ const ChatPanel: React.FC = () => {
               <button
                 onClick={handleSaveToWiki}
                 disabled={extracting}
-                className="h-[50px] px-5 bg-secondary-container text-on-secondary-container rounded-xl flex items-center gap-2 hover:bg-secondary-container/80 transition-all active:scale-95 border border-outline-variant/20 shrink-0"
+                aria-label="Save to Wiki"
+                title="Save to Wiki"
+                className="h-[50px] px-3 sm:px-5 bg-secondary-container text-on-secondary-container rounded-xl flex items-center gap-2 hover:bg-secondary-container/80 transition-all active:scale-95 border border-outline-variant/20 shrink-0"
               >
                 {extracting ? <Loader2 className="w-4 h-4 animate-spin" /> : <span className="material-symbols-outlined text-lg">history_edu</span>}
-                <span className="text-sm font-semibold whitespace-nowrap">Save to Wiki</span>
+                <span className="hidden sm:inline text-sm font-semibold whitespace-nowrap">Save to Wiki</span>
               </button>
             )}
           </div>
           <div className="flex justify-between items-center px-2">
-            <div className="flex gap-4 flex-wrap">
+            <div className="flex items-center gap-4 flex-nowrap overflow-x-auto hide-scrollbar snap-x flex-1 min-w-0 [&>*]:shrink-0 [&>*]:snap-start [&>*]:min-h-[40px] md:flex-wrap md:overflow-visible md:[&>*]:min-h-0">
               <button onClick={() => setChatDeepResearch(!chatDeepResearch)} className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${chatDeepResearch ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`}>
                 <span className="material-symbols-outlined text-sm" style={chatDeepResearch ? { fontVariationSettings: "'FILL' 1" } : {}}>science</span> Deep Research {chatDeepResearch ? "ON" : "OFF"}
               </button>
