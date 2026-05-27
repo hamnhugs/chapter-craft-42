@@ -23,7 +23,7 @@ const CALLOUT_STYLES: Record<string, { wrap: string; icon: string; symbol: strin
   tip:     { wrap: "border-cyan-500/40 bg-cyan-500/10", icon: "text-cyan-500", symbol: "lightbulb" },
 };
 
-const ChartBlock: React.FC<{ block: Extract<ResponseBlock, { type: "chart" }> }> = ({ block }) => {
+const ChartBlock: React.FC<{ block: ResponseBlock & { type: "chart" } }> = ({ block }) => {
   const { chart, data, xKey, series } = block;
   const common = { data, margin: { top: 8, right: 12, bottom: 4, left: -8 } };
   const axes = (
@@ -58,7 +58,7 @@ const ChartBlock: React.FC<{ block: Extract<ResponseBlock, { type: "chart" }> }>
   );
 };
 
-const QuizBlock: React.FC<{ block: Extract<ResponseBlock, { type: "quiz" }> }> = ({ block }) => {
+const QuizBlock: React.FC<{ block: ResponseBlock & { type: "quiz" } }> = ({ block }) => {
   const [picked, setPicked] = useState<number | null>(null);
   const revealed = picked !== null;
   return (
@@ -131,7 +131,7 @@ const Block: React.FC<{ block: ResponseBlock }> = ({ block }) => {
         </div>
       );
     case "chart":
-      return <ChartBlock block={block} />;
+      return <ChartBlock block={block as ResponseBlock & { type: "chart" }} />;
     case "timeline":
       return (
         <div className="rounded-xl bg-surface-container-high/50 border border-outline-variant/10 p-4">
@@ -191,7 +191,7 @@ const Block: React.FC<{ block: ResponseBlock }> = ({ block }) => {
         </div>
       );
     case "quiz":
-      return <QuizBlock block={block} />;
+      return <QuizBlock block={block as ResponseBlock & { type: "quiz" }} />;
     default:
       return null;
   }
