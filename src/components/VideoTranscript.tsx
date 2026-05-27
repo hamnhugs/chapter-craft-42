@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 interface VideoJob {
   id: string;
   video_url: string;
+  title: string | null;
   status: "pending" | "processing" | "completed" | "failed";
   pdf_url: string | null;
   word_count: number | null;
@@ -75,6 +76,7 @@ const VideoTranscript: React.FC = () => {
                 ...j,
                 status: data.status,
                 pdf_url: data.url || j.pdf_url,
+                title: data.title || data.metadata?.title || j.title,
                 word_count: data.word_count || j.word_count,
                 error: data.error || null,
               }
@@ -118,6 +120,7 @@ const VideoTranscript: React.FC = () => {
       const newJob: VideoJob = {
         id: data.job_id,
         video_url: url.trim(),
+        title: null,
         status: data.status,
         pdf_url: null,
         word_count: null,
@@ -132,6 +135,31 @@ const VideoTranscript: React.FC = () => {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleDelete = async (jobId: string) => {
+    if (!user) return;
+    if (!window.confirm("Delete this entry? The transcript saved to your library will not be removed.")) return;
+
+    // Stop any active polling for this job
+    if (pollingRef.current[jobId]) {
+      clearInterval(pollingRef.current[jobId]);
+      delete pollingRef.current[jobId];
+    }
+
+    const prev = jobs;
+    setJobs((curr) => curr.filter((j) => j.id !== jobId));
+
+    const { error: delErr } = await supabase
+      .from("video_jobs")
+      .delete()
+      .eq("id", jobId)
+      .eq("user_id", user.id);
+
+    if (delErr) {
+      setJobs(prev); // restore on failure
+      setError("Could not delete entry. Please try again.");
     }
   };
 
@@ -227,10 +255,28 @@ const VideoTranscript: React.FC = () => {
             className="bg-surface border border-border rounded-2xl p-4 flex flex-col gap-2"
           >
             <div className="flex items-start justify-between gap-2">
-              <p className="text-primary text-sm font-medium truncate flex-1">{job.video_url}</p>
-              <span className={`material-symbols-outlined text-xl ${statusColor(job.status)}`}>
-                {statusIcon(job.status)}
-              </span>
+              <div className="flex-1 min-w-0">
+                <p className="text-primary text-sm font-medium truncate">
+                  {job.title || job.video_url}
+                </p>
+                {job.title && (
+                  <p className="text-secondary text-xs truncate mt-0.5">{job.video_url}</p>
+                )}
+              </div>
+              <div className="flex items-center gap-1 flex-shrink-0">
+                <span className={`material-symbols-outlined text-xl ${statusColor(job.status)}`}>
+                  {statusIcon(job.status)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleDelete(job.id)}
+                  aria-label="Delete entry"
+                  title="Delete entry"
+                  className="text-secondary hover:text-red-400 transition-colors p-1 rounded-lg"
+                >
+                  <span className="material-symbols-outlined text-lg">delete</span>
+                </button>
+              </div>
             </div>
 
             <div className="flex items-center gap-3 text-xs text-secondary">
