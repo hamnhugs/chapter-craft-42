@@ -15,16 +15,16 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { useTheme } from "@/context/ThemeContext";
 
 // Navigation — Craft Workshop theme
-// Workflow reads left-to-right: Vault → Read → Forge → Talk (intake & processing)
+// Workflow reads left-to-right: Vault → Read → Forge → Counsel (intake & processing)
 //                                  then → Neuron → ​BRAIN (knowledge building)
 // Secondary intake tools (Reel) live in the More sheet.
-// Voice ("Echo") has been merged into Talk — Talk is now the single
+// Voice ("Echo") has been merged into Counsel — Counsel is now the single
 // conversational surface (typing + voice + read-aloud + notes).
 const tabs = [
   { id: "library" as const, icon: "archive", label: "Vault" },
   { id: "viewer" as const, icon: "auto_stories", label: "Read" },
   { id: "chapterize" as const, icon: "bolt", label: "Forge" },
-  { id: "chat" as const, icon: "psychology", label: "Talk" },
+  { id: "chat" as const, icon: "psychology", label: "Counsel" },
   { id: "wiki" as const, icon: "menu_book", label: "Neuron" },
   { id: "wikis" as const, icon: "collections_bookmark", label: "​BRAIN" },
   { id: "video" as const, icon: "smart_display", label: "Reel" },
