@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { synthesizeSpeech } from "@/lib/inworldTts";
 
-// Unified read-aloud for the merged Chat ("Counsel") surface.
+// Unified read-aloud for the merged Chat ("Talk") surface.
 //
 // Plays a message using the Inworld character voice when the user has it
 // enabled, and transparently falls back to the browser SpeechSynthesis voice
