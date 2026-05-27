@@ -52,7 +52,7 @@ const Index: React.FC = () => {
           <span data-wordmark className="font-display font-bold text-3xl tracking-tight text-primary">​</span>
         </div>
 
-        {/* Desktop nav — zone separator between Counsel (index 3) and Codex (index 4) */}
+        {/* Desktop nav — zone separator between Counsel (index 3) and Neuron (index 4) */}
         <nav className="hidden md:flex items-center gap-8">
           {tabs.map((tab, index) => (
             <React.Fragment key={tab.id}>
