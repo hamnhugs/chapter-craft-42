@@ -6,6 +6,7 @@ import { useChatSettings } from "@/hooks/useChatSettings";
 import { usePromptPresets } from "@/hooks/usePromptPresets";
 import { buildChatSystemPrompt } from "@/lib/buildChatSystemPrompt";
 import { CHAT_TOOL_DEFINITIONS, executeChatTool, ToolEvent } from "@/lib/chatTools";
+import { parseBlocks, type ResponseBlock } from "@/lib/responseBlocks";
 import { toast } from "sonner";
 import { isEmbeddingModel } from "@/lib/utils";
 
@@ -15,6 +16,8 @@ export interface ChatMessage {
   content: string;
   toolEvents?: ToolEvent[];
   displayOnly?: boolean;
+  /** Validated structured blocks to render (from the render_blocks tool). */
+  blocks?: ResponseBlock[];
 }
 
 interface SendOpts {
@@ -217,6 +220,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Raw web_search answers captured this turn, surfaced as a "full answer"
       // card after the model's synthesized reply.
       const webSearchCards: { answer: string; citations: Array<{ title?: string; url: string; snippet?: string }> }[] = [];
+      // Structured block sets emitted via the render_blocks tool this turn.
+      const blockSets: ResponseBlock[][] = [];
       let assistantText = "";
       setMessages((prev) => [...prev, { role: "assistant", content: "", toolEvents: [] }]);
 
@@ -354,6 +359,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (t.name === "web_search" && r && typeof r === "object" && r.answer) {
               webSearchCards.push({ answer: String(r.answer), citations: Array.isArray(r.citations) ? r.citations : [] });
             }
+            if (t.name === "render_blocks") {
+              const blocks = parseBlocks(t.args || "{}");
+              if (blocks.length) blockSets.push(blocks);
+            }
             workingMessages.push({
               role: "tool",
               tool_call_id: t.id || `call_${iteration}_${i}`,
@@ -382,6 +391,20 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               return copy;
             });
           }
+        }
+
+        // Render any structured blocks the model emitted this turn.
+        if (blockSets.length) {
+          setMessages((prev) => [
+            ...prev,
+            ...blockSets.map((blocks, idx) => ({
+              id: `blocks-${Date.now()}-${idx}`,
+              role: "assistant" as const,
+              content: "",
+              blocks,
+              displayOnly: true,
+            })),
+          ]);
         }
 
         // Surface the complete raw web_search answer(s) + sources as a card

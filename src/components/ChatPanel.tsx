@@ -17,6 +17,7 @@ import { isEmbeddingModel } from "@/lib/utils";
 import { useDictation } from "@/hooks/useDictation";
 import PromptLibrary from "@/components/PromptLibrary";
 import VoiceNotesPanel, { appendVoiceNote } from "@/components/VoiceNotesPanel";
+import ResponseBlocks from "@/components/ResponseBlocks";
 import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations, isSearchRateLimited } from "@/lib/chatTools";
 import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
 
@@ -731,7 +732,10 @@ const ChatPanel: React.FC = () => {
               onContextMenu={(e) => { if (longPressFiredRef.current) e.preventDefault(); }}
             >
               {msg.role === "assistant" ? (
-                <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown>{msg.content}</ReactMarkdown></div>
+                <>
+                  {msg.content && <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown>{msg.content}</ReactMarkdown></div>}
+                  {msg.blocks && msg.blocks.length > 0 && <ResponseBlocks blocks={msg.blocks} />}
+                </>
               ) : (
                 <p className="whitespace-pre-wrap font-medium">{msg.content}</p>
               )}

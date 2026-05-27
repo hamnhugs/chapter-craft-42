@@ -1,5 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import { BookDocument, Chapter } from "@/types/library";
+import { parseBlocks } from "@/lib/responseBlocks";
 
 export interface ToolDeps {
   books: BookDocument[];
@@ -269,6 +270,35 @@ export const CHAT_TOOL_DEFINITIONS = [
           activate: { type: "boolean", description: "If true, set this as active after creation. Default true." },
         },
         required: ["name"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "render_blocks",
+      description:
+        "Render rich, structured UI blocks INLINE in your reply (cards, tables, charts, timelines, step lists, key-value lists, comparisons, quizzes). Use this when structured/dense information is clearer than prose — e.g. comparisons, data, step-by-step guides, study quizzes. Still write a short prose reply too. Each item is an object with a `type` field. Text fields support markdown.",
+      parameters: {
+        type: "object",
+        properties: {
+          blocks: {
+            type: "array",
+            description:
+              "Up to 20 blocks. Allowed shapes by `type`: " +
+              "callout{variant:info|success|warning|danger|tip, title?, body}; " +
+              "card{title, body, footer?}; " +
+              "table{columns:string[], rows:string[][]}; " +
+              "chart{chart:bar|line|area|pie, data:object[], xKey:string, series:string[]}; " +
+              "timeline{items:[{when, label}]}; " +
+              "steps{ordered?:boolean, items:string[]}; " +
+              "keyValue{pairs:[{key, value}]}; " +
+              "comparison{columns:string[2..3], rows:[{label, cells:string[]}]}; " +
+              "quiz{question, options:string[], answerIndex:number, explanation?}.",
+            items: { type: "object", properties: { type: { type: "string" } }, required: ["type"], additionalProperties: true },
+          },
+        },
+        required: ["blocks"],
       },
     },
   },
@@ -650,6 +680,15 @@ export async function executeChatTool(
       case "delete_chapter": {
         await deps.removeChapter(String(args.book_id), String(args.chapter_id));
         return { result: { ok: true }, event: { name, summary: `Deleted chapter`, ok: true } };
+      }
+      case "render_blocks": {
+        const blocks = parseBlocks((args as any).blocks ?? args);
+        if (!blocks.length) {
+          return { result: { error: "No valid blocks — check the allowed shapes." }, event: { name, summary: "No valid blocks to render", ok: false } };
+        }
+        // The blocks are rendered client-side from the tool-call arguments
+        // (see ChatContext); here we just acknowledge to the model.
+        return { result: { ok: true, rendered: blocks.length }, event: { name, summary: `Rendered ${blocks.length} block(s)`, ok: true } };
       }
       default:
         return { result: { error: `Unknown tool ${name}` }, event: { name, summary: `Unknown tool ${name}`, ok: false } };
