@@ -18,6 +18,8 @@ import { useDictation } from "@/hooks/useDictation";
 import PromptLibrary from "@/components/PromptLibrary";
 import VoiceNotesPanel, { appendVoiceNote } from "@/components/VoiceNotesPanel";
 import ResponseBlocks from "@/components/ResponseBlocks";
+import ArtifactPanel from "@/components/ArtifactPanel";
+import type { Artifact } from "@/lib/artifacts";
 import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations, isSearchRateLimited } from "@/lib/chatTools";
 import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
 
@@ -60,6 +62,7 @@ const ChatPanel: React.FC = () => {
   const [loadingVoices, setLoadingVoices] = useState(false);
   const [testingVoice, setTestingVoice] = useState(false);
   const [selectionCapture, setSelectionCapture] = useState<{ text: string; top: number; left: number } | null>(null);
+  const [activeArtifact, setActiveArtifact] = useState<Artifact | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -735,6 +738,19 @@ const ChatPanel: React.FC = () => {
                 <>
                   {msg.content && <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown>{msg.content}</ReactMarkdown></div>}
                   {msg.blocks && msg.blocks.length > 0 && <ResponseBlocks blocks={msg.blocks} />}
+                  {msg.artifact && (
+                    <button
+                      onClick={() => setActiveArtifact(msg.artifact!)}
+                      className="flex items-center gap-3 w-full text-left rounded-xl bg-surface-container-high/60 border border-outline-variant/20 p-3 hover:border-primary-container/50 transition-colors mt-1"
+                    >
+                      <span className="material-symbols-outlined text-primary-container text-2xl">deployed_code</span>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-semibold text-foreground truncate">{msg.artifact.title}</div>
+                        <div className="text-xs text-on-surface-variant">{msg.artifact.kind.toUpperCase()} artifact · tap to open</div>
+                      </div>
+                      <span className="material-symbols-outlined text-on-surface-variant">open_in_full</span>
+                    </button>
+                  )}
                 </>
               ) : (
                 <p className="whitespace-pre-wrap font-medium">{msg.content}</p>
@@ -908,6 +924,7 @@ const ChatPanel: React.FC = () => {
       </div>
       </div>
       <VoiceNotesPanel open={notesPanelOpen} onClose={() => setNotesPanelOpen(false)} />
+      <ArtifactPanel artifact={activeArtifact} onClose={() => setActiveArtifact(null)} />
     </div>
   );
 };

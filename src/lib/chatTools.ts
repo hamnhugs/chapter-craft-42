@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { BookDocument, Chapter } from "@/types/library";
 import { parseBlocksVerbose } from "@/lib/responseBlocks";
+import { parseArtifact } from "@/lib/artifacts";
 
 export interface ToolDeps {
   books: BookDocument[];
@@ -299,6 +300,23 @@ export const CHAT_TOOL_DEFINITIONS = [
           },
         },
         required: ["blocks"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_artifact",
+      description:
+        "Render a self-contained interactive HTML or SVG 'artifact' in a side panel — for output best shown as a live rendered document: a diagram, an interactive widget, a hand-coded chart, a small HTML/CSS/JS demo, an SVG illustration, or a styled document. Provide ONLY the inner body markup (you MAY include <style> and <script> tags); do NOT include <html>, <head>, or <body> wrappers. It runs fully sandboxed with NO network access and no access to the page. Use `render_blocks` for simple structured data; use this for rich/visual/interactive output.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Short title shown on the artifact panel." },
+          kind: { type: "string", enum: ["html", "svg"], description: "html (default) or svg." },
+          content: { type: "string", description: "Inner body markup. May include <style>/<script>. No <html>/<head>/<body> wrappers and no external network calls (blocked by sandbox CSP)." },
+        },
+        required: ["content"],
       },
     },
   },
@@ -680,6 +698,14 @@ export async function executeChatTool(
       case "delete_chapter": {
         await deps.removeChapter(String(args.book_id), String(args.chapter_id));
         return { result: { ok: true }, event: { name, summary: `Deleted chapter`, ok: true } };
+      }
+      case "create_artifact": {
+        const art = parseArtifact(args);
+        if (!art) {
+          return { result: { error: "Artifact needs non-empty `content` (the inner HTML/SVG body markup, no wrappers)." }, event: { name, summary: "Artifact invalid", ok: false } };
+        }
+        // Rendered client-side from the tool-call arguments (see ChatContext).
+        return { result: { ok: true, title: art.title, kind: art.kind, bytes: art.content.length }, event: { name, summary: `Created artifact "${art.title}"`, ok: true } };
       }
       case "render_blocks": {
         const { blocks, issues } = parseBlocksVerbose((args as any).blocks ?? args);

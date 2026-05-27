@@ -45,6 +45,7 @@ export async function buildChatSystemPrompt({
     "When the user asks about which wiki is active, to list wikis, switch to another wiki, or create a new one, USE the wiki tools (`list_wikis`, `get_active_wiki`, `switch_wiki`, `create_wiki`) — never claim a switch happened without calling `switch_wiki`.",
     ...(voiceMode ? [] : [
       "You can also call `render_blocks` to present rich, structured content inline — tables, comparisons, charts, timelines, step-by-step guides, key-value facts, callouts, and study quizzes. Prefer it over long prose when structure aids clarity (e.g. comparing options, showing data, or step lists). Still include a brief prose reply alongside the blocks. Only use the whitelisted block shapes described in the tool.",
+      "For richer visual or interactive output — diagrams, hand-coded charts, an SVG illustration, or a small interactive HTML/CSS/JS demo — call `create_artifact`, which renders a sandboxed document in a side panel. Provide only inner body markup (no html/head/body wrappers); it has no network access. Use `render_blocks` for simple structured data and `create_artifact` for visual/interactive documents.",
     ]),
     "When the 'Retrieved Knowledge' section below contains 'contradicts' or 'refutes' edges, surface those conflicts to the user — never silently pick a side.",
     "## Wiki Conflict Resolution",

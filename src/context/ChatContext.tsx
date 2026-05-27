@@ -7,6 +7,7 @@ import { usePromptPresets } from "@/hooks/usePromptPresets";
 import { buildChatSystemPrompt } from "@/lib/buildChatSystemPrompt";
 import { CHAT_TOOL_DEFINITIONS, executeChatTool, ToolEvent } from "@/lib/chatTools";
 import { parseBlocks, type ResponseBlock } from "@/lib/responseBlocks";
+import { parseArtifact, type Artifact } from "@/lib/artifacts";
 import { toast } from "sonner";
 import { isEmbeddingModel } from "@/lib/utils";
 
@@ -18,6 +19,8 @@ export interface ChatMessage {
   displayOnly?: boolean;
   /** Validated structured blocks to render (from the render_blocks tool). */
   blocks?: ResponseBlock[];
+  /** Sandboxed HTML/SVG artifact to render (from the create_artifact tool). */
+  artifact?: Artifact;
 }
 
 interface SendOpts {
@@ -222,6 +225,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const webSearchCards: { answer: string; citations: Array<{ title?: string; url: string; snippet?: string }> }[] = [];
       // Structured block sets emitted via the render_blocks tool this turn.
       const blockSets: ResponseBlock[][] = [];
+      // Artifacts emitted via the create_artifact tool this turn.
+      const artifacts: Artifact[] = [];
       let assistantText = "";
       setMessages((prev) => [...prev, { role: "assistant", content: "", toolEvents: [] }]);
 
@@ -363,6 +368,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               const blocks = parseBlocks(t.args || "{}");
               if (blocks.length) blockSets.push(blocks);
             }
+            if (t.name === "create_artifact") {
+              const art = parseArtifact(t.args || "{}");
+              if (art) artifacts.push(art);
+            }
             workingMessages.push({
               role: "tool",
               tool_call_id: t.id || `call_${iteration}_${i}`,
@@ -391,6 +400,20 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               return copy;
             });
           }
+        }
+
+        // Surface any artifacts the model created this turn (opened in a panel).
+        if (artifacts.length) {
+          setMessages((prev) => [
+            ...prev,
+            ...artifacts.map((artifact, idx) => ({
+              id: `artifact-${Date.now()}-${idx}`,
+              role: "assistant" as const,
+              content: "",
+              artifact,
+              displayOnly: true,
+            })),
+          ]);
         }
 
         // Render any structured blocks the model emitted this turn.
