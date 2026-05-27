@@ -38,6 +38,7 @@ interface UseHandsFreeOpts {
 }
 
 const POST_TTS_COOLDOWN_MS = 700; // let the speaker tail / AEC settle before re-opening the mic
+const BARGE_GRACE_MS = 900;       // ignore the assistant's opening words so they don't self-trigger
 
 // Lazy-loaded VAD (only when barge-in is enabled) — kept off the main bundle.
 const VAD_BASE = "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.22/dist/";
@@ -134,10 +135,13 @@ export function useHandsFree({ onUtterance, speak, stopSpeaking, bargeIn = false
       const inst = await vad.MicVAD.new({
         baseAssetPath: VAD_BASE,
         onnxWASMBasePath: ORT_BASE,
-        // High threshold + a few frames so the assistant's own (echo-cancelled)
-        // audio doesn't self-trigger an interruption.
-        positiveSpeechThreshold: 0.85,
-        minSpeechFrames: 4,
+        // Tuned high to bias toward the user's direct (louder/clearer) voice
+        // over the echo-cancelled residual of the assistant's own playback.
+        // Headphones remain the most reliable option on open speakers.
+        positiveSpeechThreshold: 0.92,
+        negativeSpeechThreshold: 0.7,
+        minSpeechFrames: 10,
+        redemptionFrames: 10,
         additionalAudioConstraints: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         onSpeechStart: () => { bargeCallbackRef.current?.(); },
       });
@@ -210,23 +214,29 @@ export function useHandsFree({ onUtterance, speak, stopSpeaking, bargeIn = false
         setState("speaking");
         await new Promise<void>((resolve) => {
           let settled = false;
+          let armTimer: number | null = null;
           const finish = () => {
             if (settled) return;
             settled = true;
+            if (armTimer) window.clearTimeout(armTimer);
             bargeCallbackRef.current = null;
             resolve();
           };
           // Safety net: never hang in "speaking" if onEnd never fires.
           const maxMs = Math.min(90000, 4000 + reply.length * 90);
           const timer = window.setTimeout(finish, maxMs);
-          // Arm barge-in: VAD's onSpeechStart will fire this while we speak.
+          // Arm barge-in only AFTER a short grace, so the assistant's opening
+          // words don't instantly self-trigger an interruption.
           if (bargeInRef.current && vadRef.current) {
-            bargeCallbackRef.current = () => {
-              bargedIn = true;
-              stopSpeaking();
-              window.clearTimeout(timer);
-              finish();
-            };
+            armTimer = window.setTimeout(() => {
+              if (settled) return;
+              bargeCallbackRef.current = () => {
+                bargedIn = true;
+                stopSpeaking();
+                window.clearTimeout(timer);
+                finish();
+              };
+            }, BARGE_GRACE_MS);
           }
           speak(reply, { onEnd: () => { window.clearTimeout(timer); finish(); } });
         });
