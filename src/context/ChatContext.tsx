@@ -351,7 +351,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               role: "tool",
               tool_call_id: t.id || `call_${iteration}_${i}`,
               name: t.name,
-              content: JSON.stringify(result).slice(0, 8000),
+              content: JSON.stringify(result).slice(0, 24000),
             });
           }
         }

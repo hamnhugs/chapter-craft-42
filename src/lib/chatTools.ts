@@ -413,8 +413,8 @@ export async function executeChatTool(
               event: { name, summary: `Web search failed: ${msg}`, ok: false },
             };
           }
-          const answer = String(j.answer || "").slice(0, 3500);
-          const citations = pickCitations(j).slice(0, 5);
+          const answer = String(j.answer || "").slice(0, 16000);
+          const citations = pickCitations(j).slice(0, 8);
           return {
             result: { answer, citations },
             event: { name, summary: `Searched the web for "${q}" — ${citations.length} source(s)`, ok: true },
