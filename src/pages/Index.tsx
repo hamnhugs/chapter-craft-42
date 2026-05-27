@@ -16,13 +16,13 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { useTheme } from "@/context/ThemeContext";
 
 // Navigation — Craft Workshop theme
-// Workflow reads left-to-right: Vault → Study → Forge → Counsel (intake & processing)
+// Workflow reads left-to-right: Vault → Read → Forge → Counsel (intake & processing)
 //                                  then → Neuron → ​BRAIN (knowledge building)
 // Secondary intake tools (Reel, Echo) live in the More sheet.
 // When Voice merges into Counsel, Echo tab is removed and Counsel absorbs it.
 const tabs = [
   { id: "library" as const, icon: "archive", label: "Vault" },
-  { id: "viewer" as const, icon: "auto_stories", label: "Study" },
+  { id: "viewer" as const, icon: "auto_stories", label: "Read" },
   { id: "chapterize" as const, icon: "bolt", label: "Forge" },
   { id: "chat" as const, icon: "psychology", label: "Counsel" },
   { id: "wiki" as const, icon: "menu_book", label: "Neuron" },
