@@ -20,7 +20,6 @@ import { useDictation } from "@/hooks/useDictation";
 import PromptLibrary from "@/components/PromptLibrary";
 import VoiceNotesPanel, { appendVoiceNote } from "@/components/VoiceNotesPanel";
 import ResponseBlocks from "@/components/ResponseBlocks";
-import ArtifactPanel from "@/components/ArtifactPanel";
 import WorkspacePanel from "@/components/WorkspacePanel";
 import type { Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle, useWorkspaceItems } from "@/lib/workspaceStore";
@@ -70,8 +69,8 @@ const ChatPanel: React.FC = () => {
   const [loadingVoices, setLoadingVoices] = useState(false);
   const [testingVoice, setTestingVoice] = useState(false);
   const [selectionCapture, setSelectionCapture] = useState<{ text: string; top: number; left: number } | null>(null);
-  const [activeArtifact, setActiveArtifact] = useState<Artifact | null>(null);
   const [workspaceOpen, setWorkspaceOpen] = useState(() => localStorage.getItem("counsel_workspace_open") === "1");
+  const [workspaceSelectedId, setWorkspaceSelectedId] = useState<string | null>(null);
   const workspaceItems = useWorkspaceItems();
   const workspaceCount = workspaceItems.filter((i) => i.userId == null || i.userId === user?.id).length;
   useEffect(() => { localStorage.setItem("counsel_workspace_open", workspaceOpen ? "1" : "0"); }, [workspaceOpen]);
@@ -253,6 +252,33 @@ const ChatPanel: React.FC = () => {
   const saveBubbleToNotes = async (text: string) => {
     const note = await appendVoiceNote(text);
     if (note) { toast.success("Saved to notes"); setNotesPanelOpen(true); }
+  };
+
+  // Open a chat artifact in the Workspace panel (instead of a one-off modal).
+  // Prefer the linked workspace item id; fall back to matching by content, and
+  // capture it on the fly for older messages that predate the workspace.
+  const openArtifactInWorkspace = (msg: { artifact?: Artifact; workspaceItemId?: string }) => {
+    if (!msg.artifact) return;
+    const art = msg.artifact;
+    const kind = art.kind === "svg" ? "svg" : "html";
+    let id = msg.workspaceItemId;
+    if (!id || !workspaceItems.some((w) => w.id === id)) {
+      const match = workspaceItems.find(
+        (w) => w.kind === kind && w.title === art.title && w.content === art.content
+      );
+      id = match?.id;
+    }
+    if (!id) {
+      id = workspaceStore.add({
+        userId: user?.id ?? null,
+        kind,
+        title: art.title,
+        content: art.content,
+        meta: { source: "Artifact" },
+      }).id;
+    }
+    setWorkspaceSelectedId(id);
+    setWorkspaceOpen(true);
   };
 
   const bubbleId = (msg: { id?: string }, i: number) => `chat-${msg.id || i}`;
@@ -817,7 +843,7 @@ const ChatPanel: React.FC = () => {
                   {msg.blocks && msg.blocks.length > 0 && <ResponseBlocks blocks={msg.blocks} />}
                   {msg.artifact && (
                     <button
-                      onClick={() => setActiveArtifact(msg.artifact!)}
+                      onClick={() => openArtifactInWorkspace(msg)}
                       className="flex items-center gap-3 w-full text-left rounded-xl bg-surface-container-high/60 border border-outline-variant/20 p-3 hover:border-primary-container/50 transition-colors mt-1"
                     >
                       <span className="material-symbols-outlined text-primary-container text-2xl">deployed_code</span>
@@ -1030,7 +1056,12 @@ const ChatPanel: React.FC = () => {
       {/* Desktop: persistent right-side Workspace column */}
       {!isMobile && workspaceOpen && (
         <div className="flex h-full shrink-0 w-[360px] lg:w-[420px]">
-          <WorkspacePanel userId={user?.id ?? null} onClose={() => setWorkspaceOpen(false)} />
+          <WorkspacePanel
+            userId={user?.id ?? null}
+            onClose={() => setWorkspaceOpen(false)}
+            selectedId={workspaceSelectedId}
+            onSelect={setWorkspaceSelectedId}
+          />
         </div>
       )}
 
@@ -1038,13 +1069,17 @@ const ChatPanel: React.FC = () => {
       {isMobile && (
         <Sheet open={workspaceOpen} onOpenChange={setWorkspaceOpen}>
           <SheetContent side="right" className="w-full sm:max-w-md p-0">
-            <WorkspacePanel userId={user?.id ?? null} onClose={() => setWorkspaceOpen(false)} />
+            <WorkspacePanel
+              userId={user?.id ?? null}
+              onClose={() => setWorkspaceOpen(false)}
+              selectedId={workspaceSelectedId}
+              onSelect={setWorkspaceSelectedId}
+            />
           </SheetContent>
         </Sheet>
       )}
 
       <VoiceNotesPanel open={notesPanelOpen} onClose={() => setNotesPanelOpen(false)} />
-      <ArtifactPanel artifact={activeArtifact} onClose={() => setActiveArtifact(null)} />
     </div>
   );
 };

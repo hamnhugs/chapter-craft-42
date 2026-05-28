@@ -22,6 +22,9 @@ export interface ChatMessage {
   blocks?: ResponseBlock[];
   /** Sandboxed HTML/SVG artifact to render (from the create_artifact tool). */
   artifact?: Artifact;
+  /** Id of the durable Workspace item this artifact was captured as (so the
+   *  bubble can open it in the Workspace panel). */
+  workspaceItemId?: string;
 }
 
 interface SendOpts {
@@ -409,21 +412,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
 
-        // Surface any artifacts the model created this turn (opened in a panel).
+        // Surface any artifacts the model created this turn. Persist each into
+        // the durable Workspace first (survives tab switches / reloads / devices)
+        // and link the created item id onto the bubble so tapping it opens the
+        // Workspace panel.
         if (artifacts.length) {
-          setMessages((prev) => [
-            ...prev,
-            ...artifacts.map((artifact, idx) => ({
-              id: `artifact-${Date.now()}-${idx}`,
-              role: "assistant" as const,
-              content: "",
-              artifact,
-              displayOnly: true,
-            })),
-          ]);
-          // Persist each creation into the durable Workspace so it survives tab
-          // switches and reloads (the chat bubble is ephemeral; this isn't).
-          artifacts.forEach((artifact) =>
+          const created = artifacts.map((artifact) =>
             workspaceStore.add({
               userId: user?.id ?? null,
               kind: artifact.kind === "svg" ? "svg" : "html",
@@ -432,6 +426,17 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               meta: { source: "Artifact" },
             })
           );
+          setMessages((prev) => [
+            ...prev,
+            ...artifacts.map((artifact, idx) => ({
+              id: `artifact-${Date.now()}-${idx}`,
+              role: "assistant" as const,
+              content: "",
+              artifact,
+              workspaceItemId: created[idx]?.id,
+              displayOnly: true,
+            })),
+          ]);
         }
 
         // Render any structured blocks the model emitted this turn.

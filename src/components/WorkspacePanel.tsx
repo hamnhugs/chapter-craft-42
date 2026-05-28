@@ -44,13 +44,15 @@ function timeAgo(ts: number): string {
   return new Date(ts).toLocaleDateString();
 }
 
-const WorkspacePanel: React.FC<{ userId: string | null; onClose?: () => void }> = ({
-  userId,
-  onClose,
-}) => {
+const WorkspacePanel: React.FC<{
+  userId: string | null;
+  onClose?: () => void;
+  /** Controlled selection (lifted so a chat bubble can open a specific item). */
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+}> = ({ userId, onClose, selectedId, onSelect }) => {
   const allItems = useWorkspaceItems();
   const [filter, setFilter] = useState<"all" | "library">("all");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const items = useMemo(() => {
     let list = allItems.filter((i) => i.userId == null || i.userId === userId);
@@ -65,7 +67,7 @@ const WorkspacePanel: React.FC<{ userId: string | null; onClose?: () => void }> 
 
   const handleDelete = (id: string) => {
     workspaceStore.remove(id);
-    if (selectedId === id) setSelectedId(null);
+    if (selectedId === id) onSelect(null);
   };
 
   const handleToggleLibrary = (item: WorkspaceItem) => {
@@ -89,7 +91,7 @@ const WorkspacePanel: React.FC<{ userId: string | null; onClose?: () => void }> 
       return;
     }
     workspaceStore.clearUnsaved(userId);
-    setSelectedId(null);
+    onSelect(null);
     toast.success("Cleared unsaved files");
   };
 
@@ -136,7 +138,7 @@ const WorkspacePanel: React.FC<{ userId: string | null; onClose?: () => void }> 
         <div className="flex flex-col flex-1 min-h-0">
           <div className="flex items-center gap-2 px-3 py-2 border-b border-outline-variant/10 shrink-0">
             <button
-              onClick={() => setSelectedId(null)}
+              onClick={() => onSelect(null)}
               aria-label="Back to files"
               className="inline-flex items-center justify-center h-8 w-8 rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-colors"
             >
@@ -251,7 +253,7 @@ const WorkspacePanel: React.FC<{ userId: string | null; onClose?: () => void }> 
               items.map((item) => (
                 <button
                   key={item.id}
-                  onClick={() => setSelectedId(item.id)}
+                  onClick={() => onSelect(item.id)}
                   className="group flex items-start gap-3 w-full text-left rounded-xl bg-surface-container-high/50 border border-outline-variant/15 p-3 hover:border-primary-container/50 hover:bg-surface-container-high transition-colors"
                 >
                   <span className="material-symbols-outlined text-primary-container text-2xl shrink-0 mt-0.5">
