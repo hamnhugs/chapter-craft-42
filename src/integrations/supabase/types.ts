@@ -1068,6 +1068,42 @@ export type Database = {
         }
         Relationships: []
       }
+      workspace_items: {
+        Row: {
+          content: string
+          created_at: string
+          id: string
+          kind: string
+          meta: Json | null
+          saved_to_library: boolean
+          title: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          content?: string
+          created_at?: string
+          id?: string
+          kind: string
+          meta?: Json | null
+          saved_to_library?: boolean
+          title?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          id?: string
+          kind?: string
+          meta?: Json | null
+          saved_to_library?: boolean
+          title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
