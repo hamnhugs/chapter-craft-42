@@ -80,6 +80,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const abortRef = useRef<AbortController | null>(null);
   const loadedRef = useRef(false);
 
+  // Bind the durable Workspace store to the signed-in user so its files sync
+  // from Supabase (cross-device) and stream live via realtime.
+  useEffect(() => {
+    workspaceStore.setUser(user?.id ?? null);
+  }, [user]);
+
   useEffect(() => {
     if (!user) {
       setMessages([]);
