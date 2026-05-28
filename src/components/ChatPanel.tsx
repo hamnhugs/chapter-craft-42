@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useApp } from "@/context/AppContext";
 import { useChat } from "@/context/ChatContext";
+import { useAuth } from "@/hooks/useAuth";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -19,7 +21,10 @@ import PromptLibrary from "@/components/PromptLibrary";
 import VoiceNotesPanel, { appendVoiceNote } from "@/components/VoiceNotesPanel";
 import ResponseBlocks from "@/components/ResponseBlocks";
 import ArtifactPanel from "@/components/ArtifactPanel";
+import WorkspacePanel from "@/components/WorkspacePanel";
 import type { Artifact } from "@/lib/artifacts";
+import { workspaceStore, deriveResearchTitle, useWorkspaceItems } from "@/lib/workspaceStore";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations, isSearchRateLimited } from "@/lib/chatTools";
 import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
@@ -32,6 +37,8 @@ const SEARCH_INTENT_RE =
 
 const ChatPanel: React.FC = () => {
   const { books, activeBookId, activeWiki, activeWikiId } = useApp();
+  const { user } = useAuth();
+  const isMobile = useIsMobile();
   const {
     apiKey, savedModels, selectedModel, deepResearchModel, voiceModel, ttsRate, autoReadReplies, customSystemPrompt, burplexityApiToken, inworldApiKey, inworldEnabled, inworldVoiceId, loaded,
     saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setVoiceModel, setTtsRate, setAutoReadReplies, setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey, setInworldEnabled, setInworldVoiceId,
@@ -64,6 +71,10 @@ const ChatPanel: React.FC = () => {
   const [testingVoice, setTestingVoice] = useState(false);
   const [selectionCapture, setSelectionCapture] = useState<{ text: string; top: number; left: number } | null>(null);
   const [activeArtifact, setActiveArtifact] = useState<Artifact | null>(null);
+  const [workspaceOpen, setWorkspaceOpen] = useState(() => localStorage.getItem("counsel_workspace_open") === "1");
+  const workspaceItems = useWorkspaceItems();
+  const workspaceCount = workspaceItems.filter((i) => i.userId == null || i.userId === user?.id).length;
+  useEffect(() => { localStorage.setItem("counsel_workspace_open", workspaceOpen ? "1" : "0"); }, [workspaceOpen]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -332,10 +343,21 @@ const ChatPanel: React.FC = () => {
         md += `_Completed in ${result.elapsed_ms}ms${result.backend ? ` via ${result.backend}` : ""}_`;
       }
       injectDisplayMessage(md);
+      workspaceStore.add({
+        userId: user?.id ?? null,
+        kind: "research",
+        title: deriveResearchTitle("", query),
+        content: md,
+        meta: {
+          query,
+          citations: result.citations.map((c) => ({ title: c.title, url: c.url, snippet: c.snippet })),
+          source: "Quick Search",
+        },
+      });
     } finally {
       setPendingSearchCount((c) => c - 1);
     }
-  }, [burplexityApiToken, injectDisplayMessage]);
+  }, [burplexityApiToken, injectDisplayMessage, user?.id]);
 
   const handleDeepWebSearch = async () => {
     const query = input.trim();
@@ -368,6 +390,14 @@ const ChatPanel: React.FC = () => {
         });
       }
       injectDisplayMessage(md);
+      // Persist to the durable Workspace so it survives tab switches / reloads.
+      workspaceStore.add({
+        userId: user?.id ?? null,
+        kind: "research",
+        title: deriveResearchTitle(j.answer || "", query),
+        content: j.answer ? String(j.answer) : md,
+        meta: { query, citations: cites, source: "Web Search" },
+      });
       setInput("");
     } finally {
       setDeepSearching(false);
@@ -967,6 +997,15 @@ const ChatPanel: React.FC = () => {
                 </DropdownMenu>
               )}
               <button
+                onClick={() => setWorkspaceOpen((v) => !v)}
+                aria-pressed={workspaceOpen}
+                className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${workspaceOpen ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`}
+                title="Workspace — saved files & research"
+              >
+                <span className="material-symbols-outlined text-sm" style={workspaceOpen ? { fontVariationSettings: "'FILL' 1" } : {}}>folder_open</span>
+                Files{workspaceCount > 0 ? ` (${workspaceCount})` : ""}
+              </button>
+              <button
                 onClick={() => setNotesPanelOpen((v) => !v)}
                 aria-pressed={notesPanelOpen}
                 className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${notesPanelOpen ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`}
@@ -987,6 +1026,23 @@ const ChatPanel: React.FC = () => {
         </div>
       </div>
       </div>
+
+      {/* Desktop: persistent right-side Workspace column */}
+      {!isMobile && workspaceOpen && (
+        <div className="flex h-full shrink-0 w-[360px] lg:w-[420px]">
+          <WorkspacePanel userId={user?.id ?? null} onClose={() => setWorkspaceOpen(false)} />
+        </div>
+      )}
+
+      {/* Mobile: Workspace opens as a right-side sheet */}
+      {isMobile && (
+        <Sheet open={workspaceOpen} onOpenChange={setWorkspaceOpen}>
+          <SheetContent side="right" className="w-full sm:max-w-md p-0">
+            <WorkspacePanel userId={user?.id ?? null} onClose={() => setWorkspaceOpen(false)} />
+          </SheetContent>
+        </Sheet>
+      )}
+
       <VoiceNotesPanel open={notesPanelOpen} onClose={() => setNotesPanelOpen(false)} />
       <ArtifactPanel artifact={activeArtifact} onClose={() => setActiveArtifact(null)} />
     </div>

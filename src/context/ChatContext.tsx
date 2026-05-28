@@ -8,6 +8,7 @@ import { buildChatSystemPrompt } from "@/lib/buildChatSystemPrompt";
 import { CHAT_TOOL_DEFINITIONS, executeChatTool, ToolEvent } from "@/lib/chatTools";
 import { parseBlocks, type ResponseBlock } from "@/lib/responseBlocks";
 import { parseArtifact, type Artifact } from "@/lib/artifacts";
+import { workspaceStore, deriveResearchTitle } from "@/lib/workspaceStore";
 import { toast } from "sonner";
 import { isEmbeddingModel } from "@/lib/utils";
 
@@ -414,6 +415,17 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               displayOnly: true,
             })),
           ]);
+          // Persist each creation into the durable Workspace so it survives tab
+          // switches and reloads (the chat bubble is ephemeral; this isn't).
+          artifacts.forEach((artifact) =>
+            workspaceStore.add({
+              userId: user?.id ?? null,
+              kind: artifact.kind === "svg" ? "svg" : "html",
+              title: artifact.title,
+              content: artifact.content,
+              meta: { source: "Artifact" },
+            })
+          );
         }
 
         // Render any structured blocks the model emitted this turn.
@@ -445,6 +457,20 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               return { id: `websearch-card-${Date.now()}-${idx}`, role: "assistant" as const, content: md, displayOnly: true };
             }),
           ]);
+          // Persist research answers to the durable Workspace.
+          webSearchCards.forEach((card) =>
+            workspaceStore.add({
+              userId: user?.id ?? null,
+              kind: "research",
+              title: deriveResearchTitle(card.answer, trimmed),
+              content: card.answer,
+              meta: {
+                query: trimmed,
+                citations: card.citations,
+                source: deepResearch ? "Deep Research" : "Web Search",
+              },
+            })
+          );
         }
 
         return assistantText;
