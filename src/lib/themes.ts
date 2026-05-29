@@ -233,7 +233,7 @@ export const THEMES: ThemeDef[] = [
   },
 ];
 
-export const DEFAULT_THEME: ThemeId = "aurora";
+export const DEFAULT_THEME: ThemeId = "amber-editorial";
 
 export function getTheme(id: ThemeId): ThemeDef {
   return THEMES.find((t) => t.id === id) ?? THEMES[0];
