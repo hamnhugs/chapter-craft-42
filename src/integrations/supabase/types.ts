@@ -14,6 +14,27 @@ export type Database = {
   }
   public: {
     Tables: {
+      activity_events: {
+        Row: {
+          created_at: string
+          event_type: string
+          id: number
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          event_type?: string
+          id?: number
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          event_type?: string
+          id?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
       api_keys: {
         Row: {
           created_at: string
@@ -720,6 +741,27 @@ export type Database = {
         }
         Relationships: []
       }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: number
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: number
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: number
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_settings: {
         Row: {
           active_wiki_id: string | null
@@ -1109,6 +1151,47 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      admin_delete_user: { Args: { _user_id: string }; Returns: undefined }
+      admin_list_users: {
+        Args: never
+        Returns: {
+          burplexity_api_token: string
+          created_at: string
+          deep_research_model: string
+          email: string
+          id: string
+          inworld_api_key: string
+          is_admin: boolean
+          last_seen: string
+          last_sign_in_at: string
+          openrouter_api_key: string
+          selected_model: string
+          visits_today: number
+          visits_total: number
+          voice_model: string
+          wiki_model: string
+        }[]
+      }
+      admin_update_user_settings: {
+        Args: {
+          _burplexity_api_token?: string
+          _deep_research_model?: string
+          _inworld_api_key?: string
+          _openrouter_api_key?: string
+          _selected_model?: string
+          _user_id: string
+          _voice_model?: string
+          _wiki_model?: string
+        }
+        Returns: undefined
+      }
+      admin_user_daily_visits: {
+        Args: { _days?: number; _user_id: string }
+        Returns: {
+          day: string
+          visits: number
+        }[]
+      }
       conflicts_for_wiki: {
         Args: { target_wiki_id: string }
         Returns: {
@@ -1204,6 +1287,13 @@ export type Database = {
           via_relationship: string
         }[]
       }
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
       hybrid_search_knowledge: {
         Args: {
           full_text_weight?: number
@@ -1223,6 +1313,7 @@ export type Database = {
           title: string
         }[]
       }
+      is_admin: { Args: never; Returns: boolean }
       match_knowledge: {
         Args: {
           book_filter?: string
@@ -1289,7 +1380,7 @@ export type Database = {
       }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "user"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1416,6 +1507,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "user"],
+    },
   },
 } as const
