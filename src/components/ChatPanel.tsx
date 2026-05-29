@@ -911,7 +911,9 @@ const ChatPanel: React.FC = () => {
           </div>
         )}
         <div ref={messagesEndRef} />
+        </div>
       </div>
+
 
       {/* Input Area */}
       <div className="px-4 pb-4 pt-2">
