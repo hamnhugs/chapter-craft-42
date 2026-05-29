@@ -27,6 +27,7 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations, isSearchRateLimited } from "@/lib/chatTools";
 import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
+import counselBgVideo from "@/assets/counsel-bg.mp4";
 
 const VOICE_QUICK_SEARCH_KEY = "voice_quick_search";
 const VOICE_QUICK_SEARCH_MODEL_KEY = "voice_quick_search_model";
@@ -792,7 +793,19 @@ const ChatPanel: React.FC = () => {
       <div className="sr-only" aria-live="polite" aria-atomic="false">{srAnnounce}</div>
 
       {/* Messages */}
-      <div ref={messagesContainerRef} role="log" aria-label="Conversation with The Librarian" aria-live="off" className="flex-1 overflow-auto px-4 py-6 space-y-6 hide-scrollbar">
+      <div className="flex-1 relative overflow-hidden">
+        <video
+          src={counselBgVideo}
+          autoPlay
+          loop
+          muted
+          playsInline
+          aria-hidden
+          className="absolute inset-0 w-full h-full object-cover opacity-25 pointer-events-none"
+        />
+        <div className="absolute inset-0 bg-background/50 pointer-events-none" aria-hidden />
+        <div ref={messagesContainerRef} role="log" aria-label="Conversation with The Librarian" aria-live="off" className="relative h-full overflow-auto px-4 py-6 space-y-6 hide-scrollbar">
+
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-on-surface-variant gap-3">
             <span className="material-symbols-outlined text-5xl text-primary-container">auto_stories</span>
@@ -898,7 +911,9 @@ const ChatPanel: React.FC = () => {
           </div>
         )}
         <div ref={messagesEndRef} />
+        </div>
       </div>
+
 
       {/* Input Area */}
       <div className="px-4 pb-4 pt-2">
