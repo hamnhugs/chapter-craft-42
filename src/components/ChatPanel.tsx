@@ -27,9 +27,9 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations, isSearchRateLimited } from "@/lib/chatTools";
 import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
-
-import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
 import counselBgVideo from "@/assets/counsel-bg.mp4";
+
+const VOICE_QUICK_SEARCH_KEY = "voice_quick_search";
 const VOICE_QUICK_SEARCH_MODEL_KEY = "voice_quick_search_model";
 
 const SEARCH_INTENT_RE =
