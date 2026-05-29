@@ -12,6 +12,7 @@ import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import MemoryGuide from "./pages/MemoryGuide";
 import WikiControlsGuide from "./pages/WikiControlsGuide";
+import Admin from "./pages/Admin";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -42,6 +43,8 @@ const App = () => (
             <ChatProvider>
               <Routes>
                 <Route path="/auth" element={<AuthRoute />} />
+                {/* /admin has its own self-contained login gate — not wrapped in ProtectedRoute */}
+                <Route path="/admin" element={<Admin />} />
                 <Route
                   path="/memory-guide"
                   element={

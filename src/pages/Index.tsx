@@ -13,6 +13,7 @@ import ConflictNotifier from "@/components/ConflictNotifier";
 import StripeBar from "@/components/fruit-stripe/StripeBar";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { useTheme } from "@/context/ThemeContext";
+import { useVisitTracker } from "@/hooks/useVisitTracker";
 
 // Navigation — Craft Workshop theme
 // Workflow reads left-to-right: Vault → Read → Forge → Counsel (intake & processing)
@@ -41,6 +42,7 @@ const Index: React.FC = () => {
   const activeBook = getActiveBook();
   const { themeId } = useTheme();
   const isFruitStripe = themeId === "fruit-stripe";
+  useVisitTracker();
 
   return (
     <div className="flex flex-col h-screen bg-background">
