@@ -306,7 +306,7 @@ const WikiLibrary: React.FC = () => {
               </span>
             </div>
             <h2 className="font-headline font-bold text-5xl md:text-6xl text-primary tracking-tight">
-              Neuron List
+              Select a Neuron&nbsp;
             </h2>
             <p className="text-on-surface-variant max-w-xl text-lg italic font-headline">
               "Many minds, one library. Choose where to think."
