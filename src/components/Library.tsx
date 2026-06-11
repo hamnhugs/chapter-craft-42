@@ -9,6 +9,8 @@ import { useChatSettings } from "@/hooks/useChatSettings";
 import { structureJobs, useStructureJobs, StructureJob } from "@/lib/structureJobs";
 import { autoTagBooks } from "@/lib/autoTag";
 import { toast } from "sonner";
+import LibraryFolders from "@/components/LibraryFolders";
+import LibraryList from "@/components/LibraryList";
 
 // The 3D mind map pulls in three.js (~300KB gzip); lazy-load so that chunk is
 // only fetched when the user actually toggles the graph view on.
@@ -78,6 +80,16 @@ const SUPPORTED_UPLOAD_EXTENSIONS = ["pdf", "doc", "docx", "txt", "rtf", "odt", 
 const MAX_UPLOAD_ATTEMPTS = 3;
 const MAX_CONCURRENT_UPLOADS = 3;
 
+type ViewMode = "grid" | "folders" | "list" | "graph";
+const VIEW_KEY = "vault_view_mode";
+
+const VIEW_OPTIONS: { id: ViewMode; icon: string; label: string }[] = [
+  { id: "grid", icon: "grid_view", label: "Grid" },
+  { id: "folders", icon: "folder", label: "Folders" },
+  { id: "list", icon: "view_list", label: "List" },
+  { id: "graph", icon: "hub", label: "Mind map" },
+];
+
 const Library: React.FC = () => {
   const { books, addBook, removeBook, setActiveBook, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile } = useApp();
   const { apiKey } = useChatSettings();
@@ -90,8 +102,16 @@ const Library: React.FC = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [currentBatchIds, setCurrentBatchIds] = useState<string[]>([]);
   const [query, setQuery] = useState("");
-  const [view, setView] = useState<"grid" | "graph">("grid");
+  // Last-used view persists across sessions (Finder/Drive convention).
+  const [view, setView] = useState<ViewMode>(() => {
+    const v = localStorage.getItem(VIEW_KEY);
+    return v === "folders" || v === "list" || v === "graph" ? v : "grid";
+  });
   const [tagProgress, setTagProgress] = useState<{ done: number; total: number } | null>(null);
+
+  useEffect(() => {
+    localStorage.setItem(VIEW_KEY, view);
+  }, [view]);
 
   const sortedBooks = useMemo(() => {
     return [...books].sort((a, b) => {
@@ -410,23 +430,43 @@ const Library: React.FC = () => {
               </span>
               {tagProgress ? `Tagging ${tagProgress.done}/${tagProgress.total}…` : "Auto-tag"}
             </button>
-            <button
-              onClick={() => setView((v) => (v === "grid" ? "graph" : "grid"))}
-              onMouseEnter={() => {
-                // Warm the three.js chunk on hover so the toggle feels instant.
-                void import("@/components/LibraryGraph");
-              }}
-              title={view === "grid" ? "Show 3D mind map" : "Show book grid"}
-              aria-pressed={view === "graph"}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm border transition-all ${
-                view === "graph"
-                  ? "bg-primary/15 text-primary border-primary/30"
-                  : "bg-surface-container-high text-foreground border-outline-variant/10 hover:bg-surface-container-highest"
-              }`}
+            {/* View switcher — segmented control, icons + label on wide screens */}
+            <div
+              role="group"
+              aria-label="Library view"
+              className="flex items-center rounded-xl border border-outline-variant/10 bg-surface-container-high p-1"
             >
-              <span className="material-symbols-outlined text-xs">{view === "grid" ? "hub" : "grid_view"}</span>
-              {view === "grid" ? "Mind Map" : "Grid"}
-            </button>
+              {VIEW_OPTIONS.map((opt) => (
+                <button
+                  key={opt.id}
+                  onClick={() => setView(opt.id)}
+                  onMouseEnter={
+                    opt.id === "graph"
+                      ? () => {
+                          // Warm the three.js chunk on hover so the switch feels instant.
+                          void import("@/components/LibraryGraph");
+                        }
+                      : undefined
+                  }
+                  title={opt.label}
+                  aria-pressed={view === opt.id}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-all ${
+                    view === opt.id
+                      ? "bg-primary/15 text-primary font-semibold"
+                      : "text-on-surface-variant hover:text-primary"
+                  }`}
+                >
+                  <span
+                    className="material-symbols-outlined text-base"
+                    style={view === opt.id ? { fontVariationSettings: "'FILL' 1" } : undefined}
+                    aria-hidden
+                  >
+                    {opt.icon}
+                  </span>
+                  <span className="hidden xl:inline">{opt.label}</span>
+                </button>
+              ))}
+            </div>
             <button
               onClick={() => setShowApiKeys((v) => !v)}
               className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all"
@@ -529,7 +569,7 @@ const Library: React.FC = () => {
         )}
 
         {/* Upload Area (hidden in mind-map view to give the graph room) */}
-        {view === "grid" && (
+        {view !== "graph" && (
         <div
           onDragOver={(e) => e.preventDefault()}
           onDrop={handleDrop}
@@ -593,6 +633,32 @@ const Library: React.FC = () => {
               <LibraryGraph books={filteredBooks} onOpenBook={(id) => setActiveBook(id)} />
             </Suspense>
           </GraphErrorBoundary>
+        ) : view === "folders" ? (
+          <LibraryFolders
+            books={filteredBooks}
+            renderBook={(book, i) => (
+              <BookCard
+                key={book.id}
+                book={book}
+                index={i}
+                query={query}
+                job={jobs[book.id]}
+                onDetect={() => runDetect(book)}
+                onRead={() => setActiveBook(book.id)}
+                onRemove={() => removeBook(book.id)}
+                onRename={(newTitle) => updateBookTitle(book.id, newTitle)}
+              />
+            )}
+          />
+        ) : view === "list" ? (
+          <LibraryList
+            books={filteredBooks}
+            sortBy={sortBy}
+            onSortBy={setSortBy}
+            onOpenBook={(id) => setActiveBook(id)}
+            onRemove={(id) => removeBook(id)}
+            highlight={(text) => <Highlight text={text} query={query} />}
+          />
         ) : (
           <div className="book-grid">
             {filteredBooks.map((book, i) => (
