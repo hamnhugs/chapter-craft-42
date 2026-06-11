@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { toast } from "sonner";
-import { Check, Sparkles } from "lucide-react";
+import { Check, Sparkles, Lock } from "lucide-react";
 import {
   CommandDialog,
   CommandInput,
@@ -10,6 +10,9 @@ import {
   CommandItem,
 } from "@/components/ui/command";
 import { useApp } from "@/context/AppContext";
+import { usePlan } from "@/hooks/usePlan";
+import { computeLockedWikiIds } from "@/lib/neuronAccess";
+import { openPricing } from "@/components/PricingDialog";
 
 // Global keyboard-driven wiki switcher. Toggle with Cmd+K (Mac) / Ctrl+K (others).
 // Listens for keydown anywhere; ignores input/textarea/contenteditable focus
@@ -25,7 +28,15 @@ const isEditable = (el: Element | null): boolean => {
 
 const WikiQuickSwitcher: React.FC = () => {
   const { wikis, activeWikiId, setActiveWiki, setActiveTab } = useApp();
+  const { isPaid, loaded: planLoaded } = usePlan();
   const [open, setOpen] = useState(false);
+
+  // Locked neurons (free plan) stay visible but can't be loaded — same rule
+  // as the BRAIN tab cards and the database itself.
+  const lockedIds = useMemo(
+    () => computeLockedWikiIds(wikis, isPaid, planLoaded),
+    [wikis, isPaid, planLoaded],
+  );
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -47,6 +58,11 @@ const WikiQuickSwitcher: React.FC = () => {
 
   const handleSelect = useCallback(
     async (wikiId: string) => {
+      if (lockedIds.has(wikiId)) {
+        setOpen(false);
+        openPricing("neuron-locked");
+        return;
+      }
       try {
         await setActiveWiki(wikiId);
         const wiki = wikis.find((w) => w.id === wikiId);
@@ -56,7 +72,7 @@ const WikiQuickSwitcher: React.FC = () => {
         toast.error(err.message || "Switch failed");
       }
     },
-    [setActiveWiki, wikis]
+    [setActiveWiki, wikis, lockedIds]
   );
 
   // Sort: active first, then most recently loaded, then name
@@ -102,6 +118,11 @@ const WikiQuickSwitcher: React.FC = () => {
               {wiki.id === activeWikiId && (
                 <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-primary shrink-0">
                   <Check className="w-3 h-3" /> Active
+                </span>
+              )}
+              {lockedIds.has(wiki.id) && (
+                <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground shrink-0">
+                  <Lock className="w-3 h-3" /> Locked
                 </span>
               )}
             </CommandItem>

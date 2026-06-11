@@ -4,6 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useApp } from "@/context/AppContext";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { usePlan } from "@/hooks/usePlan";
+import { computeLockedWikiIds } from "@/lib/neuronAccess";
 import { usePromptPresets } from "@/hooks/usePromptPresets";
 import { buildChatSystemPrompt } from "@/lib/buildChatSystemPrompt";
 import { CHAT_TOOL_DEFINITIONS, executeChatTool, ToolEvent } from "@/lib/chatTools";
@@ -60,10 +61,10 @@ const MAX_TOOL_ITERATIONS = 5;
 
 export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
-  const { books, activeBookId, activeWiki, activeWikiId, addChapter, updateChapter, removeChapter, setActiveBookSilent } = useApp();
+  const { books, activeBookId, activeWiki, activeWikiId, wikis, addChapter, updateChapter, removeChapter, setActiveBookSilent } = useApp();
 
-  const { apiKey, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken } = useChatSettings();
-  const { isPaid } = usePlan();
+  const { apiKey, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons } = useChatSettings();
+  const { isPaid, loaded: planLoaded } = usePlan();
   const { getActiveBodyForScope, migrate } = usePromptPresets();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -222,6 +223,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const scopedPromptBody = getActiveBodyForScope(isVoice ? "voice" : "chat");
       const promptToInject = scopedPromptBody || customSystemPrompt;
 
+      // Neuron scope: by default the AI reads ONLY the active neuron. The
+      // "Access all neurons" toggle widens that — paid plans only. The same
+      // rule is enforced in chatTools (search_wiki) and, ultimately, by RLS:
+      // locked-neuron content never leaves the database for free accounts.
+      const allNeurons = accessAllNeurons && isPaid;
+      const lockedIds = computeLockedWikiIds(wikis, isPaid, planLoaded);
+      const activeIsLocked = !!activeWikiId && lockedIds.has(activeWikiId);
+
       const systemPrompt = await buildChatSystemPrompt({
         books,
         selectedBook,
@@ -229,8 +238,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         voiceMode: isVoice,
         latestUserQuery: trimmed,
         customSystemPrompt: promptToInject,
-        activeWikiName: activeWiki?.name || null,
+        activeWikiName: activeIsLocked ? null : activeWiki?.name || null,
         activeWikiId: activeWikiId || null,
+        allNeurons,
       });
 
       const assistantEvents: ToolEvent[] = [];
@@ -502,7 +512,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
       }
     },
-    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, selectedModel, deepResearchModel, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, addChapter, updateChapter, removeChapter, setActiveBookSilent]
+    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, wikis, activeWiki, activeWikiId, selectedModel, deepResearchModel, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, addChapter, updateChapter, removeChapter, setActiveBookSilent]
   );
 
 

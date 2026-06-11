@@ -30,6 +30,21 @@ export function isSearchRateLimited(status: number, message?: string): boolean {
 
 const RATE_LIMIT_MESSAGE = "The web search service is busy (rate-limited). Please try again in a moment.";
 
+// Resolve the AI's neuron scope for this user: which wiki is active, and
+// whether the paid "Access all neurons" setting widens search/conflict tools
+// to every wiki. (Locked-neuron content is additionally blocked by RLS, so
+// even an unscoped query can never surface it for free accounts.)
+async function getNeuronScope(): Promise<{ activeWikiId: string | null; allNeurons: boolean }> {
+  const [{ data: settings }, { data: sub }] = await Promise.all([
+    supabase.from("user_settings").select("active_wiki_id, access_all_neurons" as any).maybeSingle(),
+    supabase.from("subscribers" as any).select("subscribed").maybeSingle(),
+  ]);
+  return {
+    activeWikiId: (settings as any)?.active_wiki_id || null,
+    allNeurons: !!(settings as any)?.access_all_neurons && !!(sub as any)?.subscribed,
+  };
+}
+
 export function pickCitations(j: any): Array<{ title: string; url: string; snippet: string }> {
   const raw = j?.citations ?? j?.sources ?? j?.results ?? j?.references ?? [];
   if (!Array.isArray(raw)) return [];
@@ -412,14 +427,13 @@ export async function executeChatTool(
         const q = String(args.query || "").trim();
         if (!q) return { result: { error: "Empty query" }, event: { name, summary: "Empty query", ok: false } };
         const limit = Math.min(25, Math.max(1, Number(args.limit) || 10));
-        const { data: settings } = await supabase.from("user_settings").select("active_wiki_id" as any).maybeSingle();
-        const activeWikiId = (settings as any)?.active_wiki_id || null;
+        const { activeWikiId, allNeurons } = await getNeuronScope();
         let q1: any = supabase
           .from("knowledge_entries")
           .select("id, title, content, entry_type, confidence, source_book_id, tags, wiki_id")
           .or(`title.ilike.%${q}%,content.ilike.%${q}%`)
           .limit(limit);
-        if (activeWikiId) q1 = q1.eq("wiki_id", activeWikiId);
+        if (!allNeurons && activeWikiId) q1 = q1.eq("wiki_id", activeWikiId);
         const { data, error } = await q1;
         if (error) throw error;
         const entries = (data || []).map((e: any) => ({
@@ -429,7 +443,8 @@ export async function executeChatTool(
           confidence: e.confidence,
           snippet: (e.content || "").slice(0, 400),
         }));
-        return { result: entries, event: { name, summary: `Searched wiki for "${q}" — ${entries.length} hit(s)${activeWikiId ? " in active wiki" : ""}`, ok: true } };
+        const scopeNote = allNeurons ? " across all neurons" : activeWikiId ? " in active wiki" : "";
+        return { result: entries, event: { name, summary: `Searched wiki for "${q}" — ${entries.length} hit(s)${scopeNote}`, ok: true } };
       }
       case "web_search": {
         const q = String(args.query || "").trim();
@@ -489,11 +504,11 @@ export async function executeChatTool(
           ? await supabase.from("knowledge_entries").select("id, title, content, entry_type, confidence, source_book_id, wiki_id" as any).in("id", ids)
           : { data: [] as any[] };
         const byId = new Map(((ents as any[]) || []).map((e: any) => [e.id, e]));
-        // Scope to active wiki when one is set — both entries must live in it (or be unscoped legacy entries).
-        const { data: settings } = await supabase.from("user_settings").select("active_wiki_id" as any).maybeSingle();
-        const activeWikiId = (settings as any)?.active_wiki_id || null;
+        // Scope to active wiki when one is set — both entries must live in it (or be
+        // unscoped legacy entries). "Access all neurons" (paid) lifts the filter.
+        const { activeWikiId, allNeurons } = await getNeuronScope();
         const inScope = (id: string) => {
-          if (!activeWikiId) return true;
+          if (allNeurons || !activeWikiId) return true;
           const e: any = byId.get(id);
           if (!e) return true; // missing — surface anyway so user knows
           return !e.wiki_id || e.wiki_id === activeWikiId;
@@ -641,6 +656,24 @@ export async function executeChatTool(
         const { data: wiki, error: wErr } = await supabase.from("wikis" as any).select("id, name").eq("id", wid).maybeSingle();
         if (wErr) throw wErr;
         if (!wiki) return { result: { error: "Wiki not found" }, event: { name, summary: "Wiki not found", ok: false } };
+        // Free plan: only the oldest neuron is unlocked — the AI must not be a
+        // side door into locked ones (mirrors the BRAIN tab and ⌘K switcher).
+        const { data: sub } = await supabase.from("subscribers" as any).select("subscribed").maybeSingle();
+        if (!(sub as any)?.subscribed) {
+          const { data: oldest } = await supabase
+            .from("wikis" as any)
+            .select("id")
+            .order("created_at", { ascending: true })
+            .order("id", { ascending: true })
+            .limit(1)
+            .maybeSingle();
+          if (oldest && (oldest as any).id !== wid) {
+            return {
+              result: { error: `"${(wiki as any).name}" is locked on the free plan. Tell the user that upgrading to Pro or Lifetime unlocks all of their neurons.` },
+              event: { name, summary: `"${(wiki as any).name}" is locked on the free plan`, ok: false },
+            };
+          }
+        }
         await supabase.from("wikis" as any).update({ last_loaded_at: new Date().toISOString() } as any).eq("id", wid);
         const { error } = await supabase.from("user_settings").upsert({ user_id: uid, active_wiki_id: wid } as any, { onConflict: "user_id" });
         if (error) throw error;

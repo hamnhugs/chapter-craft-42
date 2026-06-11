@@ -16,10 +16,12 @@ interface BuildOpts {
   activeWikiName?: string | null;
   /** Active wiki id — scopes retrieval to that wiki (+ bridged entries). */
   activeWikiId?: string | null;
+  /** When true (paid "Access all neurons" setting), retrieval spans every neuron instead of only the active one. */
+  allNeurons?: boolean;
 }
 
 export async function buildChatSystemPrompt({
-  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeWikiName, activeWikiId,
+  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeWikiName, activeWikiId, allNeurons,
 }: BuildOpts): Promise<string> {
   const parts: string[] = [];
 
@@ -35,8 +37,10 @@ export async function buildChatSystemPrompt({
   parts.push(
     "You are an intelligent reading assistant for the Chapter Craft app with long-term memory and a knowledge graph. You help users understand, analyze, and discuss their books and chapters.",
   );
-  if (activeWikiName) {
-    parts.push(`The user's active knowledge wiki is "${activeWikiName}". New knowledge captured this session is scoped to that wiki, and \`search_wiki\` results are biased toward it.`);
+  if (allNeurons) {
+    parts.push(`The user has enabled "Access all neurons": your knowledge retrieval and \`search_wiki\` span ALL of their wikis (neurons) at once${activeWikiName ? `, with "${activeWikiName}" as the active one where new knowledge is captured` : ""}. When you draw on retrieved knowledge, mention which wiki it came from when that helps.`);
+  } else if (activeWikiName) {
+    parts.push(`The user's active knowledge wiki is "${activeWikiName}". Your knowledge retrieval and \`search_wiki\` are scoped to ONLY this wiki — you cannot read the user's other wikis unless they load one or enable "Access all neurons" in settings. New knowledge captured this session is scoped to it.`);
   }
   parts.push(
     "You have these tools: list_books, get_book, get_chapter_text, set_active_book, isolate_chapter, rename_chapter, delete_chapter, list_conflicts, get_conflict, resolve_conflict, update_conflict_status, list_wikis, get_active_wiki, switch_wiki, create_wiki, and TWO search tools:",
@@ -73,7 +77,11 @@ export async function buildChatSystemPrompt({
   // GRAPH-AWARE RETRIEVAL — replaces the old "dump 30 entries" approach
   if (latestUserQuery && latestUserQuery.trim().length > 0) {
     try {
-      const retrieval = await retrieveKnowledge(latestUserQuery, { deep: deepResearch, wiki_id: activeWikiId ?? null });
+      const retrieval = await retrieveKnowledge(latestUserQuery, {
+        deep: deepResearch,
+        // null = unscoped (all neurons); RLS still hides locked-neuron content.
+        wiki_id: allNeurons ? null : activeWikiId ?? null,
+      });
       if (retrieval && retrieval.nodes.length > 0) {
         parts.push("", `## Retrieved Knowledge (${retrieval.nodes.length} nodes, ${retrieval.edges.length} edges)`);
         const idToTitle = new Map(retrieval.nodes.map((n: any) => [n.id, n.title]));
@@ -96,7 +104,7 @@ export async function buildChatSystemPrompt({
     } catch (err) {
       console.warn("retrieveKnowledge failed, falling back to legacy dump:", err);
       // Fallback: small legacy dump so chat still works if retrieval errors
-      const knowledgeEntries = await fetchKnowledgeEntries(activeWikiId ?? null).catch(() => []);
+      const knowledgeEntries = await fetchKnowledgeEntries(allNeurons ? null : activeWikiId ?? null).catch(() => []);
       if (knowledgeEntries.length > 0) {
         parts.push("", "## Your Knowledge Wiki (fallback)");
         const relevant = selectedBook

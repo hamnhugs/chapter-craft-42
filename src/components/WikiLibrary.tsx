@@ -27,12 +27,13 @@ import { supabase } from "@/integrations/supabase/client";
 import SuggestionsTab from "@/components/SuggestionsTab";
 import { usePlan } from "@/hooks/usePlan";
 import { openPricing } from "@/components/PricingDialog";
+import { FREE_NEURON_LIMIT, computeLockedWikiIds } from "@/lib/neuronAccess";
 
-// Free tier includes one neuron (the oldest — usually the default wiki).
-// Creation past the limit is also blocked server-side by a DB trigger.
-const FREE_NEURON_LIMIT = 1;
+// Lazy: shares the three.js chunk with the Vault graph; only fetched when the
+// user opens the mind-map view.
+const NeuronGraph = React.lazy(() => import("@/components/NeuronGraph"));
 
-type ViewMode = "compact" | "gallery";
+type ViewMode = "compact" | "gallery" | "mindmap";
 
 const COVER_PALETTE = [
   "#7C3AED", "#2563EB", "#0EA5E9", "#10B981",
@@ -130,13 +131,10 @@ const WikiLibrary: React.FC = () => {
 
   // On the free plan, only the oldest neuron stays accessible; the rest are
   // visible but locked (data is kept, never deleted) until the user upgrades.
-  const lockedIds = useMemo(() => {
-    if (!planLoaded || isPaid) return new Set<string>();
-    const byAge = [...wikisWithStats].sort(
-      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-    );
-    return new Set(byAge.slice(FREE_NEURON_LIMIT).map((w) => w.id));
-  }, [wikisWithStats, isPaid, planLoaded]);
+  const lockedIds = useMemo(
+    () => computeLockedWikiIds(wikisWithStats, isPaid, planLoaded),
+    [wikisWithStats, isPaid, planLoaded],
+  );
 
   const handleNewWiki = () => {
     if (planLoaded && !isPaid && wikisWithStats.length >= FREE_NEURON_LIMIT) {
@@ -379,6 +377,17 @@ const WikiLibrary: React.FC = () => {
               >
                 <span className="material-symbols-outlined text-sm">view_module</span>
               </button>
+              <button
+                onClick={() => setViewMode("mindmap")}
+                className={`px-3 py-2 rounded-lg text-xs font-bold transition-colors ${
+                  viewMode === "mindmap"
+                    ? "bg-primary-container text-on-primary-container"
+                    : "text-on-surface-variant"
+                }`}
+                title="Mind map view"
+              >
+                <span className="material-symbols-outlined text-sm">neurology</span>
+              </button>
             </div>
 
             <button
@@ -516,6 +525,21 @@ const WikiLibrary: React.FC = () => {
                       : "No wikis match this tag."}
                   </p>
                 </div>
+              ) : viewMode === "mindmap" ? (
+                <React.Suspense
+                  fallback={
+                    <div className="flex items-center justify-center h-[60vh] min-h-[420px]">
+                      <Loader2 className="w-8 h-8 animate-spin text-on-surface-variant" />
+                    </div>
+                  }
+                >
+                  <NeuronGraph
+                    wikis={filtered}
+                    lockedIds={lockedIds}
+                    activeWikiId={activeWikiId}
+                    onSelect={handleCardClick}
+                  />
+                </React.Suspense>
               ) : viewMode === "compact" ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
                   {filtered.map((wiki) => (

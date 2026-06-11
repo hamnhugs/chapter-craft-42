@@ -44,8 +44,8 @@ const ChatPanel: React.FC = () => {
   const { user } = useAuth();
   const isMobile = useIsMobile();
   const {
-    apiKey, savedModels, selectedModel, deepResearchModel, voiceModel, ttsRate, autoReadReplies, customSystemPrompt, burplexityApiToken, inworldApiKey, inworldEnabled, inworldVoiceId, loaded,
-    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setVoiceModel, setTtsRate, setAutoReadReplies, setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey, setInworldEnabled, setInworldVoiceId,
+    apiKey, savedModels, selectedModel, deepResearchModel, voiceModel, ttsRate, autoReadReplies, customSystemPrompt, burplexityApiToken, inworldApiKey, inworldEnabled, inworldVoiceId, accessAllNeurons, loaded,
+    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setVoiceModel, setTtsRate, setAutoReadReplies, setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey, setInworldEnabled, setInworldVoiceId, setAccessAllNeurons,
   } = useChatSettings();
   const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort } = useChat();
   const { isPaid } = usePlan();
@@ -600,6 +600,29 @@ const ChatPanel: React.FC = () => {
           {/* ── Research & Search ── */}
           {settingsTab === "research" && (
           <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-3 md:p-4 rounded-xl bg-surface-container-low">
+            <div className="flex flex-col gap-1.5 lg:col-span-3">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
+                <span className="material-symbols-outlined text-xs align-middle mr-1">neurology</span>Neuron access
+              </label>
+              <div className="flex items-center justify-between gap-3 bg-surface-container-high rounded-lg py-3 px-4 border border-outline-variant/10">
+                <span className="text-sm text-primary flex items-center gap-1.5">
+                  {!isPaid && <span className="material-symbols-outlined text-sm" aria-hidden>lock</span>}
+                  {accessAllNeurons && isPaid ? "Reading all neurons at once" : "Reading only the loaded neuron"}
+                </span>
+                <Switch
+                  checked={accessAllNeurons && isPaid}
+                  onCheckedChange={(v) => {
+                    if (!isPaid) { openPricing("all-neurons"); return; }
+                    setAccessAllNeurons(v);
+                    toast.success(v ? "Counsel can now read all your neurons" : "Counsel reads only the loaded neuron");
+                  }}
+                  aria-label="Access all neurons at once"
+                />
+              </div>
+              <p className="text-[10px] text-on-surface-variant px-1">
+                Off = answers draw only on the neuron you've loaded (focused, cheaper, usually more accurate). On = Counsel searches every neuron in your brain at once.{!isPaid && " Pro feature."}
+              </p>
+            </div>
             <div className="flex flex-col gap-1.5">
               <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Burplexity API Token <span className="text-on-surface-variant/60 normal-case tracking-normal">(web search)</span></label>
               <div className="relative">
@@ -1049,6 +1072,17 @@ const ChatPanel: React.FC = () => {
           </div>
           <div className="flex justify-between items-center px-2">
             <div className="flex items-center gap-4 flex-nowrap overflow-x-auto hide-scrollbar snap-x flex-1 min-w-0 [&>*]:shrink-0 [&>*]:snap-start [&>*]:min-h-[40px] md:flex-wrap md:overflow-visible md:[&>*]:min-h-0">
+              {/* Scope indicator — always shows what Counsel can read (NotebookLM-style transparency). */}
+              <button
+                onClick={() => { setShowSettings(true); setSettingsTab("research"); }}
+                title="What Counsel can read — click to change in settings"
+                className="text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 text-on-surface-variant hover:text-primary transition-colors max-w-[180px]"
+              >
+                <span className="material-symbols-outlined text-sm" aria-hidden>neurology</span>
+                <span className="truncate">
+                  {accessAllNeurons && isPaid ? "Reading: all neurons" : `Reading: ${activeWiki?.name || "no neuron"}`}
+                </span>
+              </button>
               <button onClick={() => { if (!isPaid) { openPricing("deep-research"); return; } setChatDeepResearch(!chatDeepResearch); }} title={isPaid ? undefined : "Deep Research is a Pro feature"} className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${chatDeepResearch && isPaid ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`}>
                 <span className="material-symbols-outlined text-sm" style={chatDeepResearch && isPaid ? { fontVariationSettings: "'FILL' 1" } : {}}>{isPaid ? "science" : "lock"}</span> Deep Research {chatDeepResearch && isPaid ? "ON" : "OFF"}
               </button>

@@ -24,6 +24,8 @@ interface ChatSettings {
   inworldApiKey: string;
   inworldEnabled: boolean;
   inworldVoiceId: string;
+  /** When true (paid feature), chat retrieval draws on every neuron instead of only the active one. */
+  accessAllNeurons: boolean;
 }
 
 const defaults: ChatSettings = {
@@ -41,6 +43,7 @@ const defaults: ChatSettings = {
   inworldApiKey: "",
   inworldEnabled: false,
   inworldVoiceId: "",
+  accessAllNeurons: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -111,6 +114,7 @@ function rowToSettings(data: any): ChatSettings {
     inworldApiKey: data.inworld_api_key || "",
     inworldEnabled: !!data.inworld_enabled,
     inworldVoiceId: data.inworld_voice_id || "",
+    accessAllNeurons: !!data.access_all_neurons,
   };
 }
 
@@ -160,10 +164,16 @@ function persistSettings(userId: string, next: ChatSettings) {
       inworld_api_key: next.inworldApiKey || "",
       inworld_enabled: next.inworldEnabled,
       inworld_voice_id: next.inworldVoiceId || "",
+      access_all_neurons: next.accessAllNeurons,
     };
-    const { error } = await supabase
+    let { error } = await supabase
       .from("user_settings")
       .upsert(payload, { onConflict: "user_id" });
+    if (error && /access_all_neurons/i.test(error.message || "")) {
+      // Migration not applied yet — don't let one new column break every save.
+      delete payload.access_all_neurons;
+      ({ error } = await supabase.from("user_settings").upsert(payload, { onConflict: "user_id" }));
+    }
     if (error) console.error("Failed to save settings:", error);
     else settingsChannel?.postMessage("settings-updated");
   }, 500);
@@ -236,6 +246,7 @@ export function useChatSettings() {
     setInworldApiKey: (k: string) => update({ inworldApiKey: k.trim() }),
     setInworldEnabled: (v: boolean) => update({ inworldEnabled: v }),
     setInworldVoiceId: (v: string) => update({ inworldVoiceId: v }),
+    setAccessAllNeurons: (v: boolean) => update({ accessAllNeurons: v }),
     addModel,
     removeModel,
     setNewModelInput: undefined, // handled in component

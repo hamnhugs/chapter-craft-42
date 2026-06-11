@@ -36,6 +36,7 @@ const REASON_COPY: Record<string, string> = {
   "neuron-locked": "This neuron is locked on the free plan. Upgrade to regain access to all of them.",
   "deep-research": "Deep Research is a Pro feature. Upgrade to unlock it.",
   "auto-structure": "Auto-chapterize is a Pro feature. Upgrade and Bookworm will detect chapters in your books automatically.",
+  "all-neurons": "Letting Counsel read all your neurons at once is a Pro feature. Upgrade to unlock it.",
   ad: "Tired of ads? Upgrade and they're gone forever.",
 };
 
