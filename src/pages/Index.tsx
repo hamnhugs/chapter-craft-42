@@ -51,14 +51,15 @@ const DesktopNav: React.FC<{
   activeTab: string;
   setActiveTab: (id: NavTabId) => void;
   viewerLabel: string;
-}> = ({ activeTab, setActiveTab, viewerLabel }) => {
+  neuronLabel: string;
+}> = ({ activeTab, setActiveTab, viewerLabel, neuronLabel }) => {
   const refs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [pill, setPill] = useState<{ left: number; width: number } | null>(null);
 
   useLayoutEffect(() => {
     const el = refs.current[activeTab];
     setPill(el ? { left: el.offsetLeft, width: el.offsetWidth } : null);
-  }, [activeTab, viewerLabel]);
+  }, [activeTab, viewerLabel, neuronLabel]);
 
   useEffect(() => {
     const measure = () => {
@@ -104,7 +105,7 @@ const DesktopNav: React.FC<{
                 {tab.icon}
               </span>
               <span className="truncate max-w-[160px]">
-                {tab.id === "viewer" ? viewerLabel : tab.label}
+                {tab.id === "viewer" ? viewerLabel : tab.id === "wiki" ? neuronLabel : tab.label}
               </span>
             </button>
           </React.Fragment>
@@ -174,6 +175,9 @@ const Index: React.FC = () => {
   useVisitTracker();
 
   const viewerLabel = activeBook?.title || tabs.find((t) => t.id === "viewer")!.label;
+  // Like the Read tab, the Neuron tab takes on the loaded wiki's name
+  // (CSS-truncated in the nav, same as the book title).
+  const neuronLabel = activeWiki?.name || tabs.find((t) => t.id === "wiki")!.label;
 
   return (
     <div className="flex flex-col h-screen bg-background">
@@ -185,7 +189,7 @@ const Index: React.FC = () => {
         </div>
 
         {/* Desktop nav (lg+) — tablet uses the left rail instead */}
-        <DesktopNav activeTab={activeTab} setActiveTab={setActiveTab} viewerLabel={viewerLabel} />
+        <DesktopNav activeTab={activeTab} setActiveTab={setActiveTab} viewerLabel={viewerLabel} neuronLabel={neuronLabel} />
 
         <div className="flex items-center gap-2">
           {activeWiki && (

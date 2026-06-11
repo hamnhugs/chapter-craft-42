@@ -23,6 +23,7 @@ interface AppState {
   updateChapter: (bookId: string, chapterId: string, name: string) => void;
   removeChapter: (bookId: string, chapterId: string) => void;
   updateBookTitle: (bookId: string, newTitle: string) => void;
+  updateBookTags: (bookId: string, category: string | null, tags: string[]) => Promise<void>;
   getActiveBook: () => BookDocument | undefined;
   loadBookFile: (bookId: string) => Promise<string>;
   refreshWikis: () => Promise<void>;
@@ -136,7 +137,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const [{ data: bookRows, error: booksError }, { data: chapterRows, error: chaptersError }] = await Promise.all([
         supabase
           .from("books")
-          .select("id, title, file_name, page_count, cover_image_url, created_at")
+          .select("id, title, file_name, page_count, cover_image_url, created_at, category, tags")
           .eq("user_id", user.id)
           .order("created_at", { ascending: false }),
         supabase
@@ -182,6 +183,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           coverImageUrl: b.cover_image_url || undefined,
           chapters: chaptersByBookId[b.id] || [],
           addedAt: new Date(b.created_at).getTime(),
+          category: b.category || undefined,
+          tags: Array.isArray(b.tags) ? b.tags : [],
         }));
         setBooks(dbBooks);
       }
@@ -221,6 +224,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               coverImageUrl: b.cover_image_url || undefined,
               chapters,
               addedAt: new Date(b.created_at).getTime(),
+              category: b.category || undefined,
+              tags: Array.isArray(b.tags) ? b.tags : [],
             };
             return [newBook, ...prev];
           });
@@ -454,6 +459,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   }, [user]);
 
+  const updateBookTags = useCallback(async (bookId: string, category: string | null, tags: string[]) => {
+    if (!user) return;
+    const { error } = await supabase
+      .from("books")
+      .update({ category, tags })
+      .eq("id", bookId)
+      .eq("user_id", user.id);
+    if (error) {
+      console.error("Failed to save book tags:", error);
+      throw error;
+    }
+    setBooks((prev) =>
+      prev.map((b) => (b.id === bookId ? { ...b, category: category || undefined, tags } : b))
+    );
+  }, [user]);
+
   const getActiveBook = useCallback(() => {
     return books.find((b) => b.id === activeBookId);
   }, [books, activeBookId]);
@@ -513,6 +534,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateChapter,
         removeChapter,
         updateBookTitle,
+        updateBookTags,
         getActiveBook,
         loadBookFile,
         refreshWikis,

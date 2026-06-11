@@ -15,4 +15,8 @@ export interface BookDocument {
   chapters: Chapter[];
   addedAt: number;
   coverImageUrl?: string;
+  /** Fixed-taxonomy category assigned by auto-tag (mind map hub). */
+  category?: string;
+  /** Free-form topic tags assigned by auto-tag (mind map edges + search). */
+  tags?: string[];
 }

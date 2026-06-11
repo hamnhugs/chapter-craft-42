@@ -1,4 +1,4 @@
-import React, { useRef, useState, useMemo } from "react";
+import React, { useRef, useState, useMemo, useEffect, lazy, Suspense } from "react";
 import { useApp } from "@/context/AppContext";
 import ApiKeyManager from "@/components/ApiKeyManager";
 import { BookDocument } from "@/types/library";
@@ -7,6 +7,64 @@ import { Progress } from "@/components/ui/progress";
 import { convertEpubToPdf } from "@/lib/epubToPdf";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { structureJobs, useStructureJobs, StructureJob } from "@/lib/structureJobs";
+import { autoTagBooks } from "@/lib/autoTag";
+import { toast } from "sonner";
+
+// The 3D mind map pulls in three.js (~300KB gzip); lazy-load so that chunk is
+// only fetched when the user actually toggles the graph view on.
+const LibraryGraph = lazy(() => import("@/components/LibraryGraph"));
+
+// Chunk-load failures (offline mid-session, deploy in between) and WebGL
+// crashes degrade to a message instead of taking down the Library.
+class GraphErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    if (this.state.failed) {
+      return (
+        <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant">
+          <span className="material-symbols-outlined text-5xl mb-3 opacity-30">error</span>
+          <p className="font-headline text-lg">The mind map couldn't load</p>
+          <p className="text-sm mt-1">Check your connection and try toggling it again.</p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// Search matching is case- and diacritic-insensitive; every typed token must
+// appear somewhere in the book's title, category, or tags (AND semantics).
+const normalizeText = (s: string) =>
+  s.toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Wraps the parts of `text` matching any query token in <mark>. */
+const Highlight: React.FC<{ text: string; query: string }> = ({ text, query }) => {
+  const tokens = query.trim().split(/\s+/).filter(Boolean).map(escapeRegExp);
+  if (tokens.length === 0) return <>{text}</>;
+  const parts = text.split(new RegExp(`(${tokens.join("|")})`, "ig"));
+  return (
+    <>
+      {parts.map((part, i) =>
+        // split with a capture group alternates non-match / match
+        i % 2 === 1 ? (
+          <mark key={i} className="bg-accent/30 text-inherit rounded-sm">
+            {part}
+          </mark>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  );
+};
 
 type UploadState = {
   id: string;
@@ -21,15 +79,19 @@ const MAX_UPLOAD_ATTEMPTS = 3;
 const MAX_CONCURRENT_UPLOADS = 3;
 
 const Library: React.FC = () => {
-  const { books, addBook, removeBook, setActiveBook, updateBookTitle, addChapter, removeChapter, loadBookFile } = useApp();
+  const { books, addBook, removeBook, setActiveBook, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile } = useApp();
   const { apiKey } = useChatSettings();
   const jobs = useStructureJobs();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const [showApiKeys, setShowApiKeys] = useState(false);
   const [sortBy, setSortBy] = useState<"date" | "name">("date");
   const [uploadStates, setUploadStates] = useState<UploadState[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [currentBatchIds, setCurrentBatchIds] = useState<string[]>([]);
+  const [query, setQuery] = useState("");
+  const [view, setView] = useState<"grid" | "graph">("grid");
+  const [tagProgress, setTagProgress] = useState<{ done: number; total: number } | null>(null);
 
   const sortedBooks = useMemo(() => {
     return [...books].sort((a, b) => {
@@ -37,6 +99,65 @@ const Library: React.FC = () => {
       return b.addedAt - a.addedAt;
     });
   }, [books, sortBy]);
+
+  // Instant filter-as-you-type — at library scale this is microseconds, so no
+  // debounce (a delay here only adds perceived lag). Matches title, category,
+  // and tags so typing "sci-fi" finds tagged books without a separate filter.
+  const filteredBooks = useMemo(() => {
+    const tokens = normalizeText(query).split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return sortedBooks;
+    return sortedBooks.filter((b) => {
+      const hay = normalizeText([b.title, b.category || "", ...(b.tags || [])].join(" "));
+      return tokens.every((t) => hay.includes(t));
+    });
+  }, [sortedBooks, query]);
+
+  // "/" focuses search (GitHub/Gmail convention), Escape clears it.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/") return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      e.preventDefault();
+      searchRef.current?.focus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Auto-tag: categorize/tag books via the same model that chapterizes
+  // uploads. Only untagged books are sent unless everything is already tagged
+  // (then offer a full re-tag). Each book costs ~1k input tokens.
+  const handleAutoTag = async () => {
+    if (tagProgress || books.length === 0) return;
+    const untagged = books.filter((b) => !b.category);
+    const targets = untagged.length > 0 ? untagged : books;
+    if (
+      untagged.length === 0 &&
+      !window.confirm("All books are already tagged. Re-tag the whole library?")
+    ) {
+      return;
+    }
+    setTagProgress({ done: 0, total: targets.length });
+    try {
+      const results = await autoTagBooks(targets, books, {
+        apiKey: apiKey || undefined,
+        onProgress: (done, total) => setTagProgress({ done, total }),
+      });
+      for (const r of results) {
+        await updateBookTags(r.id, r.category, r.tags);
+      }
+      if (results.length === 0) {
+        toast.error("No tags came back — try again in a moment.");
+      } else {
+        toast.success(`Tagged ${results.length} book${results.length === 1 ? "" : "s"}`);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Auto-tag failed");
+    } finally {
+      setTagProgress(null);
+    }
+  };
 
   const currentBatchStateMap = useMemo(() => {
     const ids = new Set(currentBatchIds);
@@ -265,7 +386,7 @@ const Library: React.FC = () => {
               Your curated sanctuary of knowledge and thought.
             </p>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 flex-wrap">
             <button
               onClick={() => setSortBy((v) => (v === "date" ? "name" : "date"))}
               className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all"
@@ -273,6 +394,38 @@ const Library: React.FC = () => {
               <span className="material-symbols-outlined text-xs">sort</span>
               {sortBy === "date" ? "Recently Added" : "By Name"}
               <span className="material-symbols-outlined text-xs">expand_more</span>
+            </button>
+            <button
+              onClick={handleAutoTag}
+              disabled={!!tagProgress || books.length === 0}
+              title={
+                tagProgress
+                  ? "Tagging in progress…"
+                  : "Assign categories and tags to your books with AI (powers the mind map)"
+              }
+              className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span className={`material-symbols-outlined text-xs ${tagProgress ? "animate-spin" : ""}`}>
+                {tagProgress ? "progress_activity" : "sell"}
+              </span>
+              {tagProgress ? `Tagging ${tagProgress.done}/${tagProgress.total}…` : "Auto-tag"}
+            </button>
+            <button
+              onClick={() => setView((v) => (v === "grid" ? "graph" : "grid"))}
+              onMouseEnter={() => {
+                // Warm the three.js chunk on hover so the toggle feels instant.
+                void import("@/components/LibraryGraph");
+              }}
+              title={view === "grid" ? "Show 3D mind map" : "Show book grid"}
+              aria-pressed={view === "graph"}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm border transition-all ${
+                view === "graph"
+                  ? "bg-primary/15 text-primary border-primary/30"
+                  : "bg-surface-container-high text-foreground border-outline-variant/10 hover:bg-surface-container-highest"
+              }`}
+            >
+              <span className="material-symbols-outlined text-xs">{view === "grid" ? "hub" : "grid_view"}</span>
+              {view === "grid" ? "Mind Map" : "Grid"}
             </button>
             <button
               onClick={() => setShowApiKeys((v) => !v)}
@@ -283,6 +436,47 @@ const Library: React.FC = () => {
             </button>
           </div>
         </section>
+
+        {/* Search */}
+        {books.length > 0 && (
+          <div className="relative">
+            <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant text-xl pointer-events-none">
+              search
+            </span>
+            <input
+              ref={searchRef}
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  setQuery("");
+                  (e.target as HTMLInputElement).blur();
+                }
+              }}
+              placeholder="Search your library…  ( / )"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              aria-label="Search your library by title, category, or tag"
+              className="w-full pl-12 pr-12 py-3.5 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 focus:outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-on-surface-variant/60 [&::-webkit-search-cancel-button]:hidden"
+            />
+            {query && (
+              <button
+                onClick={() => setQuery("")}
+                aria-label="Clear search"
+                className="absolute right-3 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-highest transition-colors"
+              >
+                <span className="material-symbols-outlined text-lg">close</span>
+              </button>
+            )}
+            {query && (
+              <p className="mt-2 text-xs text-on-surface-variant" role="status">
+                {filteredBooks.length} of {books.length} book{books.length === 1 ? "" : "s"}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* API Key Manager */}
         {showApiKeys && (
@@ -334,7 +528,8 @@ const Library: React.FC = () => {
           </div>
         )}
 
-        {/* Upload Area */}
+        {/* Upload Area (hidden in mind-map view to give the graph room) */}
+        {view === "grid" && (
         <div
           onDragOver={(e) => e.preventDefault()}
           onDrop={handleDrop}
@@ -356,6 +551,7 @@ const Library: React.FC = () => {
             Browse files
           </button>
         </div>
+        )}
         <input
           ref={fileInputRef}
           type="file"
@@ -365,20 +561,46 @@ const Library: React.FC = () => {
           className="hidden"
         />
 
-        {/* Book grid */}
+        {/* Book grid / 3D mind map (search filters both the same way) */}
         {books.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant">
             <span className="material-symbols-outlined text-6xl mb-4 opacity-25">library_books</span>
             <p className="text-lg font-headline">Your library is empty</p>
             <p className="text-sm mt-1">Upload documents to get started</p>
           </div>
+        ) : filteredBooks.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant">
+            <span className="material-symbols-outlined text-6xl mb-4 opacity-25">search_off</span>
+            <p className="text-lg font-headline">No books match “{query}”</p>
+            <p className="text-sm mt-1">Check the spelling or try fewer words</p>
+            <button
+              onClick={() => setQuery("")}
+              className="mt-4 px-5 py-2 bg-primary/10 text-primary font-bold rounded-lg hover:bg-primary hover:text-on-primary-container transition-all active:scale-95"
+            >
+              Clear search
+            </button>
+          </div>
+        ) : view === "graph" ? (
+          <GraphErrorBoundary>
+            <Suspense
+              fallback={
+                <div className="flex flex-col items-center justify-center h-[60vh] min-h-[420px] rounded-2xl bg-surface-container-low border border-outline-variant/10 text-on-surface-variant">
+                  <span className="material-symbols-outlined text-4xl animate-spin mb-3">progress_activity</span>
+                  <p className="text-sm">Loading mind map…</p>
+                </div>
+              }
+            >
+              <LibraryGraph books={filteredBooks} onOpenBook={(id) => setActiveBook(id)} />
+            </Suspense>
+          </GraphErrorBoundary>
         ) : (
           <div className="book-grid">
-            {sortedBooks.map((book, i) => (
+            {filteredBooks.map((book, i) => (
               <BookCard
                 key={book.id}
                 book={book}
                 index={i}
+                query={query}
                 job={jobs[book.id]}
                 onDetect={() => runDetect(book)}
                 onRead={() => setActiveBook(book.id)}
@@ -396,12 +618,13 @@ const Library: React.FC = () => {
 const BookCard: React.FC<{
   book: BookDocument;
   index: number;
+  query?: string;
   job?: StructureJob;
   onDetect: () => void;
   onRead: () => void;
   onRemove: () => void;
   onRename: (newTitle: string) => void;
-}> = ({ book, index, job, onDetect, onRead, onRemove, onRename }) => {
+}> = ({ book, index, query = "", job, onDetect, onRead, onRemove, onRename }) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(book.title);
   const isPdf = book.fileName.toLowerCase().endsWith(".pdf");
@@ -465,12 +688,36 @@ const BookCard: React.FC<{
             className="font-headline text-2xl font-bold text-primary mb-1 cursor-pointer hover:text-accent transition-colors line-clamp-2"
             onClick={() => { setDraft(book.title); setEditing(true); }}
           >
-            {book.title}
+            <Highlight text={book.title} query={query} />
           </h4>
         )}
         <p className="text-on-surface-variant text-xs font-medium uppercase tracking-wider mb-2">
           {metadataText}
         </p>
+
+        {/* Category + tags (set by Auto-tag; they drive the mind map) */}
+        {(book.category || (book.tags?.length ?? 0) > 0) && (
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {book.category && (
+              <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[11px] font-medium">
+                {book.category}
+              </span>
+            )}
+            {(book.tags || []).slice(0, 3).map((t) => (
+              <span
+                key={t}
+                className="px-2 py-0.5 rounded-full bg-surface-container-highest text-on-surface-variant text-[11px]"
+              >
+                #{t}
+              </span>
+            ))}
+            {(book.tags?.length ?? 0) > 3 && (
+              <span className="px-1 py-0.5 text-on-surface-variant/60 text-[11px]">
+                +{book.tags!.length - 3}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Auto-structure status */}
         <div className="min-h-5 mb-4">

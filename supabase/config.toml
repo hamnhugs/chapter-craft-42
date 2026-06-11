@@ -30,5 +30,8 @@ verify_jwt = false
 [functions.auto-structure]
 verify_jwt = false
 
+[functions.auto-tag]
+verify_jwt = false
+
 
 
