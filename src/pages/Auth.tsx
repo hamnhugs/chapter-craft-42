@@ -57,7 +57,7 @@ const Auth: React.FC = () => {
           </div>
           <div className="flex flex-col gap-1">
             <h1 className="font-headline font-bold text-4xl tracking-tight text-primary">Bookworm Studio</h1>
-            <p className="text-secondary italic font-headline text-lg">Curate your intellectual legacy.</p>
+            <p className="text-secondary italic font-headline text-lg">{"\n"}</p>
           </div>
         </header>
 
