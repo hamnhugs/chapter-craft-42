@@ -809,6 +809,7 @@ export type Database = {
       }
       user_settings: {
         Row: {
+          access_all_neurons: boolean
           active_wiki_id: string | null
           auto_read_replies: boolean
           burplexity_api_token: string | null
@@ -832,6 +833,7 @@ export type Database = {
           wiki_model: string | null
         }
         Insert: {
+          access_all_neurons?: boolean
           active_wiki_id?: string | null
           auto_read_replies?: boolean
           burplexity_api_token?: string | null
@@ -855,6 +857,7 @@ export type Database = {
           wiki_model?: string | null
         }
         Update: {
+          access_all_neurons?: boolean
           active_wiki_id?: string | null
           auto_read_replies?: boolean
           burplexity_api_token?: string | null
@@ -1196,6 +1199,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      accessible_wiki_ids: { Args: { uid: string }; Returns: string[] }
       admin_delete_user: { Args: { _user_id: string }; Returns: undefined }
       admin_list_users: {
         Args: never
