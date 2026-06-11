@@ -35,6 +35,134 @@ export type Database = {
         }
         Relationships: []
       }
+      admin_audit_log: {
+        Row: {
+          action: string
+          admin_id: string
+          created_at: string
+          detail: Json
+          id: number
+          target_id: string | null
+          target_user_id: string | null
+        }
+        Insert: {
+          action: string
+          admin_id: string
+          created_at?: string
+          detail?: Json
+          id?: number
+          target_id?: string | null
+          target_user_id?: string | null
+        }
+        Update: {
+          action?: string
+          admin_id?: string
+          created_at?: string
+          detail?: Json
+          id?: number
+          target_id?: string | null
+          target_user_id?: string | null
+        }
+        Relationships: []
+      }
+      announcement_receipts: {
+        Row: {
+          acknowledged_at: string | null
+          announcement_id: string
+          dismissed_at: string | null
+          policy_version: number
+          seen_at: string
+          user_id: string
+        }
+        Insert: {
+          acknowledged_at?: string | null
+          announcement_id: string
+          dismissed_at?: string | null
+          policy_version?: number
+          seen_at?: string
+          user_id: string
+        }
+        Update: {
+          acknowledged_at?: string | null
+          announcement_id?: string
+          dismissed_at?: string | null
+          policy_version?: number
+          seen_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "announcement_receipts_announcement_id_fkey"
+            columns: ["announcement_id"]
+            isOneToOne: false
+            referencedRelation: "announcements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      announcements: {
+        Row: {
+          body: string
+          created_at: string
+          created_by: string | null
+          ends_at: string | null
+          gif_alt: string
+          gif_clickable: boolean
+          gif_link_url: string | null
+          gif_new_tab: boolean
+          gif_url: string | null
+          id: string
+          is_active: boolean
+          kind: string
+          policy_version: number
+          priority: number
+          require_ack: boolean
+          starts_at: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          body?: string
+          created_at?: string
+          created_by?: string | null
+          ends_at?: string | null
+          gif_alt?: string
+          gif_clickable?: boolean
+          gif_link_url?: string | null
+          gif_new_tab?: boolean
+          gif_url?: string | null
+          id?: string
+          is_active?: boolean
+          kind?: string
+          policy_version?: number
+          priority?: number
+          require_ack?: boolean
+          starts_at?: string
+          title?: string
+          updated_at?: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          created_by?: string | null
+          ends_at?: string | null
+          gif_alt?: string
+          gif_clickable?: boolean
+          gif_link_url?: string | null
+          gif_new_tab?: boolean
+          gif_url?: string | null
+          id?: string
+          is_active?: boolean
+          kind?: string
+          policy_version?: number
+          priority?: number
+          require_ack?: boolean
+          starts_at?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       api_keys: {
         Row: {
           created_at: string
@@ -1201,6 +1329,24 @@ export type Database = {
     Functions: {
       accessible_wiki_ids: { Args: { uid: string }; Returns: string[] }
       admin_delete_user: { Args: { _user_id: string }; Returns: undefined }
+      admin_list_all_wikis: {
+        Args: never
+        Returns: {
+          cover_color: string
+          created_at: string
+          description: string
+          entry_count: number
+          id: string
+          is_default: boolean
+          is_meta: boolean
+          last_loaded_at: string
+          name: string
+          owner_email: string
+          tags: string[]
+          updated_at: string
+          user_id: string
+        }[]
+      }
       admin_list_users: {
         Args: never
         Returns: {
@@ -1219,6 +1365,17 @@ export type Database = {
           visits_total: number
           voice_model: string
           wiki_model: string
+        }[]
+      }
+      admin_list_wiki_entries: {
+        Args: { _limit?: number; _wiki_id: string }
+        Returns: {
+          content: string
+          created_at: string
+          entry_type: string
+          id: string
+          tags: string[]
+          title: string
         }[]
       }
       admin_update_user_settings: {
