@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { synthesizeSpeech } from "@/lib/inworldTts";
+import {
+  addTtsChunk,
+  beginTtsCapture,
+  completeTtsCapture,
+  discardTtsCapture,
+} from "@/lib/ttsAudioCache";
 
 // Unified read-aloud for the merged Chat ("Talk") surface.
 //
@@ -170,6 +176,9 @@ export function useReadAloud(): ReadAloudController {
   const inworldSpeakChunks = useCallback(
     async (chunks: string[], id: string, session: number, onEnd?: () => void) => {
       if (chunks.length === 0) { clearId(id); onEnd?.(); return; }
+      // Retain the fetched MP3 chunks so the message can be downloaded later
+      // without re-synthesizing (Inworld bills per character).
+      beginTtsCapture(id);
 
       const playBuffer = (buf: ArrayBuffer): Promise<void> =>
         new Promise((resolve) => {
@@ -202,6 +211,7 @@ export function useReadAloud(): ReadAloudController {
         try {
           buf = await next;
         } catch {
+          discardTtsCapture(id); // partial audio would download truncated
           if (session !== sessionRef.current) return;
           // Inworld failed for this chunk — read the rest with the browser
           // voice so the user still hears the whole reply.
@@ -209,13 +219,14 @@ export function useReadAloud(): ReadAloudController {
           return;
         }
         if (session !== sessionRef.current) return;
+        addTtsChunk(id, buf);
         // Kick off the next request before playing the current chunk.
         next = i + 1 < chunks.length ? synthChunk(chunks[i + 1]) : Promise.resolve(new ArrayBuffer(0));
         if (i === 0 && session === sessionRef.current) setSpeakingId(id);
         await playBuffer(buf);
         if (session !== sessionRef.current) return;
       }
-      if (session === sessionRef.current) { clearId(id); onEnd?.(); }
+      if (session === sessionRef.current) { completeTtsCapture(id); clearId(id); onEnd?.(); }
     },
     [inworldApiKey, inworldVoiceId, clampedRate, clearId, browserSpeakChunks],
   );

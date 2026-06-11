@@ -27,6 +27,7 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations, isSearchRateLimited } from "@/lib/chatTools";
 import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
+import { useDownloadableTtsId, downloadTtsAudio } from "@/lib/ttsAudioCache";
 
 
 const VOICE_QUICK_SEARCH_KEY = "voice_quick_search";
@@ -287,6 +288,15 @@ const ChatPanel: React.FC = () => {
     const id = bubbleId(msg, i);
     if (speakingId === id) { stopSpeaking(); return; }
     speak(msg.content, { id });
+  };
+
+  // Id of the message whose Inworld audio finished playing and is held in
+  // memory — its bubble shows a download button (saving costs no API credits).
+  const downloadableTtsId = useDownloadableTtsId();
+  const handleDownloadAudio = (msg: { id?: string; content: string }, i: number) => {
+    if (!downloadTtsAudio(bubbleId(msg, i), msg.content)) {
+      toast.error("Audio is no longer available — play the message again first");
+    }
   };
 
   const handleSaveApiKey = (key: string) => { saveApiKey(key); setShowSettings(false); };
@@ -870,6 +880,16 @@ const ChatPanel: React.FC = () => {
                   <span className="material-symbols-outlined text-base">
                     {speakingId === bubbleId(msg, i) ? "stop_circle" : "volume_up"}
                   </span>
+                </button>
+              )}
+              {msg.content && downloadableTtsId === bubbleId(msg, i) && (
+                <button
+                  onClick={() => handleDownloadAudio(msg, i)}
+                  title="Download audio"
+                  aria-label="Download audio"
+                  className={`absolute top-1/2 -translate-y-[calc(50%+2.25rem)] ${msg.role === "user" ? "-left-3" : "-right-3"} w-7 h-7 rounded-full bg-surface-container-highest border border-outline-variant/20 shadow-sm flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-all opacity-70 hover:opacity-100`}
+                >
+                  <span className="material-symbols-outlined text-base" aria-hidden="true">download</span>
                 </button>
               )}
               <button

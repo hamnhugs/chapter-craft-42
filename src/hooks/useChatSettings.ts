@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
@@ -43,84 +43,137 @@ const defaults: ChatSettings = {
   inworldVoiceId: "",
 };
 
+// ---------------------------------------------------------------------------
+// Module-level shared store.
+//
+// useChatSettings() is mounted in several components at once (ChatPanel,
+// useReadAloud, ChatContext, WikiPanel, Library). It used to keep its state in
+// a per-instance useState loaded once from the DB, which caused two bugs:
+//   1. Changing a setting in one place (e.g. the Inworld voice picker) never
+//      reached the other copies — read-aloud kept speaking with the old voice.
+//   2. Every copy's debounced save wrote the ENTIRE settings row, so a stale
+//      copy saving later clobbered fresh changes in the DB (the voice kept
+//      "defaulting back").
+// A single store shared via useSyncExternalStore fixes both: one source of
+// truth in memory, one snapshot persisted.
+// ---------------------------------------------------------------------------
+
+interface Snapshot {
+  settings: ChatSettings;
+  loaded: boolean;
+}
+
+let snapshot: Snapshot = { settings: defaults, loaded: false };
+let loadedForUser: string | null | undefined = undefined; // undefined = never resolved
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+const listeners = new Set<() => void>();
+
+function publish(next: Partial<Snapshot>) {
+  snapshot = { ...snapshot, ...next };
+  listeners.forEach((l) => l());
+}
+
+const subscribe = (l: () => void) => {
+  listeners.add(l);
+  return () => { listeners.delete(l); };
+};
+const getSnapshot = () => snapshot;
+
+function rowToSettings(data: any): ChatSettings {
+  return {
+    apiKey: data.openrouter_api_key || "",
+    savedModels: (data.saved_models as string[]) || [DEFAULT_MODEL],
+    selectedModel: data.selected_model || DEFAULT_MODEL,
+    deepResearchModel: data.deep_research_model || DEFAULT_DEEP_RESEARCH_MODEL,
+    voiceModel: data.voice_model || "",
+    ttsRate: typeof data.tts_rate === "number" && data.tts_rate > 0
+      ? data.tts_rate
+      : DEFAULT_TTS_RATE,
+    handsFreeTtsRate: typeof data.hands_free_tts_rate === "number" && data.hands_free_tts_rate > 0
+      ? data.hands_free_tts_rate
+      : DEFAULT_HANDS_FREE_TTS_RATE,
+    autoReadReplies: !!data.auto_read_replies,
+    wikiModel: data.wiki_model || "",
+    customSystemPrompt: data.custom_system_prompt || "",
+    burplexityApiToken: data.burplexity_api_token || "",
+    inworldApiKey: data.inworld_api_key || "",
+    inworldEnabled: !!data.inworld_enabled,
+    inworldVoiceId: data.inworld_voice_id || "",
+  };
+}
+
+// Load once per signed-in user (or resolve immediately when signed out), no
+// matter how many components mount the hook.
+function ensureLoaded(userId: string | null) {
+  if (loadedForUser === userId) return;
+  loadedForUser = userId;
+  if (!userId) {
+    publish({ settings: defaults, loaded: true });
+    return;
+  }
+  void (async () => {
+    const { data, error } = await supabase
+      .from("user_settings")
+      .select("*")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (loadedForUser !== userId) return; // user changed mid-flight
+    if (error) {
+      console.error("Failed to load settings:", error);
+      publish({ loaded: true });
+      return;
+    }
+    publish({ settings: data ? rowToSettings(data) : defaults, loaded: true });
+  })();
+}
+
+// Debounced full-row save. Safe to write the whole row now that there is a
+// single in-memory source of truth — the snapshot can no longer be stale.
+function persistSettings(userId: string, next: ChatSettings) {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    const payload: any = {
+      user_id: userId,
+      openrouter_api_key: next.apiKey,
+      saved_models: next.savedModels as any,
+      selected_model: next.selectedModel,
+      deep_research_model: next.deepResearchModel,
+      voice_model: next.voiceModel || null,
+      tts_rate: next.ttsRate,
+      hands_free_tts_rate: next.handsFreeTtsRate,
+      auto_read_replies: next.autoReadReplies,
+      wiki_model: next.wikiModel || null,
+      custom_system_prompt: next.customSystemPrompt || "",
+      burplexity_api_token: next.burplexityApiToken || "",
+      inworld_api_key: next.inworldApiKey || "",
+      inworld_enabled: next.inworldEnabled,
+      inworld_voice_id: next.inworldVoiceId || "",
+    };
+    const { error } = await supabase
+      .from("user_settings")
+      .upsert(payload, { onConflict: "user_id" });
+    if (error) console.error("Failed to save settings:", error);
+  }, 500);
+}
+
+function updateStore(userId: string | undefined, partial: Partial<ChatSettings>) {
+  const next = { ...snapshot.settings, ...partial };
+  publish({ settings: next });
+  if (userId) persistSettings(userId, next);
+}
+
 export function useChatSettings() {
   const { user } = useAuth();
-  const [settings, setSettings] = useState<ChatSettings>(defaults);
-  const [loaded, setLoaded] = useState(false);
-  const saveTimer = useRef<ReturnType<typeof setTimeout>>();
+  const snap = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const settings = snap.settings;
 
-  // Load settings from DB
   useEffect(() => {
-    if (!user) { setLoaded(true); return; }
-    (async () => {
-      const { data, error } = await supabase
-        .from("user_settings")
-        .select("*")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      if (error) { console.error("Failed to load settings:", error); setLoaded(true); return; }
-      if (data) {
-        setSettings({
-          apiKey: data.openrouter_api_key || "",
-          savedModels: (data.saved_models as string[]) || [DEFAULT_MODEL],
-          selectedModel: data.selected_model || DEFAULT_MODEL,
-          deepResearchModel: data.deep_research_model || DEFAULT_DEEP_RESEARCH_MODEL,
-          voiceModel: (data as any).voice_model || "",
-          ttsRate: typeof (data as any).tts_rate === "number" && (data as any).tts_rate > 0
-            ? (data as any).tts_rate
-            : DEFAULT_TTS_RATE,
-          handsFreeTtsRate: typeof (data as any).hands_free_tts_rate === "number" && (data as any).hands_free_tts_rate > 0
-            ? (data as any).hands_free_tts_rate
-            : DEFAULT_HANDS_FREE_TTS_RATE,
-          autoReadReplies: !!(data as any).auto_read_replies,
-          wikiModel: (data as any).wiki_model || "",
-          customSystemPrompt: (data as any).custom_system_prompt || "",
-          burplexityApiToken: (data as any).burplexity_api_token || "",
-          inworldApiKey: (data as any).inworld_api_key || "",
-          inworldEnabled: !!(data as any).inworld_enabled,
-          inworldVoiceId: (data as any).inworld_voice_id || "",
-        });
-      }
-      setLoaded(true);
-    })();
-  }, [user]);
-
-  // Debounced save to DB
-  const persistSettings = useCallback((next: ChatSettings) => {
-    if (!user) return;
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(async () => {
-      const payload: any = {
-        user_id: user.id,
-        openrouter_api_key: next.apiKey,
-        saved_models: next.savedModels as any,
-        selected_model: next.selectedModel,
-        deep_research_model: next.deepResearchModel,
-        voice_model: next.voiceModel || null,
-        tts_rate: next.ttsRate,
-        hands_free_tts_rate: next.handsFreeTtsRate,
-        auto_read_replies: next.autoReadReplies,
-        wiki_model: next.wikiModel || null,
-        custom_system_prompt: next.customSystemPrompt || "",
-        burplexity_api_token: next.burplexityApiToken || "",
-        inworld_api_key: next.inworldApiKey || "",
-        inworld_enabled: next.inworldEnabled,
-        inworld_voice_id: next.inworldVoiceId || "",
-      };
-      const { error } = await supabase
-        .from("user_settings")
-        .upsert(payload, { onConflict: "user_id" });
-      if (error) console.error("Failed to save settings:", error);
-    }, 500);
+    ensureLoaded(user?.id ?? null);
   }, [user]);
 
   const update = useCallback((partial: Partial<ChatSettings>) => {
-    setSettings(prev => {
-      const next = { ...prev, ...partial };
-      persistSettings(next);
-      return next;
-    });
-  }, [persistSettings]);
+    updateStore(user?.id, partial);
+  }, [user]);
 
   const saveApiKey = useCallback((key: string) => {
     update({ apiKey: key });
@@ -131,30 +184,32 @@ export function useChatSettings() {
   const addModel = useCallback((model: string) => {
     const id = model.trim();
     if (!id) return;
-    if (settings.savedModels.includes(id)) { toast.error("Model already saved"); return; }
+    const cur = getSnapshot().settings;
+    if (cur.savedModels.includes(id)) { toast.error("Model already saved"); return; }
     const embed = isEmbeddingModel(id);
     update({
-      savedModels: [...settings.savedModels, id],
+      savedModels: [...cur.savedModels, id],
       // Don't make embedding models the active Chat model — they only work for Wiki reindex.
-      selectedModel: embed ? settings.selectedModel : id,
+      selectedModel: embed ? cur.selectedModel : id,
     });
     if (embed) {
       toast.success(`Embedding model "${id}" added — select it in Wiki Settings.`);
     } else {
       toast.success(`Model "${id}" added`);
     }
-  }, [settings.savedModels, settings.selectedModel, update]);
+  }, [update]);
 
   const removeModel = useCallback((model: string) => {
-    if (settings.savedModels.length <= 1) { toast.error("You need at least one model"); return; }
-    const next = settings.savedModels.filter(m => m !== model);
-    const sel = settings.selectedModel === model ? next[0] : settings.selectedModel;
+    const cur = getSnapshot().settings;
+    if (cur.savedModels.length <= 1) { toast.error("You need at least one model"); return; }
+    const next = cur.savedModels.filter(m => m !== model);
+    const sel = cur.selectedModel === model ? next[0] : cur.selectedModel;
     update({ savedModels: next, selectedModel: sel });
-  }, [settings, update]);
+  }, [update]);
 
   return {
     ...settings,
-    loaded,
+    loaded: snap.loaded,
     saveApiKey,
     setSelectedModel: (m: string) => update({ selectedModel: m }),
     setDeepResearchModel: (m: string) => update({ deepResearchModel: m }),
