@@ -223,9 +223,9 @@ const LibraryGraph: React.FC<{
     sprite.textHeight = n.kind === "category" ? 5 : n.kind === "tag" ? 3.4 : 2.7;
     if (n.kind === "category") sprite.fontWeight = "700";
     // Float the label above the sphere instead of intersecting it.
-    sprite.center.y = -0.8;
+    (sprite as any).center.y = -0.8;
     // Standard fix for sprite transparency punching holes through geometry.
-    (sprite.material as any).depthWrite = false;
+    ((sprite as any).material as any).depthWrite = false;
     return sprite;
   }, []);
 
