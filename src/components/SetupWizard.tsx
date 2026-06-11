@@ -181,7 +181,7 @@ const SetupWizard: React.FC = () => {
         {step === 0 && (
           <div className="space-y-4">
             <div className="space-y-1">
-              <h2 className="font-headline font-bold text-3xl text-foreground">Welcome to Bookworm</h2>
+              <h2 className="font-headline font-bold text-3xl text-foreground">Welcome to Bookworm Studio</h2>
               <p className="text-sm text-on-surface-variant">
                 Read books, talk them over with an AI, and grow a brain of everything you learn. Here's the
                 whole loop in four pieces:
@@ -211,7 +211,7 @@ const SetupWizard: React.FC = () => {
             <div className="space-y-1">
               <h2 className="font-headline font-bold text-3xl text-foreground">Power up the AI</h2>
               <p className="text-sm text-on-surface-variant">
-                Bookworm's AI runs through <strong>OpenRouter</strong> — one account that unlocks hundreds of
+                Bookworm Studio's AI runs through <strong>OpenRouter</strong> — one account that unlocks hundreds of
                 AI models. You bring your own key, pay only for exactly what you use, and several models are
                 completely free.
               </p>
@@ -256,7 +256,7 @@ const SetupWizard: React.FC = () => {
                       <li>
                         Open{" "}
                         <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" className="text-primary underline">openrouter.ai/keys</a>{" "}
-                        and press <strong>Create Key</strong> (name it "Bookworm")
+                        and press <strong>Create Key</strong> (name it "Bookworm Studio")
                       </li>
                       <li>Copy the key and paste it here:</li>
                     </ol>
