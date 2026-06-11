@@ -15,6 +15,7 @@ import { Loader2, StickyNote, BookmarkPlus } from "lucide-react";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { usePlan } from "@/hooks/usePlan";
 import { openPricing } from "@/components/PricingDialog";
+import { openSetupWizard } from "@/components/SetupWizard";
 import { useReadAloud } from "@/hooks/useReadAloud";
 import { useHandsFree } from "@/hooks/useHandsFree";
 import { isEmbeddingModel } from "@/lib/utils";
@@ -49,6 +50,7 @@ const ChatPanel: React.FC = () => {
   const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort } = useChat();
   const { isPaid } = usePlan();
   const { speakingId, speak, stop: stopSpeaking } = useReadAloud();
+  const [settingsTab, setSettingsTab] = useState<"models" | "research" | "voice" | "prompts">("models");
   const [bargeInEnabled, setBargeInEnabled] = useState(() => localStorage.getItem("hands_free_barge_in") === "true");
   const handsFree = useHandsFree({
     onUtterance: (text) => sendMessage(text, { voiceMode: true, modelOverride: voiceModel || undefined }),
@@ -513,8 +515,29 @@ const ChatPanel: React.FC = () => {
             </div>
           </div>
 
+          {/* Section tabs — settings grouped by goal so each view stays scannable */}
+          <div role="tablist" aria-label="Settings sections" className="flex gap-1.5 overflow-x-auto hide-scrollbar">
+            {([
+              ["models", "tune", "Models & Keys"],
+              ["research", "science", "Research"],
+              ["voice", "record_voice_over", "Voice"],
+              ["prompts", "history_edu", "Prompts"],
+            ] as const).map(([id, icon, label]) => (
+              <button
+                key={id}
+                role="tab"
+                aria-selected={settingsTab === id}
+                onClick={() => setSettingsTab(id)}
+                className={`shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-bold transition-colors ${settingsTab === id ? "bg-primary-container text-on-primary-container" : "bg-surface-container-high text-on-surface-variant hover:text-foreground"}`}
+              >
+                <span className="material-symbols-outlined text-sm">{icon}</span>
+                {label}
+              </button>
+            ))}
+          </div>
+
           {/* ── Models & Keys ── */}
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant/70 px-1">Models &amp; Keys</p>
+          {settingsTab === "models" && (
           <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-3 md:p-4 rounded-xl bg-surface-container-low">
             <div className="flex flex-col gap-1.5">
               <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">OpenRouter API Key</label>
@@ -531,23 +554,6 @@ const ChatPanel: React.FC = () => {
                 <Button size="sm" onClick={() => { const el = document.getElementById("openrouter-key-input") as HTMLInputElement; handleSaveApiKey(el?.value || ""); }}>Save</Button>
                 {apiKey && <Button size="sm" variant="destructive" onClick={() => handleSaveApiKey("")}>Remove</Button>}
               </div>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Burplexity API Token <span className="text-on-surface-variant/60 normal-case tracking-normal">(web search)</span></label>
-              <div className="relative">
-                <input
-                  className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 pr-10 focus:ring-1 focus:ring-primary/40 transition-all"
-                  type="password" placeholder="pp_..." defaultValue={burplexityApiToken}
-                  id="burplexity-token-input"
-                  onKeyDown={(e) => { if (e.key === "Enter") { setBurplexityApiToken((e.target as HTMLInputElement).value); toast.success("Burplexity token saved"); } }}
-                />
-                <span className="material-symbols-outlined absolute right-3 top-2.5 text-on-surface-variant text-sm">travel_explore</span>
-              </div>
-              <div className="flex gap-2 mt-1">
-                <Button size="sm" onClick={() => { const el = document.getElementById("burplexity-token-input") as HTMLInputElement; setBurplexityApiToken(el?.value || ""); toast.success(el?.value ? "Burplexity token saved" : "Burplexity token removed"); }}>Save</Button>
-                {burplexityApiToken && <Button size="sm" variant="destructive" onClick={() => setBurplexityApiToken("")}>Remove</Button>}
-              </div>
-              <p className="text-[10px] text-on-surface-variant px-1">Enables the live <code>web_search</code> tool. Generate at your Burplexity app → API Keys.</p>
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Active Model</label>
@@ -573,6 +579,13 @@ const ChatPanel: React.FC = () => {
                   );
                 })}
               </div>
+              <button
+                onClick={() => window.open("#/models", "_blank")}
+                className="self-start inline-flex items-center gap-1 mt-1 px-1 text-[11px] font-semibold text-primary hover:underline"
+              >
+                <span className="material-symbols-outlined text-sm">leaderboard</span>
+                Browse top models by category
+              </button>
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Focus Context</label>
@@ -582,10 +595,28 @@ const ChatPanel: React.FC = () => {
               </div>
             </div>
           </section>
+          )}
 
           {/* ── Research & Search ── */}
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant/70 px-1">Research &amp; Search</p>
+          {settingsTab === "research" && (
           <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-3 md:p-4 rounded-xl bg-surface-container-low">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Burplexity API Token <span className="text-on-surface-variant/60 normal-case tracking-normal">(web search)</span></label>
+              <div className="relative">
+                <input
+                  className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 pr-10 focus:ring-1 focus:ring-primary/40 transition-all"
+                  type="password" placeholder="pp_..." defaultValue={burplexityApiToken}
+                  id="burplexity-token-input"
+                  onKeyDown={(e) => { if (e.key === "Enter") { setBurplexityApiToken((e.target as HTMLInputElement).value); toast.success("Burplexity token saved"); } }}
+                />
+                <span className="material-symbols-outlined absolute right-3 top-2.5 text-on-surface-variant text-sm">travel_explore</span>
+              </div>
+              <div className="flex gap-2 mt-1">
+                <Button size="sm" onClick={() => { const el = document.getElementById("burplexity-token-input") as HTMLInputElement; setBurplexityApiToken(el?.value || ""); toast.success(el?.value ? "Burplexity token saved" : "Burplexity token removed"); }}>Save</Button>
+                {burplexityApiToken && <Button size="sm" variant="destructive" onClick={() => setBurplexityApiToken("")}>Remove</Button>}
+              </div>
+              <p className="text-[10px] text-on-surface-variant px-1">Enables the live <code>web_search</code> tool. Generate at your Burplexity app → API Keys.</p>
+            </div>
             <div className="flex flex-col gap-1.5">
               <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
                 <span className="material-symbols-outlined text-xs align-middle mr-1">science</span>Deep Research Model
@@ -618,9 +649,10 @@ const ChatPanel: React.FC = () => {
               </select>
             </div>
           </section>
+          )}
 
           {/* ── Voice (input + output) ── */}
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant/70 px-1">Voice</p>
+          {settingsTab === "voice" && (
           <section className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-3 md:p-4 rounded-xl bg-surface-container-low">
             <div className="flex flex-col gap-1.5">
               <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
@@ -745,9 +777,11 @@ const ChatPanel: React.FC = () => {
               <p className="text-[10px] text-on-surface-variant px-1">When on, hands-free keeps listening while the assistant speaks and stops it the moment you start talking (uses on-device voice detection). Headphones give the most reliable results. When off, the mic is closed during playback to avoid echo.</p>
             </div>
           </section>
+          )}
 
           {/* ── Prompts ── */}
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant/70 px-1">Prompts</p>
+          {settingsTab === "prompts" && (
+          <>
           <PromptLibrary scopeHint="chat" />
           <section className="p-3 md:p-4 rounded-xl bg-surface-container-low">
             <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center gap-1">
@@ -768,6 +802,21 @@ const ChatPanel: React.FC = () => {
               )}
             </div>
           </section>
+          </>
+          )}
+
+          {/* Help row — always visible regardless of tab */}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 pb-1">
+            <button onClick={() => openSetupWizard(0)} className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary hover:underline">
+              <span className="material-symbols-outlined text-sm">school</span>
+              New here? Run the setup helper
+            </button>
+            <span className="text-outline-variant" aria-hidden>•</span>
+            <button onClick={() => window.open("#/models", "_blank")} className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary hover:underline">
+              <span className="material-symbols-outlined text-sm">leaderboard</span>
+              Top OpenRouter models
+            </button>
+          </div>
         </div>
         </>
       )}

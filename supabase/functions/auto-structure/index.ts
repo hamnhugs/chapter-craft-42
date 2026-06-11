@@ -132,6 +132,17 @@ serve(async (req) => {
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) return json({ error: "Unauthorized" }, 401);
 
+    // Auto-chapterize is a paid feature — verify the plan server-side so a
+    // tampered client can't bypass the gate. RLS lets the user read own row.
+    const { data: subRow } = await supabase
+      .from("subscribers")
+      .select("subscribed")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!subRow?.subscribed) {
+      return json({ error: "Auto-chapterize is a Pro feature. Upgrade to detect chapters automatically." }, 402);
+    }
+
     const body = await req.json().catch(() => ({}));
     const rawCandidates: Candidate[] = Array.isArray(body?.candidates) ? body.candidates : [];
     if (rawCandidates.length === 0) return json({ error: "No candidates provided" }, 400);

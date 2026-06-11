@@ -11,6 +11,7 @@ import ThemeSwitcher from "@/components/ThemeSwitcher";
 import ConflictNotifier from "@/components/ConflictNotifier";
 import StripeBar from "@/components/fruit-stripe/StripeBar";
 import PricingDialog, { PlanBadgeButton } from "@/components/PricingDialog";
+import SetupWizard from "@/components/SetupWizard";
 import AdBanner from "@/components/ads/AdBanner";
 import AdInterstitial from "@/components/ads/AdInterstitial";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -364,6 +365,7 @@ const Index: React.FC = () => {
       </nav>
       <WikiQuickSwitcher />
       <PricingDialog />
+      <SetupWizard />
       <AdInterstitial />
     </div>
   );

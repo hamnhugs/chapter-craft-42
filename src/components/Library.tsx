@@ -6,6 +6,8 @@ import { pdfjs } from "react-pdf";
 import { Progress } from "@/components/ui/progress";
 import { convertEpubToPdf } from "@/lib/epubToPdf";
 import { useChatSettings } from "@/hooks/useChatSettings";
+import { usePlan } from "@/hooks/usePlan";
+import { openPricing } from "@/components/PricingDialog";
 import { structureJobs, useStructureJobs, StructureJob } from "@/lib/structureJobs";
 import { autoTagBooks } from "@/lib/autoTag";
 import { toast } from "sonner";
@@ -93,6 +95,7 @@ const VIEW_OPTIONS: { id: ViewMode; icon: string; label: string }[] = [
 const Library: React.FC = () => {
   const { books, addBook, removeBook, setActiveBook, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile } = useApp();
   const { apiKey } = useChatSettings();
+  const { isPaid, loaded: planLoaded } = usePlan();
   const jobs = useStructureJobs();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -314,7 +317,12 @@ const Library: React.FC = () => {
           // Detect button on the card handles those (with replacement).
           const priorBook = books.find((b) => b.id === finalBookId);
           const isPdfUpload = fileToUpload.name.toLowerCase().endsWith(".pdf");
-          if (isPdfUpload && (!priorBook || priorBook.chapters.length === 0)) {
+          // Auto-chapterize is a Pro feature (also enforced in the edge function).
+          if (planLoaded && !isPaid) {
+            if (isPdfUpload) {
+              toast("Auto-chapterize is a Pro feature — upgrade to detect chapters automatically.", { id: "auto-structure-pro" });
+            }
+          } else if (isPdfUpload && (!priorBook || priorBook.chapters.length === 0)) {
             structureJobs.enqueue({
               bookId: finalBookId,
               load: async () => ({ file: fileToUpload }),
@@ -358,6 +366,10 @@ const Library: React.FC = () => {
 
   const runDetect = (book: BookDocument) => {
     if (!book.fileName.toLowerCase().endsWith(".pdf")) return;
+    if (planLoaded && !isPaid) {
+      openPricing("auto-structure");
+      return;
+    }
     if (
       book.chapters.length > 0 &&
       !window.confirm(

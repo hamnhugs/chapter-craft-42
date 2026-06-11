@@ -79,6 +79,18 @@ const subscribe = (l: () => void) => {
 };
 const getSnapshot = () => snapshot;
 
+// Cross-tab sync: the Model Explorer page opens in its own tab and saves
+// models there; this re-pulls settings so the main tab picks them up live.
+// (BroadcastChannel never echoes to the posting tab.)
+const settingsChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("bookworm-settings") : null;
+settingsChannel?.addEventListener("message", (e) => {
+  if (e.data !== "settings-updated") return;
+  if (typeof loadedForUser !== "string") return;
+  const uid = loadedForUser;
+  loadedForUser = undefined;
+  ensureLoaded(uid);
+});
+
 function rowToSettings(data: any): ChatSettings {
   return {
     apiKey: data.openrouter_api_key || "",
@@ -153,6 +165,7 @@ function persistSettings(userId: string, next: ChatSettings) {
       .from("user_settings")
       .upsert(payload, { onConflict: "user_id" });
     if (error) console.error("Failed to save settings:", error);
+    else settingsChannel?.postMessage("settings-updated");
   }, 500);
 }
 

@@ -14,6 +14,7 @@ import MemoryGuide from "./pages/MemoryGuide";
 import WikiControlsGuide from "./pages/WikiControlsGuide";
 import Admin from "./pages/Admin";
 import PaymentSuccess from "./pages/PaymentSuccess";
+import ModelExplorer from "./pages/ModelExplorer";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -59,6 +60,14 @@ const App = () => (
                   element={
                     <ProtectedRoute>
                       <WikiControlsGuide />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/models"
+                  element={
+                    <ProtectedRoute>
+                      <ModelExplorer />
                     </ProtectedRoute>
                   }
                 />
