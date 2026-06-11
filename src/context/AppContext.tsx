@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Wiki, fetchWikis, fetchActiveWikiId, loadWiki as loadWikiApi, createWiki } from "@/lib/wikisApi";
 
-type TabId = "library" | "viewer" | "chat" | "wiki" | "wikis" | "video" | "voice" | "chapterize";
+type TabId = "library" | "viewer" | "chat" | "wiki" | "wikis" | "video" | "voice";
 
 interface AppState {
   books: BookDocument[];

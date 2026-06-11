@@ -62,7 +62,7 @@ const ALL_CAPS_RE = /^[A-Z][A-Z0-9 ,.:;'"&\-–—]{3,70}$/;
 const TOC_DOTS_RE = /\.{3,}\s*\d{1,4}\s*$/;
 const SKIP_TITLE_RE = /^(cover|title page|copyright|contents|table of contents|toc)$/i;
 
-/** Reconstruct a page's lines using text-item y positions (same approach as Forge). */
+/** Reconstruct a page's lines by grouping text items on shared y positions. */
 async function getPageLines(pdf: PDFDocumentProxy, pageNum: number): Promise<string[]> {
   try {
     const page = await pdf.getPage(pageNum);

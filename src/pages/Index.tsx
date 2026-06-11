@@ -6,7 +6,6 @@ import ChatPanel from "@/components/ChatPanel";
 import WikiPanel from "@/components/WikiPanel";
 import WikiLibrary from "@/components/WikiLibrary";
 import WikiQuickSwitcher from "@/components/WikiQuickSwitcher";
-import AutoChapterize from "@/components/AutoChapterize";
 import VideoTranscript from "@/components/VideoTranscript";
 import ThemeSwitcher from "@/components/ThemeSwitcher";
 import ConflictNotifier from "@/components/ConflictNotifier";
@@ -16,22 +15,23 @@ import { useTheme } from "@/context/ThemeContext";
 import { useVisitTracker } from "@/hooks/useVisitTracker";
 
 // Navigation — Craft Workshop theme
-// Workflow reads left-to-right: Vault → Read → Forge → Counsel (intake & processing)
+// Workflow reads left-to-right: Vault → Read → Counsel (intake & processing)
 //                                  then → Neuron → ​BRAIN (knowledge building)
 // Secondary intake tools (Reel) live in the More sheet.
 // Voice ("Echo") has been merged into Counsel — Counsel is now the single
 // conversational surface (typing + voice + read-aloud + notes).
+// Forge has been removed — chapter/section detection now runs automatically
+// on upload in the Vault (see src/lib/bookStructure.ts).
 const tabs = [
   { id: "library" as const, icon: "archive", label: "Vault" },
   { id: "viewer" as const, icon: "auto_stories", label: "Read" },
-  { id: "chapterize" as const, icon: "bolt", label: "Forge" },
   { id: "chat" as const, icon: "psychology", label: "Counsel" },
   { id: "wiki" as const, icon: "menu_book", label: "Neuron" },
   { id: "wikis" as const, icon: "collections_bookmark", label: "​BRAIN" },
   { id: "video" as const, icon: "smart_display", label: "Reel" },
 ];
 
-const PRIMARY_IDS = ["library", "viewer", "chapterize", "chat"] as const;
+const PRIMARY_IDS = ["library", "viewer", "chat"] as const;
 const primaryTabs = PRIMARY_IDS.map((id) => tabs.find((t) => t.id === id)!);
 const moreTabs = tabs.filter((t) => !PRIMARY_IDS.includes(t.id as any));
 
@@ -53,11 +53,11 @@ const Index: React.FC = () => {
           <span data-wordmark className="font-display font-bold text-3xl tracking-tight text-primary">​</span>
         </div>
 
-        {/* Desktop nav — zone separator between Talk (index 3) and Neuron (index 4) */}
+        {/* Desktop nav — zone separator between Counsel (index 2) and Neuron (index 3) */}
         <nav className="hidden md:flex items-center gap-8">
           {tabs.map((tab, index) => (
             <React.Fragment key={tab.id}>
-              {index === 4 && (
+              {index === 3 && (
                 <span className="w-px h-4 bg-border/50 flex-shrink-0" aria-hidden />
               )}
               <button
@@ -113,8 +113,6 @@ const Index: React.FC = () => {
           <WikiLibrary />
         ) : activeTab === "video" ? (
           <VideoTranscript />
-        ) : activeTab === "chapterize" ? (
-          <AutoChapterize />
         ) : (
           <PdfViewer />
         )}
@@ -126,7 +124,7 @@ const Index: React.FC = () => {
         className="md:hidden fixed bottom-0 inset-x-0 z-50 border-t border-border/60 bg-background/85 backdrop-blur-xl"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
-        <div className="grid grid-cols-5 h-16">
+        <div className="grid grid-cols-4 h-16">
           {primaryTabs.map((tab) => {
             const isActive = activeTab === tab.id;
             return (
