@@ -10,6 +10,9 @@ import VideoTranscript from "@/components/VideoTranscript";
 import ThemeSwitcher from "@/components/ThemeSwitcher";
 import ConflictNotifier from "@/components/ConflictNotifier";
 import StripeBar from "@/components/fruit-stripe/StripeBar";
+import PricingDialog, { PlanBadgeButton } from "@/components/PricingDialog";
+import AdBanner from "@/components/ads/AdBanner";
+import AdInterstitial from "@/components/ads/AdInterstitial";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { useTheme } from "@/context/ThemeContext";
 import { useVisitTracker } from "@/hooks/useVisitTracker";
@@ -206,6 +209,7 @@ const Index: React.FC = () => {
               <span className="truncate">{activeWiki.name}</span>
             </button>
           )}
+          <PlanBadgeButton />
           <ConflictNotifier />
           <ThemeSwitcher />
           <button
@@ -217,6 +221,7 @@ const Index: React.FC = () => {
         </div>
       </header>
       {isFruitStripe && <StripeBar thickness={4} />}
+      <AdBanner />
 
       {/* Tablet rail + content */}
       <div className="flex flex-1 overflow-hidden">
@@ -358,6 +363,8 @@ const Index: React.FC = () => {
         </div>
       </nav>
       <WikiQuickSwitcher />
+      <PricingDialog />
+      <AdInterstitial />
     </div>
   );
 };

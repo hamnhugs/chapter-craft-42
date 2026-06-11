@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useApp } from "@/context/AppContext";
 import { useChatSettings } from "@/hooks/useChatSettings";
+import { usePlan } from "@/hooks/usePlan";
 import { usePromptPresets } from "@/hooks/usePromptPresets";
 import { buildChatSystemPrompt } from "@/lib/buildChatSystemPrompt";
 import { CHAT_TOOL_DEFINITIONS, executeChatTool, ToolEvent } from "@/lib/chatTools";
@@ -62,6 +63,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { books, activeBookId, activeWiki, activeWikiId, addChapter, updateChapter, removeChapter, setActiveBookSilent } = useApp();
 
   const { apiKey, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken } = useChatSettings();
+  const { isPaid } = usePlan();
   const { getActiveBodyForScope, migrate } = usePromptPresets();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -214,7 +216,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .map((m) => ({ role: m.role, content: m.content }));
 
       const isVoice = !!opts?.voiceMode;
-      const deepResearch = isVoice ? voiceDeepResearch : chatDeepResearch;
+      // Deep Research is a paid feature — enforced here so every send path
+      // (chat, voice, hands-free) respects the plan regardless of toggle state.
+      const deepResearch = (isVoice ? voiceDeepResearch : chatDeepResearch) && isPaid;
       const scopedPromptBody = getActiveBodyForScope(isVoice ? "voice" : "chat");
       const promptToInject = scopedPromptBody || customSystemPrompt;
 
@@ -498,7 +502,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
       }
     },
-    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, selectedModel, deepResearchModel, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, addChapter, updateChapter, removeChapter, setActiveBookSilent]
+    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, selectedModel, deepResearchModel, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, addChapter, updateChapter, removeChapter, setActiveBookSilent]
   );
 
 

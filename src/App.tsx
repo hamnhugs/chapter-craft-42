@@ -13,6 +13,7 @@ import Auth from "./pages/Auth";
 import MemoryGuide from "./pages/MemoryGuide";
 import WikiControlsGuide from "./pages/WikiControlsGuide";
 import Admin from "./pages/Admin";
+import PaymentSuccess from "./pages/PaymentSuccess";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -58,6 +59,14 @@ const App = () => (
                   element={
                     <ProtectedRoute>
                       <WikiControlsGuide />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/payment-success"
+                  element={
+                    <ProtectedRoute>
+                      <PaymentSuccess />
                     </ProtectedRoute>
                   }
                 />

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Link } from "react-router-dom";
-import { Loader2, Plus, Check, Search, Sparkles, ArrowRight, HelpCircle } from "lucide-react";
+import { Loader2, Plus, Check, Search, Sparkles, ArrowRight, HelpCircle, Lock } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -25,6 +25,12 @@ import {
 import { searchKnowledge, SemanticSearchMatch, embedEntries, fetchKnowledgeEntries } from "@/lib/knowledgeApi";
 import { supabase } from "@/integrations/supabase/client";
 import SuggestionsTab from "@/components/SuggestionsTab";
+import { usePlan } from "@/hooks/usePlan";
+import { openPricing } from "@/components/PricingDialog";
+
+// Free tier includes one neuron (the oldest — usually the default wiki).
+// Creation past the limit is also blocked server-side by a DB trigger.
+const FREE_NEURON_LIMIT = 1;
 
 type ViewMode = "compact" | "gallery";
 
@@ -49,6 +55,7 @@ const formatRelative = (iso: string | null) => {
 
 const WikiLibrary: React.FC = () => {
   const { activeWikiId, setActiveWiki, refreshWikis, setActiveTab } = useApp();
+  const { isPaid, loaded: planLoaded } = usePlan();
   const [wikisWithStats, setWikisWithStats] = useState<WikiWithStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>("gallery");
@@ -120,6 +127,32 @@ const WikiLibrary: React.FC = () => {
     if (!tagFilter) return wikisWithStats;
     return wikisWithStats.filter((w) => w.tags.includes(tagFilter));
   }, [wikisWithStats, tagFilter]);
+
+  // On the free plan, only the oldest neuron stays accessible; the rest are
+  // visible but locked (data is kept, never deleted) until the user upgrades.
+  const lockedIds = useMemo(() => {
+    if (!planLoaded || isPaid) return new Set<string>();
+    const byAge = [...wikisWithStats].sort(
+      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    );
+    return new Set(byAge.slice(FREE_NEURON_LIMIT).map((w) => w.id));
+  }, [wikisWithStats, isPaid, planLoaded]);
+
+  const handleNewWiki = () => {
+    if (planLoaded && !isPaid && wikisWithStats.length >= FREE_NEURON_LIMIT) {
+      openPricing("neuron-limit");
+      return;
+    }
+    openCreate();
+  };
+
+  const handleCardClick = (wiki: WikiWithStats) => {
+    if (lockedIds.has(wiki.id)) {
+      openPricing("neuron-locked");
+      return;
+    }
+    setSelected(wiki);
+  };
 
   const openCreate = () => {
     setFormName("");
@@ -349,10 +382,14 @@ const WikiLibrary: React.FC = () => {
             </div>
 
             <button
-              onClick={openCreate}
+              onClick={handleNewWiki}
               className="flex items-center gap-1.5 bg-primary-container text-on-primary-container px-3 py-1.5 rounded-lg font-bold text-sm active:scale-95 transition-transform shadow-md"
             >
-              <Plus className="w-4 h-4" />
+              {planLoaded && !isPaid && wikisWithStats.length >= FREE_NEURON_LIMIT ? (
+                <Lock className="w-4 h-4" />
+              ) : (
+                <Plus className="w-4 h-4" />
+              )}
               <span>New Wiki</span>
             </button>
           </div>
@@ -486,7 +523,8 @@ const WikiLibrary: React.FC = () => {
                       key={wiki.id}
                       wiki={wiki}
                       isActive={wiki.id === activeWikiId}
-                      onClick={() => setSelected(wiki)}
+                      locked={lockedIds.has(wiki.id)}
+                      onClick={() => handleCardClick(wiki)}
                     />
                   ))}
                 </div>
@@ -497,7 +535,8 @@ const WikiLibrary: React.FC = () => {
                       key={wiki.id}
                       wiki={wiki}
                       isActive={wiki.id === activeWikiId}
-                      onClick={() => setSelected(wiki)}
+                      locked={lockedIds.has(wiki.id)}
+                      onClick={() => handleCardClick(wiki)}
                     />
                   ))}
                 </div>
@@ -720,16 +759,24 @@ const Stat: React.FC<{ label: string; value: string }> = ({ label, value }) => (
 const WikiCardCompact: React.FC<{
   wiki: WikiWithStats;
   isActive: boolean;
+  locked?: boolean;
   onClick: () => void;
-}> = ({ wiki, isActive, onClick }) => (
+}> = ({ wiki, isActive, locked, onClick }) => (
   <button
     onClick={onClick}
+    title={locked ? "Locked on the free plan — upgrade to access" : undefined}
     className={`group relative aspect-square rounded-xl overflow-hidden text-left transition-transform active:scale-95 hover:shadow-2xl ${
       isActive ? "ring-2 ring-primary" : ""
     }`}
     style={{ background: `linear-gradient(135deg, ${wiki.cover_color}, ${wiki.cover_color}99)` }}
   >
     <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
+    {locked && (
+      <div className="absolute inset-0 z-10 bg-black/55 backdrop-blur-[2px] flex flex-col items-center justify-center gap-1.5">
+        <Lock className="w-5 h-5 text-white/90" />
+        <span className="text-[9px] font-bold uppercase tracking-widest text-white/90">Upgrade to unlock</span>
+      </div>
+    )}
     {isActive && (
       <div className="absolute top-2 right-2 bg-background/90 rounded-full p-1">
         <Check className="w-3 h-3 text-primary" />
@@ -755,14 +802,24 @@ const WikiCardCompact: React.FC<{
 const WikiCardGallery: React.FC<{
   wiki: WikiWithStats;
   isActive: boolean;
+  locked?: boolean;
   onClick: () => void;
-}> = ({ wiki, isActive, onClick }) => (
+}> = ({ wiki, isActive, locked, onClick }) => (
   <button
     onClick={onClick}
+    title={locked ? "Locked on the free plan — upgrade to access" : undefined}
     className={`group relative bg-surface-container-high rounded-xl overflow-hidden text-left transition-all hover:shadow-2xl active:scale-[0.99] ${
       isActive ? "ring-2 ring-primary" : "border border-outline-variant/10"
     }`}
   >
+    {locked && (
+      <div className="absolute inset-0 z-10 bg-background/70 backdrop-blur-[2px] flex flex-col items-center justify-center gap-2">
+        <Lock className="w-6 h-6 text-on-surface-variant" />
+        <span className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">
+          Upgrade to unlock
+        </span>
+      </div>
+    )}
     <div
       className="h-24 relative"
       style={{ background: `linear-gradient(135deg, ${wiki.cover_color}, ${wiki.cover_color}88)` }}
