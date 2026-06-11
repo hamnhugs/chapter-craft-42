@@ -747,6 +747,45 @@ export type Database = {
         }
         Relationships: []
       }
+      subscribers: {
+        Row: {
+          billing_issue: boolean
+          created_at: string
+          email: string
+          id: string
+          plan: string
+          stripe_customer_id: string | null
+          subscribed: boolean
+          subscription_end: string | null
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          billing_issue?: boolean
+          created_at?: string
+          email: string
+          id?: string
+          plan?: string
+          stripe_customer_id?: string | null
+          subscribed?: boolean
+          subscription_end?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          billing_issue?: boolean
+          created_at?: string
+          email?: string
+          id?: string
+          plan?: string
+          stripe_customer_id?: string | null
+          subscribed?: boolean
+          subscription_end?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string
