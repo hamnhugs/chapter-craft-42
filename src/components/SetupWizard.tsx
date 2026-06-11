@@ -12,6 +12,7 @@ import {
   testOpenRouterKey,
   looksLikeOpenRouterKey,
 } from "@/lib/openrouterAuth";
+import { useConsentResolved } from "@/components/WelcomeGate";
 import { fetchCatalog, isFreeModel, type ORModel } from "@/lib/openrouterCatalog";
 
 // First-run setup helper. Research-backed shape: 4 steps max (completion
@@ -49,6 +50,7 @@ const TOUR_ROWS: { icon: string; name: string; metaphor: string; real: string }[
 const SetupWizard: React.FC = () => {
   const { open, step } = useSyncExternalStore(subscribeWiz, getWizState, getWizState);
   const { user } = useAuth();
+  const consentResolved = useConsentResolved();
   const { apiKey, savedModels, selectedModel, addModel, saveApiKey, loaded: settingsLoaded } = useChatSettings();
 
   const [keyDraft, setKeyDraft] = useState("");
@@ -80,9 +82,10 @@ const SetupWizard: React.FC = () => {
   }, []);
 
   // First login with no key configured → offer the walkthrough once.
+  // Waits for the privacy/welcome gate so the two dialogs never stack.
   useEffect(() => {
     if (autoOpenedRef.current || open) return;
-    if (!user || !settingsLoaded) return;
+    if (!user || !settingsLoaded || !consentResolved) return;
     if (localStorage.getItem(DONE_KEY)) return;
     if (apiKey) {
       // Existing user who set up before the wizard existed — never nag them.
@@ -91,7 +94,7 @@ const SetupWizard: React.FC = () => {
     }
     autoOpenedRef.current = true;
     openSetupWizard(0);
-  }, [user, settingsLoaded, apiKey, open]);
+  }, [user, settingsLoaded, apiKey, open, consentResolved]);
 
   // Lazy-load quick picks for the models step: top free models by real usage.
   useEffect(() => {

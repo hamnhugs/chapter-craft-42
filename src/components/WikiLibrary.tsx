@@ -26,8 +26,16 @@ import { searchKnowledge, SemanticSearchMatch, embedEntries, fetchKnowledgeEntri
 import { supabase } from "@/integrations/supabase/client";
 import SuggestionsTab from "@/components/SuggestionsTab";
 import { usePlan } from "@/hooks/usePlan";
+import { useAuth } from "@/hooks/useAuth";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { openPricing } from "@/components/PricingDialog";
 import { FREE_NEURON_LIMIT, computeLockedWikiIds } from "@/lib/neuronAccess";
+import {
+  AdminWikiRow,
+  AdminWikiEntry,
+  adminListAllWikis,
+  adminListWikiEntries,
+} from "@/lib/announcementsApi";
 
 // Lazy: shares the three.js chunk with the Vault graph; only fetched when the
 // user opens the mind-map view.
@@ -54,9 +62,16 @@ const formatRelative = (iso: string | null) => {
   return new Date(iso).toLocaleDateString();
 };
 
+// Admin "Everyone" scope never locks anything — the admin RPC re-checks
+// is_admin() server-side, so this set exists only to satisfy NeuronGraph.
+const EMPTY_LOCKED = new Set<string>();
+
 const WikiLibrary: React.FC = () => {
   const { activeWikiId, setActiveWiki, refreshWikis, setActiveTab } = useApp();
   const { isPaid, loaded: planLoaded } = usePlan();
+  const { user } = useAuth();
+  const { isAdmin } = useIsAdmin();
+  const [scope, setScope] = useState<"mine" | "all">("mine");
   const [wikisWithStats, setWikisWithStats] = useState<WikiWithStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>("gallery");
@@ -353,6 +368,26 @@ const WikiLibrary: React.FC = () => {
           </div>
 
           <div className="flex gap-3 items-center">
+            {/* Admin-only scope toggle: my neurons vs every account's neurons */}
+            {isAdmin && (
+              <div className="flex bg-surface-container-high rounded-xl p-1 border border-outline-variant/10">
+                {(["mine", "all"] as const).map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => setScope(s)}
+                    className={`px-3 py-2 rounded-lg text-xs font-bold transition-colors ${
+                      scope === s
+                        ? "bg-primary-container text-on-primary-container"
+                        : "text-on-surface-variant"
+                    }`}
+                    title={s === "mine" ? "Your neurons" : "All users' neurons (admin)"}
+                  >
+                    {s === "mine" ? "Mine" : "Everyone"}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* View mode toggle */}
             <div className="flex bg-surface-container-high rounded-xl p-1 border border-outline-variant/10">
               <button
@@ -441,6 +476,13 @@ const WikiLibrary: React.FC = () => {
 
         {activeView === "suggestions" ? (
           <SuggestionsTab onChanged={loadPendingCount} />
+        ) : isAdmin && scope === "all" ? (
+          <AdminAllNeurons
+            viewMode={viewMode}
+            ownUserId={user?.id || ""}
+            activeWikiId={activeWikiId}
+            onOwnSelect={handleCardClick}
+          />
         ) : (
           <>
             {/* Cross-wiki semantic search */}
@@ -892,6 +934,157 @@ const WikiCardGallery: React.FC<{
     </div>
   </button>
 );
+
+// =====================================================
+// AdminAllNeurons: admin-only "Everyone" scope — every account's neurons,
+// grouped by owner. Reads go through SECURITY DEFINER RPCs that re-check
+// is_admin() server-side; opening another user's entries is audit-logged.
+// =====================================================
+
+const AdminAllNeurons: React.FC<{
+  viewMode: ViewMode;
+  ownUserId: string;
+  activeWikiId: string | null;
+  onOwnSelect: (wiki: WikiWithStats) => void;
+}> = ({ viewMode, ownUserId, activeWikiId, onOwnSelect }) => {
+  const [rows, setRows] = useState<AdminWikiRow[] | null>(null);
+  const [foreign, setForeign] = useState<AdminWikiRow | null>(null);
+  const [entries, setEntries] = useState<AdminWikiEntry[] | null>(null);
+
+  useEffect(() => {
+    adminListAllWikis()
+      .then(setRows)
+      .catch((err: any) => {
+        toast.error(err.message || "Failed to load all neurons — is the migration applied?");
+        setRows([]);
+      });
+  }, []);
+
+  const grouped = useMemo(() => {
+    const map = new Map<string, AdminWikiRow[]>();
+    for (const w of rows || []) {
+      if (!map.has(w.owner_email)) map.set(w.owner_email, []);
+      map.get(w.owner_email)!.push(w);
+    }
+    return Array.from(map.entries());
+  }, [rows]);
+
+  const handleSelect = (w: AdminWikiRow) => {
+    if (w.user_id === ownUserId) {
+      onOwnSelect(w as unknown as WikiWithStats);
+      return;
+    }
+    setForeign(w);
+    setEntries(null);
+    adminListWikiEntries(w.id, 50)
+      .then(setEntries)
+      .catch((err: any) => {
+        toast.error(err.message || "Failed to load entries");
+        setEntries([]);
+      });
+  };
+
+  if (!rows) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="w-8 h-8 animate-spin text-on-surface-variant" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-8">
+      <p className="text-xs text-on-surface-variant">
+        Admin view — neurons from every account. Opening another user's neuron records an entry
+        in the audit log; access user content only for support, moderation, or security purposes.
+      </p>
+
+      {viewMode === "mindmap" ? (
+        <React.Suspense
+          fallback={
+            <div className="flex items-center justify-center h-[60vh] min-h-[420px]">
+              <Loader2 className="w-8 h-8 animate-spin text-on-surface-variant" />
+            </div>
+          }
+        >
+          <NeuronGraph
+            wikis={rows as unknown as WikiWithStats[]}
+            lockedIds={EMPTY_LOCKED}
+            activeWikiId={activeWikiId}
+            onSelect={(w) => handleSelect(w as unknown as AdminWikiRow)}
+          />
+        </React.Suspense>
+      ) : (
+        grouped.map(([email, list]) => (
+          <div key={email}>
+            <div className="flex items-baseline gap-2 mb-3">
+              <span className="text-sm font-bold text-foreground">{email}</span>
+              <span className="text-xs text-on-surface-variant">
+                {list.length} neuron{list.length === 1 ? "" : "s"} ·{" "}
+                {list.reduce((s, w) => s + w.entry_count, 0)} entries
+              </span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+              {list.map((w) => (
+                <WikiCardCompact
+                  key={w.id}
+                  wiki={w as unknown as WikiWithStats}
+                  isActive={w.id === activeWikiId}
+                  onClick={() => handleSelect(w)}
+                />
+              ))}
+            </div>
+          </div>
+        ))
+      )}
+
+      {/* Foreign neuron preview (audit-logged server-side) */}
+      <Dialog open={!!foreign} onOpenChange={(o) => !o && setForeign(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          {foreign && (
+            <>
+              <div
+                className="h-16 -mx-6 -mt-6 mb-2 rounded-t-lg"
+                style={{ background: `linear-gradient(135deg, ${foreign.cover_color}, ${foreign.cover_color}88)` }}
+              />
+              <DialogHeader>
+                <DialogTitle className="text-2xl font-headline">{foreign.name}</DialogTitle>
+                <DialogDescription>
+                  {foreign.owner_email} · {foreign.entry_count} entries · created{" "}
+                  {new Date(foreign.created_at).toLocaleDateString()}. This access was recorded in
+                  the audit log.
+                </DialogDescription>
+              </DialogHeader>
+              {!entries ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-on-surface-variant" />
+                </div>
+              ) : entries.length === 0 ? (
+                <p className="text-sm text-on-surface-variant py-4">This neuron has no entries.</p>
+              ) : (
+                <div className="divide-y divide-outline-variant/10">
+                  {entries.map((e) => (
+                    <div key={e.id} className="py-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="font-bold text-sm text-foreground">{e.title}</div>
+                        <span className="shrink-0 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">
+                          {e.entry_type}
+                        </span>
+                      </div>
+                      <p className="text-xs text-on-surface-variant line-clamp-3 mt-1 whitespace-pre-wrap">
+                        {e.content}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
 
 // =====================================================
 // SearchResults: groups semantic matches by wiki and offers "Load this wiki" CTA per group.

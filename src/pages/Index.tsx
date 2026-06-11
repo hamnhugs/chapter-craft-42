@@ -14,9 +14,14 @@ import PricingDialog, { PlanBadgeButton } from "@/components/PricingDialog";
 import SetupWizard from "@/components/SetupWizard";
 import AdBanner from "@/components/ads/AdBanner";
 import AdInterstitial from "@/components/ads/AdInterstitial";
+import WelcomeGate from "@/components/WelcomeGate";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { useTheme } from "@/context/ThemeContext";
 import { useVisitTracker } from "@/hooks/useVisitTracker";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
+
+// Admin-only surface: lazy so regular users never download it.
+const AdminPanel = React.lazy(() => import("@/components/AdminPanel"));
 
 // Navigation — Craft Workshop theme
 // Workflow reads left-to-right: Vault → Read → Counsel (intake & processing)
@@ -38,11 +43,15 @@ const tabs = [
   { id: "video" as const, icon: "smart_display", label: "Reel" },
 ];
 
-type NavTabId = (typeof tabs)[number]["id"];
+// The "admin" tab is appended at runtime for admin accounts only. Existing
+// tab IDs must never change; adding a new one is safe.
+const ADMIN_TAB = { id: "admin" as const, icon: "admin_panel_settings", label: "Admin" };
+
+type NavTabId = (typeof tabs)[number]["id"] | typeof ADMIN_TAB.id;
+type NavTab = { id: NavTabId; icon: string; label: string };
 
 const PRIMARY_IDS = ["library", "viewer", "chat"] as const;
 const primaryTabs = PRIMARY_IDS.map((id) => tabs.find((t) => t.id === id)!);
-const moreTabs = tabs.filter((t) => !PRIMARY_IDS.includes(t.id as any));
 
 // Zone separator index: intake tools (Vault/Read/Counsel) | knowledge building
 const ZONE_SPLIT = 3;
@@ -52,11 +61,12 @@ const ZONE_SPLIT = 3;
  * active item via measured offsets + a CSS transition (no animation library).
  */
 const DesktopNav: React.FC<{
+  tabs: NavTab[];
   activeTab: string;
   setActiveTab: (id: NavTabId) => void;
   viewerLabel: string;
   neuronLabel: string;
-}> = ({ activeTab, setActiveTab, viewerLabel, neuronLabel }) => {
+}> = ({ tabs, activeTab, setActiveTab, viewerLabel, neuronLabel }) => {
   const refs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [pill, setPill] = useState<{ left: number; width: number } | null>(null);
 
@@ -124,9 +134,10 @@ const DesktopNav: React.FC<{
  * destinations visible with icon + label, ≥48px touch targets.
  */
 const TabletRail: React.FC<{
+  tabs: NavTab[];
   activeTab: string;
   setActiveTab: (id: NavTabId) => void;
-}> = ({ activeTab, setActiveTab }) => (
+}> = ({ tabs, activeTab, setActiveTab }) => (
   <nav
     aria-label="Main navigation"
     className="hidden md:flex lg:hidden w-20 shrink-0 flex-col items-center justify-center gap-1 border-r border-border/60 bg-background/85 backdrop-blur-xl py-4"
@@ -171,7 +182,10 @@ const TabletRail: React.FC<{
 
 const Index: React.FC = () => {
   const { activeTab, setActiveTab, getActiveBook, signOut, activeWiki } = useApp();
+  const { isAdmin } = useIsAdmin();
   const [moreOpen, setMoreOpen] = useState(false);
+  const visibleTabs: NavTab[] = isAdmin ? [...tabs, ADMIN_TAB] : tabs;
+  const moreTabs = visibleTabs.filter((t) => !PRIMARY_IDS.includes(t.id as any));
   const moreActive = moreTabs.some((t) => t.id === activeTab);
   const activeBook = getActiveBook();
   const { themeId } = useTheme();
@@ -193,7 +207,7 @@ const Index: React.FC = () => {
         </div>
 
         {/* Desktop nav (lg+) — tablet uses the left rail instead */}
-        <DesktopNav activeTab={activeTab} setActiveTab={setActiveTab} viewerLabel={viewerLabel} neuronLabel={neuronLabel} />
+        <DesktopNav tabs={visibleTabs} activeTab={activeTab} setActiveTab={setActiveTab} viewerLabel={viewerLabel} neuronLabel={neuronLabel} />
 
         <div className="flex items-center gap-2">
           {activeWiki && (
@@ -226,7 +240,7 @@ const Index: React.FC = () => {
 
       {/* Tablet rail + content */}
       <div className="flex flex-1 overflow-hidden">
-        <TabletRail activeTab={activeTab} setActiveTab={setActiveTab} />
+        <TabletRail tabs={visibleTabs} activeTab={activeTab} setActiveTab={setActiveTab} />
 
         <div className="flex-1 overflow-hidden pb-20 md:pb-0">
           {activeTab === "library" ? (
@@ -239,6 +253,16 @@ const Index: React.FC = () => {
             <WikiLibrary />
           ) : activeTab === "video" ? (
             <VideoTranscript />
+          ) : activeTab === "admin" ? (
+            <React.Suspense
+              fallback={
+                <div className="flex items-center justify-center h-full text-muted-foreground">
+                  Loading…
+                </div>
+              }
+            >
+              <AdminPanel />
+            </React.Suspense>
           ) : (
             <PdfViewer />
           )}
@@ -365,6 +389,7 @@ const Index: React.FC = () => {
       </nav>
       <WikiQuickSwitcher />
       <PricingDialog />
+      <WelcomeGate />
       <SetupWizard />
       <AdInterstitial />
     </div>
