@@ -64,35 +64,29 @@ export type Database = {
       }
       books: {
         Row: {
-          category: string | null
           cover_image_url: string | null
           created_at: string
           file_name: string
           id: string
           page_count: number
-          tags: string[]
           title: string
           user_id: string | null
         }
         Insert: {
-          category?: string | null
           cover_image_url?: string | null
           created_at?: string
           file_name: string
           id?: string
           page_count?: number
-          tags?: string[]
           title: string
           user_id?: string | null
         }
         Update: {
-          category?: string | null
           cover_image_url?: string | null
           created_at?: string
           file_name?: string
           id?: string
           page_count?: number
-          tags?: string[]
           title?: string
           user_id?: string | null
         }
