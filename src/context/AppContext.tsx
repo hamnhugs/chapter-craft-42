@@ -14,7 +14,7 @@ interface AppState {
   wikis: Wiki[];
   activeWikiId: string | null;
   activeWiki: Wiki | undefined;
-  addBook: (book: BookDocument, sourceFile?: File) => Promise<void>;
+  addBook: (book: BookDocument, sourceFile?: File) => Promise<string>;
   removeBook: (id: string) => void;
   setActiveBook: (id: string) => void;
   setActiveBookSilent: (id: string) => void;
@@ -299,7 +299,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         return prev.map((b) => (b.id === finalBookId ? { ...b, ...nextBook } : b));
       });
-      return;
+      return finalBookId;
     }
 
     try {
@@ -347,6 +347,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       throw err instanceof Error ? err : new Error("Document upload failed");
     }
+
+    return finalBookId;
   }, [user]);
 
   const removeBook = useCallback(async (id: string) => {

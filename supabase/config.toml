@@ -27,5 +27,8 @@ verify_jwt = false
 [functions.wiki-drift-check]
 verify_jwt = false
 
+[functions.auto-structure]
+verify_jwt = false
+
 
 

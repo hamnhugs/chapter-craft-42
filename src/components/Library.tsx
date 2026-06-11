@@ -5,6 +5,8 @@ import { BookDocument } from "@/types/library";
 import { pdfjs } from "react-pdf";
 import { Progress } from "@/components/ui/progress";
 import { convertEpubToPdf } from "@/lib/epubToPdf";
+import { useChatSettings } from "@/hooks/useChatSettings";
+import { structureJobs, useStructureJobs, StructureJob } from "@/lib/structureJobs";
 
 type UploadState = {
   id: string;
@@ -19,7 +21,9 @@ const MAX_UPLOAD_ATTEMPTS = 3;
 const MAX_CONCURRENT_UPLOADS = 3;
 
 const Library: React.FC = () => {
-  const { books, addBook, removeBook, setActiveBook, updateBookTitle } = useApp();
+  const { books, addBook, removeBook, setActiveBook, updateBookTitle, addChapter, removeChapter, loadBookFile } = useApp();
+  const { apiKey } = useChatSettings();
+  const jobs = useStructureJobs();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showApiKeys, setShowApiKeys] = useState(false);
   const [sortBy, setSortBy] = useState<"date" | "name">("date");
@@ -159,9 +163,24 @@ const Library: React.FC = () => {
             addedAt: Date.now(),
           };
 
-          await addBook(newBook, fileToUpload);
+          const finalBookId = await addBook(newBook, fileToUpload);
           updateUploadState(item.id, { status: "success", attempts: attempt, error: undefined });
           uploaded = true;
+
+          // Auto-detect the table of contents / sections as soon as the upload
+          // lands (PDFs only — EPUBs were already converted to PDF above).
+          // Skip re-uploads of books that already have chapters; the manual
+          // Detect button on the card handles those (with replacement).
+          const priorBook = books.find((b) => b.id === finalBookId);
+          const isPdfUpload = fileToUpload.name.toLowerCase().endsWith(".pdf");
+          if (isPdfUpload && (!priorBook || priorBook.chapters.length === 0)) {
+            structureJobs.enqueue({
+              bookId: finalBookId,
+              load: async () => ({ file: fileToUpload }),
+              apiKey: apiKey || undefined,
+              deps: { addChapter, removeChapter },
+            });
+          }
         } catch (error) {
           lastError = error;
           if (attempt < MAX_UPLOAD_ATTEMPTS) {
@@ -194,6 +213,29 @@ const Library: React.FC = () => {
 
     setIsUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const runDetect = (book: BookDocument) => {
+    if (!book.fileName.toLowerCase().endsWith(".pdf")) return;
+    if (
+      book.chapters.length > 0 &&
+      !window.confirm(
+        `Re-detect chapters for "${book.title}"? This will replace its ${book.chapters.length} existing chapter${book.chapters.length === 1 ? "" : "s"}.`,
+      )
+    ) {
+      return;
+    }
+    structureJobs.enqueue({
+      bookId: book.id,
+      load: async () => {
+        const url = await loadBookFile(book.id);
+        if (!url) throw new Error("Could not load this book's file from storage.");
+        return { fileUrl: url };
+      },
+      apiKey: apiKey || undefined,
+      replaceChapters: book.chapters.length > 0 ? book.chapters : undefined,
+      deps: { addChapter, removeChapter },
+    });
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -337,6 +379,8 @@ const Library: React.FC = () => {
                 key={book.id}
                 book={book}
                 index={i}
+                job={jobs[book.id]}
+                onDetect={() => runDetect(book)}
                 onRead={() => setActiveBook(book.id)}
                 onRemove={() => removeBook(book.id)}
                 onRename={(newTitle) => updateBookTitle(book.id, newTitle)}
@@ -352,13 +396,16 @@ const Library: React.FC = () => {
 const BookCard: React.FC<{
   book: BookDocument;
   index: number;
+  job?: StructureJob;
+  onDetect: () => void;
   onRead: () => void;
   onRemove: () => void;
   onRename: (newTitle: string) => void;
-}> = ({ book, index, onRead, onRemove, onRename }) => {
+}> = ({ book, index, job, onDetect, onRead, onRemove, onRename }) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(book.title);
   const isPdf = book.fileName.toLowerCase().endsWith(".pdf");
+  const detecting = job?.status === "queued" || job?.status === "running";
   const isHtml = book.fileName.toLowerCase().endsWith(".html");
   const metadataText = isPdf
     ? `${book.pageCount} pages · ${book.chapters.length} chapters · PDF`
@@ -421,9 +468,31 @@ const BookCard: React.FC<{
             {book.title}
           </h4>
         )}
-        <p className="text-on-surface-variant text-xs font-medium uppercase tracking-wider mb-6">
+        <p className="text-on-surface-variant text-xs font-medium uppercase tracking-wider mb-2">
           {metadataText}
         </p>
+
+        {/* Auto-structure status */}
+        <div className="min-h-5 mb-4">
+          {detecting ? (
+            <p className="flex items-center gap-1.5 text-xs text-primary">
+              <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+              <span className="truncate">{job?.progress || "Detecting chapters…"}</span>
+            </p>
+          ) : job?.status === "done" ? (
+            <p className="flex items-center gap-1.5 text-xs text-primary">
+              <span className="material-symbols-outlined text-sm">check_circle</span>
+              {job.savedCount} chapter{job.savedCount === 1 ? "" : "s"} detected
+              {job.method === "outline" ? " (from PDF outline)" : ""}
+            </p>
+          ) : job?.status === "error" ? (
+            <p className="flex items-center gap-1.5 text-xs text-destructive">
+              <span className="material-symbols-outlined text-sm">error</span>
+              <span className="truncate" title={job.error}>{job.error || "Detection failed"}</span>
+            </p>
+          ) : null}
+        </div>
+
         <div className="flex items-center gap-3">
           <button
             onClick={onRead}
@@ -431,6 +500,26 @@ const BookCard: React.FC<{
           >
             Open
           </button>
+          {isPdf && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onDetect(); }}
+              disabled={detecting}
+              title={
+                detecting
+                  ? "Detecting chapters…"
+                  : job?.status === "error"
+                    ? "Retry chapter detection"
+                    : book.chapters.length > 0
+                      ? "Re-detect chapters with AI"
+                      : "Auto-detect chapters with AI"
+              }
+              className="p-3 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span className={`material-symbols-outlined text-xl ${detecting ? "animate-spin" : ""}`}>
+                {detecting ? "progress_activity" : "auto_awesome"}
+              </span>
+            </button>
+          )}
           <button
             onClick={(e) => { e.stopPropagation(); onRemove(); }}
             className="p-3 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-error-container/20 hover:text-destructive transition-all"
