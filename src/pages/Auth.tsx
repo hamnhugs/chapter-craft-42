@@ -56,7 +56,7 @@ const Auth: React.FC = () => {
             <span className="material-symbols-outlined text-on-primary-container text-4xl">menu_book</span>
           </div>
           <div className="flex flex-col gap-1">
-            <h1 className="font-headline font-bold text-4xl tracking-tight text-primary">Chapter Craft</h1>
+            <h1 className="font-headline font-bold text-4xl tracking-tight text-primary">Bookworm Studio</h1>
             <p className="text-secondary italic font-headline text-lg">Curate your intellectual legacy.</p>
           </div>
         </header>
@@ -87,7 +87,7 @@ const Auth: React.FC = () => {
                 <input
                   type="email" value={email} onChange={(e) => setEmail(e.target.value)} required
                   className="w-full bg-surface-container-low border-none rounded-xl py-4 pl-12 pr-4 text-foreground placeholder:text-on-surface-variant/50 focus:ring-1 focus:ring-primary/40 transition-all"
-                  placeholder="scholar@chaptercraft.com"
+                  placeholder="scholar@bookwormstudio.com"
                 />
               </div>
             </div>
