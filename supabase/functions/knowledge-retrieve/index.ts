@@ -107,7 +107,11 @@ serve(async (req) => {
       for (const b of (bridged || []) as any[]) allowedNeighborIds.add(b.entry_id);
     }
 
-    // 4. Build node map, applying graph boost
+    // 4. Build node map, applying graph boost.
+    // Seed scores are normalized against the best seed first: raw RRF scores
+    // are tiny (~1/(50+rank)), so without normalization a 2-hop neighbor's
+    // flat boost would outrank every direct search hit.
+    const maxSeedScore = Math.max(...seeds.map((s: any) => s.score ?? 0), 1e-9);
     const nodeMap = new Map<string, any>();
     for (const s of seeds) {
       nodeMap.set(s.id, {
@@ -115,7 +119,7 @@ serve(async (req) => {
         title: s.title,
         content: s.content,
         entry_type: s.entry_type,
-        score: (s.score ?? 0) * 0.7,
+        score: ((s.score ?? 0) / maxSeedScore) * 0.7,
         hop: 0,
         via: null,
         from_seed: s.id,
@@ -139,6 +143,28 @@ serve(async (req) => {
           via: n.via_relationship,
           from_seed: n.from_seed,
         });
+      }
+    }
+
+    // 4b. Generative-Agents-style blend (Park et al. 2023): final relevance =
+    // search/graph relevance × (vibrancy + confidence). Vibrancy is the
+    // ACT-R recency/usage score the Sleep Cycle already maintains — this is
+    // where it finally feeds back into what the AI actually reads. The factor
+    // spans [0.585, 1.0], so it re-ranks without ever zeroing out a match.
+    {
+      const idsAll = Array.from(nodeMap.keys());
+      const { data: meta } = await supabase
+        .from("knowledge_entries")
+        .select("id, vibrancy, confidence")
+        .in("id", idsAll);
+      for (const row of (meta || []) as any[]) {
+        const n = nodeMap.get(row.id);
+        if (!n) continue;
+        const vib = typeof row.vibrancy === "number" ? row.vibrancy : 0.5;
+        const conf = typeof row.confidence === "number" ? row.confidence : 0.8;
+        n.score = n.score * (0.55 + 0.3 * vib + 0.15 * conf);
+        n.vibrancy = vib;
+        n.confidence = conf;
       }
     }
 

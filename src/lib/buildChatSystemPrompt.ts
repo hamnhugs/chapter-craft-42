@@ -20,10 +20,58 @@ interface BuildOpts {
   allNeurons?: boolean;
 }
 
+/** A memory entry that was injected into the prompt — surfaced in the UI so
+ *  the user can see exactly what the assistant drew on (memory transparency). */
+export interface UsedMemory {
+  id: string;
+  title: string;
+}
+
+export interface BuiltPrompt {
+  prompt: string;
+  usedMemories: UsedMemory[];
+}
+
+// Words that signal the user is talking about their reading material, so the
+// full chapter text is worth its token cost in the prompt.
+const READING_WORDS =
+  /\b(book|books|chapter|chapters|page|pages|read|reading|passage|paragraph|quote|quotes|summar\w*|author|plot|character\w*|theme\w*|story|text|excerpt|section|wrote|writes|writing)\b/i;
+
+const STOPWORDS = new Set([
+  "this", "that", "with", "from", "what", "when", "where", "which", "does",
+  "have", "about", "tell", "your", "please", "would", "could", "should",
+  "there", "their", "they", "them", "then", "than", "into", "like", "just",
+  "know", "want", "need", "make", "more", "some", "very", "also", "been",
+  "were", "will", "give", "show", "explain", "help",
+]);
+
+/**
+ * Decide whether the active book's chapter text is relevant to the current
+ * question. Full chapter text costs thousands of tokens per message and —
+ * per the "context rot" research — actively distracts the model when it's
+ * unrelated to the query. The model always has the `get_chapter_text` tool
+ * to pull the text on demand, so omitting it here loses nothing.
+ */
+function isChapterContextRelevant(query: string | undefined, book: BookDocument): boolean {
+  if (!query || !query.trim()) return true; // no signal — keep legacy behavior
+  if (READING_WORDS.test(query)) return true;
+  const qTokens = query.toLowerCase().match(/[a-z][a-z'-]{3,}/g) || [];
+  const bookText = `${book.title} ${book.chapters.map((c) => c.name).join(" ")}`.toLowerCase();
+  const bookTokens = new Set(bookText.match(/[a-z][a-z'-]{3,}/g) || []);
+  return qTokens.some((t) => !STOPWORDS.has(t) && bookTokens.has(t));
+}
+
+// Section order follows two research findings:
+//  1. Prompt caching: stable content (instructions, tools, deep-research
+//     boilerplate) goes first so the cached prefix survives across turns.
+//  2. "Lost in the middle" (Liu et al.): models recall the start and end of
+//     the context best, so the retrieved memories — the most query-specific,
+//     highest-value content — go LAST, right before the conversation.
 export async function buildChatSystemPrompt({
   books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeWikiName, activeWikiId, allNeurons,
-}: BuildOpts): Promise<string> {
+}: BuildOpts): Promise<BuiltPrompt> {
   const parts: string[] = [];
+  const usedMemories: UsedMemory[] = [];
 
   if (customSystemPrompt && customSystemPrompt.trim()) {
     parts.push("## User Custom Instructions", customSystemPrompt.trim(), "");
@@ -62,7 +110,47 @@ export async function buildChatSystemPrompt({
     ] : [])
   );
 
-  // Conversation memory
+  if (deepResearch) {
+    parts.push("", DEEP_RESEARCH_SYSTEM_PROMPT, DEEP_RESEARCH_ADVANCED_PROMPT);
+  }
+
+  // Library catalog (always)
+  parts.push("", "## Available Library", `The user has ${books.length} book(s) in their library:`);
+  books.forEach((book) => {
+    parts.push(`- **${book.title}** (id: ${book.id}, ${book.pageCount} pages, ${book.chapters.length} chapter(s))`);
+    book.chapters.forEach((ch) => {
+      parts.push(`  - Chapter: "${ch.name}" (id: ${ch.id}, pages ${ch.startPage}–${ch.endPage})`);
+    });
+  });
+
+  if (selectedBook) {
+    parts.push("", `## Currently Active Book: "${selectedBook.title}" (id: ${selectedBook.id})`);
+    parts.push(`File: ${selectedBook.fileName} | Pages: ${selectedBook.pageCount}`);
+    if (selectedBook.chapters.length > 0) {
+      if (isChapterContextRelevant(latestUserQuery, selectedBook)) {
+        parts.push("", "### Chapter Contents");
+        selectedBook.chapters.forEach((ch) => {
+          parts.push(`#### ${ch.name} (pages ${ch.startPage}–${ch.endPage})`);
+          if (ch.textContent) {
+            const chapterCap = voiceMode ? 3000 : 12000;
+            const text = ch.textContent.length > chapterCap ? ch.textContent.slice(0, chapterCap) + "\n\n[...truncated]" : ch.textContent;
+            parts.push(text);
+          } else {
+            parts.push("(No text content extracted for this chapter)");
+          }
+          parts.push("");
+        });
+      } else {
+        parts.push(
+          "",
+          "### Chapter Contents",
+          "(Full chapter text omitted — the current question doesn't appear to reference this book. If you DO need the text, call `get_chapter_text` with the chapter id.)",
+        );
+      }
+    }
+  }
+
+  // Conversation memory (cross-session summary + key facts)
   try {
     const conversationMemory = await fetchConversationMemory().catch(() => null);
     if (conversationMemory?.summary) {
@@ -74,7 +162,9 @@ export async function buildChatSystemPrompt({
     }
   } catch { /* proceed without memory */ }
 
-  // GRAPH-AWARE RETRIEVAL — replaces the old "dump 30 entries" approach
+  // GRAPH-AWARE RETRIEVAL — deliberately the LAST major section: it is the
+  // most query-specific content, and end-of-context placement is where the
+  // model recalls it best. Nodes arrive ranked best-first.
   if (latestUserQuery && latestUserQuery.trim().length > 0) {
     try {
       const retrieval = await retrieveKnowledge(latestUserQuery, {
@@ -83,9 +173,10 @@ export async function buildChatSystemPrompt({
         wiki_id: allNeurons ? null : activeWikiId ?? null,
       });
       if (retrieval && retrieval.nodes.length > 0) {
-        parts.push("", `## Retrieved Knowledge (${retrieval.nodes.length} nodes, ${retrieval.edges.length} edges)`);
+        parts.push("", `## Retrieved Knowledge (${retrieval.nodes.length} nodes, ${retrieval.edges.length} edges — most relevant first)`);
         const idToTitle = new Map(retrieval.nodes.map((n: any) => [n.id, n.title]));
         for (const node of retrieval.nodes) {
+          usedMemories.push({ id: node.id, title: node.title });
           parts.push("", `### ${node.title}${node.hop > 0 ? ` _(via ${node.via}, hop ${node.hop})_` : ""}`);
           const maxLen = voiceMode ? 1200 : 4000;
           const text = (node.content || "").length > maxLen
@@ -111,44 +202,13 @@ export async function buildChatSystemPrompt({
           ? knowledgeEntries.filter((e) => e.source_book_id === selectedBook.id || !e.source_book_id).slice(0, 15)
           : knowledgeEntries.slice(0, 15);
         relevant.forEach((e) => {
+          usedMemories.push({ id: e.id, title: e.title });
           parts.push(`- **${e.title}** (${e.entry_type}): ${e.content.slice(0, 200)}`);
         });
       }
     }
   }
 
-  // Library catalog (always)
-  parts.push("", "## Available Library", `The user has ${books.length} book(s) in their library:`);
-  books.forEach((book) => {
-    parts.push(`- **${book.title}** (id: ${book.id}, ${book.pageCount} pages, ${book.chapters.length} chapter(s))`);
-    book.chapters.forEach((ch) => {
-      parts.push(`  - Chapter: "${ch.name}" (id: ${ch.id}, pages ${ch.startPage}–${ch.endPage})`);
-    });
-  });
-
-  if (selectedBook) {
-    parts.push("", `## Currently Active Book: "${selectedBook.title}" (id: ${selectedBook.id})`);
-    parts.push(`File: ${selectedBook.fileName} | Pages: ${selectedBook.pageCount}`);
-    if (selectedBook.chapters.length > 0) {
-      parts.push("", "### Chapter Contents");
-      selectedBook.chapters.forEach((ch) => {
-        parts.push(`#### ${ch.name} (pages ${ch.startPage}–${ch.endPage})`);
-        if (ch.textContent) {
-          const chapterCap = voiceMode ? 3000 : 12000;
-          const text = ch.textContent.length > chapterCap ? ch.textContent.slice(0, chapterCap) + "\n\n[...truncated]" : ch.textContent;
-          parts.push(text);
-        } else {
-          parts.push("(No text content extracted for this chapter)");
-        }
-        parts.push("");
-      });
-    }
-  }
-
-  if (deepResearch) {
-    parts.push("", DEEP_RESEARCH_SYSTEM_PROMPT, DEEP_RESEARCH_ADVANCED_PROMPT);
-  }
-
   parts.push("", "Be concise but thorough. Reference specific chapter names and page numbers when relevant. When contradictions are surfaced, present both sides explicitly.");
-  return parts.join("\n");
+  return { prompt: parts.join("\n"), usedMemories };
 }

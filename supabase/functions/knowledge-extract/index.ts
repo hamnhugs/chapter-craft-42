@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { atomicitySplit, embedAndStore, probeAndLinkConflicts, type Candidate } from "../_shared/atomicity.ts";
+import { embedOne } from "../_shared/embed.ts";
 import { resolveWikiLlm } from "../_shared/wiki-llm.ts";
 import {
   checkRecordingMode,
@@ -231,8 +232,47 @@ Rules:
       }
     }
 
-    // Apply ADDs (atomic)
+    // Apply ADDs (atomic), with semantic dedup first.
+    // The LLM only sees titles + 100-char previews, so it misses duplicates
+    // that are worded differently ("Python classes explained" vs "How to use
+    // classes in Python"). Before inserting, compare the new entry's embedding
+    // against existing entries (Mem0-style ADD/UPDATE/NOOP adjudication):
+    //   similarity >= 0.92 → near-identical, skip (NOOP)
+    //   similarity >= 0.85 → same topic, merge into the existing entry (UPDATE)
+    //   otherwise          → genuinely new, insert (ADD)
+    const dedupIds = new Set((existingEntries || []).map((e: any) => e.id));
     for (const entry of atomicAdds) {
+      let dedupHit: { id: string; similarity: number } | null = null;
+      try {
+        const vecPre = await embedOne(`${entry.title}\n${entry.content}`);
+        if (vecPre) {
+          const { data: near } = await supabase.rpc("match_knowledge", {
+            query_embedding: vecPre as any,
+            match_count: 3,
+          });
+          // Only entries in the dedup scope (active wiki) count as duplicates.
+          const top = ((near || []) as any[]).find(
+            (m) => dedupIds.has(m.id) && typeof m.similarity === "number",
+          );
+          if (top && top.similarity >= 0.85) dedupHit = { id: top.id, similarity: top.similarity };
+        }
+      } catch (err) { console.warn("semantic dedup check failed, treating as ADD:", err); }
+
+      if (dedupHit && dedupHit.similarity >= 0.92) {
+        savedEntries.push({ ...entry, id: dedupHit.id, action: "SKIPPED_DUPLICATE" });
+        continue;
+      }
+      if (dedupHit) {
+        await supabase.from("knowledge_entries").update({
+          content: entry.content,
+          tags: entry.tags || [],
+          confidence: Math.min(1, Math.max(0, entry.confidence || 0.8)),
+        }).eq("id", dedupHit.id).eq("user_id", user.id);
+        const vec = await embedAndStore(supabase, dedupHit.id, user.id, entry.title, entry.content);
+        savedEntries.push({ ...entry, id: dedupHit.id, action: "UPDATED", embedding: vec });
+        continue;
+      }
+
       const { data: inserted, error: insertError } = await supabase
         .from("knowledge_entries")
         .insert({
@@ -262,9 +302,11 @@ Rules:
     const conflictCount = await probeAndLinkConflicts(
       supabase,
       user.id,
-      savedEntries.filter((e) => e.id).map((e) => ({
-        id: e.id, title: e.title, content: e.content, embedding: e.embedding,
-      })),
+      savedEntries
+        .filter((e) => e.id && e.action !== "SKIPPED_DUPLICATE")
+        .map((e) => ({
+          id: e.id, title: e.title, content: e.content, embedding: e.embedding,
+        })),
     );
 
     if (conflictCount > 0) {

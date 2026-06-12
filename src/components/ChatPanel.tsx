@@ -358,8 +358,22 @@ const ChatPanel: React.FC = () => {
     setExtracting(true);
     try {
       const result = await extractKnowledge(messages.map(m => ({ role: m.role, content: m.content })), activeBookId || undefined, activeWikiId);
-      const count = result.entries?.length || 0;
-      toast.success(`Saved ${count} knowledge ${count === 1 ? "entry" : "entries"} to your wiki`);
+      const entries: any[] = result.entries || [];
+      const added = entries.filter((e) => e.action === "ADDED");
+      const updated = entries.filter((e) => e.action === "UPDATED");
+      const skipped = entries.filter((e) => e.action === "SKIPPED_DUPLICATE");
+      if (added.length === 0 && updated.length === 0) {
+        toast.info(skipped.length > 0 ? "Already remembered — nothing new to save" : "Nothing new to remember from this chat");
+      } else {
+        const names = [...added, ...updated].map((e) => e.title).filter(Boolean);
+        const parts: string[] = [];
+        if (added.length) parts.push(`${added.length} new`);
+        if (updated.length) parts.push(`${updated.length} updated`);
+        if (skipped.length) parts.push(`${skipped.length} duplicate${skipped.length === 1 ? "" : "s"} skipped`);
+        toast.success(`Memory updated — ${parts.join(", ")}`, {
+          description: names.slice(0, 3).join(" · ") + (names.length > 3 ? ` · +${names.length - 3} more` : ""),
+        });
+      }
     } catch (err: any) {
       toast.error(err.message || "Failed to extract knowledge");
     } finally {
@@ -915,6 +929,21 @@ const ChatPanel: React.FC = () => {
                   </span>
                 ))}
               </div>
+            )}
+            {msg.role === "assistant" && msg.usedMemories && msg.usedMemories.length > 0 && (
+              <details className="mb-2 ml-4">
+                <summary className="cursor-pointer list-none inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md bg-primary-container/20 text-on-surface-variant hover:bg-primary-container/30 transition-colors">
+                  <span className="material-symbols-outlined text-xs">neurology</span>
+                  Drew on {msg.usedMemories.length} {msg.usedMemories.length === 1 ? "memory" : "memories"}
+                </summary>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {msg.usedMemories.map((m) => (
+                    <span key={m.id} className="text-[11px] px-2 py-0.5 rounded-md bg-surface-container-high text-on-surface-variant border border-outline-variant/20">
+                      {m.title}
+                    </span>
+                  ))}
+                </div>
+              </details>
             )}
             <div
               className={`relative group ${msg.role === "user" ? "message-bubble-user bg-primary-container text-on-primary-container" : "message-bubble-ai bg-surface-container-high text-foreground border-l-2 border-primary-container/20"} p-5 shadow-sm leading-relaxed select-text`}

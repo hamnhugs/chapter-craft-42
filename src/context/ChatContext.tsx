@@ -6,7 +6,7 @@ import { useChatSettings } from "@/hooks/useChatSettings";
 import { usePlan } from "@/hooks/usePlan";
 import { computeLockedWikiIds } from "@/lib/neuronAccess";
 import { usePromptPresets } from "@/hooks/usePromptPresets";
-import { buildChatSystemPrompt } from "@/lib/buildChatSystemPrompt";
+import { buildChatSystemPrompt, type UsedMemory } from "@/lib/buildChatSystemPrompt";
 import { CHAT_TOOL_DEFINITIONS, executeChatTool, ToolEvent } from "@/lib/chatTools";
 import { parseBlocks, type ResponseBlock } from "@/lib/responseBlocks";
 import { parseArtifact, type Artifact } from "@/lib/artifacts";
@@ -27,6 +27,9 @@ export interface ChatMessage {
   /** Id of the durable Workspace item this artifact was captured as (so the
    *  bubble can open it in the Workspace panel). */
   workspaceItemId?: string;
+  /** Memory entries injected into the prompt for this reply — shown as a
+   *  transparency chip ("Drew on N memories") under the bubble. */
+  usedMemories?: UsedMemory[];
 }
 
 interface SendOpts {
@@ -59,6 +62,36 @@ const ChatContext = createContext<ChatContextValue | null>(null);
 
 const MAX_TOOL_ITERATIONS = 5;
 
+// ── Sliding-window history ───────────────────────────────────────────────
+// Long-context research (LongMemEval, "context rot") shows models get WORSE
+// — not just slower/pricier — when every past turn is re-sent verbatim. So
+// each request carries only the last HISTORY_WINDOW messages plus a rolling
+// summary of everything older. The summary is refreshed in the background
+// (off the critical path) once at least SUMMARY_MIN_BATCH messages have
+// fallen out of the window.
+const HISTORY_WINDOW = 20;
+const SUMMARY_MIN_BATCH = 6;
+const SUMMARY_STORE_KEY = (uid: string) => `bw_chat_summary_${uid}`;
+
+interface RollingSummary {
+  summary: string;
+  /** How many leading messages of the conversation the summary covers. */
+  covered: number;
+}
+
+function loadRollingSummary(uid: string): RollingSummary {
+  try {
+    const raw = localStorage.getItem(SUMMARY_STORE_KEY(uid));
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed?.summary === "string" && typeof parsed?.covered === "number") {
+        return { summary: parsed.summary, covered: parsed.covered };
+      }
+    }
+  } catch { /* corrupted/missing — start fresh */ }
+  return { summary: "", covered: 0 };
+}
+
 export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
   const { books, activeBookId, activeWiki, activeWikiId, wikis, addChapter, updateChapter, removeChapter, setActiveBookSilent } = useApp();
@@ -85,6 +118,72 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [customSystemPrompt, migrate]);
   const abortRef = useRef<AbortController | null>(null);
   const loadedRef = useRef(false);
+  const summaryRef = useRef<RollingSummary>({ summary: "", covered: 0 });
+  const summarizingRef = useRef(false);
+
+  useEffect(() => {
+    summaryRef.current = user ? loadRollingSummary(user.id) : { summary: "", covered: 0 };
+  }, [user?.id]);
+
+  /** Background refresh of the rolling summary — never on the critical path
+   *  of a send. Merges messages that fell out of the window into the stored
+   *  summary so the NEXT turn can drop them from the request. */
+  const updateRollingSummary = useCallback(
+    async (allMsgs: { role: string; content: string }[]) => {
+      if (!user || !apiKey || summarizingRef.current) return;
+      const target = allMsgs.length - HISTORY_WINDOW;
+      const cur = summaryRef.current;
+      if (target <= 0 || target <= cur.covered) return;
+      // Batch: don't pay an LLM call every turn for 2 messages.
+      if (cur.covered > 0 && target - cur.covered < SUMMARY_MIN_BATCH) return;
+      const model = selectedModel;
+      if (!model || isEmbeddingModel(model)) return;
+      const batch = allMsgs.slice(cur.covered, target);
+      if (batch.length === 0) return;
+      let transcript = batch
+        .map((m) => `${m.role}: ${(m.content || "").slice(0, 600)}`)
+        .join("\n\n");
+      if (transcript.length > 30000) transcript = transcript.slice(-30000);
+      summarizingRef.current = true;
+      try {
+        const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+            "HTTP-Referer": window.location.origin,
+            "X-Title": "Chapter Craft",
+          },
+          body: JSON.stringify({
+            model,
+            stream: false,
+            max_tokens: 500,
+            messages: [
+              {
+                role: "system",
+                content:
+                  "You maintain a running summary of a conversation between a user and a reading assistant. Merge the existing summary (if any) with the new messages into ONE concise summary of at most ~250 words. Preserve concrete facts, names, numbers, decisions, books/chapters discussed, and open questions. Output ONLY the summary text.",
+              },
+              {
+                role: "user",
+                content: `${cur.summary ? `EXISTING SUMMARY:\n${cur.summary}\n\n` : ""}NEW MESSAGES:\n${transcript}`,
+              },
+            ],
+          }),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const text = (data?.choices?.[0]?.message?.content || "").trim();
+        if (!text) return;
+        const next: RollingSummary = { summary: text.slice(0, 4000), covered: target };
+        summaryRef.current = next;
+        try { localStorage.setItem(SUMMARY_STORE_KEY(user.id), JSON.stringify(next)); } catch { /* storage full */ }
+      } catch { /* background — never surface */ } finally {
+        summarizingRef.current = false;
+      }
+    },
+    [user, apiKey, selectedModel]
+  );
 
   // Bind the durable Workspace store to the signed-in user so its files sync
   // from Supabase (cross-device) and stream live via realtime.
@@ -172,7 +271,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const clearChat = useCallback(async () => {
     abortRef.current?.abort();
     setMessages([]);
+    summaryRef.current = { summary: "", covered: 0 };
     if (user) {
+      try { localStorage.removeItem(SUMMARY_STORE_KEY(user.id)); } catch { /* ignore */ }
       const { error } = await supabase.from("chat_messages").delete().eq("user_id", user.id);
       if (error) console.error("Failed to clear chat history:", error);
     }
@@ -231,7 +332,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const lockedIds = computeLockedWikiIds(wikis, isPaid, planLoaded);
       const activeIsLocked = !!activeWikiId && lockedIds.has(activeWikiId);
 
-      const systemPrompt = await buildChatSystemPrompt({
+      const { prompt: systemPrompt, usedMemories } = await buildChatSystemPrompt({
         books,
         selectedBook,
         deepResearch,
@@ -243,6 +344,21 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         allNeurons,
       });
 
+      // Sliding window: replace messages older than the window with the
+      // rolling summary (when one exists). Until the background summarizer
+      // has caught up, the uncovered prefix is still sent verbatim so no
+      // context is ever silently dropped.
+      let historyForModel = baseHistory;
+      let summaryNote: string | null = null;
+      const rolling = summaryRef.current;
+      if (baseHistory.length > HISTORY_WINDOW && rolling.summary && rolling.covered > 0) {
+        const cut = Math.min(rolling.covered, baseHistory.length - HISTORY_WINDOW);
+        if (cut > 0) {
+          historyForModel = baseHistory.slice(cut);
+          summaryNote = `## Earlier conversation summary\nThe first ${cut} messages of this conversation were replaced by this summary to save context:\n\n${rolling.summary}`;
+        }
+      }
+
       const assistantEvents: ToolEvent[] = [];
       // Raw web_search answers captured this turn, surfaced as a "full answer"
       // card after the model's synthesized reply.
@@ -252,7 +368,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Artifacts emitted via the create_artifact tool this turn.
       const artifacts: Artifact[] = [];
       let assistantText = "";
-      setMessages((prev) => [...prev, { role: "assistant", content: "", toolEvents: [] }]);
+      setMessages((prev) => [...prev, { role: "assistant", content: "", toolEvents: [], usedMemories: usedMemories.length > 0 ? usedMemories : undefined }]);
 
       const updateAssistant = () => {
         setMessages((prev) => {
@@ -278,7 +394,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       const workingMessages: any[] = [
         { role: "system", content: systemPrompt },
-        ...baseHistory,
+        ...(summaryNote ? [{ role: "system", content: summaryNote }] : []),
+        ...historyForModel,
       ];
 
       abortRef.current = new AbortController();
@@ -498,6 +615,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           );
         }
 
+        // Refresh the rolling summary in the background so the NEXT turn can
+        // drop old messages from the request. Fire-and-forget by design.
+        if (assistantText) {
+          void updateRollingSummary([...baseHistory, { role: "assistant", content: assistantText }]);
+        }
+
         return assistantText;
       } catch (err: any) {
         if (err?.name === "AbortError") {
@@ -512,7 +635,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
       }
     },
-    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, wikis, activeWiki, activeWikiId, selectedModel, deepResearchModel, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, addChapter, updateChapter, removeChapter, setActiveBookSilent]
+    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, wikis, activeWiki, activeWikiId, selectedModel, deepResearchModel, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
   );
 
 

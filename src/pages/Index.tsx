@@ -19,6 +19,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { useTheme } from "@/context/ThemeContext";
 import { useVisitTracker } from "@/hooks/useVisitTracker";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
+import { useAutoSleepCycle } from "@/hooks/useAutoSleepCycle";
 
 // Admin-only surface: lazy so regular users never download it.
 const AdminPanel = React.lazy(() => import("@/components/AdminPanel"));
@@ -183,6 +184,7 @@ const TabletRail: React.FC<{
 const Index: React.FC = () => {
   const { activeTab, setActiveTab, getActiveBook, signOut, activeWiki } = useApp();
   const { isAdmin } = useIsAdmin();
+  useAutoSleepCycle();
   const [moreOpen, setMoreOpen] = useState(false);
   const visibleTabs: NavTab[] = isAdmin ? [...tabs, ADMIN_TAB] : tabs;
   const moreTabs = visibleTabs.filter((t) => !PRIMARY_IDS.includes(t.id as any));

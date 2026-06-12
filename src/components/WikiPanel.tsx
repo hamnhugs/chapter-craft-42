@@ -602,11 +602,14 @@ const WikiPanel: React.FC = () => {
                   );
                 })()}
                 <div className="text-xs text-on-surface-variant/60 border-t border-outline-variant/10 pt-4">
-                  Created {new Date(selectedEntry.created_at).toLocaleDateString()} · Updated {new Date(selectedEntry.updated_at).toLocaleDateString()}
-                  {selectedEntry.source_book_id && (() => {
-                    const book = books.find(b => b.id === selectedEntry.source_book_id);
-                    return book ? ` · Source: ${book.title}` : null;
+                  {(() => {
+                    const book = selectedEntry.source_book_id ? books.find(b => b.id === selectedEntry.source_book_id) : null;
+                    const when = new Date(selectedEntry.created_at).toLocaleDateString();
+                    return book
+                      ? `Remembered from "${book.title}" on ${when}`
+                      : `Remembered from a chat on ${when}`;
                   })()}
+                  {" · "}Updated {new Date(selectedEntry.updated_at).toLocaleDateString()}
                 </div>
               </>
             )}
