@@ -273,6 +273,7 @@ export type Database = {
           content: string
           created_at: string
           id: string
+          images: Json | null
           role: string
           user_id: string
         }
@@ -281,6 +282,7 @@ export type Database = {
           content?: string
           created_at?: string
           id?: string
+          images?: Json | null
           role: string
           user_id: string
         }
@@ -289,6 +291,7 @@ export type Database = {
           content?: string
           created_at?: string
           id?: string
+          images?: Json | null
           role?: string
           user_id?: string
         }
@@ -425,6 +428,60 @@ export type Database = {
           wiki_id?: string | null
         }
         Relationships: []
+      }
+      image_attachments: {
+        Row: {
+          caption: string
+          created_at: string
+          entry_id: string | null
+          id: string
+          mime: string
+          model: string
+          prompt: string
+          source_image_id: string | null
+          storage_path: string
+          user_id: string
+        }
+        Insert: {
+          caption?: string
+          created_at?: string
+          entry_id?: string | null
+          id?: string
+          mime?: string
+          model?: string
+          prompt?: string
+          source_image_id?: string | null
+          storage_path: string
+          user_id: string
+        }
+        Update: {
+          caption?: string
+          created_at?: string
+          entry_id?: string | null
+          id?: string
+          mime?: string
+          model?: string
+          prompt?: string
+          source_image_id?: string | null
+          storage_path?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "image_attachments_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "image_attachments_source_image_id_fkey"
+            columns: ["source_image_id"]
+            isOneToOne: false
+            referencedRelation: "image_attachments"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       incubator_entries: {
         Row: {
