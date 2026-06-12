@@ -133,14 +133,19 @@ serve(async (req) => {
     if (authError || !user) return json({ error: "Unauthorized" }, 401);
 
     // Auto-chapterize is a paid feature — verify the plan server-side so a
-    // tampered client can't bypass the gate. RLS lets the user read own row.
-    const { data: subRow } = await supabase
-      .from("subscribers")
-      .select("subscribed")
-      .eq("user_id", user.id)
-      .maybeSingle();
-    if (!subRow?.subscribed) {
-      return json({ error: "Auto-chapterize is a Pro feature. Upgrade to detect chapters automatically." }, 402);
+    // tampered client can't bypass the gate. Admins are exempt (the RPC
+    // re-checks the role in the database); everyone else needs an active
+    // subscription. RLS lets the user read own row.
+    const { data: adminFlag } = await supabase.rpc("is_admin");
+    if (!adminFlag) {
+      const { data: subRow } = await supabase
+        .from("subscribers")
+        .select("subscribed")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (!subRow?.subscribed) {
+        return json({ error: "Auto-chapterize is a Pro feature. Upgrade to detect chapters automatically." }, 402);
+      }
     }
 
     const body = await req.json().catch(() => ({}));

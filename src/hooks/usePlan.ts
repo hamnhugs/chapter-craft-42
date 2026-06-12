@@ -1,6 +1,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
 
 export type PlanTier = "free" | "monthly" | "lifetime";
 
@@ -102,8 +103,23 @@ function ensureLoaded(userId: string | null) {
 
 export function usePlan() {
   const { user } = useAuth();
+  const { isAdmin } = useIsAdmin();
   const snap = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   useEffect(() => { ensureLoaded(user?.id ?? null); }, [user]);
+  // Admin accounts are entitled to everything regardless of Stripe state.
+  // This only relaxes client-side gating; the database/edge gates check the
+  // admin role independently (accessible_wiki_ids, enforce_neuron_limit,
+  // auto-structure), so a tampered client still can't escalate.
+  if (isAdmin) {
+    return {
+      ...snap,
+      plan: "lifetime" as PlanTier,
+      subscribed: true,
+      billingIssue: false,
+      isPaid: true,
+      refresh: refreshPlan,
+    };
+  }
   return {
     ...snap,
     isPaid: snap.subscribed && snap.plan !== "free",
