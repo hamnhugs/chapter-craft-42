@@ -2,6 +2,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { BookDocument, Chapter } from "@/types/library";
 import { parseBlocksVerbose } from "@/lib/responseBlocks";
 import { parseArtifact } from "@/lib/artifacts";
+import {
+  generateImage, storeGeneratedImage, saveImageNeuron,
+  fetchImageById, searchImages, loadImageAsDataUrl,
+  IMAGE_ASPECT_RATIOS, type ChatImageRef,
+} from "@/lib/imageGen";
 
 export interface ToolDeps {
   books: BookDocument[];
@@ -11,6 +16,19 @@ export interface ToolDeps {
   updateChapter: (bookId: string, chapterId: string, name: string) => Promise<void> | void;
   removeChapter: (bookId: string, chapterId: string) => Promise<void> | void;
   burplexityApiToken?: string;
+  /** OpenRouter key — needed by the image generation tools. */
+  openRouterApiKey?: string;
+  /** Paid plan flag — image generation/editing are Pro features. */
+  isPaid?: boolean;
+}
+
+/** Tool results may carry side-channel fields for the chat UI. They are
+ *  stripped before the result is sent back to the model:
+ *  - `__images`: ChatImageRef[] to render inline in the assistant's bubble.
+ *  - `__vision`: data-URL image to inject as vision input next iteration. */
+export interface ToolSideChannel {
+  __images?: ChatImageRef[];
+  __vision?: string;
 }
 
 export const BURPLEXITY_BOT_ASK_URL = "https://tmagmbmitnvcwubxcwoc.supabase.co/functions/v1/bot-ask";
@@ -286,6 +304,82 @@ export const CHAT_TOOL_DEFINITIONS = [
           activate: { type: "boolean", description: "If true, set this as active after creation. Default true." },
         },
         required: ["name"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "generate_image",
+      description:
+        "Generate an AI image with Nano Banana (Google's Gemini image model) and show it to the user inline. By default the image is also saved to the user's memory as a neuron so it can be recalled later. Use when the user asks for an image, picture, illustration, visualization, logo, scene, character art, etc. Costs the user a few cents per image on their OpenRouter key, so don't generate unprompted.",
+      parameters: {
+        type: "object",
+        properties: {
+          prompt: { type: "string", description: "Detailed image description — subject, style, composition, colors, mood." },
+          aspect_ratio: { type: "string", enum: [...IMAGE_ASPECT_RATIOS], description: "Optional. Default 1:1." },
+          remember: { type: "boolean", description: "Save to memory as a neuron (default true). Set false only if the user says it's a throwaway." },
+          attach_to_entry_id: { type: "string", description: "Optional: attach the image to an EXISTING knowledge entry id instead of creating a new neuron." },
+        },
+        required: ["prompt"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "edit_image",
+      description:
+        "Edit or refine a previously generated image (by image_id) using a text instruction — Nano Banana keeps the subject consistent. The result is a NEW image shown to the user and linked to the same memory as the original. Use for 'make it blue', 'add a hat', 'same character but at night', etc.",
+      parameters: {
+        type: "object",
+        properties: {
+          image_id: { type: "string", description: "Id of the source image (from generate_image, list_images, or a memory's attached-image note)." },
+          instruction: { type: "string", description: "What to change." },
+          aspect_ratio: { type: "string", enum: [...IMAGE_ASPECT_RATIOS] },
+        },
+        required: ["image_id", "instruction"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "show_image",
+      description:
+        "Re-display a stored image to the user inline (free, instant). Use when the user asks to see an image again, or when a retrieved memory mentions an attached image worth showing.",
+      parameters: {
+        type: "object",
+        properties: { image_id: { type: "string" } },
+        required: ["image_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "view_image",
+      description:
+        "Load a stored image as VISION input so you can actually see its contents. Use ONLY when the question requires visual details (colors, layout, text in the image, what's depicted) that the stored prompt/caption can't answer — it costs ~1300 tokens. For merely re-showing an image to the user, use show_image instead.",
+      parameters: {
+        type: "object",
+        properties: { image_id: { type: "string" } },
+        required: ["image_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_images",
+      description:
+        "List the user's generated images (newest first), optionally filtered by a keyword matched against prompt/caption. Returns image_id, prompt, caption, linked entry_id, and created date. Use to find an image the user refers to ('that fox logo from last week').",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Optional keyword filter." },
+          limit: { type: "number", description: "Default 10, max 25." },
+        },
       },
     },
   },
@@ -731,6 +825,127 @@ export async function executeChatTool(
       case "delete_chapter": {
         await deps.removeChapter(String(args.book_id), String(args.chapter_id));
         return { result: { ok: true }, event: { name, summary: `Deleted chapter`, ok: true } };
+      }
+      case "generate_image": {
+        const prompt = String(args.prompt || "").trim();
+        if (!prompt) return { result: { error: "prompt required" }, event: { name, summary: "Missing prompt", ok: false } };
+        const apiKey = (deps.openRouterApiKey || "").trim();
+        if (!apiKey) {
+          return {
+            result: { error: "OpenRouter API key not configured — ask the user to add one in Settings." },
+            event: { name, summary: "OpenRouter key missing", ok: false },
+          };
+        }
+        if (deps.isPaid === false) {
+          return {
+            result: { error: "Image generation is a Pro feature. Tell the user that upgrading to Pro or Lifetime unlocks it." },
+            event: { name, summary: "Image generation is a Pro feature", ok: false },
+          };
+        }
+        const gen = await generateImage({ apiKey, prompt, aspectRatio: args.aspect_ratio ? String(args.aspect_ratio) : undefined });
+        const remember = args.remember !== false;
+        let entryId: string | null = String(args.attach_to_entry_id || "").trim() || null;
+        let neuronCreated = false;
+        if (remember && !entryId) {
+          entryId = await saveImageNeuron({ prompt, caption: gen.text, model: gen.modelUsed });
+          neuronCreated = !!entryId;
+        }
+        const ref = await storeGeneratedImage({
+          prompt, caption: gen.text, model: gen.modelUsed,
+          dataUrl: gen.dataUrl, mime: gen.mime, entryId,
+        });
+        return {
+          result: {
+            ok: true,
+            image_id: ref.id,
+            entry_id: entryId,
+            saved_to_memory: !!entryId,
+            model: gen.modelUsed,
+            note: "The image is already displayed to the user inline — do NOT output a markdown image link. Briefly describe what you created.",
+            __images: [ref],
+          },
+          event: { name, summary: `Generated image: "${prompt.slice(0, 60)}"${neuronCreated ? " · saved to memory" : entryId ? " · attached to memory" : ""}`, ok: true },
+        };
+      }
+      case "edit_image": {
+        const imageId = String(args.image_id || "").trim();
+        const instruction = String(args.instruction || "").trim();
+        if (!imageId || !instruction) return { result: { error: "image_id and instruction required" }, event: { name, summary: "Missing args", ok: false } };
+        const apiKey = (deps.openRouterApiKey || "").trim();
+        if (!apiKey) return { result: { error: "OpenRouter API key not configured." }, event: { name, summary: "OpenRouter key missing", ok: false } };
+        if (deps.isPaid === false) {
+          return {
+            result: { error: "Image editing is a Pro feature. Tell the user that upgrading to Pro or Lifetime unlocks it." },
+            event: { name, summary: "Image editing is a Pro feature", ok: false },
+          };
+        }
+        const src = await fetchImageById(imageId);
+        if (!src) return { result: { error: "Image not found" }, event: { name, summary: "Image not found", ok: false } };
+        const srcDataUrl = await loadImageAsDataUrl(src.storage_path);
+        if (!srcDataUrl) return { result: { error: "Could not load source image" }, event: { name, summary: "Source image unavailable", ok: false } };
+        const gen = await generateImage({
+          apiKey,
+          prompt: instruction,
+          aspectRatio: args.aspect_ratio ? String(args.aspect_ratio) : undefined,
+          inputImageDataUrl: srcDataUrl,
+        });
+        const ref = await storeGeneratedImage({
+          prompt: `${src.prompt} → ${instruction}`.slice(0, 2000),
+          caption: gen.text, model: gen.modelUsed,
+          dataUrl: gen.dataUrl, mime: gen.mime,
+          entryId: src.entry_id, sourceImageId: src.id,
+        });
+        return {
+          result: {
+            ok: true, image_id: ref.id, entry_id: src.entry_id, model: gen.modelUsed,
+            note: "The edited image is already displayed to the user inline. Briefly describe the change.",
+            __images: [ref],
+          },
+          event: { name, summary: `Edited image: "${instruction.slice(0, 60)}"`, ok: true },
+        };
+      }
+      case "show_image": {
+        const imageId = String(args.image_id || "").trim();
+        if (!imageId) return { result: { error: "image_id required" }, event: { name, summary: "Missing image_id", ok: false } };
+        const row = await fetchImageById(imageId);
+        if (!row) return { result: { error: "Image not found" }, event: { name, summary: "Image not found", ok: false } };
+        const ref: ChatImageRef = { id: row.id, storage_path: row.storage_path, prompt: row.prompt, entry_id: row.entry_id };
+        return {
+          result: {
+            ok: true, image_id: row.id, prompt: row.prompt, caption: row.caption,
+            note: "The image is now displayed to the user inline.",
+            __images: [ref],
+          },
+          event: { name, summary: `Showed image: "${row.prompt.slice(0, 60)}"`, ok: true },
+        };
+      }
+      case "view_image": {
+        const imageId = String(args.image_id || "").trim();
+        if (!imageId) return { result: { error: "image_id required" }, event: { name, summary: "Missing image_id", ok: false } };
+        const row = await fetchImageById(imageId);
+        if (!row) return { result: { error: "Image not found" }, event: { name, summary: "Image not found", ok: false } };
+        const dataUrl = await loadImageAsDataUrl(row.storage_path);
+        if (!dataUrl) return { result: { error: "Could not load image" }, event: { name, summary: "Image unavailable", ok: false } };
+        return {
+          result: {
+            ok: true, image_id: row.id, prompt: row.prompt,
+            note: "The image is attached as vision input in the next user message — look at it there.",
+            __vision: dataUrl,
+          },
+          event: { name, summary: `Looked at image: "${row.prompt.slice(0, 60)}"`, ok: true },
+        };
+      }
+      case "list_images": {
+        const limit = Math.min(25, Math.max(1, Number(args.limit) || 10));
+        const rows = await searchImages(args.query ? String(args.query) : undefined, limit);
+        const out = rows.map((r) => ({
+          image_id: r.id,
+          prompt: (r.prompt || "").slice(0, 200),
+          caption: (r.caption || "").slice(0, 200),
+          entry_id: r.entry_id,
+          created_at: r.created_at,
+        }));
+        return { result: out, event: { name, summary: `Listed ${out.length} image(s)${args.query ? ` matching "${String(args.query).slice(0, 40)}"` : ""}`, ok: true } };
       }
       case "create_artifact": {
         const art = parseArtifact(args);

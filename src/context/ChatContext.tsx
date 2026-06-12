@@ -8,6 +8,7 @@ import { computeLockedWikiIds } from "@/lib/neuronAccess";
 import { usePromptPresets } from "@/hooks/usePromptPresets";
 import { buildChatSystemPrompt, type UsedMemory } from "@/lib/buildChatSystemPrompt";
 import { CHAT_TOOL_DEFINITIONS, executeChatTool, ToolEvent } from "@/lib/chatTools";
+import type { ChatImageRef } from "@/lib/imageGen";
 import { parseBlocks, type ResponseBlock } from "@/lib/responseBlocks";
 import { parseArtifact, type Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle } from "@/lib/workspaceStore";
@@ -30,6 +31,9 @@ export interface ChatMessage {
   /** Memory entries injected into the prompt for this reply — shown as a
    *  transparency chip ("Drew on N memories") under the bubble. */
   usedMemories?: UsedMemory[];
+  /** Generated/recalled images rendered inline in the bubble (from the
+   *  generate_image / edit_image / show_image tools). */
+  images?: ChatImageRef[];
 }
 
 interface SendOpts {
@@ -199,12 +203,22 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     let cancelled = false;
     (async () => {
-      const { data, error } = await supabase
+      // `images` is a newer column — fall back to the legacy select if the
+      // migration hasn't been applied yet so history never fails to load.
+      let { data, error } = await supabase
         .from("chat_messages")
-        .select("id, role, content, created_at")
+        .select("id, role, content, created_at, images" as any)
         .eq("user_id", user.id)
         .order("created_at", { ascending: true })
-        .limit(200);
+        .limit(200) as any;
+      if (error) {
+        ({ data, error } = await supabase
+          .from("chat_messages")
+          .select("id, role, content, created_at")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: true })
+          .limit(200) as any);
+      }
       if (cancelled) return;
       if (error) {
         console.error("Failed to load chat history:", error);
@@ -213,7 +227,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       const loaded: ChatMessage[] = (data || [])
         .filter((m: any) => m.role === "user" || m.role === "assistant")
-        .map((m: any) => ({ id: m.id, role: m.role, content: m.content }));
+        .map((m: any) => ({
+          id: m.id, role: m.role, content: m.content,
+          images: Array.isArray(m.images) && m.images.length > 0 ? m.images : undefined,
+        }));
       setMessages(loaded);
       loadedRef.current = true;
     })();
@@ -235,7 +252,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (m.role !== "user" && m.role !== "assistant") return;
           setMessages((prev) => {
             if (prev.some((x) => x.id === m.id)) return prev;
-            return [...prev, { id: m.id, role: m.role, content: m.content }];
+            return [...prev, {
+              id: m.id, role: m.role, content: m.content,
+              images: Array.isArray(m.images) && m.images.length > 0 ? m.images : undefined,
+            }];
           });
         }
       )
@@ -252,13 +272,23 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [user]);
 
   const persistMessage = useCallback(
-    async (role: "user" | "assistant", content: string, bookId?: string | null): Promise<string | undefined> => {
+    async (role: "user" | "assistant", content: string, bookId?: string | null, images?: ChatImageRef[]): Promise<string | undefined> => {
       if (!user) return undefined;
-      const { data, error } = await supabase
+      const base: any = { user_id: user.id, role, content, book_id: bookId || null };
+      // `images` is a newer column — retry without it if the migration hasn't
+      // been applied yet (the picture is still safe in image_attachments).
+      let { data, error } = await supabase
         .from("chat_messages")
-        .insert({ user_id: user.id, role, content, book_id: bookId || null })
+        .insert(images && images.length > 0 ? { ...base, images } : base)
         .select("id")
         .single();
+      if (error && images && images.length > 0) {
+        ({ data, error } = await supabase
+          .from("chat_messages")
+          .insert(base)
+          .select("id")
+          .single());
+      }
       if (error) {
         console.error("Failed to persist chat message:", error);
         return undefined;
@@ -367,6 +397,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const blockSets: ResponseBlock[][] = [];
       // Artifacts emitted via the create_artifact tool this turn.
       const artifacts: Artifact[] = [];
+      // Images generated/recalled via the image tools this turn — rendered
+      // inline in the assistant's bubble and persisted with the message.
+      const turnImages: ChatImageRef[] = [];
       let assistantText = "";
       setMessages((prev) => [...prev, { role: "assistant", content: "", toolEvents: [], usedMemories: usedMemories.length > 0 ? usedMemories : undefined }]);
 
@@ -375,7 +408,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const copy = [...prev];
           for (let i = copy.length - 1; i >= 0; i--) {
             if (copy[i].role === "assistant") {
-              copy[i] = { ...copy[i], content: assistantText, toolEvents: [...assistantEvents] };
+              copy[i] = {
+                ...copy[i],
+                content: assistantText,
+                toolEvents: [...assistantEvents],
+                images: turnImages.length > 0 ? [...turnImages] : copy[i].images,
+              };
               break;
             }
           }
@@ -488,6 +526,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             })),
           });
 
+          // Vision payloads requested via view_image this round — injected as a
+          // user message AFTER the tool results (tool messages are text-only).
+          const visionPayloads: string[] = [];
+
           for (let i = 0; i < toolCalls.length; i++) {
             const t = toolCalls[i];
             const { result, event } = await executeChatTool(t.name!, t.args || "{}", {
@@ -498,10 +540,26 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               updateChapter,
               removeChapter,
               burplexityApiToken,
+              openRouterApiKey: apiKey,
+              isPaid,
             });
             assistantEvents.push(event);
-            updateAssistant();
             const r = result as any;
+            // Strip UI side-channel fields before the result goes to the model.
+            let modelResult = result;
+            if (r && typeof r === "object") {
+              if (Array.isArray(r.__images) && r.__images.length > 0) {
+                turnImages.push(...r.__images);
+              }
+              if (typeof r.__vision === "string" && r.__vision.startsWith("data:")) {
+                visionPayloads.push(r.__vision);
+              }
+              if ("__images" in r || "__vision" in r) {
+                const { __images, __vision, ...clean } = r;
+                modelResult = clean;
+              }
+            }
+            updateAssistant();
             if (t.name === "web_search" && r && typeof r === "object" && r.answer) {
               webSearchCards.push({ answer: String(r.answer), citations: Array.isArray(r.citations) ? r.citations : [] });
             }
@@ -517,7 +575,17 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               role: "tool",
               tool_call_id: t.id || `call_${iteration}_${i}`,
               name: t.name,
-              content: JSON.stringify(result).slice(0, 24000),
+              content: JSON.stringify(modelResult).slice(0, 24000),
+            });
+          }
+
+          if (visionPayloads.length > 0) {
+            workingMessages.push({
+              role: "user",
+              content: [
+                { type: "text", text: "[System: image(s) loaded via view_image — inspect them to answer the user's question.]" },
+                ...visionPayloads.map((url) => ({ type: "image_url", image_url: { url } })),
+              ],
             });
           }
         }
@@ -527,8 +595,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           updateAssistant();
         }
 
-        if (assistantText) {
-          const id = await persistMessage("assistant", assistantText, activeBookId);
+        if (assistantText || turnImages.length > 0) {
+          const id = await persistMessage("assistant", assistantText, activeBookId, turnImages.length > 0 ? turnImages : undefined);
           if (id) {
             setMessages((prev) => {
               const copy = [...prev];

@@ -17,6 +17,8 @@ import {
   fetchConsolidationQueue, ConsolidationQueueItem,
 } from "@/lib/knowledgeApi";
 import { Loader2, HelpCircle, ArrowRight } from "lucide-react";
+import GeneratedImage from "@/components/GeneratedImage";
+import { fetchImagesForEntries, deleteImageAttachment, type ImageAttachmentRow } from "@/lib/imageGen";
 import { Link } from "react-router-dom";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -37,6 +39,7 @@ const WikiPanel: React.FC = () => {
   const [editTitle, setEditTitle] = useState("");
   const [editContent, setEditContent] = useState("");
   const [editTags, setEditTags] = useState("");
+  const [entryImages, setEntryImages] = useState<ImageAttachmentRow[]>([]);
   const [lintResult, setLintResult] = useState<LintResult | null>(null);
   const [lintLoading, setLintLoading] = useState(false);
   const [ingestLoading, setIngestLoading] = useState(false);
@@ -79,6 +82,28 @@ const WikiPanel: React.FC = () => {
   }, [scopeWikiId]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Attached images for the open entry (generated via chat — table may not
+  // exist until the image-memory migration is applied, so fail quietly).
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedEntry) { setEntryImages([]); return; }
+    fetchImagesForEntries([selectedEntry.id])
+      .then((rows) => { if (!cancelled) setEntryImages(rows); })
+      .catch(() => { if (!cancelled) setEntryImages([]); });
+    return () => { cancelled = true; };
+  }, [selectedEntry?.id]);
+
+  const handleDeleteImage = async (img: ImageAttachmentRow) => {
+    if (!confirm("Delete this image? This can't be undone.")) return;
+    try {
+      await deleteImageAttachment(img);
+      setEntryImages((prev) => prev.filter((i) => i.id !== img.id));
+      toast.success("Image deleted");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to delete image");
+    }
+  };
 
   // Human-in-the-loop: respond to "Review" clicks from the global ConflictNotifier
   useEffect(() => {
@@ -575,6 +600,29 @@ const WikiPanel: React.FC = () => {
                   </div>
                 </div>
                 <div className="prose prose-lg prose-invert max-w-none"><ReactMarkdown>{selectedEntry.content}</ReactMarkdown></div>
+                {entryImages.length > 0 && (
+                  <div className="border-t border-outline-variant/10 pt-6">
+                    <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface-variant mb-4">Attached Images</h3>
+                    <div className="flex flex-wrap gap-4">
+                      {entryImages.map((img) => (
+                        <div key={img.id} className="relative group/img">
+                          <GeneratedImage
+                            storagePath={img.storage_path}
+                            alt={img.prompt}
+                            caption={`${img.model ? `Generated with ${img.model.split("/").pop()}` : "AI-generated"} · ${new Date(img.created_at).toLocaleDateString()}`}
+                          />
+                          <button
+                            onClick={() => handleDeleteImage(img)}
+                            className="absolute top-2 right-2 p-1.5 rounded-lg bg-surface-container-highest/80 opacity-0 group-hover/img:opacity-100 transition-opacity"
+                            aria-label="Delete image"
+                          >
+                            <span className="material-symbols-outlined text-destructive text-base">delete</span>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {selectedEntry.tags.length > 0 && (
                   <div className="flex gap-2 flex-wrap">
                     {selectedEntry.tags.map((tag) => (

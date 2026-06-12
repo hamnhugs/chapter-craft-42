@@ -23,6 +23,7 @@ import { useDictation } from "@/hooks/useDictation";
 import PromptLibrary from "@/components/PromptLibrary";
 import VoiceNotesPanel, { appendVoiceNote } from "@/components/VoiceNotesPanel";
 import ResponseBlocks from "@/components/ResponseBlocks";
+import GeneratedImage from "@/components/GeneratedImage";
 import WorkspacePanel from "@/components/WorkspacePanel";
 import type { Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle, useWorkspaceItems } from "@/lib/workspaceStore";
@@ -956,6 +957,18 @@ const ChatPanel: React.FC = () => {
             >
               {msg.role === "assistant" ? (
                 <>
+                  {msg.images && msg.images.length > 0 && (
+                    <div className="flex flex-wrap gap-3 mb-2">
+                      {msg.images.map((img) => (
+                        <GeneratedImage
+                          key={img.id}
+                          storagePath={img.storage_path}
+                          alt={img.prompt}
+                          caption={img.entry_id ? `${img.prompt} · saved to memory` : img.prompt}
+                        />
+                      ))}
+                    </div>
+                  )}
                   {msg.content && <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown>{msg.content}</ReactMarkdown></div>}
                   {msg.blocks && msg.blocks.length > 0 && <ResponseBlocks blocks={msg.blocks} />}
                   {msg.artifact && (

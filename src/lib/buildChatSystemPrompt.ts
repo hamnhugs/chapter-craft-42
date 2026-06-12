@@ -1,5 +1,6 @@
 import { BookDocument } from "@/types/library";
 import { fetchKnowledgeEntries, fetchConversationMemory, retrieveKnowledge } from "@/lib/knowledgeApi";
+import { fetchImagesForEntries } from "@/lib/imageGen";
 import { DEEP_RESEARCH_SYSTEM_PROMPT, DEEP_RESEARCH_ADVANCED_PROMPT } from "@/lib/deepResearchPrompt";
 
 interface BuildOpts {
@@ -95,6 +96,14 @@ export async function buildChatSystemPrompt({
     "- `search_wiki` → search ONLY the user's locally saved knowledge wiki. Use it for things they've already studied/ingested.",
     "- `web_search` → LIVE INTERNET search via the user's Burplexity instance. Use this WHENEVER the user asks to 'search', 'look up', 'google', 'check online', 'what's the latest', or anything time-sensitive or not in the wiki. You may call both `search_wiki` and `web_search` in the same turn when useful. Don't refuse online searches — call `web_search`.",
     "When the user asks about which wiki is active, to list wikis, switch to another wiki, or create a new one, USE the wiki tools (`list_wikis`, `get_active_wiki`, `switch_wiki`, `create_wiki`) — never claim a switch happened without calling `switch_wiki`.",
+    "## Images",
+    "You can create and remember images:",
+    "- `generate_image` → create an AI image (Nano Banana). It is shown to the user inline and saved to memory as a neuron by default. Only generate when the user asks for an image/visual — it costs them a few cents.",
+    "- `edit_image` → refine an existing image by image_id ('make it blue', 'add a hat') while keeping the subject consistent.",
+    "- `show_image` → re-display a stored image inline (free). Use when the user wants to see a remembered image again.",
+    "- `view_image` → load a stored image as vision input so YOU can see it. Use only when the question needs visual details the stored prompt/caption can't answer.",
+    "- `list_images` → find stored images by keyword when the user refers to one ('that fox logo').",
+    "Retrieved memories below may include an '[Attached image …]' note with an image_id — that means a real picture is stored with that memory. Never output markdown image links for generated images; the app renders them for you.",
     ...(voiceMode ? [] : [
       "You can also call `render_blocks` to present rich, structured content inline — tables, comparisons, charts, timelines, step-by-step guides, key-value facts, callouts, and study quizzes. Prefer it over long prose when structure aids clarity (e.g. comparing options, showing data, or step lists). Still include a brief prose reply alongside the blocks. Only use the whitelisted block shapes described in the tool.",
       "For richer visual or interactive output — diagrams, hand-coded charts, an SVG illustration, or a small interactive HTML/CSS/JS demo — call `create_artifact`, which renders a sandboxed document in a side panel. Provide only inner body markup (no html/head/body wrappers); it has no network access. Use `render_blocks` for simple structured data and `create_artifact` for visual/interactive documents.",
@@ -173,6 +182,19 @@ export async function buildChatSystemPrompt({
         wiki_id: allNeurons ? null : activeWikiId ?? null,
       });
       if (retrieval && retrieval.nodes.length > 0) {
+        // Attached images: a lightweight note (id + prompt) per the
+        // "caption by default, pixels on demand" pattern — the model can
+        // call show_image / view_image when it actually needs them.
+        const imagesByEntry = new Map<string, { id: string; prompt: string }[]>();
+        try {
+          const imgs = await fetchImagesForEntries(retrieval.nodes.map((n: any) => n.id));
+          for (const img of imgs) {
+            if (!img.entry_id) continue;
+            const list = imagesByEntry.get(img.entry_id) || [];
+            list.push({ id: img.id, prompt: (img.prompt || "").slice(0, 160) });
+            imagesByEntry.set(img.entry_id, list);
+          }
+        } catch { /* table may not exist yet — notes are optional */ }
         parts.push("", `## Retrieved Knowledge (${retrieval.nodes.length} nodes, ${retrieval.edges.length} edges — most relevant first)`);
         const idToTitle = new Map(retrieval.nodes.map((n: any) => [n.id, n.title]));
         for (const node of retrieval.nodes) {
@@ -183,6 +205,12 @@ export async function buildChatSystemPrompt({
             ? (node.content || "").slice(0, maxLen) + "\n[...truncated]"
             : node.content || "";
           parts.push(text);
+          const nodeImages = imagesByEntry.get(node.id);
+          if (nodeImages && nodeImages.length > 0) {
+            for (const img of nodeImages) {
+              parts.push(`[Attached image — image_id: ${img.id} — "${img.prompt}". Use show_image to display it, view_image to see it.]`);
+            }
+          }
           const outgoing = retrieval.edges.filter((e: any) => e.source_entry_id === node.id);
           if (outgoing.length > 0) {
             const labels = outgoing
