@@ -88,6 +88,9 @@ const ChatPanel: React.FC = () => {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const settingsPanelRef = useRef<HTMLDivElement>(null);
   const inputBeforeDictationRef = useRef<string>("");
+  // When a message is sent we stop the mic and ignore the recognizer's trailing
+  // final callback, so it can't repopulate the just-cleared composer.
+  const suppressDictationRef = useRef(false);
 
   useEffect(() => { localStorage.setItem(VOICE_QUICK_SEARCH_KEY, String(voiceQuickSearch)); }, [voiceQuickSearch]);
   useEffect(() => { localStorage.setItem(VOICE_QUICK_SEARCH_MODEL_KEY, voiceQuickSearchModel); }, [voiceQuickSearchModel]);
@@ -95,9 +98,11 @@ const ChatPanel: React.FC = () => {
 
   const dictation = useDictation({
     onInterim: (text) => {
+      if (suppressDictationRef.current) return;
       setInput((inputBeforeDictationRef.current ? inputBeforeDictationRef.current + " " : "") + text);
     },
     onFinal: (text) => {
+      if (suppressDictationRef.current) return;
       const base = inputBeforeDictationRef.current;
       setInput((base ? base + " " : "") + text);
     },
@@ -106,6 +111,7 @@ const ChatPanel: React.FC = () => {
     if (!dictation.supported) { toast.error("Voice input not supported in this browser."); return; }
     if (dictation.isListening) { dictation.stop(); return; }
     inputBeforeDictationRef.current = input;
+    suppressDictationRef.current = false;
     dictation.start();
   };
 
@@ -487,6 +493,11 @@ const ChatPanel: React.FC = () => {
     const text = input.trim();
     if (!text) return;
     if (!apiKey) { toast.error("Please set your OpenRouter API key first"); setShowSettings(true); return; }
+    // Sending is a clear "I'm done speaking" action — stop the mic so it doesn't
+    // keep listening (the continuous recognizer re-arms on silence otherwise),
+    // unless the user already stopped it.
+    suppressDictationRef.current = true;
+    dictation.stop();
     setInput("");
     if (voiceQuickSearch && burplexityApiToken && SEARCH_INTENT_RE.test(text)) {
       runBackgroundSearch(text); // intentionally not awaited
