@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
 import { flushSync } from "react-dom";
 import { BookDocument, Chapter } from "@/types/library";
 import { supabase } from "@/integrations/supabase/client";
@@ -18,6 +18,12 @@ interface AppState {
   removeBook: (id: string) => void;
   setActiveBook: (id: string) => void;
   setActiveBookSilent: (id: string) => void;
+  /** Book id awaiting a neuron choice in the load dialog (null = dialog closed). */
+  pendingBookLoadId: string | null;
+  /** Entry point for loading a book from the Vault: opens the neuron-pick dialog. */
+  requestBookLoad: (bookId: string) => void;
+  /** Resolves the load dialog: loads the chosen neuron (if any/changed) then opens the book. neuronId null = skip / keep current. */
+  resolveBookLoad: (neuronId: string | null) => Promise<void>;
   setActiveTab: (tab: TabId) => void;
   addChapter: (bookId: string, chapter: Chapter) => Promise<void>;
   updateChapter: (bookId: string, chapterId: string, name: string) => void;
@@ -54,6 +60,9 @@ const getStoragePathsForBook = (userId: string, bookId: string, fileName: string
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [books, setBooks] = useState<BookDocument[]>([]);
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
+  const [pendingBookLoadId, setPendingBookLoadId] = useState<string | null>(null);
+  // Restore-the-last-book runs once per signed-in session (guard ref).
+  const restoredBookRef = useRef(false);
   const [activeTab, setActiveTab] = useState<TabId>("library");
   const [wikis, setWikis] = useState<Wiki[]>([]);
   const [activeWikiId, setActiveWikiId] = useState<string | null>(null);
@@ -248,6 +257,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, [user]);
 
+  // Allow the once-per-session restore to run again when the account changes.
+  useEffect(() => {
+    restoredBookRef.current = false;
+  }, [user?.id]);
+
+  // Restore the last-opened book across reloads — SILENTLY (no tab jump), so
+  // Counsel/the AI still knows which book is loaded after a refresh. Runs once,
+  // as soon as the library has loaded, and only if nothing is already active.
+  useEffect(() => {
+    if (!user || restoredBookRef.current || books.length === 0) return;
+    restoredBookRef.current = true;
+    if (activeBookId) return;
+    try {
+      const saved = localStorage.getItem(`cc_active_book_${user.id}`);
+      if (saved && books.some((b) => b.id === saved)) {
+        setActiveBookId(saved);
+      }
+    } catch {
+      /* localStorage unavailable — skip restore */
+    }
+  }, [user, books, activeBookId]);
+
+  // Persist the active book so it survives reloads (per-user key).
+  useEffect(() => {
+    if (!user) return;
+    try {
+      if (activeBookId) localStorage.setItem(`cc_active_book_${user.id}`, activeBookId);
+      else localStorage.removeItem(`cc_active_book_${user.id}`);
+    } catch {
+      /* localStorage unavailable — non-fatal */
+    }
+  }, [user, activeBookId]);
+
   const addBook = useCallback(async (book: BookDocument, sourceFile?: File) => {
     if (!user) throw new Error("You must be signed in to upload books");
 
@@ -380,6 +422,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const setActiveBookSilent = useCallback((id: string) => {
     setActiveBookId(id);
   }, []);
+
+  // Loading a book from the Vault routes through here so the user can pick a
+  // neuron to load alongside it. The picker pre-selects the active neuron and
+  // is fully skippable, so opening the book never blocks on a choice (see
+  // LoadNeuronDialog + the UX research behind the conditional/default pattern).
+  const requestBookLoad = useCallback((bookId: string) => {
+    setPendingBookLoadId(bookId);
+  }, []);
+
+  const resolveBookLoad = useCallback(async (neuronId: string | null) => {
+    const bookId = pendingBookLoadId;
+    setPendingBookLoadId(null);
+    if (!bookId) return;
+    // Only switch neurons when the user picked a different one — avoids a
+    // redundant loadWiki round-trip when they keep the current neuron.
+    if (neuronId && neuronId !== activeWikiId) {
+      try {
+        await setActiveWiki(neuronId);
+      } catch (err) {
+        console.error("Failed to load neuron alongside book:", err);
+      }
+    }
+    setActiveBook(bookId);
+  }, [pendingBookLoadId, activeWikiId, setActiveWiki, setActiveBook]);
 
   const addChapter = useCallback(async (bookId: string, chapter: Chapter) => {
     const userId = await getAuthenticatedUserId();
@@ -529,6 +595,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         removeBook,
         setActiveBook,
         setActiveBookSilent,
+        pendingBookLoadId,
+        requestBookLoad,
+        resolveBookLoad,
         setActiveTab: navigateTab,
         addChapter,
         updateChapter,

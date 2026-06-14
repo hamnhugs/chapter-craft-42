@@ -859,6 +859,19 @@ const ChatPanel: React.FC = () => {
         </>
       )}
 
+      {/* Active-book indicator — confirms to the user (and signals that the AI
+          knows) which book Counsel is currently focused on. */}
+      {selectedBook && (
+        <div className="px-4 pt-3 pb-0.5 flex items-center gap-2 text-xs font-body text-on-surface-variant">
+          <span className="material-symbols-outlined text-sm text-primary-container" aria-hidden>
+            auto_stories
+          </span>
+          <span className="truncate">
+            Now discussing: <span className="font-semibold text-primary">{selectedBook.title}</span>
+          </span>
+        </div>
+      )}
+
       {/* Active-wiki indicator */}
       {activeWiki && (
         <div className="px-4 pt-3 pb-1 flex items-center gap-2 text-xs font-body text-on-surface-variant">

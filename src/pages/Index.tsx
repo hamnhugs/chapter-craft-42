@@ -15,6 +15,7 @@ import SetupWizard from "@/components/SetupWizard";
 import AdBanner from "@/components/ads/AdBanner";
 import AdInterstitial from "@/components/ads/AdInterstitial";
 import WelcomeGate from "@/components/WelcomeGate";
+import LoadNeuronDialog from "@/components/LoadNeuronDialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { useTheme } from "@/context/ThemeContext";
 import { useVisitTracker } from "@/hooks/useVisitTracker";
@@ -390,6 +391,7 @@ const Index: React.FC = () => {
         </div>
       </nav>
       <WikiQuickSwitcher />
+      <LoadNeuronDialog />
       <PricingDialog />
       <WelcomeGate />
       <SetupWizard />

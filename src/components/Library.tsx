@@ -93,7 +93,7 @@ const VIEW_OPTIONS: { id: ViewMode; icon: string; label: string }[] = [
 ];
 
 const Library: React.FC = () => {
-  const { books, addBook, removeBook, setActiveBook, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile } = useApp();
+  const { books, addBook, removeBook, requestBookLoad, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile } = useApp();
   const { apiKey } = useChatSettings();
   const { isPaid, loaded: planLoaded } = usePlan();
   const jobs = useStructureJobs();
@@ -642,7 +642,7 @@ const Library: React.FC = () => {
                 </div>
               }
             >
-              <LibraryGraph books={filteredBooks} onOpenBook={(id) => setActiveBook(id)} />
+              <LibraryGraph books={filteredBooks} onOpenBook={(id) => requestBookLoad(id)} />
             </Suspense>
           </GraphErrorBoundary>
         ) : view === "folders" ? (
@@ -656,7 +656,7 @@ const Library: React.FC = () => {
                 query={query}
                 job={jobs[book.id]}
                 onDetect={() => runDetect(book)}
-                onRead={() => setActiveBook(book.id)}
+                onRead={() => requestBookLoad(book.id)}
                 onRemove={() => removeBook(book.id)}
                 onRename={(newTitle) => updateBookTitle(book.id, newTitle)}
               />
@@ -667,7 +667,7 @@ const Library: React.FC = () => {
             books={filteredBooks}
             sortBy={sortBy}
             onSortBy={setSortBy}
-            onOpenBook={(id) => setActiveBook(id)}
+            onOpenBook={(id) => requestBookLoad(id)}
             onRemove={(id) => removeBook(id)}
             highlight={(text) => <Highlight text={text} query={query} />}
           />
@@ -681,7 +681,7 @@ const Library: React.FC = () => {
                 query={query}
                 job={jobs[book.id]}
                 onDetect={() => runDetect(book)}
-                onRead={() => setActiveBook(book.id)}
+                onRead={() => requestBookLoad(book.id)}
                 onRemove={() => removeBook(book.id)}
                 onRename={(newTitle) => updateBookTitle(book.id, newTitle)}
               />
