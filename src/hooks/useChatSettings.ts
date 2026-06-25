@@ -46,6 +46,7 @@ const defaults: ChatSettings = {
   inworldEnabled: false,
   inworldVoiceId: "",
   accessAllNeurons: false,
+  visionModel: "",
 };
 
 // ---------------------------------------------------------------------------
