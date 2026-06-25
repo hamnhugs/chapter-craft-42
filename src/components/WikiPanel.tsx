@@ -285,7 +285,7 @@ const WikiPanel: React.FC = () => {
           <div className="space-y-3 min-w-0">
             <div className="flex items-center gap-3 mb-1 flex-wrap">
               <span className="px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded text-[10px] font-bold tracking-widest uppercase">
-                {scope === "wiki" ? "Active Wiki" : "All Wikis"}
+                {scope === "wiki" ? "ACTIVE NEURON" : "ALL NEURONS"}
               </span>
               <span className="text-on-surface-variant text-sm font-medium">
                 {entries.length} entries{scope === "wiki" && activeWiki ? " in scope" : " indexed"}
