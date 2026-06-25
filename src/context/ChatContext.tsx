@@ -43,6 +43,8 @@ interface SendOpts {
   modelOverride?: string;
   /** Called on every streamed delta with the cumulative assistant text. */
   onDelta?: (fullText: string) => void;
+  /** Image attachments to send with this turn (multimodal user content). */
+  images?: Array<{ dataUrl: string; storagePath?: string; memoryId?: string; mime?: string }>;
 }
 
 interface ChatContextValue {
