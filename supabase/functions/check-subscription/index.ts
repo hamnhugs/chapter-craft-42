@@ -39,6 +39,23 @@ serve(async (req) => {
       { auth: { persistSession: false } },
     );
 
+    // Admin short-circuit: never poll Stripe for admin accounts and never let
+    // a missing/expired Stripe state downgrade them. Mirrors my_entitlements().
+    const { data: adminFlag } = await serviceClient.rpc("has_role" as any, {
+      _user_id: user.id, _role: "admin",
+    });
+    if (adminFlag === true) {
+      await serviceClient.from("subscribers").upsert({
+        user_id: user.id, email: user.email, subscribed: true,
+        plan: "lifetime_admin", subscription_end: null, billing_issue: false,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "email" });
+      return new Response(JSON.stringify({
+        subscribed: true, plan: "lifetime_admin", subscription_end: null,
+        billing_issue: false, cancel_at_period_end: false,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
     if (!stripeKey) {
       return new Response(JSON.stringify({ error: "STRIPE_SECRET_KEY is not configured" }), {

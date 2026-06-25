@@ -1744,6 +1744,7 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      my_entitlements: { Args: never; Returns: Json }
       score_entry_against_wikis: {
         Args: { query_embedding: unknown }
         Returns: {
