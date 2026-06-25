@@ -285,7 +285,7 @@ const WikiPanel: React.FC = () => {
           <div className="space-y-3 min-w-0">
             <div className="flex items-center gap-3 mb-1 flex-wrap">
               <span className="px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded text-[10px] font-bold tracking-widest uppercase">
-                {scope === "wiki" ? "Active Wiki" : "All Wikis"}
+                {scope === "wiki" ? "ACTIVE NEURON" : "ALL NEURONS"}
               </span>
               <span className="text-on-surface-variant text-sm font-medium">
                 {entries.length} entries{scope === "wiki" && activeWiki ? " in scope" : " indexed"}
@@ -299,7 +299,7 @@ const WikiPanel: React.FC = () => {
                   className={`px-3 py-1 transition-colors ${scope === "wiki" ? "bg-primary-container text-on-primary-container" : "text-on-surface-variant hover:bg-surface-container-high"} disabled:opacity-40`}
                   title="Show only data from the currently loaded wiki"
                 >
-                  This wiki
+                  This Neuron
                 </button>
                 <button
                   type="button"
@@ -307,7 +307,7 @@ const WikiPanel: React.FC = () => {
                   className={`px-3 py-1 transition-colors ${scope === "all" ? "bg-primary-container text-on-primary-container" : "text-on-surface-variant hover:bg-surface-container-high"}`}
                   title="Show everything across all your wikis"
                 >
-                  All wikis
+                  All Neurons
                 </button>
               </div>
             </div>
