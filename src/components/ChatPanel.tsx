@@ -46,8 +46,8 @@ const ChatPanel: React.FC = () => {
   const { user } = useAuth();
   const isMobile = useIsMobile();
   const {
-    apiKey, savedModels, selectedModel, deepResearchModel, voiceModel, ttsRate, autoReadReplies, customSystemPrompt, burplexityApiToken, inworldApiKey, inworldEnabled, inworldVoiceId, accessAllNeurons, loaded,
-    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setVoiceModel, setTtsRate, setAutoReadReplies, setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey, setInworldEnabled, setInworldVoiceId, setAccessAllNeurons,
+    apiKey, savedModels, selectedModel, deepResearchModel, voiceModel, visionModel, ttsRate, autoReadReplies, customSystemPrompt, burplexityApiToken, inworldApiKey, inworldEnabled, inworldVoiceId, accessAllNeurons, loaded,
+    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setVoiceModel, setVisionModel, setTtsRate, setAutoReadReplies, setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey, setInworldEnabled, setInworldVoiceId, setAccessAllNeurons,
   } = useChatSettings();
   const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort } = useChat();
   const { isPaid } = usePlan();
