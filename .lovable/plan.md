@@ -1,39 +1,33 @@
-## Goal : if You can instead create an option within the brain tab that would allow me to display all images and delete them from there, i think that would be best, and also allow me to delete multiple images at one time
+## Goal
+Make image deletion in the BRAIN → Generated Images panel actually remove images permanently, with clear error feedback when something goes wrong.
 
-&nbsp;
+## Root causes (most likely)
 
-Add an **Images** button to the Counsel tab's toolbar (next to Files / Notes). Clicking it slides in a right‑side panel that shows every AI‑generated image from the current user's chats, with select + delete.
+1. **Single-image delete uses `window.confirm()`** — that native dialog is unreliable inside the Lovable preview iframe (cross-origin sandbox can suppress it), so clicks appear to do nothing.
+2. **Bulk delete trusts a silent success** — `.delete().eq("id", id)` resolves without error even when RLS or a stale session causes 0 rows to be affected. The optimistic UI hides the row, then the realtime subscription re-fetches and the row reappears.
+3. **Realtime auto-reload races the optimistic update** — `load()` is called immediately on any change event, which can re-show rows during the round-trip.
+4. **Storage path removal failures are swallowed silently** — if the bucket object remove fails, we never tell the user; combined with #2 this makes the whole flow look broken.
 
-## UX (modeled on best practices: Gmail/Notion right‑rail, ChatGPT Library)
+## Fix plan (frontend only — no schema changes)
 
-- Trigger: small toolbar button labeled `Images (N)` with an `image` icon, toggle state mirrors Files/Notes.
-- Slide‑in `Sheet` from the right, width ~420px desktop / full‑width mobile, focus‑trapped, ESC to close, persistent close button.
-- Header: title "Generated images", search input (filters by prompt/caption), and a "Select" toggle.
-- Body: responsive 2‑col masonry grid of thumbnails using `GeneratedImage` (signed‑URL cached). Each tile shows truncated prompt, model badge, relative time, and hover/long‑press actions: open full‑size, copy prompt, delete.
-- Multi‑select mode: checkboxes appear on tiles; sticky footer shows "Delete N" with a confirmation `AlertDialog`. Bulk delete runs in parallel with per‑item error toleration.
-- Empty state: friendly illustration + "No images yet — ask Counsel to generate one."
-- Loading: skeleton tiles. Error: inline retry.
-- Deletes are optimistic with toast undo (5s window) — actual storage + DB removal fires after the undo timer.
+### `src/lib/imageGen.ts`
+- Change `deleteImageAttachment` to:
+  - Call `.delete().eq("id", row.id).select("id")` and throw if the returned array is empty (so we detect 0-row deletes from RLS/session issues).
+  - Attempt `storage.remove([row.storage_path])` after the DB delete; log but don't fail the call if storage cleanup errors (the row is what drives the UI).
+  - Purge the signed-URL cache entry for that `storage_path` so a stale URL can't render after delete.
 
-## Technical plan
+### `src/components/ImagesPanel.tsx`
+- Replace the native `confirm()` on the per-tile trash button with the existing shadcn `AlertDialog` (reuse the same component used by bulk delete, parameterized for one or many).
+- After a successful delete (single or bulk), do NOT call `load()`; trust the optimistic state. Only re-fetch on failure to reconcile.
+- Debounce the realtime listener: ignore DELETE events whose `old.id` is already absent from local `rows` (prevents redundant `load()` calls that can race with optimistic state).
+- Properly tear down the realtime channel in the effect cleanup (current cleanup only flips `active`, leaking channels across opens).
+- Surface specific errors from `deleteImageAttachment` in the toast (`e.message`) instead of a generic message.
 
-1. **New component** `src/components/ImagesPanel.tsx`
-  - Props: `open`, `onOpenChange`, `onCountChange?`.
-  - Uses `Sheet` (`side="right"`) from `@/components/ui/sheet` for the slide‑in.
-  - Loads rows via existing `searchImages(query, 100)` from `src/lib/imageGen.ts` (already lists `image_attachments` newest‑first, with optional ilike on prompt/caption).
-  - Renders thumbnails via the existing `<GeneratedImage storagePath caption />` so signed‑URL caching is reused.
-  - Realtime: subscribe to `image_attachments` inserts/deletes for the current user so the panel stays live when Counsel generates new images.
-  - Delete path: existing `deleteImageAttachment({ id, storage_path })` — already removes the storage object then the DB row. Bulk = `Promise.allSettled`.
-  - Undo: hold a pending‑delete buffer; commit on toast dismiss, restore on click.
-2. **Toolbar wiring in `src/components/ChatPanel.tsx**`
-  - Add `imagesPanelOpen` state and `imagesCount` (kept fresh by panel callback).
-  - Insert a new toolbar button right after the Notes button (~line 1335), matching the same `text-[10px] font-bold uppercase tracking-widest` styling and `aria-pressed` pattern.
-  - Render `<ImagesPanel open={imagesPanelOpen} onOpenChange={setImagesPanelOpen} onCountChange={setImagesCount} />` alongside the existing right‑panels.
-3. **No schema changes, no edge‑function changes, no new dependencies.** Everything is built on existing tables (`image_attachments`), existing helpers (`searchImages`, `deleteImageAttachment`, `getSignedImageUrl`), and existing shadcn primitives (`Sheet`, `Input`, `Checkbox`, `AlertDialog`, `Button`, toaster).
+### Verification
+- Single-tile trash → confirmation dialog opens → confirm → tile disappears and stays gone after panel close/reopen.
+- Bulk select → Delete → all selected tiles disappear and stay gone.
+- Force an error (e.g., temporarily revoke RLS) → toast shows the real error, rows are restored.
 
-## Accessibility & polish
-
-- Full keyboard navigation (arrow keys move focus across the grid, Space toggles select in select‑mode, Enter opens full‑size).
-- `aria-label`s on every tile action; live region announces "N images selected".
-- Respects `prefers-reduced-motion` for the slide animation.
-- Uses semantic tokens only (no hardcoded colors), matching the warm cream/amber editorial theme.
+## Out of scope
+- No DB migration. RLS DELETE policy is already correct (`auth.uid() = user_id`) and rows are owned by the signed-in user.
+- No change to image generation or the `image_attachments` schema.
