@@ -49,13 +49,13 @@ const WikiControlsGuide: React.FC = () => {
       <main className="max-w-3xl mx-auto px-6 py-12 pb-32">
         <div className="mb-12">
           <span className="px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded text-[10px] font-bold tracking-widest uppercase">
-            Wiki Tab
+            NEURON TAB
           </span>
           <h1 className="font-headline font-bold text-5xl md:text-6xl text-primary tracking-tight mt-3 mb-4">
             What All These Buttons Do
           </h1>
           <p className="text-on-surface-variant text-lg font-body leading-relaxed">
-            The Wiki tab has a lot of controls. Most of them you'll only touch once in a while.
+            The Neuron tab has a lot of controls. Most of them you'll only touch once in a while.
             Here's a plain-English tour so nothing feels mysterious.
           </p>
         </div>
