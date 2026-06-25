@@ -72,12 +72,12 @@ const WikiControlsGuide: React.FC = () => {
         </section>
 
         <Group title="Scope & identity" subtitle="What you're looking at right now.">
-          <Control icon="filter_alt" name="This wiki vs. All wikis" analogy="One notebook, or all notebooks at once?">
+          <Control icon="filter_alt" name="This Neuron vs. All Neurons" analogy="One notebook, or all notebooks at once?">
             <p>
-              <strong>This wiki</strong> shows only the wiki you've loaded — focused view.
-              <strong> All wikis</strong> shows everything you've ever saved across every wiki.
+              <strong>This Neuron</strong> shows only the wiki you've loaded — focused view.
+              <strong> All Neurons</strong> shows everything you've ever saved across every wiki.
             </p>
-            <p>Pick "This wiki" for normal work. Pick "All wikis" when you can't remember which wiki something is in.</p>
+            <p>Pick "This Neuron" for normal work. Pick "All Neurons" when you can't remember which wiki something is in.</p>
           </Control>
           <Control icon="swap_horiz" name="Wiki switcher dropdown" analogy="The bookshelf next to your desk.">
             <p>Jump straight to another wiki without going back to the Wikis page. Handy when you bounce between projects.</p>
