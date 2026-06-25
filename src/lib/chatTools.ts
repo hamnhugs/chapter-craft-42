@@ -1003,7 +1003,42 @@ export async function executeChatTool(
         }));
         return { result: out, event: { name, summary: `Listed ${out.length} image(s)${args.query ? ` matching "${String(args.query).slice(0, 40)}"` : ""}`, ok: true } };
       }
-      case "create_artifact": {
+      case "recall_image_memories": {
+        const limit = Math.min(15, Math.max(1, Number(args.limit) || 5));
+        const q = typeof args.query === "string" ? args.query.trim() : "";
+        let query: any = (supabase.from("image_memories" as any) as any)
+          .select("id, caption, ocr_text, tags, storage_path, created_at, wiki_id")
+          .order("created_at", { ascending: false })
+          .limit(limit);
+        if (q) {
+          const safe = q.replace(/[%,()]/g, " ");
+          query = query.or(`caption.ilike.%${safe}%,ocr_text.ilike.%${safe}%`);
+        }
+        const { data, error } = await query;
+        if (error) {
+          return { result: { error: error.message }, event: { name, summary: "Image memory search failed", ok: false } };
+        }
+        const rows: any[] = data || [];
+        const out = await Promise.all(rows.map(async (r) => {
+          let url: string | null = null;
+          try {
+            const signed = await supabase.storage.from("generated-images").createSignedUrl(r.storage_path, 60 * 60);
+            url = signed.data?.signedUrl || null;
+          } catch { /* ignore */ }
+          return {
+            memory_id: r.id,
+            caption: (r.caption || "").slice(0, 240),
+            ocr_excerpt: (r.ocr_text || "").slice(0, 240),
+            tags: r.tags || [],
+            created_at: r.created_at,
+            url,
+          };
+        }));
+        return {
+          result: out,
+          event: { name, summary: `Recalled ${out.length} image memory${out.length === 1 ? "" : "s"}${q ? ` matching "${q.slice(0, 40)}"` : ""}`, ok: true },
+        };
+      }
         const art = parseArtifact(args);
         if (!art) {
           return { result: { error: "Artifact needs non-empty `content` (the inner HTML/SVG body markup, no wrappers)." }, event: { name, summary: "Artifact invalid", ok: false } };
