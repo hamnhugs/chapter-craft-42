@@ -26,6 +26,8 @@ interface ChatSettings {
   inworldVoiceId: string;
   /** When true (paid feature), chat retrieval draws on every neuron instead of only the active one. */
   accessAllNeurons: boolean;
+  /** Optional override model used for chat turns that include image attachments. Falls back to selectedModel if empty. */
+  visionModel: string;
 }
 
 const defaults: ChatSettings = {
