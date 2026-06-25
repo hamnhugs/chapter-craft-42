@@ -1149,14 +1149,60 @@ const ChatPanel: React.FC = () => {
               <button onClick={handsFree.stop} className="ml-auto text-[10px] font-bold uppercase tracking-widest text-on-surface-variant hover:text-destructive">Stop</button>
             </div>
           )}
-          <div className="flex items-end gap-3">
+          {pendingImages.length > 0 && (
+            <div className="flex flex-wrap gap-2 px-1 pb-1">
+              {pendingImages.map((p) => (
+                <div key={p.localId} className="relative w-16 h-16 rounded-lg overflow-hidden border border-outline-variant/40 bg-surface-container-high group">
+                  <img src={p.dataUrl} alt={p.filename || "attachment"} className="w-full h-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => removePendingImage(p.localId)}
+                    aria-label="Remove image"
+                    className="absolute top-0.5 right-0.5 bg-black/70 text-white rounded-full w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">close</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div
+            className={`flex items-end gap-3 ${dragOver ? "ring-2 ring-primary/60 rounded-xl" : ""}`}
+            onDragOver={(e) => { if (Array.from(e.dataTransfer.types).includes("Files")) { e.preventDefault(); setDragOver(true); } }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => {
+              if (e.dataTransfer.files?.length) {
+                e.preventDefault();
+                setDragOver(false);
+                addImagesFromFiles(e.dataTransfer.files);
+              }
+            }}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif,image/heic,image/heif"
+              multiple
+              className="hidden"
+              onChange={(e) => { addImagesFromFiles(e.target.files); if (fileInputRef.current) fileInputRef.current.value = ""; }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              title="Attach image"
+              aria-label="Attach image"
+              className="h-[50px] w-[44px] shrink-0 flex items-center justify-center rounded-xl bg-surface-container-high text-on-surface-variant hover:text-primary hover:bg-surface-container-highest transition-colors"
+            >
+              <span className="material-symbols-outlined text-xl">attach_file</span>
+            </button>
             <div className="flex-grow relative">
               <Textarea
-                ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown}
+                ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} onPaste={handlePaste}
                 aria-label="Message The Librarian"
-                placeholder={dictation.isListening ? "Listening… speak now" : apiKey ? "Ask about your books..." : "Set your OpenRouter API key to start chatting"}
+                placeholder={dictation.isListening ? "Listening… speak now" : apiKey ? "Ask about your books, or drop an image…" : "Set your OpenRouter API key to start chatting"}
                 rows={1} className="bg-surface-container-high border-none rounded-xl text-foreground py-3 pl-4 pr-20 focus:ring-1 focus:ring-primary/40 resize-none min-h-[50px] max-h-[220px] overflow-y-auto"
               />
+
               {dictation.supported && (
                 <button
                   type="button"
