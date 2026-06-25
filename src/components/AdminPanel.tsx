@@ -211,7 +211,48 @@ const OverviewSection: React.FC<{
   );
 };
 
-const UsersSection: React.FC<{ users: AdminUserRow[] | null }> = ({ users }) => {
+const planLabel = (plan: string | null, grantedByAdmin: boolean): { label: string; tone: string } => {
+  if (plan === "lifetime_admin" || (plan === "lifetime" && grantedByAdmin)) {
+    return { label: "Lifetime (Grant)", tone: "bg-tertiary-container text-on-tertiary-container" };
+  }
+  if (plan === "lifetime") return { label: "Lifetime", tone: "bg-primary-container text-on-primary-container" };
+  if (plan === "monthly") return { label: "Pro", tone: "bg-secondary-container text-on-secondary-container" };
+  return { label: "Free", tone: "bg-surface-container-highest text-on-surface-variant" };
+};
+
+const UsersSection: React.FC<{ users: AdminUserRow[] | null }> = ({ users: initialUsers }) => {
+  const [users, setUsers] = useState<AdminUserRow[] | null>(initialUsers);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<{ user: AdminUserRow; action: "grant" | "revoke" } | null>(null);
+  const [note, setNote] = useState("");
+
+  useEffect(() => { setUsers(initialUsers); }, [initialUsers]);
+
+  const refresh = async () => {
+    try { setUsers(await fetchAdminUsers()); } catch {}
+  };
+
+  const runAction = async () => {
+    if (!confirm) return;
+    setPendingId(confirm.user.id);
+    try {
+      if (confirm.action === "grant") {
+        await adminGrantLifetime(confirm.user.id, note.trim() || undefined);
+        toast.success(`Lifetime access granted to ${confirm.user.email}`);
+      } else {
+        await adminRevokeLifetime(confirm.user.id);
+        toast.success(`Lifetime grant revoked for ${confirm.user.email}`);
+      }
+      setConfirm(null);
+      setNote("");
+      await refresh();
+    } catch (err: any) {
+      toast.error(err.message || "Action failed");
+    } finally {
+      setPendingId(null);
+    }
+  };
+
   if (!users) {
     return <Loader2 className="w-6 h-6 animate-spin text-on-surface-variant" />;
   }
@@ -226,33 +267,97 @@ const UsersSection: React.FC<{ users: AdminUserRow[] | null }> = ({ users }) => 
               <th className="px-4 py-3">Last seen</th>
               <th className="px-4 py-3 text-right">Visits</th>
               <th className="px-4 py-3">Role</th>
+              <th className="px-4 py-3">Plan</th>
+              <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {users.map((u, i) => (
-              <tr key={u.id} className={i % 2 === 1 ? "bg-surface-container-high/50" : ""}>
-                <td className="px-4 py-3 font-medium text-foreground">{u.email || u.id}</td>
-                <td className="px-4 py-3 text-on-surface-variant">{new Date(u.created_at).toLocaleDateString()}</td>
-                <td className="px-4 py-3 text-on-surface-variant">{fmtDate(u.last_seen)}</td>
-                <td className="px-4 py-3 text-right text-on-surface-variant">{u.visits_total}</td>
-                <td className="px-4 py-3">
-                  {u.is_admin ? (
-                    <span className="px-2 py-0.5 rounded-full bg-primary-container text-on-primary-container text-[10px] font-bold uppercase tracking-widest">
-                      Admin
+            {users.map((u, i) => {
+              const isAdminGrant = u.plan === "lifetime_admin" || !!u.granted_by_admin_id;
+              const isStripeSub = (u.plan === "lifetime" || u.plan === "monthly") && !isAdminGrant;
+              const badge = planLabel(u.plan, isAdminGrant);
+              return (
+                <tr key={u.id} className={i % 2 === 1 ? "bg-surface-container-high/50" : ""}>
+                  <td className="px-4 py-3 font-medium text-foreground">{u.email || u.id}</td>
+                  <td className="px-4 py-3 text-on-surface-variant">{new Date(u.created_at).toLocaleDateString()}</td>
+                  <td className="px-4 py-3 text-on-surface-variant">{fmtDate(u.last_seen)}</td>
+                  <td className="px-4 py-3 text-right text-on-surface-variant">{u.visits_total}</td>
+                  <td className="px-4 py-3">
+                    {u.is_admin ? (
+                      <span className="px-2 py-0.5 rounded-full bg-primary-container text-on-primary-container text-[10px] font-bold uppercase tracking-widest">
+                        Admin
+                      </span>
+                    ) : (
+                      <span className="text-on-surface-variant text-xs">User</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-widest ${badge.tone}`}>
+                      {badge.label}
                     </span>
-                  ) : (
-                    <span className="text-on-surface-variant text-xs">User</span>
-                  )}
-                </td>
-              </tr>
-            ))}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {pendingId === u.id ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-on-surface-variant inline" />
+                    ) : isAdminGrant ? (
+                      <Button size="sm" variant="ghost" className="text-xs h-7"
+                        onClick={() => setConfirm({ user: u, action: "revoke" })}>
+                        Revoke
+                      </Button>
+                    ) : isStripeSub ? (
+                      <span className="text-[10px] text-on-surface-variant italic">Managed in Stripe</span>
+                    ) : (
+                      <Button size="sm" variant="outline" className="text-xs h-7"
+                        onClick={() => { setNote(""); setConfirm({ user: u, action: "grant" }); }}>
+                        Grant Lifetime
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
       <div className="px-4 py-3 bg-surface-container-high text-xs text-on-surface-variant">
-        Settings and account management live in the{" "}
-        <a href="#/admin" className="text-primary font-bold hover:underline">full admin dashboard</a>.
+        Grants take effect immediately and are recorded in the audit log. Stripe-paid subscriptions must be managed in Stripe.
       </div>
+
+      <Dialog open={!!confirm} onOpenChange={(o) => { if (!o) { setConfirm(null); setNote(""); } }}>
+        <DialogContent className="max-w-md">
+          {confirm && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="font-headline text-xl">
+                  {confirm.action === "grant" ? "Grant lifetime access" : "Revoke lifetime grant"}
+                </DialogTitle>
+                <DialogDescription>
+                  {confirm.action === "grant"
+                    ? `${confirm.user.email} will get full Pro/Lifetime access immediately, with no charge, until you revoke it.`
+                    : `${confirm.user.email} will lose lifetime access and revert to the Free plan.`}
+                </DialogDescription>
+              </DialogHeader>
+              {confirm.action === "grant" && (
+                <div className="space-y-2 mt-2">
+                  <label className="text-xs font-bold uppercase tracking-widest text-on-surface-variant">
+                    Note (optional)
+                  </label>
+                  <Input value={note} onChange={(e) => setNote(e.target.value)}
+                    placeholder="e.g. Beta tester thank-you" maxLength={500} />
+                </div>
+              )}
+              <DialogFooter className="mt-4">
+                <Button variant="ghost" onClick={() => { setConfirm(null); setNote(""); }}>Cancel</Button>
+                <Button onClick={runAction} disabled={pendingId === confirm.user.id}
+                  variant={confirm.action === "revoke" ? "destructive" : "default"}>
+                  {pendingId === confirm.user.id && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  {confirm.action === "grant" ? "Grant Lifetime" : "Revoke"}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
