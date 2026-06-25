@@ -1228,7 +1228,7 @@ const ChatPanel: React.FC = () => {
               ) : (
                 <button
                   onClick={handleSend}
-                  disabled={!input.trim()}
+                  disabled={!input.trim() && pendingImages.length === 0}
                   title="Send"
                   aria-label="Send"
                   className="absolute right-2 bottom-2 p-1.5 bg-primary-container text-on-primary-container rounded-lg hover:brightness-110 active:scale-90 transition-all disabled:opacity-50"
