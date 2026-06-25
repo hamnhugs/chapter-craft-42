@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Link } from "react-router-dom";
-import { Loader2, Plus, Check, Search, Sparkles, ArrowRight, HelpCircle, Lock } from "lucide-react";
+import { Loader2, Plus, Check, Search, Sparkles, ArrowRight, HelpCircle, Lock, Image as ImageIcon } from "lucide-react";
+import ImagesPanel from "@/components/ImagesPanel";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -75,6 +76,7 @@ const WikiLibrary: React.FC = () => {
   const [wikisWithStats, setWikisWithStats] = useState<WikiWithStats[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>("gallery");
+  const [imagesOpen, setImagesOpen] = useState(false);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [selected, setSelected] = useState<WikiWithStats | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -426,6 +428,15 @@ const WikiLibrary: React.FC = () => {
             </div>
 
             <button
+              onClick={() => setImagesOpen(true)}
+              className="flex items-center gap-1.5 bg-surface-container-high text-on-surface px-3 py-1.5 rounded-lg font-bold text-sm active:scale-95 transition-transform border border-outline-variant/20 hover:bg-surface-container-highest"
+              title="View and manage all generated images"
+            >
+              <ImageIcon className="w-4 h-4" />
+              <span>IMAGES</span>
+            </button>
+
+            <button
               onClick={handleNewWiki}
               className="flex items-center gap-1.5 bg-primary-container text-on-primary-container px-3 py-1.5 rounded-lg font-bold text-sm active:scale-95 transition-transform shadow-md"
             >
@@ -436,6 +447,7 @@ const WikiLibrary: React.FC = () => {
               )}
               <span>NEW NEURON</span>
             </button>
+            <ImagesPanel open={imagesOpen} onOpenChange={setImagesOpen} />
           </div>
         </section>
 
