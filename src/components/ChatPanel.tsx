@@ -62,6 +62,33 @@ const ChatPanel: React.FC = () => {
   });
 
   const [input, setInput] = useState("");
+  // Pending image attachments for the next send (composer-local).
+  const [pendingImages, setPendingImages] = useState<PendingChatImage[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  const addImagesFromFiles = useCallback(async (files: FileList | File[] | null) => {
+    if (!files) return;
+    const arr = Array.from(files).filter(isAcceptedImage);
+    if (!arr.length) return;
+    const room = Math.max(0, 4 - pendingImages.length);
+    if (room === 0) { toast.error("Max 4 images per message"); return; }
+    const slice = arr.slice(0, room);
+    if (arr.length > room) toast.info(`Only the first ${room} image(s) were added (max 4)`);
+    for (const file of slice) {
+      try {
+        const { dataUrl, mime } = await fileToDownscaledDataUrl(file);
+        const localId = crypto.randomUUID();
+        setPendingImages((prev) => [...prev, { localId, dataUrl, mime, filename: (file as File).name }]);
+      } catch (e: any) {
+        toast.error(e?.message || "Could not load image");
+      }
+    }
+  }, [pendingImages.length]);
+
+  const removePendingImage = useCallback((localId: string) => {
+    setPendingImages((prev) => prev.filter((p) => p.localId !== localId));
+  }, []);
   const [showSettings, setShowSettings] = useState(false);
   const [newModelInput, setNewModelInput] = useState("");
   const [extracting, setExtracting] = useState(false);
