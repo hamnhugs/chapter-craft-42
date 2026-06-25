@@ -387,6 +387,21 @@ export const CHAT_TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "recall_image_memories",
+      description:
+        "Search the user's stored image memories (images they previously uploaded into chat). Returns up to N matches with memory_id, caption, OCR text, tags, and a short-lived URL that you can embed in your reply via standard markdown image syntax (![alt](url)) to show the image to the user. Use whenever the user references a picture they uploaded earlier ('that diagram I shared', 'the screenshot from yesterday').",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Optional keyword filter matched against caption + OCR text." },
+          limit: { type: "number", description: "Default 5, max 15." },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "render_blocks",
       description:
         "Render rich, structured UI blocks INLINE in your reply (cards, tables, charts, timelines, step lists, key-value lists, comparisons, quizzes). Use this when structured/dense information is clearer than prose — e.g. comparisons, data, step-by-step guides, study quizzes. Still write a short prose reply too. Each item is an object with a `type` field. Text fields support markdown.",
