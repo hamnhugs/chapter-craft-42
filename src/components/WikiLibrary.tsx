@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Link } from "react-router-dom";
-import { Loader2, Plus, Check, Search, Sparkles, ArrowRight, HelpCircle, Lock } from "lucide-react";
+import { Loader2, Plus, Check, Search, Sparkles, ArrowRight, HelpCircle, Lock, Image as ImageIcon } from "lucide-react";
+import ImagesPanel from "@/components/ImagesPanel";
 import { toast } from "sonner";
 import {
   Dialog,
