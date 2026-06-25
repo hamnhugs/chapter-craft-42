@@ -22,6 +22,25 @@ export interface AdminUserRow {
   visits_total: number;
   visits_today: number;
   last_seen: string | null;
+  plan: string | null;
+  subscribed: boolean;
+  granted_by_admin_id: string | null;
+  subscription_end: string | null;
+}
+
+export async function adminGrantLifetime(userId: string, note?: string): Promise<void> {
+  const { error } = await supabase.rpc("admin_grant_lifetime" as any, {
+    _user_id: userId,
+    _note: note ?? null,
+  } as any);
+  if (error) throw error;
+}
+
+export async function adminRevokeLifetime(userId: string): Promise<void> {
+  const { error } = await supabase.rpc("admin_revoke_lifetime" as any, {
+    _user_id: userId,
+  } as any);
+  if (error) throw error;
 }
 
 export interface AdminSettingsUpdate {

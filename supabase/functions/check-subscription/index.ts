@@ -7,7 +7,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-type Plan = "free" | "monthly" | "lifetime";
+type Plan = "free" | "monthly" | "lifetime" | "lifetime_admin";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -53,6 +53,28 @@ serve(async (req) => {
     let billingIssue = false;
     let cancelAtPeriodEnd = false;
     let customerId: string | null = null;
+
+    // Preserve admin-granted lifetime access — never downgrade these from Stripe polling.
+    const { data: existingRow } = await serviceClient
+      .from("subscribers")
+      .select("plan, granted_by_admin_id")
+      .or(`user_id.eq.${user.id},email.eq.${user.email}`)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existingRow?.plan === "lifetime_admin") {
+      return new Response(
+        JSON.stringify({
+          subscribed: true,
+          plan: "lifetime_admin",
+          subscription_end: null,
+          billing_issue: false,
+          cancel_at_period_end: false,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     const customers = await stripe.customers.list({ email: user.email, limit: 1 });
     if (customers.data.length > 0) {
