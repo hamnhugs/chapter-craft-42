@@ -877,6 +877,16 @@ const ChatPanel: React.FC = () => {
             </div>
             <div className="flex flex-col gap-1.5 lg:col-span-2">
               <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
+                <span className="material-symbols-outlined text-xs align-middle mr-1">image_search</span>Vision Model <span className="text-on-surface-variant/60 normal-case tracking-normal">(used when you attach an image)</span>
+              </label>
+              <select value={visionModel || ""} onChange={(e) => setVisionModel(e.target.value)} className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40">
+                <option value="">Same as Active model</option>
+                {savedModels.map((m: string) => (<option key={m} value={m}>{m}</option>))}
+              </select>
+              <p className="text-[10px] text-on-surface-variant px-1">For best image understanding pick a vision-strong model like <code>google/gemini-2.5-flash</code> (cheap, great at docs/OCR) or <code>google/gemini-2.5-pro</code> (best reasoning). Falls back to your Active model if blank.</p>
+            </div>
+            <div className="flex flex-col gap-1.5 lg:col-span-2">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
                 <span className="material-symbols-outlined text-xs align-middle mr-1">front_hand</span>Barge-in (interrupt the assistant)
               </label>
               <div className="flex items-center justify-between gap-3 bg-surface-container-high rounded-lg py-3 px-4 border border-outline-variant/10">
