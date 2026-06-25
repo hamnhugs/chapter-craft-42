@@ -483,6 +483,71 @@ export type Database = {
           },
         ]
       }
+      image_memories: {
+        Row: {
+          caption: string | null
+          created_at: string
+          embedding_v2: unknown
+          height: number | null
+          id: string
+          mime_type: string | null
+          ocr_text: string | null
+          source: string
+          source_message_id: string | null
+          storage_path: string
+          tags: string[] | null
+          tsv: unknown
+          updated_at: string
+          user_id: string
+          width: number | null
+          wiki_id: string | null
+        }
+        Insert: {
+          caption?: string | null
+          created_at?: string
+          embedding_v2?: unknown
+          height?: number | null
+          id?: string
+          mime_type?: string | null
+          ocr_text?: string | null
+          source?: string
+          source_message_id?: string | null
+          storage_path: string
+          tags?: string[] | null
+          tsv?: unknown
+          updated_at?: string
+          user_id: string
+          width?: number | null
+          wiki_id?: string | null
+        }
+        Update: {
+          caption?: string | null
+          created_at?: string
+          embedding_v2?: unknown
+          height?: number | null
+          id?: string
+          mime_type?: string | null
+          ocr_text?: string | null
+          source?: string
+          source_message_id?: string | null
+          storage_path?: string
+          tags?: string[] | null
+          tsv?: unknown
+          updated_at?: string
+          user_id?: string
+          width?: number | null
+          wiki_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "image_memories_wiki_id_fkey"
+            columns: ["wiki_id"]
+            isOneToOne: false
+            referencedRelation: "wikis"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       incubator_entries: {
         Row: {
           cluster_id: string | null
@@ -1012,6 +1077,7 @@ export type Database = {
           deep_research_model: string | null
           hands_free_tts_rate: number
           id: string
+          image_safety_check: boolean
           inworld_api_key: string
           inworld_enabled: boolean
           inworld_voice_id: string
@@ -1020,9 +1086,11 @@ export type Database = {
           saved_models: Json | null
           selected_model: string | null
           smart_filing_enabled: boolean
+          trust_image_text: boolean
           tts_rate: number
           updated_at: string
           user_id: string
+          vision_model: string | null
           voice_model: string | null
           wiki_model: string | null
         }
@@ -1036,6 +1104,7 @@ export type Database = {
           deep_research_model?: string | null
           hands_free_tts_rate?: number
           id?: string
+          image_safety_check?: boolean
           inworld_api_key?: string
           inworld_enabled?: boolean
           inworld_voice_id?: string
@@ -1044,9 +1113,11 @@ export type Database = {
           saved_models?: Json | null
           selected_model?: string | null
           smart_filing_enabled?: boolean
+          trust_image_text?: boolean
           tts_rate?: number
           updated_at?: string
           user_id: string
+          vision_model?: string | null
           voice_model?: string | null
           wiki_model?: string | null
         }
@@ -1060,6 +1131,7 @@ export type Database = {
           deep_research_model?: string | null
           hands_free_tts_rate?: number
           id?: string
+          image_safety_check?: boolean
           inworld_api_key?: string
           inworld_enabled?: boolean
           inworld_voice_id?: string
@@ -1068,9 +1140,11 @@ export type Database = {
           saved_models?: Json | null
           selected_model?: string | null
           smart_filing_enabled?: boolean
+          trust_image_text?: boolean
           tts_rate?: number
           updated_at?: string
           user_id?: string
+          vision_model?: string | null
           voice_model?: string | null
           wiki_model?: string | null
         }
@@ -1595,6 +1669,26 @@ export type Database = {
         }[]
       }
       is_admin: { Args: never; Returns: boolean }
+      match_image_memories: {
+        Args: {
+          filter_wiki_id?: string
+          match_count: number
+          match_threshold: number
+          query_embedding: unknown
+        }
+        Returns: {
+          caption: string
+          created_at: string
+          id: string
+          mime_type: string
+          ocr_text: string
+          similarity: number
+          source: string
+          storage_path: string
+          tags: string[]
+          wiki_id: string
+        }[]
+      }
       match_knowledge: {
         Args: {
           book_filter?: string
