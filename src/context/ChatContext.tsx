@@ -723,7 +723,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
       }
     },
-    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, wikis, activeWiki, activeWikiId, selectedModel, deepResearchModel, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
+    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, wikis, activeWiki, activeWikiId, selectedModel, deepResearchModel, visionModel, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
   );
 
 
