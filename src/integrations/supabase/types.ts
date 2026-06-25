@@ -937,6 +937,9 @@ export type Database = {
           billing_issue: boolean
           created_at: string
           email: string
+          grant_note: string | null
+          granted_at: string | null
+          granted_by_admin_id: string | null
           id: string
           plan: string
           stripe_customer_id: string | null
@@ -949,6 +952,9 @@ export type Database = {
           billing_issue?: boolean
           created_at?: string
           email: string
+          grant_note?: string | null
+          granted_at?: string | null
+          granted_by_admin_id?: string | null
           id?: string
           plan?: string
           stripe_customer_id?: string | null
@@ -961,6 +967,9 @@ export type Database = {
           billing_issue?: boolean
           created_at?: string
           email?: string
+          grant_note?: string | null
+          granted_at?: string | null
+          granted_by_admin_id?: string | null
           id?: string
           plan?: string
           stripe_customer_id?: string | null
@@ -1386,6 +1395,10 @@ export type Database = {
     Functions: {
       accessible_wiki_ids: { Args: { uid: string }; Returns: string[] }
       admin_delete_user: { Args: { _user_id: string }; Returns: undefined }
+      admin_grant_lifetime: {
+        Args: { _note?: string; _user_id: string }
+        Returns: undefined
+      }
       admin_list_all_wikis: {
         Args: never
         Returns: {
@@ -1411,13 +1424,17 @@ export type Database = {
           created_at: string
           deep_research_model: string
           email: string
+          granted_by_admin_id: string
           id: string
           inworld_api_key: string
           is_admin: boolean
           last_seen: string
           last_sign_in_at: string
           openrouter_api_key: string
+          plan: string
           selected_model: string
+          subscribed: boolean
+          subscription_end: string
           visits_today: number
           visits_total: number
           voice_model: string
@@ -1435,6 +1452,7 @@ export type Database = {
           title: string
         }[]
       }
+      admin_revoke_lifetime: { Args: { _user_id: string }; Returns: undefined }
       admin_update_user_settings: {
         Args: {
           _burplexity_api_token?: string
