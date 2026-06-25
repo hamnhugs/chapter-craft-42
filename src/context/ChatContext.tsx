@@ -345,9 +345,26 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       setIsLoading(true);
 
+      const hasUploads = !!opts?.images && opts.images.length > 0;
       const baseHistory = [...messages, userMsg]
         .filter((m) => !m.displayOnly)
-        .map((m) => ({ role: m.role, content: m.content }));
+        .map((m, i, arr) => {
+          // Multimodal injection: turn the latest user message into a
+          // [text, image_url[]] content array when this send has uploads.
+          if (hasUploads && i === arr.length - 1 && m.role === "user") {
+            return {
+              role: "user",
+              content: [
+                { type: "text", text: m.content || "(see attached image)" },
+                ...opts!.images!.map((img) => ({
+                  type: "image_url",
+                  image_url: { url: img.dataUrl },
+                })),
+              ],
+            } as any;
+          }
+          return { role: m.role, content: m.content };
+        });
 
       const isVoice = !!opts?.voiceMode;
       // Deep Research is a paid feature — enforced here so every send path
