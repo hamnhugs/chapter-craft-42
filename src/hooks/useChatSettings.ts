@@ -252,6 +252,7 @@ export function useChatSettings() {
     setInworldEnabled: (v: boolean) => update({ inworldEnabled: v }),
     setInworldVoiceId: (v: string) => update({ inworldVoiceId: v }),
     setAccessAllNeurons: (v: boolean) => update({ accessAllNeurons: v }),
+    setVisionModel: (m: string) => update({ visionModel: m }),
     addModel,
     removeModel,
     setNewModelInput: undefined, // handled in component
