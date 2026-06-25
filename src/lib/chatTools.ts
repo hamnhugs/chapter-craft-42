@@ -312,16 +312,17 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "generate_image",
       description:
-        "Generate an AI image with Nano Banana (Google's Gemini image model) and show it to the user inline. By default the image is also saved to the user's memory as a neuron so it can be recalled later. Use when the user asks for an image, picture, illustration, visualization, logo, scene, character art, etc. Costs the user a few cents per image on their OpenRouter key, so don't generate unprompted.",
+        "Generate one or more AI images with Nano Banana (Google's Gemini image model) and show them to the user inline. By default each image is also saved to the user's memory as a neuron. Use when the user asks for an image, picture, illustration, visualization, logo, scene, character art, etc. For multiple images in one turn: pass `count` (2–4) for variations of the SAME prompt, or `prompts: [...]` (2–4 entries) for a DISTINCT set in one call. Each image costs a few cents on their OpenRouter key — match the count to what the user asked for, don't pad.",
       parameters: {
         type: "object",
         properties: {
-          prompt: { type: "string", description: "Detailed image description — subject, style, composition, colors, mood." },
-          aspect_ratio: { type: "string", enum: [...IMAGE_ASPECT_RATIOS], description: "Optional. Default 1:1." },
-          remember: { type: "boolean", description: "Save to memory as a neuron (default true). Set false only if the user says it's a throwaway." },
-          attach_to_entry_id: { type: "string", description: "Optional: attach the image to an EXISTING knowledge entry id instead of creating a new neuron." },
+          prompt: { type: "string", description: "Detailed image description — subject, style, composition, colors, mood. Required unless `prompts` is used." },
+          prompts: { type: "array", items: { type: "string" }, description: "Optional. Up to 4 distinct prompts to generate as a set in one call (e.g. logo in red/blue/green). Overrides `prompt` and `count`." },
+          count: { type: "integer", minimum: 1, maximum: 4, description: "Optional. Number of variations of `prompt` to generate (1–4, default 1). Ignored if `prompts` is provided." },
+          aspect_ratio: { type: "string", enum: [...IMAGE_ASPECT_RATIOS], description: "Optional. Default 1:1. Applied to every image in the batch." },
+          remember: { type: "boolean", description: "Save to memory as neurons (default true). Set false only if the user says they're throwaways." },
+          attach_to_entry_id: { type: "string", description: "Optional: attach ALL generated images to an EXISTING knowledge entry id instead of creating new neurons." },
         },
-        required: ["prompt"],
       },
     },
   },
