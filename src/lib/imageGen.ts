@@ -217,9 +217,20 @@ export async function searchImages(query: string | undefined, limit = 10): Promi
 }
 
 export async function deleteImageAttachment(row: { id: string; storage_path: string }): Promise<void> {
-  try { await supabase.storage.from("generated-images").remove([row.storage_path]); } catch { /* row delete still proceeds */ }
-  const { error } = await (supabase.from("image_attachments" as any) as any).delete().eq("id", row.id);
+  // 1. Delete the DB row first (source of truth for the UI) and verify a row was actually removed.
+  const { data: deleted, error } = await (supabase.from("image_attachments" as any) as any)
+    .delete()
+    .eq("id", row.id)
+    .select("id");
   if (error) throw error;
+  if (!deleted || (deleted as any[]).length === 0) {
+    throw new Error("Image could not be deleted (not found or no permission). Please sign out and back in.");
+  }
+  // 2. Best-effort storage cleanup. Failure here doesn't bring back the row.
+  try { await supabase.storage.from("generated-images").remove([row.storage_path]); }
+  catch (e) { console.warn("[deleteImageAttachment] storage remove failed", e); }
+  // 3. Purge any cached signed URL so stale references can't render.
+  try { urlCache.delete(row.storage_path); } catch { /* noop */ }
 }
 
 // ── Signed URL cache ────────────────────────────────────────────────────────
