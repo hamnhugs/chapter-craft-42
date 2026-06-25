@@ -84,7 +84,7 @@ export const PlanBadgeButton: React.FC = () => {
           : "bg-accent/10 text-accent hover:bg-accent/20"
       }`}
     >
-      {billingIssue ? "Payment issue" : plan === "lifetime" ? "Lifetime" : "Pro"}
+      {billingIssue ? "Payment issue" : (plan === "lifetime" || plan === "lifetime_admin") ? "Lifetime" : "Pro"}
     </button>
   );
 };
@@ -169,7 +169,7 @@ const PricingDialog: React.FC = () => {
               <Button
                 className="mt-auto gap-2"
                 onClick={() => startCheckout("monthly")}
-                disabled={busy !== null || plan === "lifetime"}
+                disabled={busy !== null || (plan === "lifetime" || plan === "lifetime_admin")}
               >
                 {busy === "monthly" ? <Loader2 className="w-4 h-4 animate-spin" /> : "Upgrade to Pro"}
               </Button>
@@ -194,12 +194,12 @@ const PricingDialog: React.FC = () => {
               Everything in Pro, forever — including all future updates.
             </p>
             <Button
-              variant={plan === "lifetime" ? "outline" : "secondary"}
+              variant={(plan === "lifetime" || plan === "lifetime_admin") ? "outline" : "secondary"}
               className="mt-auto gap-2"
               onClick={() => startCheckout("lifetime")}
-              disabled={busy !== null || plan === "lifetime"}
+              disabled={busy !== null || (plan === "lifetime" || plan === "lifetime_admin")}
             >
-              {plan === "lifetime" ? (
+              {(plan === "lifetime" || plan === "lifetime_admin") ? (
                 <>
                   <Check className="w-4 h-4" /> Your plan
                 </>
