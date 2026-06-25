@@ -5,6 +5,7 @@ import { reindexEmbeddings } from "@/lib/knowledgeApi";
 // Primary: Nano Banana 2 (Gemini 3.1 Flash Image) — near-Pro quality at half
 // the price. Fallback: the original Nano Banana (Gemini 2.5 Flash Image).
 export const IMAGE_MODELS = [
+  "google/gemini-3-pro-image",
   "google/gemini-3.1-flash-image-preview",
   "google/gemini-2.5-flash-image",
 ];
