@@ -32,6 +32,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations, isSearchRateLimited } from "@/lib/chatTools";
 import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
 import { useDownloadableTtsId, downloadTtsAudio } from "@/lib/ttsAudioCache";
+import { fileToDownscaledDataUrl, isAcceptedImage, uploadChatImage, persistImageMemory, type PendingChatImage } from "@/lib/imageUpload";
 
 
 const VOICE_QUICK_SEARCH_KEY = "voice_quick_search";
