@@ -312,16 +312,17 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "generate_image",
       description:
-        "Generate an AI image with Nano Banana (Google's Gemini image model) and show it to the user inline. By default the image is also saved to the user's memory as a neuron so it can be recalled later. Use when the user asks for an image, picture, illustration, visualization, logo, scene, character art, etc. Costs the user a few cents per image on their OpenRouter key, so don't generate unprompted.",
+        "Generate one or more AI images with Nano Banana (Google's Gemini image model) and show them to the user inline. By default each image is also saved to the user's memory as a neuron. Use when the user asks for an image, picture, illustration, visualization, logo, scene, character art, etc. For multiple images in one turn: pass `count` (2–4) for variations of the SAME prompt, or `prompts: [...]` (2–4 entries) for a DISTINCT set in one call. Each image costs a few cents on their OpenRouter key — match the count to what the user asked for, don't pad.",
       parameters: {
         type: "object",
         properties: {
-          prompt: { type: "string", description: "Detailed image description — subject, style, composition, colors, mood." },
-          aspect_ratio: { type: "string", enum: [...IMAGE_ASPECT_RATIOS], description: "Optional. Default 1:1." },
-          remember: { type: "boolean", description: "Save to memory as a neuron (default true). Set false only if the user says it's a throwaway." },
-          attach_to_entry_id: { type: "string", description: "Optional: attach the image to an EXISTING knowledge entry id instead of creating a new neuron." },
+          prompt: { type: "string", description: "Detailed image description — subject, style, composition, colors, mood. Required unless `prompts` is used." },
+          prompts: { type: "array", items: { type: "string" }, description: "Optional. Up to 4 distinct prompts to generate as a set in one call (e.g. logo in red/blue/green). Overrides `prompt` and `count`." },
+          count: { type: "integer", minimum: 1, maximum: 4, description: "Optional. Number of variations of `prompt` to generate (1–4, default 1). Ignored if `prompts` is provided." },
+          aspect_ratio: { type: "string", enum: [...IMAGE_ASPECT_RATIOS], description: "Optional. Default 1:1. Applied to every image in the batch." },
+          remember: { type: "boolean", description: "Save to memory as neurons (default true). Set false only if the user says they're throwaways." },
+          attach_to_entry_id: { type: "string", description: "Optional: attach ALL generated images to an EXISTING knowledge entry id instead of creating new neurons." },
         },
-        required: ["prompt"],
       },
     },
   },
@@ -827,8 +828,6 @@ export async function executeChatTool(
         return { result: { ok: true }, event: { name, summary: `Deleted chapter`, ok: true } };
       }
       case "generate_image": {
-        const prompt = String(args.prompt || "").trim();
-        if (!prompt) return { result: { error: "prompt required" }, event: { name, summary: "Missing prompt", ok: false } };
         const apiKey = (deps.openRouterApiKey || "").trim();
         if (!apiKey) {
           return {
@@ -842,29 +841,71 @@ export async function executeChatTool(
             event: { name, summary: "Image generation is a Pro feature", ok: false },
           };
         }
-        const gen = await generateImage({ apiKey, prompt, aspectRatio: args.aspect_ratio ? String(args.aspect_ratio) : undefined });
-        const remember = args.remember !== false;
-        let entryId: string | null = String(args.attach_to_entry_id || "").trim() || null;
-        let neuronCreated = false;
-        if (remember && !entryId) {
-          entryId = await saveImageNeuron({ prompt, caption: gen.text, model: gen.modelUsed });
-          neuronCreated = !!entryId;
+        // Normalize into a prompts[] (1–4 items).
+        let prompts: string[] = [];
+        if (Array.isArray(args.prompts) && args.prompts.length > 0) {
+          prompts = args.prompts.map((p: unknown) => String(p || "").trim()).filter(Boolean).slice(0, 4);
+        } else {
+          const base = String(args.prompt || "").trim();
+          if (!base) return { result: { error: "prompt (or non-empty prompts[]) required" }, event: { name, summary: "Missing prompt", ok: false } };
+          const count = Math.min(4, Math.max(1, Number(args.count) || 1));
+          prompts = Array(count).fill(base);
         }
-        const ref = await storeGeneratedImage({
-          prompt, caption: gen.text, model: gen.modelUsed,
-          dataUrl: gen.dataUrl, mime: gen.mime, entryId,
-        });
+        if (prompts.length === 0) return { result: { error: "No valid prompts." }, event: { name, summary: "Missing prompts", ok: false } };
+
+        const aspectRatio = args.aspect_ratio ? String(args.aspect_ratio) : undefined;
+        const remember = args.remember !== false;
+        const sharedEntryId: string | null = String(args.attach_to_entry_id || "").trim() || null;
+
+        const settled = await Promise.allSettled(
+          prompts.map(async (p) => {
+            const gen = await generateImage({ apiKey, prompt: p, aspectRatio });
+            let entryId: string | null = sharedEntryId;
+            let neuronCreated = false;
+            if (remember && !entryId) {
+              entryId = await saveImageNeuron({ prompt: p, caption: gen.text, model: gen.modelUsed });
+              neuronCreated = !!entryId;
+            }
+            const ref = await storeGeneratedImage({
+              prompt: p, caption: gen.text, model: gen.modelUsed,
+              dataUrl: gen.dataUrl, mime: gen.mime, entryId,
+            });
+            return { ref, entryId, neuronCreated, model: gen.modelUsed, prompt: p };
+          }),
+        );
+
+        const successes = settled.flatMap((s) => s.status === "fulfilled" ? [s.value] : []);
+        const failures = settled.flatMap((s, i) => s.status === "rejected" ? [{ prompt: prompts[i], error: String((s as PromiseRejectedResult).reason?.message || (s as PromiseRejectedResult).reason || "unknown") }] : []);
+
+        if (successes.length === 0) {
+          return {
+            result: { error: "All image generations failed.", failures },
+            event: { name, summary: `Image generation failed (${failures.length})`, ok: false },
+          };
+        }
+
+        const refs = successes.map((s) => s.ref);
+        const firstPrompt = prompts[0];
+        const summary = successes.length === 1
+          ? `Generated image: "${firstPrompt.slice(0, 60)}"${successes[0].neuronCreated ? " · saved to memory" : successes[0].entryId ? " · attached to memory" : ""}`
+          : `Generated ${successes.length} images${failures.length ? ` (${failures.length} failed)` : ""}`;
+
         return {
           result: {
             ok: true,
-            image_id: ref.id,
-            entry_id: entryId,
-            saved_to_memory: !!entryId,
-            model: gen.modelUsed,
-            note: "The image is already displayed to the user inline — do NOT output a markdown image link. Briefly describe what you created.",
-            __images: [ref],
+            count: successes.length,
+            images: successes.map((s) => ({
+              image_id: s.ref.id,
+              entry_id: s.entryId,
+              saved_to_memory: !!s.entryId,
+              prompt: s.prompt,
+              model: s.model,
+            })),
+            failures: failures.length ? failures : undefined,
+            note: "All images above are ALREADY displayed to the user inline — do NOT output markdown image links. Briefly describe what you created.",
+            __images: refs,
           },
-          event: { name, summary: `Generated image: "${prompt.slice(0, 60)}"${neuronCreated ? " · saved to memory" : entryId ? " · attached to memory" : ""}`, ok: true },
+          event: { name, summary, ok: true },
         };
       }
       case "edit_image": {

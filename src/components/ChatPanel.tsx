@@ -982,7 +982,15 @@ const ChatPanel: React.FC = () => {
               {msg.role === "assistant" ? (
                 <>
                   {msg.images && msg.images.length > 0 && (
-                    <div className="flex flex-wrap gap-3 mb-2">
+                    <div
+                      className={`grid gap-2 mb-2 ${
+                        msg.images.length === 1
+                          ? "grid-cols-1"
+                          : msg.images.length === 2
+                          ? "grid-cols-2"
+                          : "grid-cols-2 sm:grid-cols-2 md:grid-cols-3"
+                      }`}
+                    >
                       {msg.images.map((img) => (
                         <GeneratedImage
                           key={img.id}

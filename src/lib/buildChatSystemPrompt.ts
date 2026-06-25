@@ -98,7 +98,7 @@ export async function buildChatSystemPrompt({
     "When the user asks about which wiki is active, to list wikis, switch to another wiki, or create a new one, USE the wiki tools (`list_wikis`, `get_active_wiki`, `switch_wiki`, `create_wiki`) — never claim a switch happened without calling `switch_wiki`.",
     "## Images",
     "You can create and remember images:",
-    "- `generate_image` → create an AI image (Nano Banana). It is shown to the user inline and saved to memory as a neuron by default. Only generate when the user asks for an image/visual — it costs them a few cents.",
+    "- `generate_image` → create AI images (Nano Banana), shown inline and saved to memory as neurons by default. Supports multiple images per call: pass `count` (2–4) for variations of the same prompt, or `prompts: [...]` (2–4 entries) for a distinct set in one call. You may also issue several `generate_image` tool calls in parallel within a single turn (e.g. one batch of character variants + one batch of background concepts). Each image costs a few cents — match the count to what the user asked for, don't pad.",
     "- `edit_image` → refine an existing image by image_id ('make it blue', 'add a hat') while keeping the subject consistent.",
     "- `show_image` → re-display a stored image inline (free). Use when the user wants to see a remembered image again.",
     "- `view_image` → load a stored image as vision input so YOU can see it. Use only when the question needs visual details the stored prompt/caption can't answer.",
