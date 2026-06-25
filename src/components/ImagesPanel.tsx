@@ -54,6 +54,10 @@ const ImagesPanel: React.FC<ImagesPanelProps> = ({ open, onOpenChange }) => {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Single-image delete confirmation
+  const [singleTarget, setSingleTarget] = useState<ImageAttachmentRow | null>(null);
+  // IDs we just deleted optimistically — used to ignore racing realtime reloads.
+  const recentlyDeletedRef = React.useRef<Set<string>>(new Set());
 
   // Debounce search
   useEffect(() => {
@@ -65,7 +69,9 @@ const ImagesPanel: React.FC<ImagesPanelProps> = ({ open, onOpenChange }) => {
     setLoading(true);
     try {
       const list = await searchImages(debounced || undefined, 100);
-      setRows(list);
+      // Filter out anything we just deleted in case a stale fetch races.
+      const filtered = list.filter((r) => !recentlyDeletedRef.current.has(r.id));
+      setRows(filtered);
     } catch (e: any) {
       toast.error(e?.message || "Failed to load images");
     } finally {
@@ -78,25 +84,32 @@ const ImagesPanel: React.FC<ImagesPanelProps> = ({ open, onOpenChange }) => {
     void load();
   }, [open, load]);
 
-  // Realtime: keep panel in sync with new/deleted images
+  // Realtime: keep panel in sync with new images. Skip our own optimistic deletes.
   useEffect(() => {
     if (!open) return;
-    let active = true;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let cancelled = false;
     (async () => {
       const { data: u } = await supabase.auth.getUser();
       const uid = u.user?.id;
-      if (!uid || !active) return;
-      const channel = supabase
+      if (!uid || cancelled) return;
+      channel = supabase
         .channel(`image_attachments:${uid}`)
         .on(
           "postgres_changes" as any,
           { event: "*", schema: "public", table: "image_attachments", filter: `user_id=eq.${uid}` },
-          () => { void load(); },
+          (payload: any) => {
+            const changedId = payload?.new?.id ?? payload?.old?.id;
+            if (changedId && recentlyDeletedRef.current.has(changedId)) return;
+            void load();
+          },
         )
         .subscribe();
-      return () => { supabase.removeChannel(channel); };
     })();
-    return () => { active = false; };
+    return () => {
+      cancelled = true;
+      if (channel) { try { supabase.removeChannel(channel); } catch { /* noop */ } }
+    };
   }, [open, load]);
 
   // Reset selection on close
@@ -105,6 +118,8 @@ const ImagesPanel: React.FC<ImagesPanelProps> = ({ open, onOpenChange }) => {
       setSelectMode(false);
       setSelected(new Set());
       setQuery("");
+      setSingleTarget(null);
+      recentlyDeletedRef.current.clear();
     }
   }, [open]);
 
@@ -129,19 +144,24 @@ const ImagesPanel: React.FC<ImagesPanelProps> = ({ open, onOpenChange }) => {
     const targets = rows.filter((r) => ids.includes(r.id));
     if (targets.length === 0) return;
     setDeleting(true);
-    // Optimistic removal
     const snapshot = rows;
+    // Track for realtime dedupe and optimistically remove.
+    targets.forEach((t) => recentlyDeletedRef.current.add(t.id));
     setRows((prev) => prev.filter((r) => !selected.has(r.id)));
     const results = await Promise.allSettled(
       targets.map((r) => deleteImageAttachment({ id: r.id, storage_path: r.storage_path })),
     );
-    const failed = results.filter((r) => r.status === "rejected").length;
+    const failures = results
+      .map((r, i) => ({ r, t: targets[i] }))
+      .filter((x) => x.r.status === "rejected");
     setDeleting(false);
     setConfirmOpen(false);
-    if (failed > 0) {
-      toast.error(`${failed} image${failed > 1 ? "s" : ""} could not be deleted`);
-      setRows(snapshot); // restore on partial failure for clarity
-      void load();
+    if (failures.length > 0) {
+      // Roll back failed ones from the dedupe set and restore them in UI
+      failures.forEach((f) => recentlyDeletedRef.current.delete(f.t.id));
+      setRows(snapshot.filter((r) => !targets.some((t) => t.id === r.id && !failures.some((f) => f.t.id === r.id))));
+      const firstMsg = (failures[0].r as PromiseRejectedResult).reason?.message || "Delete failed";
+      toast.error(`${failures.length} of ${targets.length} could not be deleted: ${firstMsg}`);
     } else {
       toast.success(`Deleted ${targets.length} image${targets.length > 1 ? "s" : ""}`);
       setSelected(new Set());
@@ -150,14 +170,17 @@ const ImagesPanel: React.FC<ImagesPanelProps> = ({ open, onOpenChange }) => {
   };
 
   const handleDeleteOne = async (row: ImageAttachmentRow) => {
-    const snapshot = rows;
+    recentlyDeletedRef.current.add(row.id);
     setRows((prev) => prev.filter((r) => r.id !== row.id));
     try {
       await deleteImageAttachment({ id: row.id, storage_path: row.storage_path });
       toast.success("Image deleted");
     } catch (e: any) {
-      setRows(snapshot);
+      recentlyDeletedRef.current.delete(row.id);
+      setRows((prev) => (prev.some((r) => r.id === row.id) ? prev : [row, ...prev]));
       toast.error(e?.message || "Delete failed");
+    } finally {
+      setSingleTarget(null);
     }
   };
 
