@@ -94,7 +94,7 @@ const PricingDialog: React.FC = () => {
   const { plan, isPaid, billingIssue, cancelAtPeriodEnd, subscriptionEnd } = usePlan();
   const [busy, setBusy] = useState<"monthly" | "lifetime" | "portal" | null>(null);
 
-  const startCheckout = async (target: Exclude<PlanTier, "free">) => {
+  const startCheckout = async (target: "monthly" | "lifetime") => {
     setBusy(target);
     try {
       const { data, error } = await supabase.functions.invoke("create-checkout", {
