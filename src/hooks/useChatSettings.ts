@@ -118,6 +118,7 @@ function rowToSettings(data: any): ChatSettings {
     inworldEnabled: !!data.inworld_enabled,
     inworldVoiceId: data.inworld_voice_id || "",
     accessAllNeurons: !!data.access_all_neurons,
+    visionModel: data.vision_model || "",
   };
 }
 
