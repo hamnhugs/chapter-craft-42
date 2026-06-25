@@ -169,6 +169,7 @@ function persistSettings(userId: string, next: ChatSettings) {
       inworld_enabled: next.inworldEnabled,
       inworld_voice_id: next.inworldVoiceId || "",
       access_all_neurons: next.accessAllNeurons,
+      vision_model: next.visionModel || null,
     };
     let { error } = await supabase
       .from("user_settings")
