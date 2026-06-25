@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
-import { fetchAdminUsers, AdminUserRow } from "@/lib/adminApi";
+import { fetchAdminUsers, adminGrantLifetime, adminRevokeLifetime, AdminUserRow } from "@/lib/adminApi";
 import {
   Announcement,
   AnnouncementDraft,
