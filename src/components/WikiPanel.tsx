@@ -299,7 +299,7 @@ const WikiPanel: React.FC = () => {
                   className={`px-3 py-1 transition-colors ${scope === "wiki" ? "bg-primary-container text-on-primary-container" : "text-on-surface-variant hover:bg-surface-container-high"} disabled:opacity-40`}
                   title="Show only data from the currently loaded wiki"
                 >
-                  This wiki
+                  This Neuron
                 </button>
                 <button
                   type="button"
@@ -307,7 +307,7 @@ const WikiPanel: React.FC = () => {
                   className={`px-3 py-1 transition-colors ${scope === "all" ? "bg-primary-container text-on-primary-container" : "text-on-surface-variant hover:bg-surface-container-high"}`}
                   title="Show everything across all your wikis"
                 >
-                  All wikis
+                  All Neurons
                 </button>
               </div>
             </div>
