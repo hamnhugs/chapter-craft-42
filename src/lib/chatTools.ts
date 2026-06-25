@@ -768,20 +768,25 @@ export async function executeChatTool(
         if (!wiki) return { result: { error: "Wiki not found" }, event: { name, summary: "Wiki not found", ok: false } };
         // Free plan: only the oldest neuron is unlocked — the AI must not be a
         // side door into locked ones (mirrors the BRAIN tab and ⌘K switcher).
-        const { data: sub } = await supabase.from("subscribers" as any).select("subscribed").maybeSingle();
-        if (!(sub as any)?.subscribed) {
-          const { data: oldest } = await supabase
-            .from("wikis" as any)
-            .select("id")
-            .order("created_at", { ascending: true })
-            .order("id", { ascending: true })
-            .limit(1)
-            .maybeSingle();
-          if (oldest && (oldest as any).id !== wid) {
-            return {
-              result: { error: `"${(wiki as any).name}" is locked on the free plan. Tell the user that upgrading to Pro or Lifetime unlocks all of their neurons.` },
-              event: { name, summary: `"${(wiki as any).name}" is locked on the free plan`, ok: false },
-            };
+        // Admins bypass all plan gates (same rule as accessible_wiki_ids()).
+        const { data: isAdminData } = await supabase.rpc("is_admin" as any);
+        if (!isAdminData) {
+          const { data: sub } = await supabase.from("subscribers" as any).select("subscribed, plan").maybeSingle();
+          const paid = !!(sub as any)?.subscribed && (sub as any)?.plan !== "free";
+          if (!paid) {
+            const { data: oldest } = await supabase
+              .from("wikis" as any)
+              .select("id")
+              .order("created_at", { ascending: true })
+              .order("id", { ascending: true })
+              .limit(1)
+              .maybeSingle();
+            if (oldest && (oldest as any).id !== wid) {
+              return {
+                result: { error: `"${(wiki as any).name}" is locked on the free plan. Tell the user that upgrading to Pro or Lifetime unlocks all of their neurons.` },
+                event: { name, summary: `"${(wiki as any).name}" is locked on the free plan`, ok: false },
+              };
+            }
           }
         }
         await supabase.from("wikis" as any).update({ last_loaded_at: new Date().toISOString() } as any).eq("id", wid);
