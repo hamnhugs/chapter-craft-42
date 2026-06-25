@@ -135,7 +135,7 @@ export async function acceptProposal(p: WikiProposal): Promise<void> {
     })
     .select("id")
     .single();
-  if (wikiErr || !newWiki) throw wikiErr || new Error("Wiki create failed");
+  if (wikiErr || !newWiki) throw wikiErr || new Error("Neuron create failed");
 
   // Move member entries into the new wiki
   if (p.member_entry_ids.length > 0) {

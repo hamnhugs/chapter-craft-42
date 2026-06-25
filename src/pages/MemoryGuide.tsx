@@ -38,7 +38,7 @@ const MemoryGuide: React.FC = () => {
             className="inline-flex items-center gap-2 text-sm font-body font-medium text-primary hover:text-accent transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
-            Back to Wikis
+            Back to Neurons
           </Link>
           <span className="text-xs uppercase tracking-widest font-bold text-on-surface-variant">
             Field Guide
@@ -56,7 +56,7 @@ const MemoryGuide: React.FC = () => {
             The Memory System, Explained
           </h1>
           <p className="text-on-surface-variant text-lg font-body leading-relaxed">
-            Your wikis aren't just folders of notes — they're a living memory that learns,
+            Your neurons aren't just folders of notes — they're a living memory that learns,
             connects, and tidies itself up over time. Here's how it works, in plain English.
           </p>
         </div>
@@ -80,8 +80,8 @@ const MemoryGuide: React.FC = () => {
           <Section icon="desk" title="Working Memory" analogy="Your desk">
             <p>
               This is what's <strong>in front of you right now</strong> — the chat you're having,
-              the page you're reading, the wiki you just opened. It's temporary. When you close
-              the tab or switch wikis, the desk gets cleared.
+              the page you're reading, the neuron you just opened. It's temporary. When you close
+              the tab or switch neurons, the desk gets cleared.
             </p>
             <p>You don't manage this layer. It just keeps the current moment ready.</p>
           </Section>
@@ -140,9 +140,9 @@ const MemoryGuide: React.FC = () => {
           Quick translations for the terms that show up in the app.
         </p>
         <div className="bg-surface-container-low rounded-2xl p-6 md:p-8 border border-outline-variant/10 mb-16">
-          <Term word="Wiki">
-            A themed bucket for your cards. You might have a "Work" wiki, a "Cooking" wiki, and a
-            "Family" wiki — each kept separate so things don't get mixed up.
+          <Term word="Neuron">
+            A themed bucket for your cards. You might have a "Work" neuron, a "Cooking" neuron, and a
+            "Family" neuron — each kept separate so things don't get mixed up.
           </Term>
           <Term word="Entry (or card)">
             A single piece of knowledge. One fact, one concept, one person. The smallest unit the
@@ -163,7 +163,7 @@ const MemoryGuide: React.FC = () => {
           <Term word="Recording vs. Retrieval Mode">
             <strong>Recording</strong> means the AI is allowed to add new cards as you chat.{" "}
             <strong>Retrieval</strong> means it can only read — useful when you want answers
-            without growing the wiki.
+            without growing the neuron.
           </Term>
         </div>
 
@@ -171,8 +171,8 @@ const MemoryGuide: React.FC = () => {
         <h2 className="font-headline font-bold text-3xl text-primary mb-6">How to use it well</h2>
         <ol className="space-y-4 list-decimal list-outside ml-6 text-foreground/90 font-body leading-relaxed mb-16">
           <li>
-            <strong>Pick a wiki before you chat.</strong> Whatever wiki is active is where new
-            cards land. If you're talking about cooking, load your Cooking wiki first.
+            <strong>Pick a neuron before you chat.</strong> Whatever neuron is active is where new
+            cards land. If you're talking about cooking, load your Cooking neuron first.
           </li>
           <li>
             <strong>Just talk normally.</strong> The AI extracts cards automatically. You don't
@@ -198,7 +198,7 @@ const MemoryGuide: React.FC = () => {
             className="inline-flex items-center gap-2 bg-primary-container text-on-primary-container px-6 py-3 rounded-xl font-bold active:scale-95 transition-transform shadow-lg"
           >
             <ArrowLeft className="w-4 h-4" />
-            Back to Wikis
+            Back to Neurons
           </Link>
         </div>
       </main>

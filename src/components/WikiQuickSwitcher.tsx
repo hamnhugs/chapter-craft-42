@@ -66,7 +66,7 @@ const WikiQuickSwitcher: React.FC = () => {
       try {
         await setActiveWiki(wikiId);
         const wiki = wikis.find((w) => w.id === wikiId);
-        toast.success(`Loaded "${wiki?.name || "wiki"}"`);
+        toast.success(`Loaded "${wiki?.name || "neuron"}"`);
         setOpen(false);
       } catch (err: any) {
         toast.error(err.message || "Switch failed");
@@ -87,10 +87,10 @@ const WikiQuickSwitcher: React.FC = () => {
 
   return (
     <CommandDialog open={open} onOpenChange={setOpen}>
-      <CommandInput placeholder="Switch wiki — type to filter…" />
+      <CommandInput placeholder="Switch neuron — type to filter…" />
       <CommandList>
-        <CommandEmpty>No wikis match.</CommandEmpty>
-        <CommandGroup heading="Wikis">
+        <CommandEmpty>No neurons match.</CommandEmpty>
+        <CommandGroup heading="Neurons">
           {sorted.map((wiki) => (
             <CommandItem
               key={wiki.id}
@@ -136,7 +136,7 @@ const WikiQuickSwitcher: React.FC = () => {
               setOpen(false);
             }}
           >
-            Open Wiki Library →
+            Open Neuron Library →
           </CommandItem>
           <CommandItem
             value="open current wiki entries"
@@ -145,7 +145,7 @@ const WikiQuickSwitcher: React.FC = () => {
               setOpen(false);
             }}
           >
-            Open active wiki entries →
+            Open active neuron entries →
           </CommandItem>
         </CommandGroup>
       </CommandList>

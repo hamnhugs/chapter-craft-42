@@ -216,7 +216,7 @@ export function useChatSettings() {
       selectedModel: embed ? cur.selectedModel : id,
     });
     if (embed) {
-      toast.success(`Embedding model "${id}" added — select it in Wiki Settings.`);
+      toast.success(`Embedding model "${id}" added — select it in Neuron Settings.`);
     } else {
       toast.success(`Model "${id}" added`);
     }

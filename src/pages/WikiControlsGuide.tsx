@@ -38,7 +38,7 @@ const WikiControlsGuide: React.FC = () => {
             className="inline-flex items-center gap-2 text-sm font-body font-medium text-primary hover:text-accent transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
-            Back to Wiki
+            Back to Neuron
           </Link>
           <span className="text-xs uppercase tracking-widest font-bold text-on-surface-variant">
             Field Guide
@@ -65,7 +65,7 @@ const WikiControlsGuide: React.FC = () => {
             The 30-second version
           </h2>
           <p className="text-on-primary-container/90 font-body leading-relaxed">
-            Most days you just <strong>chat</strong> and the wiki grows on its own. Pop in here to{" "}
+            Most days you just <strong>chat</strong> and the neuron grows on its own. Pop in here to{" "}
             <strong>resolve conflicts</strong> when a number appears, and once a week run{" "}
             <strong>Sleep Cycle</strong> and <strong>Health Check</strong> to tidy things up. That's it.
           </p>
@@ -79,8 +79,8 @@ const WikiControlsGuide: React.FC = () => {
             </p>
             <p>Pick "This Neuron" for normal work. Pick "All Neurons" when you can't remember which wiki something is in.</p>
           </Control>
-          <Control icon="swap_horiz" name="Wiki switcher dropdown" analogy="The bookshelf next to your desk.">
-            <p>Jump straight to another wiki without going back to the Wikis page. Handy when you bounce between projects.</p>
+          <Control icon="swap_horiz" name="Neuron switcher dropdown" analogy="The bookshelf next to your desk.">
+            <p>Jump straight to another neuron without going back to the Neurons page. Handy when you bounce between projects.</p>
           </Control>
         </Group>
 
@@ -97,14 +97,14 @@ const WikiControlsGuide: React.FC = () => {
               <strong>Recording mode</strong> — the AI writes new cards as you chat. The default.
             </p>
             <p>
-              <strong>Retrieval mode</strong> — read-only. The AI can answer questions using the wiki but
+              <strong>Retrieval mode</strong> — read-only. The AI can answer questions using the neuron but
               won't add anything new. Use this when you want pure Q&A without growing the library.
             </p>
           </Control>
         </Group>
 
-        <Group title="Tidy-up tools" subtitle="Run these once in a while. They keep the wiki sharp.">
-          <Control icon="bedtime" name="Sleep Cycle" analogy="A good night's sleep for your wiki.">
+        <Group title="Tidy-up tools" subtitle="Run these once in a while. They keep the neuron sharp.">
+          <Control icon="bedtime" name="Sleep Cycle" analogy="A good night's sleep for your neuron.">
             <p>
               Connects lonely cards to their neighbors, merges duplicates, and quietly cleans the web of
               links. Just like real sleep helps your brain consolidate.
@@ -113,7 +113,7 @@ const WikiControlsGuide: React.FC = () => {
           </Control>
           <Control icon="health_and_safety" name="Health Check" analogy="A quick checkup.">
             <p>
-              Scans the wiki for problems — broken links, weird empty cards, anything that looks off — and
+              Scans the neuron for problems — broken links, weird empty cards, anything that looks off — and
               shows you what it found. Run it when something feels wrong.
             </p>
           </Control>
@@ -143,7 +143,7 @@ const WikiControlsGuide: React.FC = () => {
         <Group title="Settings & filters" subtitle="Less common, but here when you need them.">
           <Control icon="settings" name="Settings (gear icon)" analogy="The control panel.">
             <p>
-              Pick which AI model this wiki uses, change advanced options, and tweak how the wiki behaves.
+              Pick which AI model this neuron uses, change advanced options, and tweak how the neuron behaves.
             </p>
           </Control>
           <Control icon="filter_list" name="Type filters" analogy="Sort by what kind of card.">
@@ -161,7 +161,7 @@ const WikiControlsGuide: React.FC = () => {
             className="inline-flex items-center gap-2 bg-primary-container text-on-primary-container px-6 py-3 rounded-xl font-bold active:scale-95 transition-transform shadow-lg"
           >
             <ArrowLeft className="w-4 h-4" />
-            Back to Wiki
+            Back to Neuron
           </Link>
         </div>
       </main>

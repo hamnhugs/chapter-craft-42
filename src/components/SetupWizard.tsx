@@ -342,7 +342,7 @@ const SetupWizard: React.FC = () => {
               {[
                 { icon: "upload_file", text: "Drop a PDF or EPUB into the Vault." },
                 { icon: "forum", text: "Open Counsel and ask anything about it." },
-                { icon: "history_edu", text: 'Press "Save to Wiki" after a good chat — and watch your first neuron grow.' },
+                { icon: "history_edu", text: 'Press "Save to Neuron" after a good chat — and watch your first neuron grow.' },
               ].map((s, i) => (
                 <div key={s.icon} className="flex items-center gap-3 p-3 rounded-xl bg-surface-container-high">
                   <span className="font-headline font-bold text-primary">{i + 1}</span>
