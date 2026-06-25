@@ -434,7 +434,7 @@ const WikiLibrary: React.FC = () => {
               ) : (
                 <Plus className="w-4 h-4" />
               )}
-              <span>New Wiki</span>
+              <span>NEW NEURON</span>
             </button>
           </div>
         </section>
