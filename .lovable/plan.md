@@ -1,61 +1,39 @@
-# Admin Entitlements — Server-Authoritative Fix
+## Goal : if You can instead create an option within the brain tab that would allow me to display all images and delete them from there, i think that would be best, and also allow me to delete multiple images at one time
 
-## Why your admin still sees "Upgrade"
+&nbsp;
 
-Entitlement today is decided by **two independent client calls** that race:
+Add an **Images** button to the Counsel tab's toolbar (next to Files / Notes). Clicking it slides in a right‑side panel that shows every AI‑generated image from the current user's chats, with select + delete.
 
-1. `useIsAdmin()` — calls `is_admin()` RPC
-2. `usePlan()` — reads `subscribers` row + calls `check-subscription`
+## UX (modeled on best practices: Gmail/Notion right‑rail, ChatGPT Library)
 
-The UI shows "Upgrade" until **both** resolve and `isAdmin` flips true. On a slow network or if `is_admin` momentarily fails, `isPaid` flickers to `false`, ad gates close, the badge shows "Upgrade", and Counsel tools that captured a stale `isPaid` reject features. That matches the "glitches and removes my access on refresh" symptom.
+- Trigger: small toolbar button labeled `Images (N)` with an `image` icon, toggle state mirrors Files/Notes.
+- Slide‑in `Sheet` from the right, width ~420px desktop / full‑width mobile, focus‑trapped, ESC to close, persistent close button.
+- Header: title "Generated images", search input (filters by prompt/caption), and a "Select" toggle.
+- Body: responsive 2‑col masonry grid of thumbnails using `GeneratedImage` (signed‑URL cached). Each tile shows truncated prompt, model badge, relative time, and hover/long‑press actions: open full‑size, copy prompt, delete.
+- Multi‑select mode: checkboxes appear on tiles; sticky footer shows "Delete N" with a confirmation `AlertDialog`. Bulk delete runs in parallel with per‑item error toleration.
+- Empty state: friendly illustration + "No images yet — ask Counsel to generate one."
+- Loading: skeleton tiles. Error: inline retry.
+- Deletes are optimistic with toast undo (5s window) — actual storage + DB removal fires after the undo timer.
 
-The data layer is already correct — `has_role()`, `accessible_wiki_ids()`, and `enforce_neuron_limit()` all bypass admins. The problem is only in how the client and edge functions assemble the answer.
+## Technical plan
 
-## Fix (one source of truth, admin-first)
+1. **New component** `src/components/ImagesPanel.tsx`
+  - Props: `open`, `onOpenChange`, `onCountChange?`.
+  - Uses `Sheet` (`side="right"`) from `@/components/ui/sheet` for the slide‑in.
+  - Loads rows via existing `searchImages(query, 100)` from `src/lib/imageGen.ts` (already lists `image_attachments` newest‑first, with optional ilike on prompt/caption).
+  - Renders thumbnails via the existing `<GeneratedImage storagePath caption />` so signed‑URL caching is reused.
+  - Realtime: subscribe to `image_attachments` inserts/deletes for the current user so the panel stays live when Counsel generates new images.
+  - Delete path: existing `deleteImageAttachment({ id, storage_path })` — already removes the storage object then the DB row. Bulk = `Promise.allSettled`.
+  - Undo: hold a pending‑delete buffer; commit on toast dismiss, restore on click.
+2. **Toolbar wiring in `src/components/ChatPanel.tsx**`
+  - Add `imagesPanelOpen` state and `imagesCount` (kept fresh by panel callback).
+  - Insert a new toolbar button right after the Notes button (~line 1335), matching the same `text-[10px] font-bold uppercase tracking-widest` styling and `aria-pressed` pattern.
+  - Render `<ImagesPanel open={imagesPanelOpen} onOpenChange={setImagesPanelOpen} onCountChange={setImagesCount} />` alongside the existing right‑panels.
+3. **No schema changes, no edge‑function changes, no new dependencies.** Everything is built on existing tables (`image_attachments`), existing helpers (`searchImages`, `deleteImageAttachment`, `getSignedImageUrl`), and existing shadcn primitives (`Sheet`, `Input`, `Checkbox`, `AlertDialog`, `Button`, toaster).
 
-**1. New RPC `public.my_entitlements()`** — single SECURITY DEFINER call that returns everything the UI and tools need:
+## Accessibility & polish
 
-```
-{ is_admin, plan, subscribed, is_paid, billing_issue,
-  subscription_end, cancel_at_period_end, locked_wiki_ids[] }
-```
-
-Admin short-circuit inside the RPC: if `has_role(auth.uid(),'admin')`, return `plan='lifetime_admin'`, `is_paid=true`, `locked_wiki_ids=[]` regardless of the `subscribers` row. No race possible — one round trip, server-decided.
-
-**2. Auto-provision admins in `subscribers`** — migration upserts `plan='lifetime_admin'` for every existing admin and a trigger does the same for new admins. So even legacy code paths that read `subscribers` directly see the right answer.
-
-**3. Harden `check-subscription`** — if the caller is an admin, skip Stripe entirely and return `lifetime_admin`. Never downgrade an admin from a transient Stripe error.
-
-**4. Replace `useIsAdmin` + `usePlan` with `useEntitlements`** — one hook, one RPC, no races. `usePlan` and `useIsAdmin` become thin wrappers over it so no existing components break.
-
-**5. Edge-function audit** — every server gate (`auto-structure`, `auto-tag`, future `counsel-chat`) uses the same helper: `requireEntitlement(req, 'pro')` which checks admin first, then subscriber row. Removes copy-pasted gate logic and the "I forgot to check admin here" class of bug.
-
-**6. UI gates** — `PlanBadgeButton`, `ChatPanel` (Deep Research, all-neurons), `WikiLibrary` / `LoadNeuronDialog` / `WikiQuickSwitcher` (locked cards), `Library` (auto-chapterize), `chatTools` (`generate_image`, `edit_image`, `switch_wiki`) all read from `useEntitlements`. Lock UI never renders until `loaded=true` — no flicker, no "Upgrade" flash for admins.
-
-## Files
-
-**Migration**
-- `supabase/migrations/<ts>_admin_entitlements.sql`
-  - `CREATE FUNCTION public.my_entitlements()` + `GRANT EXECUTE TO authenticated`
-  - Backfill: `UPDATE subscribers SET plan='lifetime_admin', subscribed=true, billing_issue=false WHERE user_id IN (SELECT user_id FROM user_roles WHERE role='admin')` plus `INSERT … ON CONFLICT DO UPDATE` for admins without a row
-  - Trigger `on_admin_role_grant` → upsert `lifetime_admin` subscriber row
-
-**Edge functions**
-- `supabase/functions/check-subscription/index.ts` — admin short-circuit at the top
-- `supabase/functions/_shared/entitlement.ts` — new `requireEntitlement()` helper
-- `supabase/functions/auto-structure/index.ts`, `auto-tag/index.ts` — switch to helper
-
-**Frontend**
-- `src/hooks/useEntitlements.ts` — new single-source hook
-- `src/hooks/usePlan.ts`, `src/hooks/useIsAdmin.ts` — re-export from `useEntitlements`
-- `src/lib/neuronAccess.ts` — `computeLockedWikiIds` now also accepts `isAdmin` and returns empty set
-- Lock-rendering components defer until `loaded`
-
-## Verification
-
-- Sign in as `4325skyviewdrive@gmail.com` → badge immediately shows **Lifetime**, no flicker on hard refresh
-- Counsel: Deep Research and "all neurons" toggles work without upsell
-- BRAIN: no neuron is locked; can create a 2nd, 3rd neuron
-- Library: Auto-chapterize runs without 402
-- Chat AI: `switch_wiki` to any neuron succeeds; `generate_image` works
-- Non-admin free account still hits every gate exactly as before (regression check)
+- Full keyboard navigation (arrow keys move focus across the grid, Space toggles select in select‑mode, Enter opens full‑size).
+- `aria-label`s on every tile action; live region announces "N images selected".
+- Respects `prefers-reduced-motion` for the slide animation.
+- Uses semantic tokens only (no hardcoded colors), matching the warm cream/amber editorial theme.
