@@ -43,6 +43,8 @@ interface SendOpts {
   modelOverride?: string;
   /** Called on every streamed delta with the cumulative assistant text. */
   onDelta?: (fullText: string) => void;
+  /** Image attachments to send with this turn (multimodal user content). */
+  images?: Array<{ dataUrl: string; storagePath?: string; memoryId?: string; mime?: string }>;
 }
 
 interface ChatContextValue {
@@ -100,7 +102,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { user } = useAuth();
   const { books, activeBookId, activeWiki, activeWikiId, wikis, addChapter, updateChapter, removeChapter, setActiveBookSilent } = useApp();
 
-  const { apiKey, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons } = useChatSettings();
+  const { apiKey, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, visionModel } = useChatSettings();
   const { isPaid, loaded: planLoaded } = usePlan();
   const { getActiveBodyForScope, migrate } = usePromptPresets();
 
@@ -343,9 +345,26 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       setIsLoading(true);
 
+      const hasUploads = !!opts?.images && opts.images.length > 0;
       const baseHistory = [...messages, userMsg]
         .filter((m) => !m.displayOnly)
-        .map((m) => ({ role: m.role, content: m.content }));
+        .map((m, i, arr) => {
+          // Multimodal injection: turn the latest user message into a
+          // [text, image_url[]] content array when this send has uploads.
+          if (hasUploads && i === arr.length - 1 && m.role === "user") {
+            return {
+              role: "user",
+              content: [
+                { type: "text", text: m.content || "(see attached image)" },
+                ...opts!.images!.map((img) => ({
+                  type: "image_url",
+                  image_url: { url: img.dataUrl },
+                })),
+              ],
+            } as any;
+          }
+          return { role: m.role, content: m.content };
+        });
 
       const isVoice = !!opts?.voiceMode;
       // Deep Research is a paid feature — enforced here so every send path
@@ -421,7 +440,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
       };
 
-      const model = opts?.modelOverride || (deepResearch ? deepResearchModel : selectedModel);
+      const model = opts?.modelOverride
+        || (hasUploads && visionModel ? visionModel : (deepResearch ? deepResearchModel : selectedModel));
       if (isEmbeddingModel(model)) {
         const msg = `"${model}" is an embedding model — pick a chat model in Settings (it's only valid for Wiki reindex).`;
         toast.error(msg);
@@ -703,7 +723,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
       }
     },
-    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, wikis, activeWiki, activeWikiId, selectedModel, deepResearchModel, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
+    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, wikis, activeWiki, activeWikiId, selectedModel, deepResearchModel, visionModel, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
   );
 
 

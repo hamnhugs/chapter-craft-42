@@ -26,6 +26,8 @@ interface ChatSettings {
   inworldVoiceId: string;
   /** When true (paid feature), chat retrieval draws on every neuron instead of only the active one. */
   accessAllNeurons: boolean;
+  /** Optional override model used for chat turns that include image attachments. Falls back to selectedModel if empty. */
+  visionModel: string;
 }
 
 const defaults: ChatSettings = {
@@ -44,6 +46,7 @@ const defaults: ChatSettings = {
   inworldEnabled: false,
   inworldVoiceId: "",
   accessAllNeurons: false,
+  visionModel: "",
 };
 
 // ---------------------------------------------------------------------------
@@ -115,6 +118,7 @@ function rowToSettings(data: any): ChatSettings {
     inworldEnabled: !!data.inworld_enabled,
     inworldVoiceId: data.inworld_voice_id || "",
     accessAllNeurons: !!data.access_all_neurons,
+    visionModel: data.vision_model || "",
   };
 }
 
@@ -165,6 +169,7 @@ function persistSettings(userId: string, next: ChatSettings) {
       inworld_enabled: next.inworldEnabled,
       inworld_voice_id: next.inworldVoiceId || "",
       access_all_neurons: next.accessAllNeurons,
+      vision_model: next.visionModel || null,
     };
     let { error } = await supabase
       .from("user_settings")
@@ -247,6 +252,7 @@ export function useChatSettings() {
     setInworldEnabled: (v: boolean) => update({ inworldEnabled: v }),
     setInworldVoiceId: (v: string) => update({ inworldVoiceId: v }),
     setAccessAllNeurons: (v: boolean) => update({ accessAllNeurons: v }),
+    setVisionModel: (m: string) => update({ visionModel: m }),
     addModel,
     removeModel,
     setNewModelInput: undefined, // handled in component

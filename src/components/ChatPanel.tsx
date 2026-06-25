@@ -32,6 +32,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations, isSearchRateLimited } from "@/lib/chatTools";
 import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
 import { useDownloadableTtsId, downloadTtsAudio } from "@/lib/ttsAudioCache";
+import { fileToDownscaledDataUrl, isAcceptedImage, uploadChatImage, persistImageMemory, type PendingChatImage } from "@/lib/imageUpload";
 
 
 const VOICE_QUICK_SEARCH_KEY = "voice_quick_search";
@@ -45,8 +46,8 @@ const ChatPanel: React.FC = () => {
   const { user } = useAuth();
   const isMobile = useIsMobile();
   const {
-    apiKey, savedModels, selectedModel, deepResearchModel, voiceModel, ttsRate, autoReadReplies, customSystemPrompt, burplexityApiToken, inworldApiKey, inworldEnabled, inworldVoiceId, accessAllNeurons, loaded,
-    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setVoiceModel, setTtsRate, setAutoReadReplies, setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey, setInworldEnabled, setInworldVoiceId, setAccessAllNeurons,
+    apiKey, savedModels, selectedModel, deepResearchModel, voiceModel, visionModel, ttsRate, autoReadReplies, customSystemPrompt, burplexityApiToken, inworldApiKey, inworldEnabled, inworldVoiceId, accessAllNeurons, loaded,
+    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setVoiceModel, setVisionModel, setTtsRate, setAutoReadReplies, setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey, setInworldEnabled, setInworldVoiceId, setAccessAllNeurons,
   } = useChatSettings();
   const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort } = useChat();
   const { isPaid } = usePlan();
@@ -61,6 +62,33 @@ const ChatPanel: React.FC = () => {
   });
 
   const [input, setInput] = useState("");
+  // Pending image attachments for the next send (composer-local).
+  const [pendingImages, setPendingImages] = useState<PendingChatImage[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  const addImagesFromFiles = useCallback(async (files: FileList | File[] | null) => {
+    if (!files) return;
+    const arr = Array.from(files).filter(isAcceptedImage);
+    if (!arr.length) return;
+    const room = Math.max(0, 4 - pendingImages.length);
+    if (room === 0) { toast.error("Max 4 images per message"); return; }
+    const slice = arr.slice(0, room);
+    if (arr.length > room) toast.info(`Only the first ${room} image(s) were added (max 4)`);
+    for (const file of slice) {
+      try {
+        const { dataUrl, mime } = await fileToDownscaledDataUrl(file);
+        const localId = crypto.randomUUID();
+        setPendingImages((prev) => [...prev, { localId, dataUrl, mime, filename: (file as File).name }]);
+      } catch (e: any) {
+        toast.error(e?.message || "Could not load image");
+      }
+    }
+  }, [pendingImages.length]);
+
+  const removePendingImage = useCallback((localId: string) => {
+    setPendingImages((prev) => prev.filter((p) => p.localId !== localId));
+  }, []);
   const [showSettings, setShowSettings] = useState(false);
   const [newModelInput, setNewModelInput] = useState("");
   const [extracting, setExtracting] = useState(false);
@@ -491,22 +519,54 @@ const ChatPanel: React.FC = () => {
   const handleSend = async () => {
     if (isLoading) return; // a reply is streaming — use Stop first
     const text = input.trim();
-    if (!text) return;
+    const imagesToSend = pendingImages;
+    if (!text && imagesToSend.length === 0) return;
     if (!apiKey) { toast.error("Please set your OpenRouter API key first"); setShowSettings(true); return; }
-    // Sending is a clear "I'm done speaking" action — stop the mic so it doesn't
-    // keep listening (the continuous recognizer re-arms on silence otherwise),
-    // unless the user already stopped it.
     suppressDictationRef.current = true;
     dictation.stop();
     setInput("");
+    setPendingImages([]);
     if (voiceQuickSearch && burplexityApiToken && SEARCH_INTENT_RE.test(text)) {
       runBackgroundSearch(text); // intentionally not awaited
     }
-    try { await sendMessage(text); } catch { /* surfaced via toast */ }
+    // Kick off uploads in the background so the model sees the data URLs
+    // immediately but the memory rows + storage are durable for recall.
+    const imagesForModel = imagesToSend.map((p) => ({ dataUrl: p.dataUrl, mime: p.mime }));
+    void Promise.all(
+      imagesToSend.map(async (p) => {
+        try {
+          const { storagePath } = await uploadChatImage(p.dataUrl, p.mime);
+          await persistImageMemory({
+            storagePath,
+            mime: p.mime,
+            wikiId: activeWikiId || null,
+            source: "upload",
+          });
+        } catch (e: any) {
+          console.warn("[image upload]", e?.message || e);
+        }
+      })
+    );
+    try {
+      await sendMessage(text || "(see attached image)", { images: imagesForModel });
+    } catch { /* surfaced via toast */ }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (const it of Array.from(items)) {
+      if (it.kind === "file") {
+        const f = it.getAsFile();
+        if (f && isAcceptedImage(f)) files.push(f);
+      }
+    }
+    if (files.length > 0) { e.preventDefault(); addImagesFromFiles(files); }
   };
 
   return (
@@ -817,6 +877,16 @@ const ChatPanel: React.FC = () => {
             </div>
             <div className="flex flex-col gap-1.5 lg:col-span-2">
               <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
+                <span className="material-symbols-outlined text-xs align-middle mr-1">image_search</span>Vision Model <span className="text-on-surface-variant/60 normal-case tracking-normal">(used when you attach an image)</span>
+              </label>
+              <select value={visionModel || ""} onChange={(e) => setVisionModel(e.target.value)} className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40">
+                <option value="">Same as Active model</option>
+                {savedModels.map((m: string) => (<option key={m} value={m}>{m}</option>))}
+              </select>
+              <p className="text-[10px] text-on-surface-variant px-1">For best image understanding pick a vision-strong model like <code>google/gemini-2.5-flash</code> (cheap, great at docs/OCR) or <code>google/gemini-2.5-pro</code> (best reasoning). Falls back to your Active model if blank.</p>
+            </div>
+            <div className="flex flex-col gap-1.5 lg:col-span-2">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
                 <span className="material-symbols-outlined text-xs align-middle mr-1">front_hand</span>Barge-in (interrupt the assistant)
               </label>
               <div className="flex items-center justify-between gap-3 bg-surface-container-high rounded-lg py-3 px-4 border border-outline-variant/10">
@@ -1089,14 +1159,60 @@ const ChatPanel: React.FC = () => {
               <button onClick={handsFree.stop} className="ml-auto text-[10px] font-bold uppercase tracking-widest text-on-surface-variant hover:text-destructive">Stop</button>
             </div>
           )}
-          <div className="flex items-end gap-3">
+          {pendingImages.length > 0 && (
+            <div className="flex flex-wrap gap-2 px-1 pb-1">
+              {pendingImages.map((p) => (
+                <div key={p.localId} className="relative w-16 h-16 rounded-lg overflow-hidden border border-outline-variant/40 bg-surface-container-high group">
+                  <img src={p.dataUrl} alt={p.filename || "attachment"} className="w-full h-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => removePendingImage(p.localId)}
+                    aria-label="Remove image"
+                    className="absolute top-0.5 right-0.5 bg-black/70 text-white rounded-full w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">close</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div
+            className={`flex items-end gap-3 ${dragOver ? "ring-2 ring-primary/60 rounded-xl" : ""}`}
+            onDragOver={(e) => { if (Array.from(e.dataTransfer.types).includes("Files")) { e.preventDefault(); setDragOver(true); } }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => {
+              if (e.dataTransfer.files?.length) {
+                e.preventDefault();
+                setDragOver(false);
+                addImagesFromFiles(e.dataTransfer.files);
+              }
+            }}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif,image/heic,image/heif"
+              multiple
+              className="hidden"
+              onChange={(e) => { addImagesFromFiles(e.target.files); if (fileInputRef.current) fileInputRef.current.value = ""; }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              title="Attach image"
+              aria-label="Attach image"
+              className="h-[50px] w-[44px] shrink-0 flex items-center justify-center rounded-xl bg-surface-container-high text-on-surface-variant hover:text-primary hover:bg-surface-container-highest transition-colors"
+            >
+              <span className="material-symbols-outlined text-xl">attach_file</span>
+            </button>
             <div className="flex-grow relative">
               <Textarea
-                ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown}
+                ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} onPaste={handlePaste}
                 aria-label="Message The Librarian"
-                placeholder={dictation.isListening ? "Listening… speak now" : apiKey ? "Ask about your books..." : "Set your OpenRouter API key to start chatting"}
+                placeholder={dictation.isListening ? "Listening… speak now" : apiKey ? "Ask about your books, or drop an image…" : "Set your OpenRouter API key to start chatting"}
                 rows={1} className="bg-surface-container-high border-none rounded-xl text-foreground py-3 pl-4 pr-20 focus:ring-1 focus:ring-primary/40 resize-none min-h-[50px] max-h-[220px] overflow-y-auto"
               />
+
               {dictation.supported && (
                 <button
                   type="button"
@@ -1122,7 +1238,7 @@ const ChatPanel: React.FC = () => {
               ) : (
                 <button
                   onClick={handleSend}
-                  disabled={!input.trim()}
+                  disabled={!input.trim() && pendingImages.length === 0}
                   title="Send"
                   aria-label="Send"
                   className="absolute right-2 bottom-2 p-1.5 bg-primary-container text-on-primary-container rounded-lg hover:brightness-110 active:scale-90 transition-all disabled:opacity-50"
