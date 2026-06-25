@@ -68,7 +68,7 @@ export async function createWiki(input: {
     .select()
     .single();
 
-  if (error || !data) throw error || new Error("Failed to create wiki");
+  if (error || !data) throw error || new Error("Failed to create neuron");
   return data as unknown as Wiki;
 }
 

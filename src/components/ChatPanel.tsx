@@ -361,7 +361,7 @@ const ChatPanel: React.FC = () => {
   const selectedBook = books.find((b) => b.id === activeBookId);
 
   const handleSaveToWiki = async () => {
-    if (messages.length < 2) { toast.error("Chat first before saving to wiki"); return; }
+    if (messages.length < 2) { toast.error("Chat first before saving to neuron"); return; }
     setExtracting(true);
     try {
       const result = await extractKnowledge(messages.map(m => ({ role: m.role, content: m.content })), activeBookId || undefined, activeWikiId);
@@ -598,8 +598,8 @@ const ChatPanel: React.FC = () => {
                 {savedModels.map((m) => {
                   const embed = isEmbeddingModel(m);
                   return (
-                    <span key={m} title={embed ? "Embedding model — used by Wiki reindex, not Chat" : undefined} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md ${m === selectedModel ? "bg-primary-container/20 text-primary border border-primary-container/30" : embed ? "bg-surface-container-highest/50 text-on-surface-variant/60 italic" : "bg-surface-container-highest text-on-surface-variant"}`}>
-                      <button onClick={() => { if (embed) { toast.error("Embedding model — pick it in Wiki Settings, not Chat."); return; } setSelectedModel(m); }} className="hover:underline">{m}{embed ? " (embed)" : ""}</button>
+                    <span key={m} title={embed ? "Embedding model — used by Neuron reindex, not Chat" : undefined} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md ${m === selectedModel ? "bg-primary-container/20 text-primary border border-primary-container/30" : embed ? "bg-surface-container-highest/50 text-on-surface-variant/60 italic" : "bg-surface-container-highest text-on-surface-variant"}`}>
+                      <button onClick={() => { if (embed) { toast.error("Embedding model — pick it in Neuron Settings, not Chat."); return; } setSelectedModel(m); }} className="hover:underline">{m}{embed ? " (embed)" : ""}</button>
                       <button onClick={() => removeModel(m)} className="hover:text-destructive ml-0.5 material-symbols-outlined text-xs">close</button>
                     </span>
                   );
@@ -892,7 +892,7 @@ const ChatPanel: React.FC = () => {
             aria-hidden
           />
           <span>
-            Your Knowledge Wiki: <span className="font-semibold text-primary">{activeWiki.name}</span>
+            Your Knowledge Neuron: <span className="font-semibold text-primary">{activeWiki.name}</span>
           </span>
         </div>
       )}
@@ -1127,12 +1127,12 @@ const ChatPanel: React.FC = () => {
               <button
                 onClick={handleSaveToWiki}
                 disabled={extracting}
-                aria-label="Save to Wiki"
-                title="Save to Wiki"
+                aria-label="Save to Neuron"
+                title="Save to Neuron"
                 className="h-[50px] px-3 sm:px-5 bg-secondary-container text-on-secondary-container rounded-xl flex items-center gap-2 hover:bg-secondary-container/80 transition-all active:scale-95 border border-outline-variant/20 shrink-0"
               >
                 {extracting ? <Loader2 className="w-4 h-4 animate-spin" /> : <span className="material-symbols-outlined text-lg">history_edu</span>}
-                <span className="hidden sm:inline text-sm font-semibold whitespace-nowrap">Save to Wiki</span>
+                <span className="hidden sm:inline text-sm font-semibold whitespace-nowrap">Save to Neuron</span>
               </button>
             )}
           </div>

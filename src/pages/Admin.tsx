@@ -178,7 +178,7 @@ const FIELD_DEFS: { key: keyof EditForm; label: string; secret?: boolean; placeh
   { key: "selectedModel", label: "Active chat model", placeholder: "e.g. google/gemini-2.5-flash" },
   { key: "deepResearchModel", label: "Deep research model", placeholder: "e.g. google/gemini-2.5-pro" },
   { key: "voiceModel", label: "Voice model (blank = same as chat)", placeholder: "optional" },
-  { key: "wikiModel", label: "Wiki model (blank = default)", placeholder: "optional" },
+  { key: "wikiModel", label: "Neuron model (blank = default)", placeholder: "optional" },
   { key: "openrouterApiKey", label: "OpenRouter API key", secret: true, placeholder: "sk-or-..." },
   { key: "inworldApiKey", label: "Inworld API key", secret: true, placeholder: "optional" },
   { key: "burplexityApiToken", label: "Burplexity search token", secret: true, placeholder: "optional" },
@@ -499,7 +499,7 @@ const AdminDashboard: React.FC<{ onSignOut: () => void }> = ({ onSignOut }) => {
             <AlertDialogTitle>Delete this user?</AlertDialogTitle>
             <AlertDialogDescription>
               This permanently deletes <strong className="break-all">{deleting?.email}</strong> and all of
-              their data (books, chapters, wikis, settings). This cannot be undone.
+              their data (books, chapters, neurons, settings). This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

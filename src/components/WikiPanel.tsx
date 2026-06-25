@@ -297,7 +297,7 @@ const WikiPanel: React.FC = () => {
                   onClick={() => setScope("wiki")}
                   disabled={!activeWikiId}
                   className={`px-3 py-1 transition-colors ${scope === "wiki" ? "bg-primary-container text-on-primary-container" : "text-on-surface-variant hover:bg-surface-container-high"} disabled:opacity-40`}
-                  title="Show only data from the currently loaded wiki"
+                  title="Show only data from the currently loaded neuron"
                 >
                   This Neuron
                 </button>
@@ -305,7 +305,7 @@ const WikiPanel: React.FC = () => {
                   type="button"
                   onClick={() => setScope("all")}
                   className={`px-3 py-1 transition-colors ${scope === "all" ? "bg-primary-container text-on-primary-container" : "text-on-surface-variant hover:bg-surface-container-high"}`}
-                  title="Show everything across all your wikis"
+                  title="Show everything across all your neurons"
                 >
                   All Neurons
                 </button>
@@ -320,7 +320,7 @@ const WikiPanel: React.FC = () => {
                 />
               )}
               <h2 className="font-headline font-bold text-5xl md:text-6xl text-primary tracking-tight truncate">
-                {scope === "all" ? "Knowledge Wiki" : (activeWiki?.name || "Knowledge Wiki")}
+                {scope === "all" ? "Knowledge Neuron" : (activeWiki?.name || "Knowledge Neuron")}
               </h2>
               {/* In-tab wiki switcher */}
               {wikis.length > 1 && (
@@ -330,14 +330,14 @@ const WikiPanel: React.FC = () => {
                     if (!v || v === activeWikiId) return;
                     try {
                       await setActiveWiki(v);
-                      toast.success("Wiki loaded");
+                      toast.success("Neuron loaded");
                     } catch (err: any) {
-                      toast.error(err.message || "Failed to switch wiki");
+                      toast.error(err.message || "Failed to switch neuron");
                     }
                   }}
                 >
                   <SelectTrigger className="w-[200px] h-9 text-xs">
-                    <SelectValue placeholder="Switch wiki…" />
+                    <SelectValue placeholder="Switch neuron…" />
                   </SelectTrigger>
                   <SelectContent>
                     {wikis.map((w) => (
@@ -421,22 +421,22 @@ const WikiPanel: React.FC = () => {
             <button onClick={loadData} disabled={loading} className="p-3 bg-surface-container-high rounded-xl border border-outline-variant/10 hover:bg-surface-container-highest transition-all">
               <span className={`material-symbols-outlined ${loading ? "animate-spin" : ""}`}>refresh</span>
             </button>
-            <button onClick={() => setSettingsOpen(true)} className="p-3 bg-surface-container-high rounded-xl border border-outline-variant/10 hover:bg-surface-container-highest transition-all" title="Wiki settings">
+            <button onClick={() => setSettingsOpen(true)} className="p-3 bg-surface-container-high rounded-xl border border-outline-variant/10 hover:bg-surface-container-highest transition-all" title="Neuron settings">
               <span className="material-symbols-outlined">settings</span>
             </button>
           </div>
         </section>
 
         <div className="mb-6 -mt-6 text-xs text-on-surface-variant">
-          Wiki model: <span className="font-mono text-foreground">{wikiModel || "Default (Gemini Flash)"}</span>
+          Neuron model: <span className="font-mono text-foreground">{wikiModel || "Default (Gemini Flash)"}</span>
         </div>
 
         <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Wiki Settings</DialogTitle>
+              <DialogTitle>Neuron Settings</DialogTitle>
               <DialogDescription>
-                Choose which model powers wiki ingest, extract, and health checks.
+                Choose which model powers neuron ingest, extract, and health checks.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-2">
@@ -461,7 +461,7 @@ const WikiPanel: React.FC = () => {
                 </p>
                 {wikiModel && !openrouterKey && (
                   <p className="text-xs text-destructive">
-                    No OpenRouter API key found. Add one in Chat Settings, or wiki ops will fall back to the default model.
+                    No OpenRouter API key found. Add one in Chat Settings, or neuron ops will fall back to the default model.
                   </p>
                 )}
               </div>
@@ -526,7 +526,7 @@ const WikiPanel: React.FC = () => {
               <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant gap-3">
                 <span className="material-symbols-outlined text-5xl">menu_book</span>
                 <p className="text-sm text-center">
-                  {entries.length === 0 ? "Your wiki is empty. Chat about your books or ingest chapters." : "No entries match your search."}
+                  {entries.length === 0 ? "Your neuron is empty. Chat about your books or ingest chapters." : "No entries match your search."}
                 </p>
               </div>
             ) : (
@@ -855,7 +855,7 @@ const WikiPanel: React.FC = () => {
               <span className="ml-3 text-sm font-normal text-on-surface-variant">Layer 2 — {episodicLog.length} sessions</span>
             </h3>
             {episodicLog.length === 0 ? (
-              <p className="text-on-surface-variant text-sm italic">No session episodes recorded yet. Save a chat to Wiki to begin building the episodic log.</p>
+              <p className="text-on-surface-variant text-sm italic">No session episodes recorded yet. Save a chat to Neuron to begin building the episodic log.</p>
             ) : episodicLog.map((ep) => (
               <div key={ep.id} className="p-4 rounded-xl bg-surface-container-high border border-outline-variant/10">
                 <div className="flex items-center gap-3 mb-2">

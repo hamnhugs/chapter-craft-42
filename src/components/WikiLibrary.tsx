@@ -123,7 +123,7 @@ const WikiLibrary: React.FC = () => {
       const list = await fetchWikisWithStats();
       setWikisWithStats(list);
     } catch (err: any) {
-      toast.error(err.message || "Failed to load wikis");
+      toast.error(err.message || "Failed to load neurons");
     } finally {
       setLoading(false);
     }
@@ -203,7 +203,7 @@ const WikiLibrary: React.FC = () => {
           tags,
           is_meta: formIsMeta,
         });
-        toast.success("Wiki updated");
+        toast.success("Neuron updated");
       } else {
         await createWiki({
           name: formName.trim(),
@@ -212,7 +212,7 @@ const WikiLibrary: React.FC = () => {
           tags,
           is_meta: formIsMeta,
         });
-        toast.success("Wiki created");
+        toast.success("Neuron created");
       }
       setCreateOpen(false);
       setSelected(null);
@@ -315,13 +315,13 @@ const WikiLibrary: React.FC = () => {
       setSelected(null);
       setActiveTab("wiki");
     } catch (err: any) {
-      toast.error(err.message || "Failed to load wiki");
+      toast.error(err.message || "Failed to load neuron");
     }
   };
 
   const handleDelete = async (wiki: WikiWithStats) => {
     if (wiki.id === activeWikiId) {
-      toast.error("Cannot delete the active wiki. Load another one first.");
+      toast.error("Cannot delete the active neuron. Load another one first.");
       return;
     }
     if (!confirm(`Delete "${wiki.name}" and all ${wiki.entry_count} of its entries? This cannot be undone.`)) {
@@ -329,7 +329,7 @@ const WikiLibrary: React.FC = () => {
     }
     try {
       await deleteWiki(wiki.id);
-      toast.success("Wiki deleted");
+      toast.success("Neuron deleted");
       setSelected(null);
       await Promise.all([load(), refreshWikis()]);
     } catch (err: any) {
@@ -345,10 +345,10 @@ const WikiLibrary: React.FC = () => {
           <div className="space-y-2">
             <div className="flex items-center gap-3 mb-1">
               <span className="px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded text-[10px] font-bold tracking-widest uppercase">
-                Wiki Library
+                Neuron Library
               </span>
               <span className="text-on-surface-variant text-sm font-medium">
-                {wikisWithStats.length} {wikisWithStats.length === 1 ? "wiki" : "wikis"}
+                {wikisWithStats.length} {wikisWithStats.length === 1 ? "neuron" : "neurons"}
               </span>
             </div>
             <h2 className="font-headline font-bold text-5xl md:text-6xl text-primary tracking-tight">
@@ -449,7 +449,7 @@ const WikiLibrary: React.FC = () => {
                 : "text-on-surface-variant hover:text-foreground"
             }`}
           >
-            Wikis
+            Neurons
             {activeView === "wikis" && (
               <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-t" />
             )}
@@ -491,7 +491,7 @@ const WikiLibrary: React.FC = () => {
               <input
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search across all wikis (semantic — try a question or topic)…"
+                placeholder="Search across all neurons (semantic — try a question or topic)…"
                 className="w-full bg-surface-container-low border-none rounded-xl py-4 pl-12 pr-12 focus:ring-1 focus:ring-primary/40 placeholder:text-on-surface-variant/50 text-foreground text-base transition-all shadow-inner"
               />
               {searching && (
@@ -563,8 +563,8 @@ const WikiLibrary: React.FC = () => {
                   <span className="material-symbols-outlined text-5xl">menu_book</span>
                   <p className="text-sm text-center">
                     {wikisWithStats.length === 0
-                      ? "You have no wikis yet. Create one to get started."
-                      : "No wikis match this tag."}
+                      ? "You have no neurons yet. Create one to get started."
+                      : "No neurons match this tag."}
                   </p>
                 </div>
               ) : viewMode === "mindmap" ? (
@@ -685,7 +685,7 @@ const WikiLibrary: React.FC = () => {
                 <div className="flex items-center gap-2 p-3 rounded-lg bg-primary-container/15 border border-primary/20 text-xs my-2">
                   <Sparkles className="w-4 h-4 text-primary shrink-0" />
                   <span className="text-on-surface-variant">
-                    Meta wiki — collects pointers to your other wikis.
+                    Meta neuron — collects pointers to your other neurons.
                   </span>
                 </div>
               )}
@@ -712,7 +712,7 @@ const WikiLibrary: React.FC = () => {
                       <Check className="w-4 h-4" /> Loaded
                     </>
                   ) : (
-                    "Load Wiki"
+                    "Load Neuron"
                   )}
                 </Button>
               </DialogFooter>
@@ -726,10 +726,10 @@ const WikiLibrary: React.FC = () => {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="font-headline text-2xl">
-              {editing ? "Edit wiki" : "New wiki"}
+              {editing ? "Edit neuron" : "New neuron"}
             </DialogTitle>
             <DialogDescription>
-              A wiki is an isolated pocket of knowledge. Each one keeps its own entries, tags, and AI context.
+              A neuron is an isolated pocket of knowledge. Each one keeps its own entries, tags, and AI context.
             </DialogDescription>
           </DialogHeader>
 
@@ -752,7 +752,7 @@ const WikiLibrary: React.FC = () => {
               <Textarea
                 value={formDesc}
                 onChange={(e) => setFormDesc(e.target.value)}
-                placeholder="What lives in this wiki?"
+                placeholder="What lives in this neuron?"
                 rows={3}
               />
             </div>
@@ -789,10 +789,10 @@ const WikiLibrary: React.FC = () => {
             <div className="flex items-start justify-between gap-4 p-3 rounded-lg bg-surface-container-high border border-outline-variant/10">
               <div>
                 <div className="flex items-center gap-2 text-sm font-bold text-foreground">
-                  <Sparkles className="w-4 h-4 text-primary" /> Meta wiki
+                  <Sparkles className="w-4 h-4 text-primary" /> Meta neuron
                 </div>
                 <div className="text-xs text-on-surface-variant mt-1">
-                  Use this wiki to collect pointers to your other wikis — a hub or index.
+                  Use this neuron to collect pointers to your other neurons — a hub or index.
                 </div>
               </div>
               <Switch checked={formIsMeta} onCheckedChange={setFormIsMeta} />
@@ -1127,7 +1127,7 @@ const SearchResults: React.FC<{
   return (
     <div className="space-y-6">
       <div className="text-xs font-bold uppercase tracking-widest text-on-surface-variant">
-        {results.length} match{results.length === 1 ? "" : "es"} across {groups.size} wiki{groups.size === 1 ? "" : "s"}
+        {results.length} match{results.length === 1 ? "" : "es"} across {groups.size} neuron{groups.size === 1 ? "" : "s"}
       </div>
       {Array.from(groups.entries()).map(([wikiId, matches]) => {
         const wiki = wikis.find((w) => w.id === wikiId);
