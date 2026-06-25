@@ -1039,6 +1039,7 @@ export async function executeChatTool(
           event: { name, summary: `Recalled ${out.length} image memory${out.length === 1 ? "" : "s"}${q ? ` matching "${q.slice(0, 40)}"` : ""}`, ok: true },
         };
       }
+      case "create_artifact": {
         const art = parseArtifact(args);
         if (!art) {
           return { result: { error: "Artifact needs non-empty `content` (the inner HTML/SVG body markup, no wrappers)." }, event: { name, summary: "Artifact invalid", ok: false } };
