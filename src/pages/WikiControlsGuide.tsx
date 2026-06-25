@@ -49,13 +49,13 @@ const WikiControlsGuide: React.FC = () => {
       <main className="max-w-3xl mx-auto px-6 py-12 pb-32">
         <div className="mb-12">
           <span className="px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded text-[10px] font-bold tracking-widest uppercase">
-            Wiki Tab
+            NEURON TAB
           </span>
           <h1 className="font-headline font-bold text-5xl md:text-6xl text-primary tracking-tight mt-3 mb-4">
             What All These Buttons Do
           </h1>
           <p className="text-on-surface-variant text-lg font-body leading-relaxed">
-            The Wiki tab has a lot of controls. Most of them you'll only touch once in a while.
+            The Neuron tab has a lot of controls. Most of them you'll only touch once in a while.
             Here's a plain-English tour so nothing feels mysterious.
           </p>
         </div>
@@ -72,12 +72,12 @@ const WikiControlsGuide: React.FC = () => {
         </section>
 
         <Group title="Scope & identity" subtitle="What you're looking at right now.">
-          <Control icon="filter_alt" name="This wiki vs. All wikis" analogy="One notebook, or all notebooks at once?">
+          <Control icon="filter_alt" name="This Neuron vs. All Neurons" analogy="One notebook, or all notebooks at once?">
             <p>
-              <strong>This wiki</strong> shows only the wiki you've loaded — focused view.
-              <strong> All wikis</strong> shows everything you've ever saved across every wiki.
+              <strong>This Neuron</strong> shows only the wiki you've loaded — focused view.
+              <strong> All Neurons</strong> shows everything you've ever saved across every wiki.
             </p>
-            <p>Pick "This wiki" for normal work. Pick "All wikis" when you can't remember which wiki something is in.</p>
+            <p>Pick "This Neuron" for normal work. Pick "All Neurons" when you can't remember which wiki something is in.</p>
           </Control>
           <Control icon="swap_horiz" name="Wiki switcher dropdown" analogy="The bookshelf next to your desk.">
             <p>Jump straight to another wiki without going back to the Wikis page. Handy when you bounce between projects.</p>
