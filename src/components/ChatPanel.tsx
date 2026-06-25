@@ -519,22 +519,54 @@ const ChatPanel: React.FC = () => {
   const handleSend = async () => {
     if (isLoading) return; // a reply is streaming — use Stop first
     const text = input.trim();
-    if (!text) return;
+    const imagesToSend = pendingImages;
+    if (!text && imagesToSend.length === 0) return;
     if (!apiKey) { toast.error("Please set your OpenRouter API key first"); setShowSettings(true); return; }
-    // Sending is a clear "I'm done speaking" action — stop the mic so it doesn't
-    // keep listening (the continuous recognizer re-arms on silence otherwise),
-    // unless the user already stopped it.
     suppressDictationRef.current = true;
     dictation.stop();
     setInput("");
+    setPendingImages([]);
     if (voiceQuickSearch && burplexityApiToken && SEARCH_INTENT_RE.test(text)) {
       runBackgroundSearch(text); // intentionally not awaited
     }
-    try { await sendMessage(text); } catch { /* surfaced via toast */ }
+    // Kick off uploads in the background so the model sees the data URLs
+    // immediately but the memory rows + storage are durable for recall.
+    const imagesForModel = imagesToSend.map((p) => ({ dataUrl: p.dataUrl, mime: p.mime }));
+    void Promise.all(
+      imagesToSend.map(async (p) => {
+        try {
+          const { storagePath } = await uploadChatImage(p.dataUrl, p.mime);
+          await persistImageMemory({
+            storagePath,
+            mime: p.mime,
+            wikiId: activeWikiId || null,
+            source: "upload",
+          });
+        } catch (e: any) {
+          console.warn("[image upload]", e?.message || e);
+        }
+      })
+    );
+    try {
+      await sendMessage(text || "(see attached image)", { images: imagesForModel });
+    } catch { /* surfaced via toast */ }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (const it of Array.from(items)) {
+      if (it.kind === "file") {
+        const f = it.getAsFile();
+        if (f && isAcceptedImage(f)) files.push(f);
+      }
+    }
+    if (files.length > 0) { e.preventDefault(); addImagesFromFiles(files); }
   };
 
   return (
