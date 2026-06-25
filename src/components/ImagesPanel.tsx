@@ -312,9 +312,7 @@ const ImagesPanel: React.FC<ImagesPanelProps> = ({ open, onOpenChange }) => {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (confirm("Delete this image? This cannot be undone.")) {
-                              void handleDeleteOne(row);
-                            }
+                            setSingleTarget(row);
                           }}
                           aria-label="Delete image"
                           title="Delete image"
