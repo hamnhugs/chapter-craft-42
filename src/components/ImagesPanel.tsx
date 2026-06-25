@@ -391,6 +391,7 @@ const ImagesPanel: React.FC<ImagesPanelProps> = ({ open, onOpenChange }) => {
         </AlertDialogContent>
       </AlertDialog>
     </>
+  );
 };
 
 export default ImagesPanel;
