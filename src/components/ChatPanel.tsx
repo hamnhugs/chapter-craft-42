@@ -605,10 +605,13 @@ const ChatPanel: React.FC = () => {
           <div role="tablist" aria-label="Settings sections" className="flex gap-1.5 overflow-x-auto hide-scrollbar">
             {([
               ["models", "tune", "Models & Keys"],
+              ["images", "image", "Images"],
               ["research", "science", "Research"],
               ["voice", "record_voice_over", "Voice"],
               ["prompts", "history_edu", "Prompts"],
+              ["permissions", "shield_person", "AI Permissions"],
             ] as const).map(([id, icon, label]) => (
+
               <button
                 key={id}
                 role="tab"
