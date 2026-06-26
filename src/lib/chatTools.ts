@@ -445,7 +445,79 @@ export const CHAT_TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "create_memory_entry",
+      description:
+        "Create a new knowledge entry (a 'neuron memory') in the user's active wiki. Use for facts the user explicitly asks you to remember. Honors the user's Settings → AI permissions (may be disabled).",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Short title for the entry." },
+          content: { type: "string", description: "Body text of the memory." },
+          entry_type: { type: "string", description: "e.g. fact, person, place, concept, event.", default: "fact" },
+          tags: { type: "array", items: { type: "string" }, description: "Optional tags." },
+          confidence: { type: "number", description: "0.0–1.0, default 0.8." },
+        },
+        required: ["title", "content"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_memory_entry",
+      description:
+        "Edit a knowledge entry the user already has (title / content / tags / confidence). Requires entry_id. Honors per-tool permissions.",
+      parameters: {
+        type: "object",
+        properties: {
+          entry_id: { type: "string" },
+          title: { type: "string" },
+          content: { type: "string" },
+          tags: { type: "array", items: { type: "string" } },
+          confidence: { type: "number" },
+        },
+        required: ["entry_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_memory_entry",
+      description:
+        "Permanently delete a knowledge entry. Only call when the user has explicitly approved deleting this specific entry in the current turn. Honors per-tool permissions.",
+      parameters: {
+        type: "object",
+        properties: {
+          entry_id: { type: "string" },
+        },
+        required: ["entry_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "link_memory_entries",
+      description:
+        "Create or remove a typed edge between two knowledge entries (supports, contradicts, refines, related, etc.). Honors per-tool permissions.",
+      parameters: {
+        type: "object",
+        properties: {
+          source_entry_id: { type: "string" },
+          target_entry_id: { type: "string" },
+          relation: { type: "string", description: "e.g. supports | contradicts | refines | related | causes" },
+          action: { type: "string", enum: ["upsert", "delete"], default: "upsert" },
+        },
+        required: ["source_entry_id", "target_entry_id", "relation"],
+      },
+    },
+  },
 ] as const;
+
 
 export interface ToolEvent {
   name: string;
