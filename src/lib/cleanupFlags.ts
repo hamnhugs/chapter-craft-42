@@ -63,7 +63,7 @@ export async function listCleanupItems(
   if (wikiId) q = q.eq("wiki_id", wikiId);
   const { data: flags, error } = await q;
   if (error) throw error;
-  const rows = (flags as CleanupFlagRow[]) || [];
+  const rows = ((flags as unknown) as CleanupFlagRow[]) || [];
   if (rows.length === 0) return [];
 
   const entryIds = Array.from(new Set(rows.map((r) => r.entry_id)));
