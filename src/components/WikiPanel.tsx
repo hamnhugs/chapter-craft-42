@@ -85,26 +85,8 @@ const WikiPanel: React.FC = () => {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // Cleanup-suggestion ids so we can paint flagged entries red.
-  useEffect(() => {
-    let cancelled = false;
-    const refresh = () => {
-      fetchFlaggedEntryIds(scopeWikiId)
-        .then((s) => { if (!cancelled) setFlaggedIds(s); })
-        .catch(() => { if (!cancelled) setFlaggedIds(new Set()); });
-    };
-    refresh();
-    const onChange = () => refresh();
-    if (typeof window !== "undefined") {
-      window.addEventListener("knowledge-entries-changed", onChange);
-    }
-    return () => {
-      cancelled = true;
-      if (typeof window !== "undefined") {
-        window.removeEventListener("knowledge-entries-changed", onChange);
-      }
-    };
-  }, [scopeWikiId]);
+  // Cleanup-flagging UI removed — chat tools now manage deletions directly.
+
 
   // Attached images for the open entry (generated via chat — table may not
   // exist until the image-memory migration is applied, so fail quietly).
