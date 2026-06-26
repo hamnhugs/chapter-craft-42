@@ -562,7 +562,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               burplexityApiToken,
               openRouterApiKey: apiKey,
               isPaid,
+              imageModelPrimary,
+              imageModelFallback,
             });
+
             assistantEvents.push(event);
             const r = result as any;
             // Strip UI side-channel fields before the result goes to the model.
