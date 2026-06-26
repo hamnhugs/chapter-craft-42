@@ -696,9 +696,13 @@ export type Database = {
           book_id: string | null
           created_at: string
           error: string | null
+          finished_at: string | null
           folder_id: string | null
           id: string
           model: string | null
+          progress: string | null
+          result: Json | null
+          started_at: string | null
           status: string
           updated_at: string
           user_id: string
@@ -709,9 +713,13 @@ export type Database = {
           book_id?: string | null
           created_at?: string
           error?: string | null
+          finished_at?: string | null
           folder_id?: string | null
           id?: string
           model?: string | null
+          progress?: string | null
+          result?: Json | null
+          started_at?: string | null
           status?: string
           updated_at?: string
           user_id: string
@@ -722,9 +730,13 @@ export type Database = {
           book_id?: string | null
           created_at?: string
           error?: string | null
+          finished_at?: string | null
           folder_id?: string | null
           id?: string
           model?: string | null
+          progress?: string | null
+          result?: Json | null
+          started_at?: string | null
           status?: string
           updated_at?: string
           user_id?: string
@@ -1741,6 +1753,32 @@ export type Database = {
           visits: number
         }[]
       }
+      claim_next_ingest_job: {
+        Args: { _user_id: string }
+        Returns: {
+          attempts: number
+          book_id: string | null
+          created_at: string
+          error: string | null
+          finished_at: string | null
+          folder_id: string | null
+          id: string
+          model: string | null
+          progress: string | null
+          result: Json | null
+          started_at: string | null
+          status: string
+          updated_at: string
+          user_id: string
+          wiki_id: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "ingest_jobs"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       conflicts_for_wiki: {
         Args: { target_wiki_id: string }
         Returns: {
@@ -1960,6 +1998,13 @@ export type Database = {
         }
       }
       my_entitlements: { Args: never; Returns: Json }
+      requeue_stuck_ingest_jobs: {
+        Args: never
+        Returns: {
+          requeued: number
+          user_id: string
+        }[]
+      }
       scan_cleanup_flags: {
         Args: { target_wiki_id?: string }
         Returns: {
