@@ -47,3 +47,7 @@ verify_jwt = false
 
 [functions.embed-image]
 verify_jwt = true
+
+[functions.enqueue-ingest]
+verify_jwt = false
+
