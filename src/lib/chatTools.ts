@@ -314,6 +314,22 @@ export const CHAT_TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "delete_wiki",
+      description:
+        "Permanently delete a wiki (neuron) and ALL of its entries, edges, and conflicts. DESTRUCTIVE — never call until the user has, in the current turn, explicitly approved deleting this exact wiki by name or id. Must be invoked with confirm:true; without confirm:true the tool will refuse so you can ask the user again.",
+      parameters: {
+        type: "object",
+        properties: {
+          wiki_id: { type: "string" },
+          confirm: { type: "boolean", description: "Must be true. Set only after the user has explicitly approved deletion of this exact wiki in this turn." },
+        },
+        required: ["wiki_id", "confirm"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "generate_image",
       description:
         "Generate one or more AI images with Nano Banana (Google's Gemini image model) and show them to the user inline. By default each image is also saved to the user's memory as a neuron. Use when the user asks for an image, picture, illustration, visualization, logo, scene, character art, etc. For multiple images in one turn: pass `count` (2–4) for variations of the SAME prompt, or `prompts: [...]` (2–4 entries) for a DISTINCT set in one call. Each image costs a few cents on their OpenRouter key — match the count to what the user asked for, don't pad.",
@@ -887,6 +903,83 @@ export async function executeChatTool(
         }
         if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("wiki-active-changed"));
         return { result: { ok: true, id: (data as any).id, name: wname, activated: activate }, event: { name, summary: `Created wiki "${wname}"${activate ? " (active)" : ""}`, ok: true } };
+      }
+      case "delete_wiki": {
+        // Per-tool permission gate. Defaults to allowed.
+        const { data: prefs } = await supabase
+          .from("user_settings")
+          .select("chat_tool_permissions, active_wiki_id" as any)
+          .maybeSingle();
+        const perms = (((prefs as any)?.chat_tool_permissions) || {}) as Record<string, boolean>;
+        if (perms.delete_wiki === false) {
+          return {
+            result: { error: "Tool 'delete_wiki' is disabled in the user's AI permissions. Ask the user to enable it in Settings." },
+            event: { name, summary: "delete_wiki blocked by user settings", ok: false },
+          };
+        }
+        const wid = String(args.wiki_id || "");
+        if (!wid) return { result: { error: "wiki_id required" }, event: { name, summary: "Missing wiki_id", ok: false } };
+        if (args.confirm !== true) {
+          return {
+            result: { error: "Deletion requires confirm:true. Ask the user to explicitly confirm deleting this exact wiki by name, then retry with confirm:true." },
+            event: { name, summary: "Refused: confirmation required", ok: false },
+          };
+        }
+        const { data: userData } = await supabase.auth.getUser();
+        const uid = userData.user?.id;
+        if (!uid) return { result: { error: "Not signed in" }, event: { name, summary: "Not signed in", ok: false } };
+
+        const { data: target, error: tErr } = await supabase
+          .from("wikis" as any)
+          .select("id, name, is_default")
+          .eq("id", wid)
+          .eq("user_id", uid)
+          .maybeSingle();
+        if (tErr) throw tErr;
+        if (!target) return { result: { error: "Wiki not found" }, event: { name, summary: "Wiki not found", ok: false } };
+
+        const { data: allWikis } = await supabase
+          .from("wikis" as any)
+          .select("id, created_at")
+          .eq("user_id", uid)
+          .order("created_at", { ascending: true });
+        const wikis = (allWikis as any[]) || [];
+        if (wikis.length <= 1) {
+          return {
+            result: { error: "Cannot delete the only remaining wiki. Ask the user to create another wiki first." },
+            event: { name, summary: "Refused: last remaining wiki", ok: false },
+          };
+        }
+        if ((target as any).is_default) {
+          return {
+            result: { error: "This wiki is marked as the default. Ask the user to set a different wiki as default before deleting." },
+            event: { name, summary: "Refused: default wiki", ok: false },
+          };
+        }
+
+        const wasActive = ((prefs as any)?.active_wiki_id || null) === wid;
+        const { error: dErr } = await supabase
+          .from("wikis" as any)
+          .delete()
+          .eq("id", wid)
+          .eq("user_id", uid);
+        if (dErr) throw dErr;
+
+        if (wasActive) {
+          const nextActive = wikis.find((w) => w.id !== wid)?.id || null;
+          await supabase.from("user_settings").upsert(
+            { user_id: uid, active_wiki_id: nextActive } as any,
+            { onConflict: "user_id" },
+          );
+        }
+        try {
+          window.dispatchEvent(new CustomEvent("wiki-active-changed"));
+          window.dispatchEvent(new Event("knowledge-entries-changed"));
+        } catch {}
+        return {
+          result: { ok: true, deleted_id: wid, name: (target as any).name },
+          event: { name, summary: `Deleted wiki "${(target as any).name}"`, ok: true },
+        };
       }
       case "isolate_chapter": {
         const book = deps.books.find((b) => b.id === args.book_id);
