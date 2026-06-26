@@ -314,6 +314,22 @@ export const CHAT_TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "delete_wiki",
+      description:
+        "Permanently delete a wiki (neuron) and ALL of its entries, edges, and conflicts. DESTRUCTIVE — never call until the user has, in the current turn, explicitly approved deleting this exact wiki by name or id. Must be invoked with confirm:true; without confirm:true the tool will refuse so you can ask the user again.",
+      parameters: {
+        type: "object",
+        properties: {
+          wiki_id: { type: "string" },
+          confirm: { type: "boolean", description: "Must be true. Set only after the user has explicitly approved deletion of this exact wiki in this turn." },
+        },
+        required: ["wiki_id", "confirm"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "generate_image",
       description:
         "Generate one or more AI images with Nano Banana (Google's Gemini image model) and show them to the user inline. By default each image is also saved to the user's memory as a neuron. Use when the user asks for an image, picture, illustration, visualization, logo, scene, character art, etc. For multiple images in one turn: pass `count` (2–4) for variations of the SAME prompt, or `prompts: [...]` (2–4 entries) for a DISTINCT set in one call. Each image costs a few cents on their OpenRouter key — match the count to what the user asked for, don't pad.",
