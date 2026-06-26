@@ -451,7 +451,6 @@ export const CHAT_TOOL_DEFINITIONS = [
       },
     },
   },
-  },
   {
     type: "function",
     function: {
