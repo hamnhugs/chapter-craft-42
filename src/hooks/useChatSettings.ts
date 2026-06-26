@@ -28,6 +28,14 @@ interface ChatSettings {
   accessAllNeurons: boolean;
   /** Optional override model used for chat turns that include image attachments. Falls back to selectedModel if empty. */
   visionModel: string;
+  libraryIngestModel: string;
+  libraryIngestAutoFile: boolean;
+  imageModelPrimary: string;
+  imageModelFallback: string;
+  imageQuality: string;
+  imageSize: string;
+  savedImageModels: string[];
+  chatToolPermissions: Record<string, boolean>;
 }
 
 const defaults: ChatSettings = {
@@ -47,7 +55,16 @@ const defaults: ChatSettings = {
   inworldVoiceId: "",
   accessAllNeurons: false,
   visionModel: "",
+  libraryIngestModel: "",
+  libraryIngestAutoFile: true,
+  imageModelPrimary: "",
+  imageModelFallback: "",
+  imageQuality: "",
+  imageSize: "",
+  savedImageModels: [],
+  chatToolPermissions: {},
 };
+
 
 // ---------------------------------------------------------------------------
 // Module-level shared store.
