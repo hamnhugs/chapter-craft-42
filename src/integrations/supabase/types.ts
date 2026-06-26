@@ -190,12 +190,54 @@ export type Database = {
         }
         Relationships: []
       }
+      book_folders: {
+        Row: {
+          color: string | null
+          created_at: string
+          id: string
+          name: string
+          parent_id: string | null
+          sort_index: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          color?: string | null
+          created_at?: string
+          id?: string
+          name: string
+          parent_id?: string | null
+          sort_index?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          color?: string | null
+          created_at?: string
+          id?: string
+          name?: string
+          parent_id?: string | null
+          sort_index?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "book_folders_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "book_folders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       books: {
         Row: {
           category: string | null
           cover_image_url: string | null
           created_at: string
           file_name: string
+          folder_id: string | null
           id: string
           page_count: number
           tags: string[]
@@ -207,6 +249,7 @@ export type Database = {
           cover_image_url?: string | null
           created_at?: string
           file_name: string
+          folder_id?: string | null
           id?: string
           page_count?: number
           tags?: string[]
@@ -218,13 +261,22 @@ export type Database = {
           cover_image_url?: string | null
           created_at?: string
           file_name?: string
+          folder_id?: string | null
           id?: string
           page_count?: number
           tags?: string[]
           title?: string
           user_id?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "books_folder_id_fkey"
+            columns: ["folder_id"]
+            isOneToOne: false
+            referencedRelation: "book_folders"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       chapters: {
         Row: {
@@ -637,6 +689,70 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      ingest_jobs: {
+        Row: {
+          attempts: number
+          book_id: string | null
+          created_at: string
+          error: string | null
+          folder_id: string | null
+          id: string
+          model: string | null
+          status: string
+          updated_at: string
+          user_id: string
+          wiki_id: string | null
+        }
+        Insert: {
+          attempts?: number
+          book_id?: string | null
+          created_at?: string
+          error?: string | null
+          folder_id?: string | null
+          id?: string
+          model?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+          wiki_id?: string | null
+        }
+        Update: {
+          attempts?: number
+          book_id?: string | null
+          created_at?: string
+          error?: string | null
+          folder_id?: string | null
+          id?: string
+          model?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+          wiki_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingest_jobs_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
+            referencedRelation: "books"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ingest_jobs_folder_id_fkey"
+            columns: ["folder_id"]
+            isOneToOne: false
+            referencedRelation: "book_folders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ingest_jobs_wiki_id_fkey"
+            columns: ["wiki_id"]
+            isOneToOne: false
+            referencedRelation: "wikis"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       knowledge_conflicts: {
         Row: {
@@ -1126,17 +1242,25 @@ export type Database = {
           active_wiki_id: string | null
           auto_read_replies: boolean
           burplexity_api_token: string | null
+          chat_tool_permissions: Json
           created_at: string
           custom_system_prompt: string | null
           deep_research_model: string | null
           hands_free_tts_rate: number
           id: string
+          image_model_fallback: string | null
+          image_model_primary: string | null
+          image_quality: string | null
           image_safety_check: boolean
+          image_size: string | null
           inworld_api_key: string
           inworld_enabled: boolean
           inworld_voice_id: string
           is_recording_mode: boolean
+          library_ingest_auto_file: boolean
+          library_ingest_model: string | null
           openrouter_api_key: string | null
+          saved_image_models: Json
           saved_models: Json | null
           selected_model: string | null
           smart_filing_enabled: boolean
@@ -1153,17 +1277,25 @@ export type Database = {
           active_wiki_id?: string | null
           auto_read_replies?: boolean
           burplexity_api_token?: string | null
+          chat_tool_permissions?: Json
           created_at?: string
           custom_system_prompt?: string | null
           deep_research_model?: string | null
           hands_free_tts_rate?: number
           id?: string
+          image_model_fallback?: string | null
+          image_model_primary?: string | null
+          image_quality?: string | null
           image_safety_check?: boolean
+          image_size?: string | null
           inworld_api_key?: string
           inworld_enabled?: boolean
           inworld_voice_id?: string
           is_recording_mode?: boolean
+          library_ingest_auto_file?: boolean
+          library_ingest_model?: string | null
           openrouter_api_key?: string | null
+          saved_image_models?: Json
           saved_models?: Json | null
           selected_model?: string | null
           smart_filing_enabled?: boolean
@@ -1180,17 +1312,25 @@ export type Database = {
           active_wiki_id?: string | null
           auto_read_replies?: boolean
           burplexity_api_token?: string | null
+          chat_tool_permissions?: Json
           created_at?: string
           custom_system_prompt?: string | null
           deep_research_model?: string | null
           hands_free_tts_rate?: number
           id?: string
+          image_model_fallback?: string | null
+          image_model_primary?: string | null
+          image_quality?: string | null
           image_safety_check?: boolean
+          image_size?: string | null
           inworld_api_key?: string
           inworld_enabled?: boolean
           inworld_voice_id?: string
           is_recording_mode?: boolean
+          library_ingest_auto_file?: boolean
+          library_ingest_model?: string | null
           openrouter_api_key?: string | null
+          saved_image_models?: Json
           saved_models?: Json | null
           selected_model?: string | null
           smart_filing_enabled?: boolean
@@ -1778,6 +1918,26 @@ export type Database = {
           title: string
           wiki_id: string
         }[]
+      }
+      memory_edge_delete: {
+        Args: { _source: string; _target: string }
+        Returns: number
+      }
+      memory_edge_upsert: {
+        Args: { _relationship: string; _source: string; _target: string }
+        Returns: string
+      }
+      memory_entry_upsert: {
+        Args: {
+          _confidence: number
+          _content: string
+          _entry_type: string
+          _id: string
+          _tags: string[]
+          _title: string
+          _wiki_id: string
+        }
+        Returns: string
       }
       memory_graph_for_wiki: {
         Args: { target_wiki_id: string }
