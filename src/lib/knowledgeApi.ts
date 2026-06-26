@@ -171,7 +171,7 @@ export async function runLint(wikiId?: string | null): Promise<LintResult> {
   return resp.json();
 }
 
-export async function ingestBook(bookId: string, wikiId?: string | null): Promise<any> {
+export async function ingestBook(bookId: string, wikiId?: string | null, opts?: { model?: string; autoFile?: boolean }): Promise<any> {
   const { data: { session } } = await supabase.auth.getSession();
   const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/knowledge-ingest`, {
     method: "POST",
@@ -179,7 +179,12 @@ export async function ingestBook(bookId: string, wikiId?: string | null): Promis
       "Content-Type": "application/json",
       Authorization: `Bearer ${session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
     },
-    body: JSON.stringify({ book_id: bookId, wiki_id: wikiId }),
+    body: JSON.stringify({
+      book_id: bookId,
+      wiki_id: wikiId,
+      ...(opts?.model ? { model: opts.model } : {}),
+      ...(opts?.autoFile != null ? { auto_file: opts.autoFile } : {}),
+    }),
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ error: "Ingest failed" }));
@@ -187,6 +192,7 @@ export async function ingestBook(bookId: string, wikiId?: string | null): Promis
   }
   return resp.json();
 }
+
 
 // ---- Phase 4: graph-aware retrieval ----
 export interface RetrievedNode {
