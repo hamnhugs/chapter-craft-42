@@ -52,7 +52,7 @@ const ChatPanel: React.FC = () => {
   const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort } = useChat();
   const { isPaid } = usePlan();
   const { speakingId, speak, stop: stopSpeaking } = useReadAloud();
-  const [settingsTab, setSettingsTab] = useState<"models" | "research" | "voice" | "prompts">("models");
+  const [settingsTab, setSettingsTab] = useState<"models" | "research" | "voice" | "prompts" | "permissions" | "images">("models");
   const [bargeInEnabled, setBargeInEnabled] = useState(() => localStorage.getItem("hands_free_barge_in") === "true");
   const handsFree = useHandsFree({
     onUtterance: (text) => sendMessage(text, { voiceMode: true, modelOverride: voiceModel || undefined }),
