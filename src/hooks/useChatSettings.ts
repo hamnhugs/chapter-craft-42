@@ -136,6 +136,17 @@ function rowToSettings(data: any): ChatSettings {
     inworldVoiceId: data.inworld_voice_id || "",
     accessAllNeurons: !!data.access_all_neurons,
     visionModel: data.vision_model || "",
+    libraryIngestModel: data.library_ingest_model || "",
+    libraryIngestAutoFile: data.library_ingest_auto_file !== false,
+    imageModelPrimary: data.image_model_primary || "",
+    imageModelFallback: data.image_model_fallback || "",
+    imageQuality: data.image_quality || "",
+    imageSize: data.image_size || "",
+    savedImageModels: Array.isArray(data.saved_image_models) ? (data.saved_image_models as string[]) : [],
+    chatToolPermissions: (data.chat_tool_permissions && typeof data.chat_tool_permissions === "object")
+      ? (data.chat_tool_permissions as Record<string, boolean>)
+      : {},
+
   };
 }
 
