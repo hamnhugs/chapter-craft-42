@@ -198,7 +198,16 @@ function persistSettings(userId: string, next: ChatSettings) {
       inworld_voice_id: next.inworldVoiceId || "",
       access_all_neurons: next.accessAllNeurons,
       vision_model: next.visionModel || null,
+      library_ingest_model: next.libraryIngestModel || null,
+      library_ingest_auto_file: next.libraryIngestAutoFile,
+      image_model_primary: next.imageModelPrimary || null,
+      image_model_fallback: next.imageModelFallback || null,
+      image_quality: next.imageQuality || null,
+      image_size: next.imageSize || null,
+      saved_image_models: next.savedImageModels as any,
+      chat_tool_permissions: next.chatToolPermissions as any,
     };
+
     let { error } = await supabase
       .from("user_settings")
       .upsert(payload, { onConflict: "user_id" });
