@@ -18,6 +18,9 @@ import { openPricing } from "@/components/PricingDialog";
 import { openSetupWizard } from "@/components/SetupWizard";
 import { useReadAloud } from "@/hooks/useReadAloud";
 import { useHandsFree } from "@/hooks/useHandsFree";
+import AiPermissionsSettings from "@/components/AiPermissionsSettings";
+import ImageModelsSettings from "@/components/ImageModelsSettings";
+
 import { isEmbeddingModel } from "@/lib/utils";
 import { useDictation } from "@/hooks/useDictation";
 import PromptLibrary from "@/components/PromptLibrary";
