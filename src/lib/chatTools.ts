@@ -418,7 +418,39 @@ export const CHAT_TOOL_DEFINITIONS = [
           limit: { type: "number", description: "Default 5, max 15." },
         },
       },
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_image",
+      description:
+        "Permanently delete a generated image (the row in image_attachments AND the underlying file in storage). Use `list_images` first to find the image_id. DESTRUCTIVE: only call when the user has explicitly approved deleting this specific image in the current turn — paraphrase the image (prompt/date) back, get a clear 'yes', then call with confirm:true. Honors the user's per-tool permissions in Settings → AI permissions.",
+      parameters: {
+        type: "object",
+        properties: {
+          image_id: { type: "string", description: "The id returned by list_images / show_image." },
+          confirm: { type: "boolean", description: "Must be true — proof the user just approved this exact deletion." },
+        },
+        required: ["image_id", "confirm"],
+      },
     },
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_image_memory",
+      description:
+        "Permanently delete an uploaded image memory (a picture the USER shared earlier). Removes both the image_memories row and the storage file. Use `recall_image_memories` first to find the memory_id. DESTRUCTIVE: only call after the user has explicitly approved this specific deletion in the current turn (paraphrase caption/date, get 'yes'). Honors per-tool permissions in Settings.",
+      parameters: {
+        type: "object",
+        properties: {
+          memory_id: { type: "string", description: "The id returned by recall_image_memories." },
+          confirm: { type: "boolean", description: "Must be true — proof the user just approved this exact deletion." },
+        },
+        required: ["memory_id", "confirm"],
+      },
+    },
+  },
   },
   {
     type: "function",
