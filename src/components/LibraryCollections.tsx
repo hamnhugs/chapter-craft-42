@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { BookDocument } from "@/types/library";
 import { listFolders, createFolder, renameFolder, deleteFolder, moveBookToFolder, BookFolder } from "@/lib/bookFolders";
-import { ingestBook } from "@/lib/knowledgeApi";
+import { enqueueIngestJobs } from "@/lib/knowledgeApi";
+import { useIngestJobs } from "@/hooks/useIngestJobs";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+
 
 // Managed folder view: user-created folders (book_folders table) that the user
 // can rename, recolor and delete. Books can be assigned to a folder; the
@@ -28,9 +30,18 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [busy, setBusy] = useState(false);
-  const [ingestProgress, setIngestProgress] = useState<{ done: number; total: number } | null>(null);
   const { libraryIngestModel, libraryIngestAutoFile, selectedModel, setLibraryIngestModel, setLibraryIngestAutoFile, savedModels } = useChatSettings();
   const [showSettings, setShowSettings] = useState(false);
+  // Live, cross-device view of the user's queue. Survives refresh/tab close
+  // because work happens on the server.
+  const { jobs, active, recent } = useIngestJobs();
+
+  // On mount, ping the worker so any orphaned jobs from a previous session
+  // get drained. Fire-and-forget; failures are non-fatal.
+  useEffect(() => {
+    enqueueIngestJobs([], { resume: true }).catch(() => {});
+  }, []);
+
 
   // Load folders + book-folder mapping (the mapping lives on books.folder_id
   // which the rest of the app doesn't read, so we pull it directly here).
