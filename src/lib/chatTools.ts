@@ -5,6 +5,7 @@ import { parseArtifact } from "@/lib/artifacts";
 import {
   generateImage, storeGeneratedImage, saveImageNeuron,
   fetchImageById, searchImages, loadImageAsDataUrl,
+  deleteImageAttachment, deleteImageMemory,
   IMAGE_ASPECT_RATIOS, type ChatImageRef,
 } from "@/lib/imageGen";
 
