@@ -36,10 +36,17 @@ const GROUPS: { group: string; items: PermItem[] }[] = [
     ],
   },
   {
-    group: "Generation",
+    group: "Images",
     items: [
       { id: "generate_image", label: "Generate images", description: "Allow the AI to create new images." },
       { id: "edit_image", label: "Edit images", description: "Allow the AI to modify existing images." },
+      { id: "delete_image", label: "Delete generated images", description: "Allow the AI to permanently delete AI-generated images after you confirm.", danger: true },
+      { id: "delete_image_memory", label: "Delete uploaded image memories", description: "Allow the AI to permanently delete pictures you previously uploaded, after you confirm.", danger: true },
+    ],
+  },
+  {
+    group: "Generation",
+    items: [
       { id: "create_artifact", label: "Create artifacts", description: "Allow the AI to publish code/markdown artifacts to the workspace." },
     ],
   },

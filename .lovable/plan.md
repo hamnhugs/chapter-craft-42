@@ -1,28 +1,49 @@
-## Goal
-Give the chat AI the ability to delete a wiki (neuron) when the user explicitly asks, since this tool is currently missing — that's why deletes from chat don't work.
+# Fix: AI cannot actually delete images
 
-## Changes
+## Root cause
 
-### 1. `src/lib/chatTools.ts` — add `delete_wiki` tool
-- New tool definition after `create_wiki`:
-  - Args: `wiki_id` (required), `confirm` (boolean, required).
-  - Description states: destructive, never call without `confirm: true`, and never call until the user has explicitly approved deletion of that exact wiki in the current turn.
-- New executor case `delete_wiki`:
-  - Permission gate via `chat_tool_permissions.delete_wiki` (defaults ON, like every other tool).
-  - Require `confirm === true`; otherwise return a refusal result instructing the AI to ask the user first.
-  - Verify the wiki exists and belongs to the current user (`select id, name, is_default … eq("user_id", uid)`).
-  - Refuse if it's the user's only remaining wiki (would leave them with none) or if `is_default` is true — return a clear message telling the AI to ask the user to pick a different default first.
-  - `supabase.from("wikis").delete().eq("id", wid).eq("user_id", uid)` — RLS already enforces ownership; the explicit `user_id` filter is defense in depth.
-  - If the deleted wiki was the active one, clear `user_settings.active_wiki_id` (set to the user's oldest remaining wiki, or `null`).
-  - Dispatch `window.dispatchEvent(new CustomEvent("wiki-active-changed"))` so WikiPanel / WikiLibrary refresh.
-  - Return `{ ok: true, deleted_id, name }` with a summary event.
+The AI claims to delete images because it sees `list_images` and `recall_image_memories` tools, but **no `delete_image*` tool exists** in `src/lib/chatTools.ts`. When asked to delete, the model either hallucinates a success or attempts a non-existent tool. The user-facing `ImagesPanel` deletion works (uses `deleteImageAttachment`) — only the AI path is broken. There is also no user-controlled permission toggle for image deletion.
 
-### 2. `src/components/AiPermissionsSettings.tsx` — expose the toggle
-- Add to the "Wikis (Neurons)" group:
-  - `{ id: "delete_wiki", label: "Delete wikis", description: "Allow the AI to permanently delete a neuron after you confirm.", danger: true }`
+## What I'll change
 
-No DB migration needed — `wikis` already has user-scoped RLS and ON DELETE CASCADE on its child tables, so deletion cleans up entries/edges/etc. automatically.
+### 1. Add two new AI tools in `src/lib/chatTools.ts`
 
-## Technical detail
-- Pattern mirrors the existing `resolve_conflict` safeguard: destructive action requires an explicit `confirm` arg, and the executor returns a structured refusal when missing so the model re-asks the user.
-- Defaults: tool ON unless the user toggles it off, matching every other entry in `chat_tool_permissions`.
+- **`delete_image`** — deletes a generated image (row in `image_attachments` + the file in the `generated-images` bucket). Args: `image_id` (required, the `image_id` returned by `list_images`), `confirm: true` (required, destructive guard). Uses the existing `deleteImageAttachment()` helper so the DB row is removed first, then the storage object, then the signed-URL cache is purged — same atomic order the panel uses. Dispatches an `image-attachments-changed` window event so the chat thumbnails and the Images side-panel refresh immediately.
+- **`delete_image_memory`** — deletes an uploaded image the user shared (row in `image_memories` + the storage file). Args: `memory_id` (required, the `memory_id` returned by `recall_image_memories`), `confirm: true`. Ownership-scoped via `auth.uid()` RLS, with best-effort storage cleanup mirroring the attachment helper.
+
+Both executors:
+- Refuse with a clear message if the matching permission is `false` in `user_settings.chat_tool_permissions` (consistent with how `delete_wiki` and `delete_memory_entry` already gate themselves).
+- Require `confirm: true` — the model is instructed in the tool description to only set this after the user has explicitly approved the deletion in the current turn.
+- Verify the row belongs to `auth.uid()` before deleting (defense in depth on top of RLS).
+- Return a structured `{ ok, deleted_id }` so the model can confirm precisely what was removed, plus an `event` so the chat timeline shows the destructive action.
+
+### 2. Add a small shared helper for image-memory deletion
+
+Add `deleteImageMemory({ id, storage_path })` to `src/lib/imageGen.ts` that mirrors `deleteImageAttachment` (DB delete → verify a row was actually removed → best-effort storage remove → purge signed-URL cache). Keeping it next to the attachment helper means both deletion paths follow the same battle-tested order.
+
+### 3. Surface permission toggles in `src/components/AiPermissionsSettings.tsx`
+
+Add a new **"Images"** group with four toggles so the user has full granular control in one place:
+- Generate images (move existing `generate_image` here from the Generation group)
+- Edit images (move existing `edit_image` here)
+- **Delete generated images** — new, `danger: true`
+- **Delete uploaded image memories** — new, `danger: true`
+
+The Generation group keeps `create_artifact`. Moving generate/edit alongside the new delete toggles keeps every image capability in one place — easier to audit and toggle in one click.
+
+### 4. Update the chat system prompt block that lists tool capabilities
+
+In `src/lib/buildChatSystemPrompt.ts` (the block that tells the model which tools exist), add one short line each for `delete_image` and `delete_image_memory` so the model knows the capability is real, knows it must ask for explicit user confirmation in the same turn, and knows to call the tool with `confirm: true` only after that confirmation. This is the same pattern already used for `delete_wiki`.
+
+## Files touched
+
+- `src/lib/chatTools.ts` — tool definitions + executors
+- `src/lib/imageGen.ts` — `deleteImageMemory` helper
+- `src/components/AiPermissionsSettings.tsx` — new Images group with 4 toggles
+- `src/lib/buildChatSystemPrompt.ts` — two-line capability hint
+
+## Out of scope
+
+- No DB migrations (RLS on `image_attachments` and `image_memories` already restricts to owner).
+- No changes to the user-facing `ImagesPanel` deletion path (it already works).
+- No changes to bulk-delete behavior in the panel.

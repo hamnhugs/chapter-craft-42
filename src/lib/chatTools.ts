@@ -5,6 +5,7 @@ import { parseArtifact } from "@/lib/artifacts";
 import {
   generateImage, storeGeneratedImage, saveImageNeuron,
   fetchImageById, searchImages, loadImageAsDataUrl,
+  deleteImageAttachment, deleteImageMemory,
   IMAGE_ASPECT_RATIOS, type ChatImageRef,
 } from "@/lib/imageGen";
 
@@ -416,6 +417,38 @@ export const CHAT_TOOL_DEFINITIONS = [
           query: { type: "string", description: "Optional keyword filter matched against caption + OCR text." },
           limit: { type: "number", description: "Default 5, max 15." },
         },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_image",
+      description:
+        "Permanently delete a generated image (the row in image_attachments AND the underlying file in storage). Use `list_images` first to find the image_id. DESTRUCTIVE: only call when the user has explicitly approved deleting this specific image in the current turn — paraphrase the image (prompt/date) back, get a clear 'yes', then call with confirm:true. Honors the user's per-tool permissions in Settings → AI permissions.",
+      parameters: {
+        type: "object",
+        properties: {
+          image_id: { type: "string", description: "The id returned by list_images / show_image." },
+          confirm: { type: "boolean", description: "Must be true — proof the user just approved this exact deletion." },
+        },
+        required: ["image_id", "confirm"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_image_memory",
+      description:
+        "Permanently delete an uploaded image memory (a picture the USER shared earlier). Removes both the image_memories row and the storage file. Use `recall_image_memories` first to find the memory_id. DESTRUCTIVE: only call after the user has explicitly approved this specific deletion in the current turn (paraphrase caption/date, get 'yes'). Honors per-tool permissions in Settings.",
+      parameters: {
+        type: "object",
+        properties: {
+          memory_id: { type: "string", description: "The id returned by recall_image_memories." },
+          confirm: { type: "boolean", description: "Must be true — proof the user just approved this exact deletion." },
+        },
+        required: ["memory_id", "confirm"],
       },
     },
   },
@@ -1215,6 +1248,68 @@ export async function executeChatTool(
           result: out,
           event: { name, summary: `Recalled ${out.length} image memory${out.length === 1 ? "" : "s"}${q ? ` matching "${q.slice(0, 40)}"` : ""}`, ok: true },
         };
+      }
+      case "delete_image":
+      case "delete_image_memory": {
+        // Per-tool permission gate. Defaults to allowed.
+        const { data: prefs } = await supabase
+          .from("user_settings")
+          .select("chat_tool_permissions" as any)
+          .maybeSingle();
+        const perms = (((prefs as any)?.chat_tool_permissions) || {}) as Record<string, boolean>;
+        if (perms[name] === false) {
+          return {
+            result: { error: `Tool '${name}' is disabled in the user's AI permissions. Ask the user to enable it in Settings → AI permissions → Images.` },
+            event: { name, summary: `${name} blocked by user settings`, ok: false },
+          };
+        }
+        if (args.confirm !== true) {
+          return {
+            result: { error: "Deletion requires confirm:true. Paraphrase the exact image back to the user, get explicit approval, then retry with confirm:true." },
+            event: { name, summary: "Refused: confirmation required", ok: false },
+          };
+        }
+        const { data: userData } = await supabase.auth.getUser();
+        const uid = userData.user?.id;
+        if (!uid) return { result: { error: "Not signed in" }, event: { name, summary: "Not signed in", ok: false } };
+
+        if (name === "delete_image") {
+          const imageId = String(args.image_id || "").trim();
+          if (!imageId) return { result: { error: "image_id required" }, event: { name, summary: "Missing image_id", ok: false } };
+          const row = await fetchImageById(imageId);
+          if (!row) return { result: { error: "Image not found or not owned by current user" }, event: { name, summary: "Image not found", ok: false } };
+          try {
+            await deleteImageAttachment({ id: row.id, storage_path: row.storage_path });
+          } catch (e: any) {
+            return { result: { error: e?.message || "Delete failed" }, event: { name, summary: "Image delete failed", ok: false } };
+          }
+          try { window.dispatchEvent(new CustomEvent("image-attachments-changed", { detail: { deleted: [row.id] } })); } catch {}
+          return {
+            result: { ok: true, deleted_id: row.id, prompt: (row.prompt || "").slice(0, 80) },
+            event: { name, summary: `Deleted image: "${(row.prompt || "").slice(0, 60)}"`, ok: true },
+          };
+        } else {
+          const memId = String(args.memory_id || "").trim();
+          if (!memId) return { result: { error: "memory_id required" }, event: { name, summary: "Missing memory_id", ok: false } };
+          const { data: mem, error: fErr } = await (supabase.from("image_memories" as any) as any)
+            .select("id, caption, storage_path, user_id")
+            .eq("id", memId)
+            .maybeSingle();
+          if (fErr) throw fErr;
+          if (!mem || (mem as any).user_id !== uid) {
+            return { result: { error: "Image memory not found or not owned by current user" }, event: { name, summary: "Memory not found", ok: false } };
+          }
+          try {
+            await deleteImageMemory({ id: (mem as any).id, storage_path: (mem as any).storage_path });
+          } catch (e: any) {
+            return { result: { error: e?.message || "Delete failed" }, event: { name, summary: "Memory delete failed", ok: false } };
+          }
+          try { window.dispatchEvent(new CustomEvent("image-memories-changed", { detail: { deleted: [(mem as any).id] } })); } catch {}
+          return {
+            result: { ok: true, deleted_id: (mem as any).id, caption: ((mem as any).caption || "").slice(0, 80) },
+            event: { name, summary: `Deleted image memory${(mem as any).caption ? `: "${(mem as any).caption.slice(0, 60)}"` : ""}`, ok: true },
+          };
+        }
       }
       case "create_artifact": {
         const art = parseArtifact(args);
