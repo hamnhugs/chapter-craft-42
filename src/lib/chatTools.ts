@@ -1092,6 +1092,42 @@ export async function executeChatTool(
           event: { name, summary: `Rendered ${blocks.length} block(s)${issues.length ? `, dropped ${issues.length}` : ""}`, ok: true },
         };
       }
+      case "flag_for_cleanup": {
+        const eid = String(args.entry_id || "").trim();
+        const reason = String(args.reason || "ai_marked").trim();
+        const note = args.note ? String(args.note).slice(0, 280) : null;
+        const allowed = new Set(["duplicate","low_confidence","stale","contradicted","empty_or_trivial","atomicity_violation","user_marked","ai_marked"]);
+        if (!eid) return { result: { error: "entry_id required" }, event: { name, summary: "Missing entry_id", ok: false } };
+        if (!allowed.has(reason)) return { result: { error: "invalid reason" }, event: { name, summary: "Invalid reason", ok: false } };
+        const { data: userData } = await supabase.auth.getUser();
+        const uid = userData.user?.id;
+        if (!uid) return { result: { error: "Not signed in" }, event: { name, summary: "Not signed in", ok: false } };
+        const { data: entry } = await supabase
+          .from("knowledge_entries")
+          .select("id, title, wiki_id, user_id")
+          .eq("id", eid)
+          .maybeSingle();
+        if (!entry || (entry as any).user_id !== uid) {
+          return { result: { error: "Entry not found" }, event: { name, summary: "Entry not found", ok: false } };
+        }
+        const { error } = await supabase
+          .from("cleanup_flags" as any)
+          .upsert({
+            user_id: uid,
+            wiki_id: (entry as any).wiki_id,
+            entry_id: eid,
+            reason,
+            note,
+            confidence: 0.9,
+            flagged_by: reason === "user_marked" ? "user" : "chat",
+            dismissed_at: null,
+          } as any, { onConflict: "entry_id,reason" });
+        if (error) throw error;
+        return {
+          result: { ok: true, entry_id: eid, reason, title: (entry as any).title },
+          event: { name, summary: `Flagged "${(entry as any).title}" for cleanup (${reason})`, ok: true },
+        };
+      }
       default:
         return { result: { error: `Unknown tool ${name}` }, event: { name, summary: `Unknown tool ${name}`, ok: false } };
     }
