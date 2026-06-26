@@ -53,7 +53,7 @@ const WikiPanel: React.FC = () => {
   const [sleepCycleReport, setSleepCycleReport] = useState<SleepCycleReport | null>(null);
   const [episodicLog, setEpisodicLog] = useState<EpisodicLogEntry[]>([]);
   const [queueItems, setQueueItems] = useState<ConsolidationQueueItem[]>([]);
-  const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
+  
   // Scope toggle: when "wiki", every panel / action is bound to the active wiki.
   // When "all", we keep the legacy global view (cross-wiki graph, conflicts, etc.).
   const [scope, setScope] = useState<"wiki" | "all">("wiki");
