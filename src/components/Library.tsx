@@ -110,7 +110,7 @@ const Library: React.FC = () => {
   // Last-used view persists across sessions (Finder/Drive convention).
   const [view, setView] = useState<ViewMode>(() => {
     const v = localStorage.getItem(VIEW_KEY);
-    return v === "folders" || v === "list" || v === "graph" ? v : "grid";
+    return v === "folders" || v === "collections" || v === "list" || v === "graph" ? v : "grid";
   });
   const [tagProgress, setTagProgress] = useState<{ done: number; total: number } | null>(null);
 
