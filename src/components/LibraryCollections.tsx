@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { BookDocument } from "@/types/library";
 import { listFolders, createFolder, renameFolder, deleteFolder, moveBookToFolder, BookFolder } from "@/lib/bookFolders";
-import { ingestBook } from "@/lib/knowledgeApi";
+import { enqueueIngestJobs } from "@/lib/knowledgeApi";
+import { useIngestJobs } from "@/hooks/useIngestJobs";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+
 
 // Managed folder view: user-created folders (book_folders table) that the user
 // can rename, recolor and delete. Books can be assigned to a folder; the
@@ -28,9 +30,18 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [busy, setBusy] = useState(false);
-  const [ingestProgress, setIngestProgress] = useState<{ done: number; total: number } | null>(null);
   const { libraryIngestModel, libraryIngestAutoFile, selectedModel, setLibraryIngestModel, setLibraryIngestAutoFile, savedModels } = useChatSettings();
   const [showSettings, setShowSettings] = useState(false);
+  // Live, cross-device view of the user's queue. Survives refresh/tab close
+  // because work happens on the server.
+  const { jobs, active, recent } = useIngestJobs();
+
+  // On mount, ping the worker so any orphaned jobs from a previous session
+  // get drained. Fire-and-forget; failures are non-fatal.
+  useEffect(() => {
+    enqueueIngestJobs([], { resume: true }).catch(() => {});
+  }, []);
+
 
   // Load folders + book-folder mapping (the mapping lives on books.folder_id
   // which the rest of the app doesn't read, so we pull it directly here).
@@ -124,28 +135,37 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
     if (!activeWikiId) { toast.error("Pick an active neuron in the Wiki tab first."); return; }
     const targets = booksInFolder;
     if (targets.length === 0) { toast("Folder is empty."); return; }
-    if (!window.confirm(`Digest ${targets.length} book${targets.length === 1 ? "" : "s"} into the active neuron?`)) return;
+    if (!window.confirm(`Queue ${targets.length} book${targets.length === 1 ? "" : "s"} for digestion?\n\nThis runs on the server — you can close this tab and it will keep going.`)) return;
     setBusy(true);
-    setIngestProgress({ done: 0, total: targets.length });
-    let failures = 0;
-    for (let i = 0; i < targets.length; i++) {
-      try {
-        await ingestBook(targets[i].id, activeWikiId, {
-          model: libraryIngestModel || selectedModel,
-          autoFile: libraryIngestAutoFile,
-        });
-      } catch (e) {
-        failures++;
-        console.warn("ingest failed", targets[i].title, e);
-      } finally {
-        setIngestProgress({ done: i + 1, total: targets.length });
-      }
+    try {
+      const { enqueued } = await enqueueIngestJobs(
+        targets.map((b) => ({
+          book_id: b.id,
+          wiki_id: activeWikiId,
+          folder_id: openFolderId,
+          model: libraryIngestModel || selectedModel || null,
+        })),
+      );
+      if (enqueued === 0) toast("Already in queue — nothing new to add.");
+      else toast.success(`Queued ${enqueued} book${enqueued === 1 ? "" : "s"} — safe to close the tab.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not queue jobs");
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
-    setIngestProgress(null);
-    if (failures === 0) toast.success(`Digested ${targets.length} book${targets.length === 1 ? "" : "s"}`);
-    else toast.error(`Digested with ${failures} failure${failures === 1 ? "" : "s"}`);
   };
+
+  // Lookup helpers for live progress UI
+  const jobByBookId = useMemo(() => {
+    const map = new Map<string, typeof jobs[number]>();
+    for (const j of jobs) if (j.book_id && !map.has(j.book_id)) map.set(j.book_id, j);
+    return map;
+  }, [jobs]);
+  const activeInFolder = useMemo(
+    () => active.filter((j) => !openFolderId || j.folder_id === openFolderId),
+    [active, openFolderId],
+  );
+
 
   const renderBookCard = (b: BookWithFolder, index: number) => (
     <div key={b.id} className="relative group">
@@ -308,12 +328,56 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
               onClick={handleDigest}
               disabled={busy || booksInFolder.length === 0 || !activeWikiId}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-on-primary-container text-xs font-bold disabled:opacity-40"
-              title={!activeWikiId ? "Set an active neuron first" : "Digest every book in this folder into the active neuron"}
+              title={!activeWikiId ? "Set an active neuron first" : "Queue every book in this folder for server-side digestion"}
             >
-              <span className={`material-symbols-outlined text-sm ${busy ? "animate-spin" : ""}`}>{busy ? "progress_activity" : "auto_awesome"}</span>
-              {ingestProgress ? `Digesting ${ingestProgress.done}/${ingestProgress.total}…` : "Digest folder into neuron"}
+              <span className={`material-symbols-outlined text-sm ${busy || activeInFolder.length > 0 ? "animate-spin" : ""}`}>
+                {busy || activeInFolder.length > 0 ? "progress_activity" : "auto_awesome"}
+              </span>
+              {activeInFolder.length > 0
+                ? `Digesting ${activeInFolder.length} in background…`
+                : "Digest folder into neuron"}
             </button>
           </nav>
+
+          {/* Live queue strip — survives page refresh */}
+          {(activeInFolder.length > 0 || recent.length > 0) && (
+            <div className="rounded-xl border border-outline-variant/15 bg-surface-container-low p-3 text-xs">
+              <div className="flex items-center gap-2 mb-2 text-on-surface-variant">
+                <span className="material-symbols-outlined text-sm">cloud_sync</span>
+                Server queue · keeps running if you refresh or close the tab
+              </div>
+              <ul className="space-y-1">
+                {activeInFolder.slice(0, 8).map((j) => {
+                  const title = books.find((b) => b.id === j.book_id)?.title || j.book_id?.slice(0, 6);
+                  return (
+                    <li key={j.id} className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[14px] animate-spin text-primary">progress_activity</span>
+                      <span className="truncate flex-1">{title}</span>
+                      <span className="text-on-surface-variant truncate max-w-[40%]">
+                        {j.status === "running" ? (j.progress || "Working…") : "Queued"}
+                      </span>
+                    </li>
+                  );
+                })}
+                {recent.slice(0, 4).map((j) => {
+                  const title = books.find((b) => b.id === j.book_id)?.title || j.book_id?.slice(0, 6);
+                  const ok = j.status === "succeeded";
+                  return (
+                    <li key={j.id} className="flex items-center gap-2 opacity-70">
+                      <span className={`material-symbols-outlined text-[14px] ${ok ? "text-green-400" : "text-red-400"}`}>
+                        {ok ? "check_circle" : "error"}
+                      </span>
+                      <span className="truncate flex-1">{title}</span>
+                      <span className="text-on-surface-variant truncate max-w-[40%]">
+                        {ok ? (j.progress || "Done") : (j.error || "Failed")}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
 
           {booksInFolder.length === 0 ? (
             <div className="py-12 text-center text-on-surface-variant text-sm">
