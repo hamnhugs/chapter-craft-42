@@ -297,6 +297,60 @@ export type Database = {
         }
         Relationships: []
       }
+      cleanup_flags: {
+        Row: {
+          confidence: number
+          created_at: string
+          dismissed_at: string | null
+          entry_id: string
+          flagged_by: string
+          id: string
+          note: string | null
+          reason: string
+          user_id: string
+          wiki_id: string | null
+        }
+        Insert: {
+          confidence?: number
+          created_at?: string
+          dismissed_at?: string | null
+          entry_id: string
+          flagged_by?: string
+          id?: string
+          note?: string | null
+          reason: string
+          user_id: string
+          wiki_id?: string | null
+        }
+        Update: {
+          confidence?: number
+          created_at?: string
+          dismissed_at?: string | null
+          entry_id?: string
+          flagged_by?: string
+          id?: string
+          note?: string | null
+          reason?: string
+          user_id?: string
+          wiki_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cleanup_flags_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cleanup_flags_wiki_id_fkey"
+            columns: ["wiki_id"]
+            isOneToOne: false
+            referencedRelation: "wikis"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       consolidation_queue: {
         Row: {
           created_at: string
@@ -1586,6 +1640,7 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      delete_entries_bulk: { Args: { entry_ids: string[] }; Returns: number }
       entries_for_wiki: {
         Args: { target_wiki_id: string }
         Returns: {
@@ -1745,6 +1800,13 @@ export type Database = {
         }
       }
       my_entitlements: { Args: never; Returns: Json }
+      scan_cleanup_flags: {
+        Args: { target_wiki_id?: string }
+        Returns: {
+          added: number
+          reason: string
+        }[]
+      }
       score_entry_against_wikis: {
         Args: { query_embedding: unknown }
         Returns: {
