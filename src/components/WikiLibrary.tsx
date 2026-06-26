@@ -78,6 +78,8 @@ const WikiLibrary: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>("gallery");
   const [imagesOpen, setImagesOpen] = useState(false);
+  const [cleanupOpen, setCleanupOpen] = useState(false);
+  const [cleanupCount, setCleanupCount] = useState(0);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [selected, setSelected] = useState<WikiWithStats | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
