@@ -19,7 +19,7 @@ import {
 import { Loader2, HelpCircle, ArrowRight } from "lucide-react";
 import GeneratedImage from "@/components/GeneratedImage";
 import { fetchImagesForEntries, deleteImageAttachment, type ImageAttachmentRow } from "@/lib/imageGen";
-import { fetchFlaggedEntryIds } from "@/lib/cleanupFlags";
+
 import { Link } from "react-router-dom";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
