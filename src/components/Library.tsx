@@ -97,7 +97,7 @@ const VIEW_OPTIONS: { id: ViewMode; icon: string; label: string }[] = [
 
 
 const Library: React.FC = () => {
-  const { books, addBook, removeBook, requestBookLoad, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile } = useApp();
+  const { books, addBook, removeBook, requestBookLoad, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile, activeWikiId } = useApp();
   const { apiKey } = useChatSettings();
   const { isPaid, loaded: planLoaded } = usePlan();
   const jobs = useStructureJobs();
