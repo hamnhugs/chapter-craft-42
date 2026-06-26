@@ -12,6 +12,8 @@ import { structureJobs, useStructureJobs, StructureJob } from "@/lib/structureJo
 import { autoTagBooks } from "@/lib/autoTag";
 import { toast } from "sonner";
 import LibraryFolders from "@/components/LibraryFolders";
+import LibraryCollections from "@/components/LibraryCollections";
+
 import LibraryList from "@/components/LibraryList";
 
 // The 3D mind map pulls in three.js (~300KB gzip); lazy-load so that chunk is
