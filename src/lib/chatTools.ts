@@ -1143,9 +1143,80 @@ export async function executeChatTool(
           event: { name, summary: `Rendered ${blocks.length} block(s)${issues.length ? `, dropped ${issues.length}` : ""}`, ok: true },
         };
       }
+      case "create_memory_entry":
+      case "update_memory_entry":
+      case "delete_memory_entry":
+      case "link_memory_entries": {
+        // Per-tool permission gate. Defaults to allowed.
+        const { data: prefs } = await supabase
+          .from("user_settings")
+          .select("chat_tool_permissions" as any)
+          .maybeSingle();
+        const perms = ((prefs as any)?.chat_tool_permissions || {}) as Record<string, boolean>;
+        if (perms[name] === false) {
+          return {
+            result: { error: `Tool '${name}' is disabled in the user's AI permissions. Ask the user to enable it in Settings.` },
+            event: { name, summary: `${name} blocked by user settings`, ok: false },
+          };
+        }
+
+        if (name === "create_memory_entry") {
+          const { activeWikiId } = await getNeuronScope();
+          if (!activeWikiId) return { result: { error: "No active wiki" }, event: { name, summary: "No active wiki", ok: false } };
+          const { data, error } = await supabase.rpc("memory_entry_upsert" as any, {
+            p_wiki_id: activeWikiId,
+            p_entry_id: null,
+            p_title: String(args.title || "").slice(0, 200),
+            p_content: String(args.content || ""),
+            p_entry_type: String(args.entry_type || "fact"),
+            p_tags: Array.isArray(args.tags) ? args.tags : [],
+            p_confidence: typeof args.confidence === "number" ? args.confidence : 0.8,
+          });
+          if (error) throw error;
+          try { window.dispatchEvent(new Event("knowledge-entries-changed")); } catch {}
+          return { result: { ok: true, entry_id: data }, event: { name, summary: `Created memory "${args.title}"`, ok: true } };
+        }
+        if (name === "update_memory_entry") {
+          if (!args.entry_id) return { result: { error: "entry_id required" }, event: { name, summary: "Missing entry_id", ok: false } };
+          const { data, error } = await supabase.rpc("memory_entry_upsert" as any, {
+            p_wiki_id: null,
+            p_entry_id: args.entry_id,
+            p_title: args.title ?? null,
+            p_content: args.content ?? null,
+            p_entry_type: args.entry_type ?? null,
+            p_tags: Array.isArray(args.tags) ? args.tags : null,
+            p_confidence: typeof args.confidence === "number" ? args.confidence : null,
+          });
+          if (error) throw error;
+          try { window.dispatchEvent(new Event("knowledge-entries-changed")); } catch {}
+          return { result: { ok: true, entry_id: data }, event: { name, summary: `Updated memory`, ok: true } };
+        }
+        if (name === "delete_memory_entry") {
+          if (!args.entry_id) return { result: { error: "entry_id required" }, event: { name, summary: "Missing entry_id", ok: false } };
+          const { error } = await supabase.from("knowledge_entries").delete().eq("id", args.entry_id);
+          if (error) throw error;
+          try { window.dispatchEvent(new Event("knowledge-entries-changed")); } catch {}
+          return { result: { ok: true }, event: { name, summary: `Deleted memory entry`, ok: true } };
+        }
+        // link_memory_entries
+        const action = String(args.action || "upsert");
+        if (action === "delete") {
+          const { error } = await supabase.rpc("memory_edge_delete" as any, {
+            p_source: args.source_entry_id, p_target: args.target_entry_id, p_relation: args.relation,
+          });
+          if (error) throw error;
+          return { result: { ok: true }, event: { name, summary: `Removed ${args.relation} link`, ok: true } };
+        }
+        const { error } = await supabase.rpc("memory_edge_upsert" as any, {
+          p_source: args.source_entry_id, p_target: args.target_entry_id, p_relation: args.relation,
+        });
+        if (error) throw error;
+        return { result: { ok: true }, event: { name, summary: `Linked entries (${args.relation})`, ok: true } };
+      }
       default:
         return { result: { error: `Unknown tool ${name}` }, event: { name, summary: `Unknown tool ${name}`, ok: false } };
     }
+
   } catch (e: any) {
     return {
       result: { error: e?.message || "Tool failed" },
