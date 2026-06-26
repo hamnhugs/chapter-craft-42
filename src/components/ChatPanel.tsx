@@ -18,6 +18,9 @@ import { openPricing } from "@/components/PricingDialog";
 import { openSetupWizard } from "@/components/SetupWizard";
 import { useReadAloud } from "@/hooks/useReadAloud";
 import { useHandsFree } from "@/hooks/useHandsFree";
+import AiPermissionsSettings from "@/components/AiPermissionsSettings";
+import ImageModelsSettings from "@/components/ImageModelsSettings";
+
 import { isEmbeddingModel } from "@/lib/utils";
 import { useDictation } from "@/hooks/useDictation";
 import PromptLibrary from "@/components/PromptLibrary";
@@ -52,7 +55,7 @@ const ChatPanel: React.FC = () => {
   const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort } = useChat();
   const { isPaid } = usePlan();
   const { speakingId, speak, stop: stopSpeaking } = useReadAloud();
-  const [settingsTab, setSettingsTab] = useState<"models" | "research" | "voice" | "prompts">("models");
+  const [settingsTab, setSettingsTab] = useState<"models" | "research" | "voice" | "prompts" | "permissions" | "images">("models");
   const [bargeInEnabled, setBargeInEnabled] = useState(() => localStorage.getItem("hands_free_barge_in") === "true");
   const handsFree = useHandsFree({
     onUtterance: (text) => sendMessage(text, { voiceMode: true, modelOverride: voiceModel || undefined }),
@@ -605,10 +608,13 @@ const ChatPanel: React.FC = () => {
           <div role="tablist" aria-label="Settings sections" className="flex gap-1.5 overflow-x-auto hide-scrollbar">
             {([
               ["models", "tune", "Models & Keys"],
+              ["images", "image", "Images"],
               ["research", "science", "Research"],
               ["voice", "record_voice_over", "Voice"],
               ["prompts", "history_edu", "Prompts"],
+              ["permissions", "shield_person", "AI Permissions"],
             ] as const).map(([id, icon, label]) => (
+
               <button
                 key={id}
                 role="tab"
@@ -923,6 +929,11 @@ const ChatPanel: React.FC = () => {
           </section>
           </>
           )}
+
+          {settingsTab === "images" && <ImageModelsSettings />}
+          {settingsTab === "permissions" && <AiPermissionsSettings />}
+
+
 
           {/* Help row — always visible regardless of tab */}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 pb-1">

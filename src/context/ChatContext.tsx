@@ -102,7 +102,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { user } = useAuth();
   const { books, activeBookId, activeWiki, activeWikiId, wikis, addChapter, updateChapter, removeChapter, setActiveBookSilent } = useApp();
 
-  const { apiKey, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, visionModel } = useChatSettings();
+  const { apiKey, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, visionModel, imageModelPrimary, imageModelFallback } = useChatSettings();
   const { isPaid, loaded: planLoaded } = usePlan();
   const { getActiveBodyForScope, migrate } = usePromptPresets();
 
@@ -562,7 +562,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               burplexityApiToken,
               openRouterApiKey: apiKey,
               isPaid,
+              imageModelPrimary,
+              imageModelFallback,
             });
+
             assistantEvents.push(event);
             const r = result as any;
             // Strip UI side-channel fields before the result goes to the model.

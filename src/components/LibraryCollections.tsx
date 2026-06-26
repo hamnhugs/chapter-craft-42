@@ -1,0 +1,333 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { BookDocument } from "@/types/library";
+import { listFolders, createFolder, renameFolder, deleteFolder, moveBookToFolder, BookFolder } from "@/lib/bookFolders";
+import { ingestBook } from "@/lib/knowledgeApi";
+import { useChatSettings } from "@/hooks/useChatSettings";
+import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+
+// Managed folder view: user-created folders (book_folders table) that the user
+// can rename, recolor and delete. Books can be assigned to a folder; the
+// "Digest folder" button runs every book in the folder through knowledge-ingest
+// against the currently active neuron, using the user's chosen ingest model.
+
+type BookWithFolder = BookDocument & { folderId?: string | null };
+
+interface Props {
+  books: BookDocument[];
+  renderBook: (book: BookDocument, index: number) => React.ReactNode;
+  activeWikiId: string | null;
+}
+
+const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }) => {
+  const [folders, setFolders] = useState<BookFolder[]>([]);
+  const [openFolderId, setOpenFolderId] = useState<string | null>(null);
+  const [folderAssignments, setFolderAssignments] = useState<Record<string, string | null>>({});
+  const [loading, setLoading] = useState(true);
+  const [newName, setNewName] = useState("");
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [ingestProgress, setIngestProgress] = useState<{ done: number; total: number } | null>(null);
+  const { libraryIngestModel, libraryIngestAutoFile, selectedModel, setLibraryIngestModel, setLibraryIngestAutoFile, savedModels } = useChatSettings();
+  const [showSettings, setShowSettings] = useState(false);
+
+  // Load folders + book-folder mapping (the mapping lives on books.folder_id
+  // which the rest of the app doesn't read, so we pull it directly here).
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const [f, rows] = await Promise.all([
+          listFolders(),
+          (supabase.from("books" as any) as any).select("id, folder_id"),
+        ]);
+        if (cancel) return;
+        setFolders(f);
+        const map: Record<string, string | null> = {};
+        for (const r of (rows.data as any[]) || []) map[r.id] = r.folder_id ?? null;
+        setFolderAssignments(map);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Could not load folders");
+      } finally {
+        if (!cancel) setLoading(false);
+      }
+    })();
+    return () => { cancel = true; };
+  }, []);
+
+  const booksInFolder = useMemo<BookWithFolder[]>(() => {
+    if (!openFolderId) return [];
+    return books.filter((b) => folderAssignments[b.id] === openFolderId);
+  }, [books, folderAssignments, openFolderId]);
+
+  const unassigned = useMemo<BookWithFolder[]>(() => {
+    return books.filter((b) => !folderAssignments[b.id]);
+  }, [books, folderAssignments]);
+
+  const handleCreate = async () => {
+    const name = newName.trim();
+    if (!name) return;
+    try {
+      const f = await createFolder(name);
+      setFolders((prev) => [...prev, f]);
+      setNewName("");
+      toast.success(`Folder "${name}" created`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not create folder");
+    }
+  };
+
+  const handleRename = async (id: string) => {
+    const name = renameDraft.trim();
+    if (!name) { setRenaming(null); return; }
+    try {
+      await renameFolder(id, name);
+      setFolders((prev) => prev.map((f) => f.id === id ? { ...f, name } : f));
+      setRenaming(null);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Rename failed");
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    const f = folders.find((x) => x.id === id);
+    if (!f) return;
+    if (!window.confirm(`Delete folder "${f.name}"? Books inside will return to "Unassigned" (not deleted).`)) return;
+    try {
+      await deleteFolder(id);
+      setFolders((prev) => prev.filter((x) => x.id !== id));
+      setFolderAssignments((prev) => {
+        const next = { ...prev };
+        for (const k of Object.keys(next)) if (next[k] === id) next[k] = null;
+        return next;
+      });
+      if (openFolderId === id) setOpenFolderId(null);
+      toast.success(`Folder deleted`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Delete failed");
+    }
+  };
+
+  const assignBook = async (bookId: string, folderId: string | null) => {
+    try {
+      await moveBookToFolder(bookId, folderId);
+      setFolderAssignments((prev) => ({ ...prev, [bookId]: folderId }));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Move failed");
+    }
+  };
+
+  const handleDigest = async () => {
+    if (!openFolderId) return;
+    if (!activeWikiId) { toast.error("Pick an active neuron in the Wiki tab first."); return; }
+    const targets = booksInFolder;
+    if (targets.length === 0) { toast("Folder is empty."); return; }
+    if (!window.confirm(`Digest ${targets.length} book${targets.length === 1 ? "" : "s"} into the active neuron?`)) return;
+    setBusy(true);
+    setIngestProgress({ done: 0, total: targets.length });
+    let failures = 0;
+    for (let i = 0; i < targets.length; i++) {
+      try {
+        await ingestBook(targets[i].id, activeWikiId, {
+          model: libraryIngestModel || selectedModel,
+          autoFile: libraryIngestAutoFile,
+        });
+      } catch (e) {
+        failures++;
+        console.warn("ingest failed", targets[i].title, e);
+      } finally {
+        setIngestProgress({ done: i + 1, total: targets.length });
+      }
+    }
+    setBusy(false);
+    setIngestProgress(null);
+    if (failures === 0) toast.success(`Digested ${targets.length} book${targets.length === 1 ? "" : "s"}`);
+    else toast.error(`Digested with ${failures} failure${failures === 1 ? "" : "s"}`);
+  };
+
+  const renderBookCard = (b: BookWithFolder, index: number) => (
+    <div key={b.id} className="relative group">
+      {renderBook(b, index)}
+      <select
+        value={folderAssignments[b.id] || ""}
+        onChange={(e) => assignBook(b.id, e.target.value || null)}
+        className="absolute top-2 right-2 bg-surface-container-high text-xs rounded-md px-1.5 py-0.5 border border-outline-variant/30 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+        title="Move to folder"
+      >
+        <option value="">Unassigned</option>
+        {folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+      </select>
+    </div>
+  );
+
+  if (loading) {
+    return <div className="py-16 text-center text-on-surface-variant text-sm">Loading folders…</div>;
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      {/* Settings strip */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2 text-xs text-on-surface-variant">
+          <span className="material-symbols-outlined text-base">folder_managed</span>
+          Managed collections{activeWikiId ? "" : " — pick an active neuron to enable digesting"}
+        </div>
+        <button
+          onClick={() => setShowSettings((v) => !v)}
+          className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-surface-container-high hover:bg-surface-container-highest"
+        >
+          <span className="material-symbols-outlined text-sm">tune</span>
+          Ingest settings
+        </button>
+      </div>
+
+      {showSettings && (
+        <div className="rounded-xl border border-outline-variant/15 p-3 bg-surface-container-low grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant">Ingest Model</label>
+            <select
+              value={libraryIngestModel}
+              onChange={(e) => setLibraryIngestModel(e.target.value)}
+              className="w-full bg-surface-container-high border-none rounded-lg text-sm py-2 px-3"
+            >
+              <option value="">Use active chat model ({selectedModel})</option>
+              {savedModels.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={libraryIngestAutoFile}
+              onChange={(e) => setLibraryIngestAutoFile(e.target.checked)}
+              className="mt-1"
+            />
+            <span>
+              <span className="font-medium">Smart-file entries</span>
+              <span className="block text-[11px] text-on-surface-variant">
+                When on, each digested entry is automatically routed to the best matching neuron.
+              </span>
+            </span>
+          </label>
+        </div>
+      )}
+
+      {/* Folder list */}
+      {!openFolderId ? (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+            {folders.map((f) => {
+              const count = books.filter((b) => folderAssignments[b.id] === f.id).length;
+              return (
+                <div
+                  key={f.id}
+                  className="group relative flex flex-col items-start gap-3 rounded-2xl p-5 text-left border border-outline-variant/15 bg-surface-container-high transition-all hover:-translate-y-0.5 hover:shadow-xl"
+                >
+                  <button onClick={() => setOpenFolderId(f.id)} className="absolute inset-0" aria-label={`Open ${f.name}`} />
+                  <span className="material-symbols-outlined text-4xl text-primary" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden>folder</span>
+                  <div className="min-w-0 z-10 pointer-events-none">
+                    {renaming === f.id ? (
+                      <input
+                        autoFocus
+                        value={renameDraft}
+                        onChange={(e) => setRenameDraft(e.target.value)}
+                        onBlur={() => handleRename(f.id)}
+                        onKeyDown={(e) => { if (e.key === "Enter") handleRename(f.id); if (e.key === "Escape") setRenaming(null); }}
+                        className="bg-surface-container-highest rounded px-2 py-0.5 text-sm pointer-events-auto"
+                      />
+                    ) : (
+                      <p className="font-headline font-bold text-base text-foreground truncate w-full">{f.name}</p>
+                    )}
+                    <p className="text-xs text-on-surface-variant mt-0.5">{count} book{count === 1 ? "" : "s"}</p>
+                  </div>
+                  <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setRenameDraft(f.name); setRenaming(f.id); }}
+                      title="Rename"
+                      className="p-1 rounded bg-surface-container-high hover:bg-surface-container-highest"
+                    >
+                      <span className="material-symbols-outlined text-sm">edit</span>
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDelete(f.id); }}
+                      title="Delete"
+                      className="p-1 rounded bg-surface-container-high hover:bg-red-500/20 text-red-300"
+                    >
+                      <span className="material-symbols-outlined text-sm">delete</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            {/* Create card */}
+            <div className="flex flex-col items-stretch gap-2 rounded-2xl p-5 border-2 border-dashed border-outline-variant/30">
+              <p className="text-xs uppercase tracking-widest text-on-surface-variant">New folder</p>
+              <input
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); }}
+                placeholder="Folder name"
+                className="bg-surface-container-high rounded-lg text-sm py-2 px-3 focus:ring-1 focus:ring-primary/40 border-none"
+              />
+              <button
+                onClick={handleCreate}
+                disabled={!newName.trim()}
+                className="px-3 py-1.5 bg-primary/10 text-primary text-sm font-bold rounded-lg hover:bg-primary hover:text-on-primary-container disabled:opacity-40"
+              >
+                Create
+              </button>
+            </div>
+          </div>
+
+          {/* Unassigned bucket */}
+          {unassigned.length > 0 && (
+            <section className="mt-2">
+              <p className="text-xs uppercase tracking-widest text-on-surface-variant mb-2 px-1">Unassigned ({unassigned.length})</p>
+              <div className="book-grid">
+                {unassigned.map((b, i) => renderBookCard(b, i))}
+              </div>
+            </section>
+          )}
+        </>
+      ) : (
+        <>
+          <nav className="flex items-center gap-1.5 text-sm">
+            <button onClick={() => setOpenFolderId(null)} className="flex items-center gap-1 px-2 py-1 rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container-high">
+              <span className="material-symbols-outlined text-base">folder_copy</span>
+              All collections
+            </button>
+            <span className="text-on-surface-variant/50" aria-hidden>/</span>
+            <span className="flex items-center gap-1.5 px-2 py-1 font-semibold text-foreground">
+              <span className="material-symbols-outlined text-base text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>folder_open</span>
+              {folders.find((f) => f.id === openFolderId)?.name}
+              <span className="text-on-surface-variant font-normal">({booksInFolder.length})</span>
+            </span>
+            <span className="ml-auto" />
+            <button
+              onClick={handleDigest}
+              disabled={busy || booksInFolder.length === 0 || !activeWikiId}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-on-primary-container text-xs font-bold disabled:opacity-40"
+              title={!activeWikiId ? "Set an active neuron first" : "Digest every book in this folder into the active neuron"}
+            >
+              <span className={`material-symbols-outlined text-sm ${busy ? "animate-spin" : ""}`}>{busy ? "progress_activity" : "auto_awesome"}</span>
+              {ingestProgress ? `Digesting ${ingestProgress.done}/${ingestProgress.total}…` : "Digest folder into neuron"}
+            </button>
+          </nav>
+
+          {booksInFolder.length === 0 ? (
+            <div className="py-12 text-center text-on-surface-variant text-sm">
+              No books in this folder yet — hover any book card and use the dropdown to move it here.
+            </div>
+          ) : (
+            <div className="book-grid">
+              {booksInFolder.map((b, i) => renderBookCard(b, i))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
+
+export default LibraryCollections;

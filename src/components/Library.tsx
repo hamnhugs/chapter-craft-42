@@ -12,6 +12,8 @@ import { structureJobs, useStructureJobs, StructureJob } from "@/lib/structureJo
 import { autoTagBooks } from "@/lib/autoTag";
 import { toast } from "sonner";
 import LibraryFolders from "@/components/LibraryFolders";
+import LibraryCollections from "@/components/LibraryCollections";
+
 import LibraryList from "@/components/LibraryList";
 
 // The 3D mind map pulls in three.js (~300KB gzip); lazy-load so that chunk is
@@ -82,18 +84,20 @@ const SUPPORTED_UPLOAD_EXTENSIONS = ["pdf", "doc", "docx", "txt", "rtf", "odt", 
 const MAX_UPLOAD_ATTEMPTS = 3;
 const MAX_CONCURRENT_UPLOADS = 3;
 
-type ViewMode = "grid" | "folders" | "list" | "graph";
+type ViewMode = "grid" | "folders" | "collections" | "list" | "graph";
 const VIEW_KEY = "vault_view_mode";
 
 const VIEW_OPTIONS: { id: ViewMode; icon: string; label: string }[] = [
   { id: "grid", icon: "grid_view", label: "Grid" },
   { id: "folders", icon: "folder", label: "Folders" },
+  { id: "collections", icon: "folder_managed", label: "Collections" },
   { id: "list", icon: "view_list", label: "List" },
   { id: "graph", icon: "hub", label: "Mind map" },
 ];
 
+
 const Library: React.FC = () => {
-  const { books, addBook, removeBook, requestBookLoad, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile } = useApp();
+  const { books, addBook, removeBook, requestBookLoad, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile, activeWikiId } = useApp();
   const { apiKey } = useChatSettings();
   const { isPaid, loaded: planLoaded } = usePlan();
   const jobs = useStructureJobs();
@@ -108,7 +112,7 @@ const Library: React.FC = () => {
   // Last-used view persists across sessions (Finder/Drive convention).
   const [view, setView] = useState<ViewMode>(() => {
     const v = localStorage.getItem(VIEW_KEY);
-    return v === "folders" || v === "list" || v === "graph" ? v : "grid";
+    return v === "folders" || v === "collections" || v === "list" || v === "graph" ? v : "grid";
   });
   const [tagProgress, setTagProgress] = useState<{ done: number; total: number } | null>(null);
 
@@ -662,7 +666,26 @@ const Library: React.FC = () => {
               />
             )}
           />
+        ) : view === "collections" ? (
+          <LibraryCollections
+            books={filteredBooks}
+            activeWikiId={activeWikiId}
+            renderBook={(book, i) => (
+              <BookCard
+                key={book.id}
+                book={book}
+                index={i}
+                query={query}
+                job={jobs[book.id]}
+                onDetect={() => runDetect(book)}
+                onRead={() => requestBookLoad(book.id)}
+                onRemove={() => removeBook(book.id)}
+                onRename={(newTitle) => updateBookTitle(book.id, newTitle)}
+              />
+            )}
+          />
         ) : view === "list" ? (
+
           <LibraryList
             books={filteredBooks}
             sortBy={sortBy}

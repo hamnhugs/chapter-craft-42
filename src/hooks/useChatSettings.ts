@@ -28,6 +28,14 @@ interface ChatSettings {
   accessAllNeurons: boolean;
   /** Optional override model used for chat turns that include image attachments. Falls back to selectedModel if empty. */
   visionModel: string;
+  libraryIngestModel: string;
+  libraryIngestAutoFile: boolean;
+  imageModelPrimary: string;
+  imageModelFallback: string;
+  imageQuality: string;
+  imageSize: string;
+  savedImageModels: string[];
+  chatToolPermissions: Record<string, boolean>;
 }
 
 const defaults: ChatSettings = {
@@ -47,7 +55,16 @@ const defaults: ChatSettings = {
   inworldVoiceId: "",
   accessAllNeurons: false,
   visionModel: "",
+  libraryIngestModel: "",
+  libraryIngestAutoFile: true,
+  imageModelPrimary: "",
+  imageModelFallback: "",
+  imageQuality: "",
+  imageSize: "",
+  savedImageModels: [],
+  chatToolPermissions: {},
 };
+
 
 // ---------------------------------------------------------------------------
 // Module-level shared store.
@@ -119,6 +136,17 @@ function rowToSettings(data: any): ChatSettings {
     inworldVoiceId: data.inworld_voice_id || "",
     accessAllNeurons: !!data.access_all_neurons,
     visionModel: data.vision_model || "",
+    libraryIngestModel: data.library_ingest_model || "",
+    libraryIngestAutoFile: data.library_ingest_auto_file !== false,
+    imageModelPrimary: data.image_model_primary || "",
+    imageModelFallback: data.image_model_fallback || "",
+    imageQuality: data.image_quality || "",
+    imageSize: data.image_size || "",
+    savedImageModels: Array.isArray(data.saved_image_models) ? (data.saved_image_models as string[]) : [],
+    chatToolPermissions: (data.chat_tool_permissions && typeof data.chat_tool_permissions === "object")
+      ? (data.chat_tool_permissions as Record<string, boolean>)
+      : {},
+
   };
 }
 
@@ -170,7 +198,16 @@ function persistSettings(userId: string, next: ChatSettings) {
       inworld_voice_id: next.inworldVoiceId || "",
       access_all_neurons: next.accessAllNeurons,
       vision_model: next.visionModel || null,
+      library_ingest_model: next.libraryIngestModel || null,
+      library_ingest_auto_file: next.libraryIngestAutoFile,
+      image_model_primary: next.imageModelPrimary || null,
+      image_model_fallback: next.imageModelFallback || null,
+      image_quality: next.imageQuality || null,
+      image_size: next.imageSize || null,
+      saved_image_models: next.savedImageModels as any,
+      chat_tool_permissions: next.chatToolPermissions as any,
     };
+
     let { error } = await supabase
       .from("user_settings")
       .upsert(payload, { onConflict: "user_id" });
@@ -253,8 +290,34 @@ export function useChatSettings() {
     setInworldVoiceId: (v: string) => update({ inworldVoiceId: v }),
     setAccessAllNeurons: (v: boolean) => update({ accessAllNeurons: v }),
     setVisionModel: (m: string) => update({ visionModel: m }),
+    setLibraryIngestModel: (m: string) => update({ libraryIngestModel: m }),
+    setLibraryIngestAutoFile: (v: boolean) => update({ libraryIngestAutoFile: v }),
+    setImageModelPrimary: (m: string) => update({ imageModelPrimary: m }),
+    setImageModelFallback: (m: string) => update({ imageModelFallback: m }),
+    setImageQuality: (q: string) => update({ imageQuality: q }),
+    setImageSize: (s: string) => update({ imageSize: s }),
+    addImageModel: (m: string) => {
+      const id = m.trim(); if (!id) return;
+      const cur = getSnapshot().settings;
+      if (cur.savedImageModels.includes(id)) { toast.error("Image model already saved"); return; }
+      update({ savedImageModels: [...cur.savedImageModels, id], imageModelPrimary: cur.imageModelPrimary || id });
+      toast.success(`Image model "${id}" added`);
+    },
+    removeImageModel: (m: string) => {
+      const cur = getSnapshot().settings;
+      const next = cur.savedImageModels.filter(x => x !== m);
+      const primary = cur.imageModelPrimary === m ? (next[0] || "") : cur.imageModelPrimary;
+      const fallback = cur.imageModelFallback === m ? "" : cur.imageModelFallback;
+      update({ savedImageModels: next, imageModelPrimary: primary, imageModelFallback: fallback });
+    },
+    setChatToolPermission: (tool: string, allowed: boolean) => {
+      const cur = getSnapshot().settings;
+      update({ chatToolPermissions: { ...cur.chatToolPermissions, [tool]: allowed } });
+    },
+    setChatToolPermissions: (perms: Record<string, boolean>) => update({ chatToolPermissions: perms }),
     addModel,
     removeModel,
     setNewModelInput: undefined, // handled in component
   };
+
 }
