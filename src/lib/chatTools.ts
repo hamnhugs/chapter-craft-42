@@ -20,7 +20,11 @@ export interface ToolDeps {
   openRouterApiKey?: string;
   /** Paid plan flag — image generation/editing are Pro features. */
   isPaid?: boolean;
+  /** Optional user-preferred image model overrides. */
+  imageModelPrimary?: string;
+  imageModelFallback?: string;
 }
+
 
 /** Tool results may carry side-channel fields for the chat UI. They are
  *  stripped before the result is sent back to the model:
