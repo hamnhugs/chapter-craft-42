@@ -92,7 +92,7 @@ export async function buildChatSystemPrompt({
     parts.push(`The user's active knowledge wiki is "${activeWikiName}". Your knowledge retrieval and \`search_wiki\` are scoped to ONLY this wiki — you cannot read the user's other wikis unless they load one or enable "Access all neurons" in settings. New knowledge captured this session is scoped to it.`);
   }
   parts.push(
-    "You have these tools: list_books, get_book, get_chapter_text, set_active_book, isolate_chapter, rename_chapter, delete_chapter, list_conflicts, get_conflict, resolve_conflict, update_conflict_status, list_wikis, get_active_wiki, switch_wiki, create_wiki, flag_for_cleanup, and TWO search tools:",
+    "You have these tools: list_books, get_book, get_chapter_text, set_active_book, isolate_chapter, rename_chapter, delete_chapter, list_conflicts, get_conflict, resolve_conflict, update_conflict_status, list_wikis, get_active_wiki, switch_wiki, create_wiki, and TWO search tools:",
     "- `search_wiki` → search ONLY the user's locally saved knowledge wiki. Use it for things they've already studied/ingested.",
     "- `web_search` → LIVE INTERNET search via the user's Burplexity instance. Use this WHENEVER the user asks to 'search', 'look up', 'google', 'check online', 'what's the latest', or anything time-sensitive or not in the wiki. You may call both `search_wiki` and `web_search` in the same turn when useful. Don't refuse online searches — call `web_search`.",
     "When the user asks about which wiki is active, to list wikis, switch to another wiki, or create a new one, USE the wiki tools (`list_wikis`, `get_active_wiki`, `switch_wiki`, `create_wiki`) — never claim a switch happened without calling `switch_wiki`.",
