@@ -445,27 +445,6 @@ export const CHAT_TOOL_DEFINITIONS = [
       },
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "flag_for_cleanup",
-      description:
-        "Mark a memory entry as a deletion candidate so the user sees it (highlighted red) in the Cleanup panel of the BRAIN tab. Use when the user says things like 'this is junk', 'forget that', 'delete this note', or when you notice an entry that is clearly obsolete, contradicted, or a duplicate. Does NOT delete the entry — the user reviews and confirms.",
-      parameters: {
-        type: "object",
-        properties: {
-          entry_id: { type: "string", description: "knowledge_entries.id of the entry to flag." },
-          reason: {
-            type: "string",
-            enum: ["duplicate", "low_confidence", "stale", "contradicted", "empty_or_trivial", "atomicity_violation", "user_marked", "ai_marked"],
-            description: "Why it should be deleted. Use 'user_marked' when the user explicitly asked.",
-          },
-          note: { type: "string", description: "One short sentence the user will see explaining the suggestion." },
-        },
-        required: ["entry_id", "reason"],
-      },
-    },
-  },
 ] as const;
 
 export interface ToolEvent {
