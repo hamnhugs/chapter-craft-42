@@ -40,6 +40,10 @@ interface GenerateArgs {
   aspectRatio?: string;
   /** When set, the image is sent as input — Nano Banana edits/refines it. */
   inputImageDataUrl?: string;
+  /** Optional user-preferred primary image model id. */
+  primaryModel?: string;
+  /** Optional user-preferred fallback model id. */
+  fallbackModel?: string;
 }
 
 export interface GenerateResult {
@@ -52,9 +56,15 @@ export interface GenerateResult {
 
 /** Generate (or edit) an image through OpenRouter's chat-completions API with
  *  `modalities: ["image", "text"]`. Tries each Nano Banana model in order. */
-export async function generateImage({ apiKey, prompt, aspectRatio, inputImageDataUrl }: GenerateArgs): Promise<GenerateResult> {
+export async function generateImage({ apiKey, prompt, aspectRatio, inputImageDataUrl, primaryModel, fallbackModel }: GenerateArgs): Promise<GenerateResult> {
   let lastError = "";
-  for (const model of IMAGE_MODELS) {
+  // Build candidate list: user's primary, user's fallback, then the built-in
+  // defaults. Dedupe while preserving order.
+  const seen = new Set<string>();
+  const candidates = [primaryModel, fallbackModel, ...IMAGE_MODELS]
+    .filter((m): m is string => !!m && !seen.has(m) && (seen.add(m), true));
+  for (const model of candidates) {
+
     try {
       const content: any = inputImageDataUrl
         ? [
