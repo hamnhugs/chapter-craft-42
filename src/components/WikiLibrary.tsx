@@ -474,6 +474,23 @@ const WikiLibrary: React.FC = () => {
             </button>
 
             <button
+              onClick={() => setCleanupOpen(true)}
+              className="relative flex items-center gap-1.5 bg-surface-container-high text-on-surface px-3 py-1.5 rounded-lg font-bold text-sm active:scale-95 transition-transform border border-outline-variant/20 hover:bg-surface-container-highest"
+              title="Review entries the AI suggests deleting"
+            >
+              <AlertTriangle className={`w-4 h-4 ${cleanupCount > 0 ? "text-destructive" : ""}`} />
+              <span>CLEANUP</span>
+              {cleanupCount > 0 && (
+                <span
+                  aria-label={`${cleanupCount} cleanup suggestion${cleanupCount === 1 ? "" : "s"}`}
+                  className="ml-1 inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold"
+                >
+                  {cleanupCount > 99 ? "99+" : cleanupCount}
+                </span>
+              )}
+            </button>
+
+            <button
               onClick={handleNewWiki}
               className="flex items-center gap-1.5 bg-primary-container text-on-primary-container px-3 py-1.5 rounded-lg font-bold text-sm active:scale-95 transition-transform shadow-md"
             >
@@ -485,6 +502,7 @@ const WikiLibrary: React.FC = () => {
               <span>NEW NEURON</span>
             </button>
             <ImagesPanel open={imagesOpen} onOpenChange={setImagesOpen} />
+            <CleanupPanel open={cleanupOpen} onOpenChange={setCleanupOpen} />
           </div>
         </section>
 
