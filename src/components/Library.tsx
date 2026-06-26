@@ -666,7 +666,26 @@ const Library: React.FC = () => {
               />
             )}
           />
+        ) : view === "collections" ? (
+          <LibraryCollections
+            books={filteredBooks}
+            activeWikiId={activeWikiId}
+            renderBook={(book, i) => (
+              <BookCard
+                key={book.id}
+                book={book}
+                index={i}
+                query={query}
+                job={jobs[book.id]}
+                onDetect={() => runDetect(book)}
+                onRead={() => requestBookLoad(book.id)}
+                onRemove={() => removeBook(book.id)}
+                onRename={(newTitle) => updateBookTitle(book.id, newTitle)}
+              />
+            )}
+          />
         ) : view === "list" ? (
+
           <LibraryList
             books={filteredBooks}
             sortBy={sortBy}
