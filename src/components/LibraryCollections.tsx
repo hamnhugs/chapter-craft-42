@@ -328,12 +328,56 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
               onClick={handleDigest}
               disabled={busy || booksInFolder.length === 0 || !activeWikiId}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-on-primary-container text-xs font-bold disabled:opacity-40"
-              title={!activeWikiId ? "Set an active neuron first" : "Digest every book in this folder into the active neuron"}
+              title={!activeWikiId ? "Set an active neuron first" : "Queue every book in this folder for server-side digestion"}
             >
-              <span className={`material-symbols-outlined text-sm ${busy ? "animate-spin" : ""}`}>{busy ? "progress_activity" : "auto_awesome"}</span>
-              {ingestProgress ? `Digesting ${ingestProgress.done}/${ingestProgress.total}…` : "Digest folder into neuron"}
+              <span className={`material-symbols-outlined text-sm ${busy || activeInFolder.length > 0 ? "animate-spin" : ""}`}>
+                {busy || activeInFolder.length > 0 ? "progress_activity" : "auto_awesome"}
+              </span>
+              {activeInFolder.length > 0
+                ? `Digesting ${activeInFolder.length} in background…`
+                : "Digest folder into neuron"}
             </button>
           </nav>
+
+          {/* Live queue strip — survives page refresh */}
+          {(activeInFolder.length > 0 || recent.length > 0) && (
+            <div className="rounded-xl border border-outline-variant/15 bg-surface-container-low p-3 text-xs">
+              <div className="flex items-center gap-2 mb-2 text-on-surface-variant">
+                <span className="material-symbols-outlined text-sm">cloud_sync</span>
+                Server queue · keeps running if you refresh or close the tab
+              </div>
+              <ul className="space-y-1">
+                {activeInFolder.slice(0, 8).map((j) => {
+                  const title = books.find((b) => b.id === j.book_id)?.title || j.book_id?.slice(0, 6);
+                  return (
+                    <li key={j.id} className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[14px] animate-spin text-primary">progress_activity</span>
+                      <span className="truncate flex-1">{title}</span>
+                      <span className="text-on-surface-variant truncate max-w-[40%]">
+                        {j.status === "running" ? (j.progress || "Working…") : "Queued"}
+                      </span>
+                    </li>
+                  );
+                })}
+                {recent.slice(0, 4).map((j) => {
+                  const title = books.find((b) => b.id === j.book_id)?.title || j.book_id?.slice(0, 6);
+                  const ok = j.status === "succeeded";
+                  return (
+                    <li key={j.id} className="flex items-center gap-2 opacity-70">
+                      <span className={`material-symbols-outlined text-[14px] ${ok ? "text-green-400" : "text-red-400"}`}>
+                        {ok ? "check_circle" : "error"}
+                      </span>
+                      <span className="truncate flex-1">{title}</span>
+                      <span className="text-on-surface-variant truncate max-w-[40%]">
+                        {ok ? (j.progress || "Done") : (j.error || "Failed")}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
 
           {booksInFolder.length === 0 ? (
             <div className="py-12 text-center text-on-surface-variant text-sm">
