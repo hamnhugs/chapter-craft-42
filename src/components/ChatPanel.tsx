@@ -927,6 +927,11 @@ const ChatPanel: React.FC = () => {
           </>
           )}
 
+          {settingsTab === "images" && <ImageModelsSettings />}
+          {settingsTab === "permissions" && <AiPermissionsSettings />}
+
+
+
           {/* Help row — always visible regardless of tab */}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 pb-1">
             <button onClick={() => openSetupWizard(0)} className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary hover:underline">
