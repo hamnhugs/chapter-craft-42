@@ -23,6 +23,7 @@ const GROUPS: { group: string; items: PermItem[] }[] = [
     items: [
       { id: "switch_wiki", label: "Switch active wiki", description: "Allow the AI to change which neuron is in focus." },
       { id: "create_wiki", label: "Create new wikis", description: "Allow the AI to spin up new neurons." },
+      { id: "delete_wiki", label: "Delete wikis", description: "Allow the AI to permanently delete a neuron after you confirm.", danger: true },
     ],
   },
   {
