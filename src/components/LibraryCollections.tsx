@@ -135,28 +135,37 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
     if (!activeWikiId) { toast.error("Pick an active neuron in the Wiki tab first."); return; }
     const targets = booksInFolder;
     if (targets.length === 0) { toast("Folder is empty."); return; }
-    if (!window.confirm(`Digest ${targets.length} book${targets.length === 1 ? "" : "s"} into the active neuron?`)) return;
+    if (!window.confirm(`Queue ${targets.length} book${targets.length === 1 ? "" : "s"} for digestion?\n\nThis runs on the server — you can close this tab and it will keep going.`)) return;
     setBusy(true);
-    setIngestProgress({ done: 0, total: targets.length });
-    let failures = 0;
-    for (let i = 0; i < targets.length; i++) {
-      try {
-        await ingestBook(targets[i].id, activeWikiId, {
-          model: libraryIngestModel || selectedModel,
-          autoFile: libraryIngestAutoFile,
-        });
-      } catch (e) {
-        failures++;
-        console.warn("ingest failed", targets[i].title, e);
-      } finally {
-        setIngestProgress({ done: i + 1, total: targets.length });
-      }
+    try {
+      const { enqueued } = await enqueueIngestJobs(
+        targets.map((b) => ({
+          book_id: b.id,
+          wiki_id: activeWikiId,
+          folder_id: openFolderId,
+          model: libraryIngestModel || selectedModel || null,
+        })),
+      );
+      if (enqueued === 0) toast("Already in queue — nothing new to add.");
+      else toast.success(`Queued ${enqueued} book${enqueued === 1 ? "" : "s"} — safe to close the tab.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not queue jobs");
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
-    setIngestProgress(null);
-    if (failures === 0) toast.success(`Digested ${targets.length} book${targets.length === 1 ? "" : "s"}`);
-    else toast.error(`Digested with ${failures} failure${failures === 1 ? "" : "s"}`);
   };
+
+  // Lookup helpers for live progress UI
+  const jobByBookId = useMemo(() => {
+    const map = new Map<string, typeof jobs[number]>();
+    for (const j of jobs) if (j.book_id && !map.has(j.book_id)) map.set(j.book_id, j);
+    return map;
+  }, [jobs]);
+  const activeInFolder = useMemo(
+    () => active.filter((j) => !openFolderId || j.folder_id === openFolderId),
+    [active, openFolderId],
+  );
+
 
   const renderBookCard = (b: BookWithFolder, index: number) => (
     <div key={b.id} className="relative group">
