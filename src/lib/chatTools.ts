@@ -418,6 +418,7 @@ export const CHAT_TOOL_DEFINITIONS = [
           limit: { type: "number", description: "Default 5, max 15." },
         },
       },
+    },
   },
   {
     type: "function",
