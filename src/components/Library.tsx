@@ -82,15 +82,17 @@ const SUPPORTED_UPLOAD_EXTENSIONS = ["pdf", "doc", "docx", "txt", "rtf", "odt", 
 const MAX_UPLOAD_ATTEMPTS = 3;
 const MAX_CONCURRENT_UPLOADS = 3;
 
-type ViewMode = "grid" | "folders" | "list" | "graph";
+type ViewMode = "grid" | "folders" | "collections" | "list" | "graph";
 const VIEW_KEY = "vault_view_mode";
 
 const VIEW_OPTIONS: { id: ViewMode; icon: string; label: string }[] = [
   { id: "grid", icon: "grid_view", label: "Grid" },
   { id: "folders", icon: "folder", label: "Folders" },
+  { id: "collections", icon: "folder_managed", label: "Collections" },
   { id: "list", icon: "view_list", label: "List" },
   { id: "graph", icon: "hub", label: "Mind map" },
 ];
+
 
 const Library: React.FC = () => {
   const { books, addBook, removeBook, requestBookLoad, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile } = useApp();
