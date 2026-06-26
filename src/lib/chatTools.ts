@@ -448,25 +448,76 @@ export const CHAT_TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
-      name: "flag_for_cleanup",
+      name: "create_memory_entry",
       description:
-        "Mark a memory entry as a deletion candidate so the user sees it (highlighted red) in the Cleanup panel of the BRAIN tab. Use when the user says things like 'this is junk', 'forget that', 'delete this note', or when you notice an entry that is clearly obsolete, contradicted, or a duplicate. Does NOT delete the entry — the user reviews and confirms.",
+        "Create a new knowledge entry (a 'neuron memory') in the user's active wiki. Use for facts the user explicitly asks you to remember. Honors the user's Settings → AI permissions (may be disabled).",
       parameters: {
         type: "object",
         properties: {
-          entry_id: { type: "string", description: "knowledge_entries.id of the entry to flag." },
-          reason: {
-            type: "string",
-            enum: ["duplicate", "low_confidence", "stale", "contradicted", "empty_or_trivial", "atomicity_violation", "user_marked", "ai_marked"],
-            description: "Why it should be deleted. Use 'user_marked' when the user explicitly asked.",
-          },
-          note: { type: "string", description: "One short sentence the user will see explaining the suggestion." },
+          title: { type: "string", description: "Short title for the entry." },
+          content: { type: "string", description: "Body text of the memory." },
+          entry_type: { type: "string", description: "e.g. fact, person, place, concept, event.", default: "fact" },
+          tags: { type: "array", items: { type: "string" }, description: "Optional tags." },
+          confidence: { type: "number", description: "0.0–1.0, default 0.8." },
         },
-        required: ["entry_id", "reason"],
+        required: ["title", "content"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_memory_entry",
+      description:
+        "Edit a knowledge entry the user already has (title / content / tags / confidence). Requires entry_id. Honors per-tool permissions.",
+      parameters: {
+        type: "object",
+        properties: {
+          entry_id: { type: "string" },
+          title: { type: "string" },
+          content: { type: "string" },
+          tags: { type: "array", items: { type: "string" } },
+          confidence: { type: "number" },
+        },
+        required: ["entry_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_memory_entry",
+      description:
+        "Permanently delete a knowledge entry. Only call when the user has explicitly approved deleting this specific entry in the current turn. Honors per-tool permissions.",
+      parameters: {
+        type: "object",
+        properties: {
+          entry_id: { type: "string" },
+        },
+        required: ["entry_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "link_memory_entries",
+      description:
+        "Create or remove a typed edge between two knowledge entries (supports, contradicts, refines, related, etc.). Honors per-tool permissions.",
+      parameters: {
+        type: "object",
+        properties: {
+          source_entry_id: { type: "string" },
+          target_entry_id: { type: "string" },
+          relation: { type: "string", description: "e.g. supports | contradicts | refines | related | causes" },
+          action: { type: "string", enum: ["upsert", "delete"], default: "upsert" },
+        },
+        required: ["source_entry_id", "target_entry_id", "relation"],
       },
     },
   },
 ] as const;
+
 
 export interface ToolEvent {
   name: string;
@@ -1092,45 +1143,80 @@ export async function executeChatTool(
           event: { name, summary: `Rendered ${blocks.length} block(s)${issues.length ? `, dropped ${issues.length}` : ""}`, ok: true },
         };
       }
-      case "flag_for_cleanup": {
-        const eid = String(args.entry_id || "").trim();
-        const reason = String(args.reason || "ai_marked").trim();
-        const note = args.note ? String(args.note).slice(0, 280) : null;
-        const allowed = new Set(["duplicate","low_confidence","stale","contradicted","empty_or_trivial","atomicity_violation","user_marked","ai_marked"]);
-        if (!eid) return { result: { error: "entry_id required" }, event: { name, summary: "Missing entry_id", ok: false } };
-        if (!allowed.has(reason)) return { result: { error: "invalid reason" }, event: { name, summary: "Invalid reason", ok: false } };
-        const { data: userData } = await supabase.auth.getUser();
-        const uid = userData.user?.id;
-        if (!uid) return { result: { error: "Not signed in" }, event: { name, summary: "Not signed in", ok: false } };
-        const { data: entry } = await supabase
-          .from("knowledge_entries")
-          .select("id, title, wiki_id, user_id")
-          .eq("id", eid)
+      case "create_memory_entry":
+      case "update_memory_entry":
+      case "delete_memory_entry":
+      case "link_memory_entries": {
+        // Per-tool permission gate. Defaults to allowed.
+        const { data: prefs } = await supabase
+          .from("user_settings")
+          .select("chat_tool_permissions" as any)
           .maybeSingle();
-        if (!entry || (entry as any).user_id !== uid) {
-          return { result: { error: "Entry not found" }, event: { name, summary: "Entry not found", ok: false } };
+        const perms = ((prefs as any)?.chat_tool_permissions || {}) as Record<string, boolean>;
+        if (perms[name] === false) {
+          return {
+            result: { error: `Tool '${name}' is disabled in the user's AI permissions. Ask the user to enable it in Settings.` },
+            event: { name, summary: `${name} blocked by user settings`, ok: false },
+          };
         }
-        const { error } = await supabase
-          .from("cleanup_flags" as any)
-          .upsert({
-            user_id: uid,
-            wiki_id: (entry as any).wiki_id,
-            entry_id: eid,
-            reason,
-            note,
-            confidence: 0.9,
-            flagged_by: reason === "user_marked" ? "user" : "chat",
-            dismissed_at: null,
-          } as any, { onConflict: "entry_id,reason" });
+
+        if (name === "create_memory_entry") {
+          const { activeWikiId } = await getNeuronScope();
+          if (!activeWikiId) return { result: { error: "No active wiki" }, event: { name, summary: "No active wiki", ok: false } };
+          const { data, error } = await supabase.rpc("memory_entry_upsert" as any, {
+            p_wiki_id: activeWikiId,
+            p_entry_id: null,
+            p_title: String(args.title || "").slice(0, 200),
+            p_content: String(args.content || ""),
+            p_entry_type: String(args.entry_type || "fact"),
+            p_tags: Array.isArray(args.tags) ? args.tags : [],
+            p_confidence: typeof args.confidence === "number" ? args.confidence : 0.8,
+          });
+          if (error) throw error;
+          try { window.dispatchEvent(new Event("knowledge-entries-changed")); } catch {}
+          return { result: { ok: true, entry_id: data }, event: { name, summary: `Created memory "${args.title}"`, ok: true } };
+        }
+        if (name === "update_memory_entry") {
+          if (!args.entry_id) return { result: { error: "entry_id required" }, event: { name, summary: "Missing entry_id", ok: false } };
+          const { data, error } = await supabase.rpc("memory_entry_upsert" as any, {
+            p_wiki_id: null,
+            p_entry_id: args.entry_id,
+            p_title: args.title ?? null,
+            p_content: args.content ?? null,
+            p_entry_type: args.entry_type ?? null,
+            p_tags: Array.isArray(args.tags) ? args.tags : null,
+            p_confidence: typeof args.confidence === "number" ? args.confidence : null,
+          });
+          if (error) throw error;
+          try { window.dispatchEvent(new Event("knowledge-entries-changed")); } catch {}
+          return { result: { ok: true, entry_id: data }, event: { name, summary: `Updated memory`, ok: true } };
+        }
+        if (name === "delete_memory_entry") {
+          if (!args.entry_id) return { result: { error: "entry_id required" }, event: { name, summary: "Missing entry_id", ok: false } };
+          const { error } = await supabase.from("knowledge_entries").delete().eq("id", args.entry_id);
+          if (error) throw error;
+          try { window.dispatchEvent(new Event("knowledge-entries-changed")); } catch {}
+          return { result: { ok: true }, event: { name, summary: `Deleted memory entry`, ok: true } };
+        }
+        // link_memory_entries
+        const action = String(args.action || "upsert");
+        if (action === "delete") {
+          const { error } = await supabase.rpc("memory_edge_delete" as any, {
+            p_source: args.source_entry_id, p_target: args.target_entry_id, p_relation: args.relation,
+          });
+          if (error) throw error;
+          return { result: { ok: true }, event: { name, summary: `Removed ${args.relation} link`, ok: true } };
+        }
+        const { error } = await supabase.rpc("memory_edge_upsert" as any, {
+          p_source: args.source_entry_id, p_target: args.target_entry_id, p_relation: args.relation,
+        });
         if (error) throw error;
-        return {
-          result: { ok: true, entry_id: eid, reason, title: (entry as any).title },
-          event: { name, summary: `Flagged "${(entry as any).title}" for cleanup (${reason})`, ok: true },
-        };
+        return { result: { ok: true }, event: { name, summary: `Linked entries (${args.relation})`, ok: true } };
       }
       default:
         return { result: { error: `Unknown tool ${name}` }, event: { name, summary: `Unknown tool ${name}`, ok: false } };
     }
+
   } catch (e: any) {
     return {
       result: { error: e?.message || "Tool failed" },

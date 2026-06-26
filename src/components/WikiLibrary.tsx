@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Link } from "react-router-dom";
-import { Loader2, Plus, Check, Search, Sparkles, ArrowRight, HelpCircle, Lock, Image as ImageIcon, AlertTriangle } from "lucide-react";
+import { Loader2, Plus, Check, Search, Sparkles, ArrowRight, HelpCircle, Lock, Image as ImageIcon } from "lucide-react";
 import ImagesPanel from "@/components/ImagesPanel";
-import CleanupPanel from "@/components/CleanupPanel";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -78,8 +77,6 @@ const WikiLibrary: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>("gallery");
   const [imagesOpen, setImagesOpen] = useState(false);
-  const [cleanupOpen, setCleanupOpen] = useState(false);
-  const [cleanupCount, setCleanupCount] = useState(0);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [selected, setSelected] = useState<WikiWithStats | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -122,39 +119,8 @@ const WikiLibrary: React.FC = () => {
 
   useEffect(() => { loadPendingCount(); }, [loadPendingCount, activeView]);
 
-  // Cleanup-suggestions count for the destructive badge on the BRAIN toolbar.
-  useEffect(() => {
-    let cancelled = false;
-    let channel: ReturnType<typeof supabase.channel> | null = null;
-    const refresh = async () => {
-      try {
-        const q = supabase
-          .from("cleanup_flags" as any)
-          .select("id", { count: "exact", head: true })
-          .is("dismissed_at", null);
-        const { count } = activeWikiId ? await q.eq("wiki_id", activeWikiId) : await q;
-        if (!cancelled) setCleanupCount(count || 0);
-      } catch { /* silent */ }
-    };
-    void refresh();
-    (async () => {
-      const { data: u } = await supabase.auth.getUser();
-      const uid = u.user?.id;
-      if (!uid || cancelled) return;
-      channel = supabase
-        .channel(`cleanup_flags_badge:${uid}`)
-        .on(
-          "postgres_changes" as any,
-          { event: "*", schema: "public", table: "cleanup_flags", filter: `user_id=eq.${uid}` },
-          () => { void refresh(); },
-        )
-        .subscribe();
-    })();
-    return () => {
-      cancelled = true;
-      if (channel) { try { supabase.removeChannel(channel); } catch { /* noop */ } }
-    };
-  }, [activeWikiId]);
+  // Cleanup feature removed — the chat handles deletion through its memory tools.
+
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -474,23 +440,6 @@ const WikiLibrary: React.FC = () => {
             </button>
 
             <button
-              onClick={() => setCleanupOpen(true)}
-              className="relative flex items-center gap-1.5 bg-surface-container-high text-on-surface px-3 py-1.5 rounded-lg font-bold text-sm active:scale-95 transition-transform border border-outline-variant/20 hover:bg-surface-container-highest"
-              title="Review entries the AI suggests deleting"
-            >
-              <AlertTriangle className={`w-4 h-4 ${cleanupCount > 0 ? "text-destructive" : ""}`} />
-              <span>CLEANUP</span>
-              {cleanupCount > 0 && (
-                <span
-                  aria-label={`${cleanupCount} cleanup suggestion${cleanupCount === 1 ? "" : "s"}`}
-                  className="ml-1 inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold"
-                >
-                  {cleanupCount > 99 ? "99+" : cleanupCount}
-                </span>
-              )}
-            </button>
-
-            <button
               onClick={handleNewWiki}
               className="flex items-center gap-1.5 bg-primary-container text-on-primary-container px-3 py-1.5 rounded-lg font-bold text-sm active:scale-95 transition-transform shadow-md"
             >
@@ -502,9 +451,9 @@ const WikiLibrary: React.FC = () => {
               <span>NEW NEURON</span>
             </button>
             <ImagesPanel open={imagesOpen} onOpenChange={setImagesOpen} />
-            <CleanupPanel open={cleanupOpen} onOpenChange={setCleanupOpen} />
           </div>
         </section>
+
 
         {/* Tab switcher: Wikis | Suggestions */}
         <div className="mb-6 flex items-center gap-2 border-b border-outline-variant/20">

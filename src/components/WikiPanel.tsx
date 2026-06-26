@@ -19,7 +19,7 @@ import {
 import { Loader2, HelpCircle, ArrowRight } from "lucide-react";
 import GeneratedImage from "@/components/GeneratedImage";
 import { fetchImagesForEntries, deleteImageAttachment, type ImageAttachmentRow } from "@/lib/imageGen";
-import { fetchFlaggedEntryIds } from "@/lib/cleanupFlags";
+
 import { Link } from "react-router-dom";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -53,7 +53,7 @@ const WikiPanel: React.FC = () => {
   const [sleepCycleReport, setSleepCycleReport] = useState<SleepCycleReport | null>(null);
   const [episodicLog, setEpisodicLog] = useState<EpisodicLogEntry[]>([]);
   const [queueItems, setQueueItems] = useState<ConsolidationQueueItem[]>([]);
-  const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
+  
   // Scope toggle: when "wiki", every panel / action is bound to the active wiki.
   // When "all", we keep the legacy global view (cross-wiki graph, conflicts, etc.).
   const [scope, setScope] = useState<"wiki" | "all">("wiki");
@@ -85,26 +85,8 @@ const WikiPanel: React.FC = () => {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // Cleanup-suggestion ids so we can paint flagged entries red.
-  useEffect(() => {
-    let cancelled = false;
-    const refresh = () => {
-      fetchFlaggedEntryIds(scopeWikiId)
-        .then((s) => { if (!cancelled) setFlaggedIds(s); })
-        .catch(() => { if (!cancelled) setFlaggedIds(new Set()); });
-    };
-    refresh();
-    const onChange = () => refresh();
-    if (typeof window !== "undefined") {
-      window.addEventListener("knowledge-entries-changed", onChange);
-    }
-    return () => {
-      cancelled = true;
-      if (typeof window !== "undefined") {
-        window.removeEventListener("knowledge-entries-changed", onChange);
-      }
-    };
-  }, [scopeWikiId]);
+  // Cleanup-flagging UI removed — chat tools now manage deletions directly.
+
 
   // Attached images for the open entry (generated via chat — table may not
   // exist until the image-memory migration is applied, so fail quietly).
@@ -556,26 +538,14 @@ const WikiPanel: React.FC = () => {
               <div className="space-y-4">
                 {filteredEntries.map((entry) => {
                   const relCount = graph.filter(g => g.source_entry_id === entry.id || g.target_entry_id === entry.id).length;
-                  const isFlagged = flaggedIds.has(entry.id);
                   return (
                     <button
                       key={entry.id} onClick={() => openDetail(entry)}
-                      className={`group w-full text-left rounded-xl p-8 hover:shadow-2xl transition-all duration-300 border-l-4 ${
-                        isFlagged
-                          ? "bg-destructive/5 border-destructive hover:border-destructive"
-                          : "bg-surface-container-high border-transparent hover:border-primary-container"
-                      }`}
-                      title={isFlagged ? "The AI suggests deleting this entry. Open Cleanup in the BRAIN toolbar to review." : undefined}
+                      className="group w-full text-left rounded-xl p-8 hover:shadow-2xl transition-all duration-300 border-l-4 bg-surface-container-high border-transparent hover:border-primary-container"
                     >
                       <div className="flex justify-between items-start mb-4">
                         <div>
                           <div className="flex items-center gap-2 mb-2 flex-wrap">
-                            {isFlagged && (
-                              <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded bg-destructive text-destructive-foreground">
-                                <span className="material-symbols-outlined text-[12px] leading-none">delete_sweep</span>
-                                Cleanup suggested
-                              </span>
-                            )}
                             <span className="text-[10px] font-bold uppercase text-primary tracking-widest">Type: {entry.entry_type}</span>
                             <span className="text-outline-variant">•</span>
                             <span className="text-[10px] font-bold uppercase text-secondary tracking-widest">Confidence: {Math.round(entry.confidence * 100)}%</span>
@@ -590,6 +560,7 @@ const WikiPanel: React.FC = () => {
                         </div>
                         <span className="material-symbols-outlined text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity">chevron_right</span>
                       </div>
+
                       <p className="text-on-surface-variant mb-4 line-clamp-2 leading-relaxed">{entry.content.slice(0, 200)}</p>
                       <div className="flex flex-wrap gap-2">
                         {entry.tags.slice(0, 4).map((tag) => (
