@@ -1025,7 +1025,10 @@ export async function executeChatTool(
           prompt: instruction,
           aspectRatio: args.aspect_ratio ? String(args.aspect_ratio) : undefined,
           inputImageDataUrl: srcDataUrl,
+          primaryModel: deps.imageModelPrimary,
+          fallbackModel: deps.imageModelFallback,
         });
+
         const ref = await storeGeneratedImage({
           prompt: `${src.prompt} → ${instruction}`.slice(0, 2000),
           caption: gen.text, model: gen.modelUsed,
