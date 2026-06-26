@@ -556,14 +556,26 @@ const WikiPanel: React.FC = () => {
               <div className="space-y-4">
                 {filteredEntries.map((entry) => {
                   const relCount = graph.filter(g => g.source_entry_id === entry.id || g.target_entry_id === entry.id).length;
+                  const isFlagged = flaggedIds.has(entry.id);
                   return (
                     <button
                       key={entry.id} onClick={() => openDetail(entry)}
-                      className="group w-full text-left bg-surface-container-high rounded-xl p-8 hover:shadow-2xl transition-all duration-300 border-l-2 border-transparent hover:border-primary-container"
+                      className={`group w-full text-left rounded-xl p-8 hover:shadow-2xl transition-all duration-300 border-l-4 ${
+                        isFlagged
+                          ? "bg-destructive/5 border-destructive hover:border-destructive"
+                          : "bg-surface-container-high border-transparent hover:border-primary-container"
+                      }`}
+                      title={isFlagged ? "The AI suggests deleting this entry. Open Cleanup in the BRAIN toolbar to review." : undefined}
                     >
                       <div className="flex justify-between items-start mb-4">
                         <div>
-                          <div className="flex items-center gap-2 mb-2">
+                          <div className="flex items-center gap-2 mb-2 flex-wrap">
+                            {isFlagged && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded bg-destructive text-destructive-foreground">
+                                <span className="material-symbols-outlined text-[12px] leading-none">delete_sweep</span>
+                                Cleanup suggested
+                              </span>
+                            )}
                             <span className="text-[10px] font-bold uppercase text-primary tracking-widest">Type: {entry.entry_type}</span>
                             <span className="text-outline-variant">•</span>
                             <span className="text-[10px] font-bold uppercase text-secondary tracking-widest">Confidence: {Math.round(entry.confidence * 100)}%</span>
