@@ -193,6 +193,34 @@ export async function ingestBook(bookId: string, wikiId?: string | null, opts?: 
   return resp.json();
 }
 
+/**
+ * enqueueIngestJobs — queue book digestions on the server so they survive
+ * page refreshes / tab closures. Returns { enqueued: number }.
+ *
+ * Pass `resume: true` (no jobs) on app load to nudge the worker into draining
+ * anything that was left behind from a previous session.
+ */
+export async function enqueueIngestJobs(
+  jobs: Array<{ book_id: string; wiki_id?: string | null; folder_id?: string | null; model?: string | null }>,
+  opts?: { resume?: boolean },
+): Promise<{ ok: boolean; enqueued: number }> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/enqueue-ingest`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+    },
+    body: JSON.stringify({ jobs, resume: !!opts?.resume }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ error: "Enqueue failed" }));
+    throw new Error(err.error || `Error ${resp.status}`);
+  }
+  return resp.json();
+}
+
+
 
 // ---- Phase 4: graph-aware retrieval ----
 export interface RetrievedNode {
