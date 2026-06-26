@@ -19,4 +19,7 @@ export interface BookDocument {
   category?: string;
   /** Free-form topic tags assigned by auto-tag (mind map edges + search). */
   tags?: string[];
+  /** User-managed folder id (book_folders.id) — null when uncategorized. */
+  folderId?: string | null;
 }
+
