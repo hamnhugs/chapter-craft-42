@@ -243,6 +243,27 @@ export async function deleteImageAttachment(row: { id: string; storage_path: str
   try { urlCache.delete(row.storage_path); } catch { /* noop */ }
 }
 
+/** Delete an uploaded image memory (the `image_memories` table + storage file).
+ *  Mirrors the order in deleteImageAttachment: DB delete (source of truth) first,
+ *  best-effort storage cleanup second, signed-URL cache purge last. */
+export async function deleteImageMemory(row: { id: string; storage_path?: string | null }): Promise<void> {
+  const { data: deleted, error } = await (supabase.from("image_memories" as any) as any)
+    .delete()
+    .eq("id", row.id)
+    .select("id, storage_path");
+  if (error) throw error;
+  const rows = (deleted as any[]) || [];
+  if (rows.length === 0) {
+    throw new Error("Image memory could not be deleted (not found or no permission).");
+  }
+  const path = rows[0]?.storage_path || row.storage_path;
+  if (path) {
+    try { await supabase.storage.from("generated-images").remove([path]); }
+    catch (e) { console.warn("[deleteImageMemory] storage remove failed", e); }
+    try { urlCache.delete(path); } catch { /* noop */ }
+  }
+}
+
 // ── Signed URL cache ────────────────────────────────────────────────────────
 // The bucket is private; render through short-lived signed URLs, cached so a
 // chat full of images doesn't re-sign on every render.
