@@ -290,8 +290,34 @@ export function useChatSettings() {
     setInworldVoiceId: (v: string) => update({ inworldVoiceId: v }),
     setAccessAllNeurons: (v: boolean) => update({ accessAllNeurons: v }),
     setVisionModel: (m: string) => update({ visionModel: m }),
+    setLibraryIngestModel: (m: string) => update({ libraryIngestModel: m }),
+    setLibraryIngestAutoFile: (v: boolean) => update({ libraryIngestAutoFile: v }),
+    setImageModelPrimary: (m: string) => update({ imageModelPrimary: m }),
+    setImageModelFallback: (m: string) => update({ imageModelFallback: m }),
+    setImageQuality: (q: string) => update({ imageQuality: q }),
+    setImageSize: (s: string) => update({ imageSize: s }),
+    addImageModel: (m: string) => {
+      const id = m.trim(); if (!id) return;
+      const cur = getSnapshot().settings;
+      if (cur.savedImageModels.includes(id)) { toast.error("Image model already saved"); return; }
+      update({ savedImageModels: [...cur.savedImageModels, id], imageModelPrimary: cur.imageModelPrimary || id });
+      toast.success(`Image model "${id}" added`);
+    },
+    removeImageModel: (m: string) => {
+      const cur = getSnapshot().settings;
+      const next = cur.savedImageModels.filter(x => x !== m);
+      const primary = cur.imageModelPrimary === m ? (next[0] || "") : cur.imageModelPrimary;
+      const fallback = cur.imageModelFallback === m ? "" : cur.imageModelFallback;
+      update({ savedImageModels: next, imageModelPrimary: primary, imageModelFallback: fallback });
+    },
+    setChatToolPermission: (tool: string, allowed: boolean) => {
+      const cur = getSnapshot().settings;
+      update({ chatToolPermissions: { ...cur.chatToolPermissions, [tool]: allowed } });
+    },
+    setChatToolPermissions: (perms: Record<string, boolean>) => update({ chatToolPermissions: perms }),
     addModel,
     removeModel,
     setNewModelInput: undefined, // handled in component
   };
+
 }
