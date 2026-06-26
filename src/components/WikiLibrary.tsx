@@ -119,39 +119,8 @@ const WikiLibrary: React.FC = () => {
 
   useEffect(() => { loadPendingCount(); }, [loadPendingCount, activeView]);
 
-  // Cleanup-suggestions count for the destructive badge on the BRAIN toolbar.
-  useEffect(() => {
-    let cancelled = false;
-    let channel: ReturnType<typeof supabase.channel> | null = null;
-    const refresh = async () => {
-      try {
-        const q = supabase
-          .from("cleanup_flags" as any)
-          .select("id", { count: "exact", head: true })
-          .is("dismissed_at", null);
-        const { count } = activeWikiId ? await q.eq("wiki_id", activeWikiId) : await q;
-        if (!cancelled) setCleanupCount(count || 0);
-      } catch { /* silent */ }
-    };
-    void refresh();
-    (async () => {
-      const { data: u } = await supabase.auth.getUser();
-      const uid = u.user?.id;
-      if (!uid || cancelled) return;
-      channel = supabase
-        .channel(`cleanup_flags_badge:${uid}`)
-        .on(
-          "postgres_changes" as any,
-          { event: "*", schema: "public", table: "cleanup_flags", filter: `user_id=eq.${uid}` },
-          () => { void refresh(); },
-        )
-        .subscribe();
-    })();
-    return () => {
-      cancelled = true;
-      if (channel) { try { supabase.removeChannel(channel); } catch { /* noop */ } }
-    };
-  }, [activeWikiId]);
+  // Cleanup feature removed — the chat handles deletion through its memory tools.
+
 
   const load = useCallback(async () => {
     setLoading(true);
