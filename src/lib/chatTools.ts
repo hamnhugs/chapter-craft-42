@@ -1164,13 +1164,13 @@ export async function executeChatTool(
           const { activeWikiId } = await getNeuronScope();
           if (!activeWikiId) return { result: { error: "No active wiki" }, event: { name, summary: "No active wiki", ok: false } };
           const { data, error } = await supabase.rpc("memory_entry_upsert" as any, {
-            p_wiki_id: activeWikiId,
-            p_entry_id: null,
-            p_title: String(args.title || "").slice(0, 200),
-            p_content: String(args.content || ""),
-            p_entry_type: String(args.entry_type || "fact"),
-            p_tags: Array.isArray(args.tags) ? args.tags : [],
-            p_confidence: typeof args.confidence === "number" ? args.confidence : 0.8,
+            _id: null,
+            _wiki_id: activeWikiId,
+            _title: String(args.title || "").slice(0, 200),
+            _content: String(args.content || ""),
+            _entry_type: String(args.entry_type || "fact"),
+            _tags: Array.isArray(args.tags) ? args.tags : [],
+            _confidence: typeof args.confidence === "number" ? args.confidence : 0.8,
           });
           if (error) throw error;
           try { window.dispatchEvent(new Event("knowledge-entries-changed")); } catch {}
@@ -1179,13 +1179,13 @@ export async function executeChatTool(
         if (name === "update_memory_entry") {
           if (!args.entry_id) return { result: { error: "entry_id required" }, event: { name, summary: "Missing entry_id", ok: false } };
           const { data, error } = await supabase.rpc("memory_entry_upsert" as any, {
-            p_wiki_id: null,
-            p_entry_id: args.entry_id,
-            p_title: args.title ?? null,
-            p_content: args.content ?? null,
-            p_entry_type: args.entry_type ?? null,
-            p_tags: Array.isArray(args.tags) ? args.tags : null,
-            p_confidence: typeof args.confidence === "number" ? args.confidence : null,
+            _id: args.entry_id,
+            _wiki_id: null,
+            _title: args.title ?? null,
+            _content: args.content ?? null,
+            _entry_type: args.entry_type ?? null,
+            _tags: Array.isArray(args.tags) ? args.tags : null,
+            _confidence: typeof args.confidence === "number" ? args.confidence : null,
           });
           if (error) throw error;
           try { window.dispatchEvent(new Event("knowledge-entries-changed")); } catch {}
@@ -1202,17 +1202,18 @@ export async function executeChatTool(
         const action = String(args.action || "upsert");
         if (action === "delete") {
           const { error } = await supabase.rpc("memory_edge_delete" as any, {
-            p_source: args.source_entry_id, p_target: args.target_entry_id, p_relation: args.relation,
+            _source: args.source_entry_id, _target: args.target_entry_id,
           });
           if (error) throw error;
-          return { result: { ok: true }, event: { name, summary: `Removed ${args.relation} link`, ok: true } };
+          return { result: { ok: true }, event: { name, summary: `Removed link`, ok: true } };
         }
         const { error } = await supabase.rpc("memory_edge_upsert" as any, {
-          p_source: args.source_entry_id, p_target: args.target_entry_id, p_relation: args.relation,
+          _source: args.source_entry_id, _target: args.target_entry_id, _relationship: args.relation,
         });
         if (error) throw error;
         return { result: { ok: true }, event: { name, summary: `Linked entries (${args.relation})`, ok: true } };
       }
+
       default:
         return { result: { error: `Unknown tool ${name}` }, event: { name, summary: `Unknown tool ${name}`, ok: false } };
     }
