@@ -955,7 +955,7 @@ export async function executeChatTool(
 
         const settled = await Promise.allSettled(
           prompts.map(async (p) => {
-            const gen = await generateImage({ apiKey, prompt: p, aspectRatio });
+            const gen = await generateImage({ apiKey, prompt: p, aspectRatio, primaryModel: deps.imageModelPrimary, fallbackModel: deps.imageModelFallback });
             let entryId: string | null = sharedEntryId;
             let neuronCreated = false;
             if (remember && !entryId) {
