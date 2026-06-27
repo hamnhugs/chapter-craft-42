@@ -1,11 +1,16 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { BookDocument } from "@/types/library";
-import { listFolders, createFolder, renameFolder, deleteFolder, moveBookToFolder, BookFolder } from "@/lib/bookFolders";
+import { listFolders, createFolder, renameFolder, deleteFolder, moveBookToFolder, setFolderDefaultWiki, BookFolder } from "@/lib/bookFolders";
 import { enqueueIngestJobs } from "@/lib/knowledgeApi";
 import { useIngestJobs } from "@/hooks/useIngestJobs";
 import { useChatSettings } from "@/hooks/useChatSettings";
+import { fetchWikis, type Wiki } from "@/lib/wikisApi";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 
 // Managed folder view: user-created folders (book_folders table) that the user
