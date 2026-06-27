@@ -448,6 +448,35 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
           )}
         </>
       )}
+
+      <AlertDialog open={!!digestPrompt} onOpenChange={(o) => { if (!o) setDigestPrompt(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {digestPrompt?.wikiId
+                ? <>Digest "{digestPrompt.book.title}" into <span className="text-primary">{digestPrompt.wikiName}</span>?</>
+                : <>No neuron available</>}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {digestPrompt?.reason === "folder-default" && (
+                <>This is the neuron <span className="font-semibold">{digestPrompt.folder.name}</span> was last digested into. Runs on the server — safe to close the tab.</>
+              )}
+              {digestPrompt?.reason === "active-fallback" && (
+                <><span className="font-semibold">{digestPrompt.folder.name}</span> hasn't been digested before, so this uses your currently active neuron. It'll be remembered for next time.</>
+              )}
+              {digestPrompt?.reason === "none" && (
+                <>Pick an active neuron in the Wiki tab, then re-assign this document to be prompted again.</>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Skip</AlertDialogCancel>
+            {digestPrompt?.wikiId && (
+              <AlertDialogAction onClick={confirmSingleDigest} autoFocus>Digest</AlertDialogAction>
+            )}
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
