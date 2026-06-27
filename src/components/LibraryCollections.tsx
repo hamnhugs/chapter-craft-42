@@ -40,8 +40,9 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
   const [wikis, setWikis] = useState<Wiki[]>([]);
   // Pending single-doc digest prompt after a folder assignment.
   const [digestPrompt, setDigestPrompt] = useState<null | {
-    book: BookDocument; folder: BookFolder; wikiId: string | null; wikiName: string; reason: "folder-default" | "active-fallback" | "none";
+    book: BookDocument; folder: BookFolder; suggestedWikiId: string | null;
   }>(null);
+  const [selectedDigestWikiId, setSelectedDigestWikiId] = useState<string>("");
   // Live, cross-device view of the user's queue. Survives refresh/tab close
   // because work happens on the server.
   const { jobs, active, recent } = useIngestJobs();
@@ -141,13 +142,9 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
         const folder = folders.find((f) => f.id === folderId);
         const book = books.find((b) => b.id === bookId);
         if (folder && book) {
-          const targetWikiId = folder.default_wiki_id || activeWikiId || null;
-          const reason: "folder-default" | "active-fallback" | "none" =
-            folder.default_wiki_id ? "folder-default" : (activeWikiId ? "active-fallback" : "none");
-          const wikiName = targetWikiId
-            ? (wikis.find((w) => w.id === targetWikiId)?.name || "selected neuron")
-            : "";
-          setDigestPrompt({ book, folder, wikiId: targetWikiId, wikiName, reason });
+          const suggestedWikiId = folder.default_wiki_id || activeWikiId || (wikis[0]?.id ?? null);
+          setSelectedDigestWikiId(suggestedWikiId || "");
+          setDigestPrompt({ book, folder, suggestedWikiId });
         }
       }
     } catch (e) {
@@ -156,8 +153,10 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
   };
 
   const confirmSingleDigest = async () => {
-    if (!digestPrompt || !digestPrompt.wikiId) { setDigestPrompt(null); return; }
-    const { book, folder, wikiId } = digestPrompt;
+    if (!digestPrompt) return;
+    const wikiId = selectedDigestWikiId;
+    if (!wikiId) { toast.error("Pick a neuron first."); return; }
+    const { book, folder } = digestPrompt;
     setDigestPrompt(null);
     try {
       const { enqueued } = await enqueueIngestJobs([{
@@ -166,8 +165,8 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
         folder_id: folder.id,
         model: libraryIngestModel || selectedModel || null,
       }]);
-      // Remember this neuron for future single-doc prompts on this folder.
-      if (!folder.default_wiki_id) {
+      // Remember the chosen neuron for next time on this folder.
+      if (folder.default_wiki_id !== wikiId) {
         try {
           await setFolderDefaultWiki(folder.id, wikiId);
           setFolders((prev) => prev.map((f) => f.id === folder.id ? { ...f, default_wiki_id: wikiId } : f));
@@ -179,6 +178,7 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
       toast.error(e instanceof Error ? e.message : "Could not queue job");
     }
   };
+
 
   const handleDigest = async () => {
     if (!openFolderId) return;
@@ -453,30 +453,58 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {digestPrompt?.wikiId
-                ? <>Digest "{digestPrompt.book.title}" into <span className="text-primary">{digestPrompt.wikiName}</span>?</>
-                : <>No neuron available</>}
+              {wikis.length > 0
+                ? <>Digest "{digestPrompt?.book.title}" into a neuron?</>
+                : <>No neurons available</>}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {digestPrompt?.reason === "folder-default" && (
-                <>This is the neuron <span className="font-semibold">{digestPrompt.folder.name}</span> was last digested into. Runs on the server — safe to close the tab.</>
-              )}
-              {digestPrompt?.reason === "active-fallback" && (
-                <><span className="font-semibold">{digestPrompt.folder.name}</span> hasn't been digested before, so this uses your currently active neuron. It'll be remembered for next time.</>
-              )}
-              {digestPrompt?.reason === "none" && (
-                <>Pick an active neuron in the Wiki tab, then re-assign this document to be prompted again.</>
+              {wikis.length > 0 ? (
+                <>Choose which neuron should absorb <span className="font-semibold">{digestPrompt?.book.title}</span>. Your choice will be remembered for future documents filed into <span className="font-semibold">{digestPrompt?.folder.name}</span>. Runs on the server — safe to close the tab.</>
+              ) : (
+                <>Create a neuron in the Wiki tab first, then re-assign this document to be prompted again.</>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {wikis.length > 0 && (
+            <div className="flex flex-col gap-2 py-1">
+              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant">Target neuron</label>
+              <select
+                value={selectedDigestWikiId}
+                onChange={(e) => setSelectedDigestWikiId(e.target.value)}
+                className="w-full bg-surface-container-high border-none rounded-lg text-sm py-2 px-3"
+                autoFocus
+              >
+                {wikis.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                    {digestPrompt?.folder.default_wiki_id === w.id ? "  · folder default" : ""}
+                    {!digestPrompt?.folder.default_wiki_id && activeWikiId === w.id ? "  · active" : ""}
+                  </option>
+                ))}
+              </select>
+              {digestPrompt?.folder.default_wiki_id ? (
+                <p className="text-[11px] text-on-surface-variant">
+                  Last time, <span className="font-semibold">{digestPrompt.folder.name}</span> was digested into{" "}
+                  <span className="font-semibold">{wikis.find((w) => w.id === digestPrompt.folder.default_wiki_id)?.name || "a neuron"}</span>.
+                </p>
+              ) : (
+                <p className="text-[11px] text-on-surface-variant">
+                  No remembered neuron for this folder yet — your pick becomes the default.
+                </p>
+              )}
+            </div>
+          )}
           <AlertDialogFooter>
             <AlertDialogCancel>Skip</AlertDialogCancel>
-            {digestPrompt?.wikiId && (
-              <AlertDialogAction onClick={confirmSingleDigest} autoFocus>Digest</AlertDialogAction>
+            {wikis.length > 0 && (
+              <AlertDialogAction onClick={confirmSingleDigest} disabled={!selectedDigestWikiId}>
+                Digest into selected neuron
+              </AlertDialogAction>
             )}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
     </div>
   );
 };
