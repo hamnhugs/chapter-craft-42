@@ -40,8 +40,9 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
   const [wikis, setWikis] = useState<Wiki[]>([]);
   // Pending single-doc digest prompt after a folder assignment.
   const [digestPrompt, setDigestPrompt] = useState<null | {
-    book: BookDocument; folder: BookFolder; wikiId: string | null; wikiName: string; reason: "folder-default" | "active-fallback" | "none";
+    book: BookDocument; folder: BookFolder; suggestedWikiId: string | null;
   }>(null);
+  const [selectedDigestWikiId, setSelectedDigestWikiId] = useState<string>("");
   // Live, cross-device view of the user's queue. Survives refresh/tab close
   // because work happens on the server.
   const { jobs, active, recent } = useIngestJobs();
