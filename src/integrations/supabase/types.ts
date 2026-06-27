@@ -194,6 +194,7 @@ export type Database = {
         Row: {
           color: string | null
           created_at: string
+          default_wiki_id: string | null
           id: string
           name: string
           parent_id: string | null
@@ -204,6 +205,7 @@ export type Database = {
         Insert: {
           color?: string | null
           created_at?: string
+          default_wiki_id?: string | null
           id?: string
           name: string
           parent_id?: string | null
@@ -214,6 +216,7 @@ export type Database = {
         Update: {
           color?: string | null
           created_at?: string
+          default_wiki_id?: string | null
           id?: string
           name?: string
           parent_id?: string | null
@@ -222,6 +225,13 @@ export type Database = {
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "book_folders_default_wiki_id_fkey"
+            columns: ["default_wiki_id"]
+            isOneToOne: false
+            referencedRelation: "wikis"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "book_folders_parent_id_fkey"
             columns: ["parent_id"]
