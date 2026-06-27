@@ -7,8 +7,16 @@ export interface BookFolder {
   parent_id: string | null;
   color: string | null;
   sort_index: number;
+  /** Neuron this folder was last digested into. Null until first digest. */
+  default_wiki_id: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export async function setFolderDefaultWiki(id: string, wikiId: string | null): Promise<void> {
+  const { error } = await (supabase.from("book_folders" as any) as any)
+    .update({ default_wiki_id: wikiId }).eq("id", id);
+  if (error) throw error;
 }
 
 export async function listFolders(): Promise<BookFolder[]> {

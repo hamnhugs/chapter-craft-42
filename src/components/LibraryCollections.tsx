@@ -1,11 +1,16 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { BookDocument } from "@/types/library";
-import { listFolders, createFolder, renameFolder, deleteFolder, moveBookToFolder, BookFolder } from "@/lib/bookFolders";
+import { listFolders, createFolder, renameFolder, deleteFolder, moveBookToFolder, setFolderDefaultWiki, BookFolder } from "@/lib/bookFolders";
 import { enqueueIngestJobs } from "@/lib/knowledgeApi";
 import { useIngestJobs } from "@/hooks/useIngestJobs";
 import { useChatSettings } from "@/hooks/useChatSettings";
+import { fetchWikis, type Wiki } from "@/lib/wikisApi";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 
 // Managed folder view: user-created folders (book_folders table) that the user
@@ -32,6 +37,11 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
   const [busy, setBusy] = useState(false);
   const { libraryIngestModel, libraryIngestAutoFile, selectedModel, setLibraryIngestModel, setLibraryIngestAutoFile, savedModels } = useChatSettings();
   const [showSettings, setShowSettings] = useState(false);
+  const [wikis, setWikis] = useState<Wiki[]>([]);
+  // Pending single-doc digest prompt after a folder assignment.
+  const [digestPrompt, setDigestPrompt] = useState<null | {
+    book: BookDocument; folder: BookFolder; wikiId: string | null; wikiName: string; reason: "folder-default" | "active-fallback" | "none";
+  }>(null);
   // Live, cross-device view of the user's queue. Survives refresh/tab close
   // because work happens on the server.
   const { jobs, active, recent } = useIngestJobs();
@@ -40,6 +50,7 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
   // get drained. Fire-and-forget; failures are non-fatal.
   useEffect(() => {
     enqueueIngestJobs([], { resume: true }).catch(() => {});
+    fetchWikis().then(setWikis).catch(() => {});
   }, []);
 
 
@@ -125,8 +136,47 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
     try {
       await moveBookToFolder(bookId, folderId);
       setFolderAssignments((prev) => ({ ...prev, [bookId]: folderId }));
+      // Only prompt when actually filing into a folder (not when clearing).
+      if (folderId) {
+        const folder = folders.find((f) => f.id === folderId);
+        const book = books.find((b) => b.id === bookId);
+        if (folder && book) {
+          const targetWikiId = folder.default_wiki_id || activeWikiId || null;
+          const reason: "folder-default" | "active-fallback" | "none" =
+            folder.default_wiki_id ? "folder-default" : (activeWikiId ? "active-fallback" : "none");
+          const wikiName = targetWikiId
+            ? (wikis.find((w) => w.id === targetWikiId)?.name || "selected neuron")
+            : "";
+          setDigestPrompt({ book, folder, wikiId: targetWikiId, wikiName, reason });
+        }
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Move failed");
+    }
+  };
+
+  const confirmSingleDigest = async () => {
+    if (!digestPrompt || !digestPrompt.wikiId) { setDigestPrompt(null); return; }
+    const { book, folder, wikiId } = digestPrompt;
+    setDigestPrompt(null);
+    try {
+      const { enqueued } = await enqueueIngestJobs([{
+        book_id: book.id,
+        wiki_id: wikiId,
+        folder_id: folder.id,
+        model: libraryIngestModel || selectedModel || null,
+      }]);
+      // Remember this neuron for future single-doc prompts on this folder.
+      if (!folder.default_wiki_id) {
+        try {
+          await setFolderDefaultWiki(folder.id, wikiId);
+          setFolders((prev) => prev.map((f) => f.id === folder.id ? { ...f, default_wiki_id: wikiId } : f));
+        } catch { /* non-fatal */ }
+      }
+      if (enqueued === 0) toast(`"${book.title}" is already queued or digested.`);
+      else toast.success(`Queued "${book.title}" — safe to close the tab.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not queue job");
     }
   };
 
@@ -146,6 +196,14 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
           model: libraryIngestModel || selectedModel || null,
         })),
       );
+      // Remember this neuron on the folder for future single-doc prompts.
+      const folder = folders.find((f) => f.id === openFolderId);
+      if (folder && folder.default_wiki_id !== activeWikiId) {
+        try {
+          await setFolderDefaultWiki(openFolderId, activeWikiId);
+          setFolders((prev) => prev.map((f) => f.id === openFolderId ? { ...f, default_wiki_id: activeWikiId } : f));
+        } catch { /* non-fatal */ }
+      }
       if (enqueued === 0) toast("Already in queue — nothing new to add.");
       else toast.success(`Queued ${enqueued} book${enqueued === 1 ? "" : "s"} — safe to close the tab.`);
     } catch (e) {
@@ -390,6 +448,35 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
           )}
         </>
       )}
+
+      <AlertDialog open={!!digestPrompt} onOpenChange={(o) => { if (!o) setDigestPrompt(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {digestPrompt?.wikiId
+                ? <>Digest "{digestPrompt.book.title}" into <span className="text-primary">{digestPrompt.wikiName}</span>?</>
+                : <>No neuron available</>}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {digestPrompt?.reason === "folder-default" && (
+                <>This is the neuron <span className="font-semibold">{digestPrompt.folder.name}</span> was last digested into. Runs on the server — safe to close the tab.</>
+              )}
+              {digestPrompt?.reason === "active-fallback" && (
+                <><span className="font-semibold">{digestPrompt.folder.name}</span> hasn't been digested before, so this uses your currently active neuron. It'll be remembered for next time.</>
+              )}
+              {digestPrompt?.reason === "none" && (
+                <>Pick an active neuron in the Wiki tab, then re-assign this document to be prompted again.</>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Skip</AlertDialogCancel>
+            {digestPrompt?.wikiId && (
+              <AlertDialogAction onClick={confirmSingleDigest} autoFocus>Digest</AlertDialogAction>
+            )}
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
