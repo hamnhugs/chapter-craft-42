@@ -142,13 +142,9 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
         const folder = folders.find((f) => f.id === folderId);
         const book = books.find((b) => b.id === bookId);
         if (folder && book) {
-          const targetWikiId = folder.default_wiki_id || activeWikiId || null;
-          const reason: "folder-default" | "active-fallback" | "none" =
-            folder.default_wiki_id ? "folder-default" : (activeWikiId ? "active-fallback" : "none");
-          const wikiName = targetWikiId
-            ? (wikis.find((w) => w.id === targetWikiId)?.name || "selected neuron")
-            : "";
-          setDigestPrompt({ book, folder, wikiId: targetWikiId, wikiName, reason });
+          const suggestedWikiId = folder.default_wiki_id || activeWikiId || (wikis[0]?.id ?? null);
+          setSelectedDigestWikiId(suggestedWikiId || "");
+          setDigestPrompt({ book, folder, suggestedWikiId });
         }
       }
     } catch (e) {
@@ -157,8 +153,10 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
   };
 
   const confirmSingleDigest = async () => {
-    if (!digestPrompt || !digestPrompt.wikiId) { setDigestPrompt(null); return; }
-    const { book, folder, wikiId } = digestPrompt;
+    if (!digestPrompt) return;
+    const wikiId = selectedDigestWikiId;
+    if (!wikiId) { toast.error("Pick a neuron first."); return; }
+    const { book, folder } = digestPrompt;
     setDigestPrompt(null);
     try {
       const { enqueued } = await enqueueIngestJobs([{
@@ -167,8 +165,8 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
         folder_id: folder.id,
         model: libraryIngestModel || selectedModel || null,
       }]);
-      // Remember this neuron for future single-doc prompts on this folder.
-      if (!folder.default_wiki_id) {
+      // Remember the chosen neuron for next time on this folder.
+      if (folder.default_wiki_id !== wikiId) {
         try {
           await setFolderDefaultWiki(folder.id, wikiId);
           setFolders((prev) => prev.map((f) => f.id === folder.id ? { ...f, default_wiki_id: wikiId } : f));
@@ -180,6 +178,7 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
       toast.error(e instanceof Error ? e.message : "Could not queue job");
     }
   };
+
 
   const handleDigest = async () => {
     if (!openFolderId) return;
