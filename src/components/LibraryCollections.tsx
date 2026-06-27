@@ -136,8 +136,47 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
     try {
       await moveBookToFolder(bookId, folderId);
       setFolderAssignments((prev) => ({ ...prev, [bookId]: folderId }));
+      // Only prompt when actually filing into a folder (not when clearing).
+      if (folderId) {
+        const folder = folders.find((f) => f.id === folderId);
+        const book = books.find((b) => b.id === bookId);
+        if (folder && book) {
+          const targetWikiId = folder.default_wiki_id || activeWikiId || null;
+          const reason: "folder-default" | "active-fallback" | "none" =
+            folder.default_wiki_id ? "folder-default" : (activeWikiId ? "active-fallback" : "none");
+          const wikiName = targetWikiId
+            ? (wikis.find((w) => w.id === targetWikiId)?.name || "selected neuron")
+            : "";
+          setDigestPrompt({ book, folder, wikiId: targetWikiId, wikiName, reason });
+        }
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Move failed");
+    }
+  };
+
+  const confirmSingleDigest = async () => {
+    if (!digestPrompt || !digestPrompt.wikiId) { setDigestPrompt(null); return; }
+    const { book, folder, wikiId } = digestPrompt;
+    setDigestPrompt(null);
+    try {
+      const { enqueued } = await enqueueIngestJobs([{
+        book_id: book.id,
+        wiki_id: wikiId,
+        folder_id: folder.id,
+        model: libraryIngestModel || selectedModel || null,
+      }]);
+      // Remember this neuron for future single-doc prompts on this folder.
+      if (!folder.default_wiki_id) {
+        try {
+          await setFolderDefaultWiki(folder.id, wikiId);
+          setFolders((prev) => prev.map((f) => f.id === folder.id ? { ...f, default_wiki_id: wikiId } : f));
+        } catch { /* non-fatal */ }
+      }
+      if (enqueued === 0) toast(`"${book.title}" is already queued or digested.`);
+      else toast.success(`Queued "${book.title}" — safe to close the tab.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not queue job");
     }
   };
 
@@ -157,6 +196,14 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
           model: libraryIngestModel || selectedModel || null,
         })),
       );
+      // Remember this neuron on the folder for future single-doc prompts.
+      const folder = folders.find((f) => f.id === openFolderId);
+      if (folder && folder.default_wiki_id !== activeWikiId) {
+        try {
+          await setFolderDefaultWiki(openFolderId, activeWikiId);
+          setFolders((prev) => prev.map((f) => f.id === openFolderId ? { ...f, default_wiki_id: activeWikiId } : f));
+        } catch { /* non-fatal */ }
+      }
       if (enqueued === 0) toast("Already in queue — nothing new to add.");
       else toast.success(`Queued ${enqueued} book${enqueued === 1 ? "" : "s"} — safe to close the tab.`);
     } catch (e) {
