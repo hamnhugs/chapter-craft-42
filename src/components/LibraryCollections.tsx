@@ -37,6 +37,11 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
   const [busy, setBusy] = useState(false);
   const { libraryIngestModel, libraryIngestAutoFile, selectedModel, setLibraryIngestModel, setLibraryIngestAutoFile, savedModels } = useChatSettings();
   const [showSettings, setShowSettings] = useState(false);
+  const [wikis, setWikis] = useState<Wiki[]>([]);
+  // Pending single-doc digest prompt after a folder assignment.
+  const [digestPrompt, setDigestPrompt] = useState<null | {
+    book: BookDocument; folder: BookFolder; wikiId: string | null; wikiName: string; reason: "folder-default" | "active-fallback" | "none";
+  }>(null);
   // Live, cross-device view of the user's queue. Survives refresh/tab close
   // because work happens on the server.
   const { jobs, active, recent } = useIngestJobs();
@@ -45,6 +50,7 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
   // get drained. Fire-and-forget; failures are non-fatal.
   useEffect(() => {
     enqueueIngestJobs([], { resume: true }).catch(() => {});
+    fetchWikis().then(setWikis).catch(() => {});
   }, []);
 
 
