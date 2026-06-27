@@ -1,32 +1,31 @@
-# Single-doc digest on folder assignment
+## Goal
+When assigning a document to a folder, let the user **choose which neuron** to digest it into — instead of only confirming the folder's remembered/active neuron.
 
-When you move an unassigned (or any) document into a folder in the Vault tab, a confirm dialog will appear asking whether to digest just that one document into the folder's neuron. The folder remembers the neuron it was last digested into, so the prompt always offers the correct target — even if the active neuron in the Wiki tab has since changed.
+## Changes (UI only, in `src/components/LibraryCollections.tsx`)
 
-## What changes for you
+1. **Replace the simple AlertDialog** with a `Dialog` containing:
+   - Document name + target folder name (context).
+   - A **Select** dropdown listing all of the user's wikis (neurons), pre-selected to:
+     1. The folder's `default_wiki_id` if set, else
+     2. The currently active wiki.
+   - A small caption showing which neuron is the folder's remembered default (if any).
+   - Two buttons: **Skip** (just file the doc) and **Digest into selected neuron**.
 
-- Assigning a document to a folder pops a clean confirm dialog:
-  - **"Digest 'Document Title' into 'Neuron Name' now?"** with **Digest** / **Skip** buttons.
-- The neuron shown is the one this folder has been digested into before. If the folder has never been digested, it falls back to the currently active neuron and the dialog says so.
-- Clicking **Digest** queues a single durable job on the server (same pipeline as the bulk "Digest folder" button) — safe to refresh or close the tab, progress shows in the live queue strip.
-- Clicking **Skip** just moves the document, no prompt nagging afterward.
-- No prompt appears when *removing* a document from a folder (assigning to Unassigned).
+2. **Confirm handler** (`confirmSingleDigest`)
+   - Use the wiki chosen in the dropdown (not the cached default).
+   - Enqueue the single ingest job against that wiki via the existing `enqueueIngestJobs` pipeline.
+   - Persist the chosen wiki as the folder's new `default_wiki_id` via `setFolderDefaultWiki`, so the next prompt remembers the latest choice.
 
-## How it works
+3. **State additions**
+   - `pendingDigest`: `{ bookId, folderId, suggestedWikiId }`
+   - `selectedDigestWikiId`: controlled value for the Select.
+   - Reset both on close/skip.
 
-1. **Folder remembers its neuron.** Add `default_wiki_id` to `book_folders`. Set it the first time a folder is digested (bulk or single-doc); update it whenever the user digests that folder into a different neuron.
-2. **Assignment hook.** `LibraryCollections.assignBook` becomes a two-step flow: move the book, then open a dialog if the target folder is not null. Dialog uses shadcn `AlertDialog` for accessibility.
-3. **Resolve target neuron.** Prefer `folder.default_wiki_id`; fall back to `activeWikiId`; if neither exists, the dialog shows a soft warning and a "Pick a neuron in the Wiki tab" hint with only a Close button.
-4. **Queue one job.** On confirm, call existing `enqueueIngestJobs([{ book_id, wiki_id, folder_id, model }])` — reuses the durable server runner, realtime progress, retries, and dedupe already in place. No new edge function needed.
-5. **Idempotency / no double-digest.** Server runner already skips books that are currently queued or running for the same `(book_id, wiki_id)`. If the book has already been fully digested into that neuron, the runner short-circuits and the live strip shows "Already digested".
-6. **Bulk path stays intact.** "Digest folder into neuron" button is unchanged; it just also writes `default_wiki_id` on the folder when it runs.
+## Out of scope
+- Bulk "Digest folder" flow stays unchanged (already targets the active neuron and updates the folder default).
+- No schema changes, no edge-function changes, no AI tool changes.
 
 ## Technical notes
-
-- **DB migration:** `ALTER TABLE public.book_folders ADD COLUMN default_wiki_id uuid REFERENCES public.wikis(id) ON DELETE SET NULL;` (nullable, no backfill — folders start blank and learn on first digest).
-- **Files touched:**
-  - `supabase/migrations/<new>.sql` — column add.
-  - `src/lib/bookFolders.ts` — extend `BookFolder` type with `default_wiki_id`; add `setFolderDefaultWiki(id, wikiId)` helper.
-  - `src/components/LibraryCollections.tsx` — refactor `assignBook` to open a confirm dialog (shadcn `AlertDialog`), wire `enqueueIngestJobs` for the single book, update `handleDigest` (bulk) to also persist `default_wiki_id`.
-  - Resolve neuron name for the dialog via existing `wikisApi` (cached list already loaded elsewhere; lightweight fetch if not in scope).
-- **Permissions / safety:** uses the same RLS-scoped queue table and runner; no new policies needed. Skip prompt entirely for assignments to `null` (Unassigned).
-- **UX details:** dialog auto-focuses **Digest**; pressing Esc = Skip; toast on success ("Queued 'Title' for digestion") and on skip is silent.
+- Wikis list is already fetched/cached in the component — reuse it to populate the Select.
+- Use shadcn `Dialog` + `Select` (already in the project) for consistent styling.
+- Type-check after the edit; no other files need to change.
