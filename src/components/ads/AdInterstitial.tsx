@@ -62,6 +62,7 @@ const AdInterstitial: React.FC = () => {
     if (open && skipIn <= 0) skipRef.current?.focus();
   }, [open, skipIn]);
 
+  if (OPEN_ACCESS) return null;
   if (!isFree || !open) return null;
 
   const ad = HOUSE_ADS[adIndex];

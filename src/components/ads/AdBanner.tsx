@@ -20,6 +20,7 @@ const AdBanner: React.FC = () => {
     return () => clearInterval(t);
   }, []);
 
+  if (OPEN_ACCESS) return null;
   if (!loaded || plan !== "free") return null;
 
   const ad = HOUSE_ADS[index];
