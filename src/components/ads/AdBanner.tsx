@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { usePlan } from "@/hooks/usePlan";
 import { openPricing } from "@/components/PricingDialog";
 import { HOUSE_ADS } from "@/lib/houseAds";
+import { OPEN_ACCESS } from "@/lib/openAccess";
 
 const ROTATE_MS = 45_000;
 

@@ -96,6 +96,7 @@ const PricingDialog: React.FC = () => {
   const { open, reason } = useSyncExternalStore(subscribeDialog, getDialogState, getDialogState);
   const { plan, isPaid, billingIssue, cancelAtPeriodEnd, subscriptionEnd } = usePlan();
   const [busy, setBusy] = useState<"monthly" | "lifetime" | "portal" | null>(null);
+  if (OPEN_ACCESS) return null;
 
   const startCheckout = async (target: "monthly" | "lifetime") => {
     setBusy(target);
