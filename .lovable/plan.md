@@ -1,34 +1,46 @@
-# Add intro video to the login page
+# Open Access — Retire the Paywall (for now)
 
-Place the provided YouTube video (`1Cgc0kXEv-4`) on `src/pages/Auth.tsx` in a way that feels native to the existing editorial/glass aesthetic, works on mobile and desktop, and follows current embed best practices.
+Goal: every signed-in user gets full Pro capabilities. No Stripe calls, no ads, no locked neurons, no upgrade prompts. Keep the billing code intact but dormant so we can flip it back on later.
 
-## Best-practice research summary
-
-- **Use `youtube-nocookie.com`** with `rel=0` and `modestbranding=1` — privacy-enhanced mode, no related videos from other channels, cleaner UI. Google/EU GDPR guidance + YouTube's own docs recommend this for sites that embed marketing videos.
-- **Do NOT autoplay with sound** (Chrome/Safari block it and WCAG 2.2.2 forbids uncontrolled motion). Autoplay is only acceptable muted; here we'll keep it click-to-play so the login form stays the primary action.
-- **Responsive 16:9 wrapper** using Tailwind's `aspect-video` (modern replacement for the old padding-bottom hack).
-- **Lazy load** via `loading="lazy"` on the iframe so it doesn't compete with auth JS on first paint.
-- **Accessibility**: real `<iframe title>`, `allow` list trimmed to what's actually needed (no `autoplay` since we're not autoplaying), keyboard-focusable, and a visible caption above the frame for screen-reader context.
-- **Layout**: on desktop, form stays centered and primary; video sits below the form inside the same glass panel width so the eye lands on Sign In first (F-pattern / primary-action-first, per NN/g login-page guidance). On mobile it stacks naturally under the form.
+## Best-practice notes applied
+- **Single source of truth**: flip the gate at the entitlements layer (`useEntitlements`) so every downstream gate (`usePlan`, locked neurons, ads, Pricing dialog, Deep Research, auto-chapterize, BRAIN locks, ⌘K switcher, chat tools) inherits "paid" without touching each call site. Avoids drift and future re-enable pain.
+- **Fail closed → fail open, intentionally**: force `plan = "lifetime"`, `isPaid = true`, `lockedWikiIds = ∅`, `billingIssue = false` locally. Do not touch the DB or Stripe — server still knows the truth for when we re-enable.
+- **Don't rip code out**: leave Stripe edge functions, `PricingDialog`, `AdBanner`, `houseAds` in the repo but stop rendering/invoking them. One-line kill switch (`OPEN_ACCESS = true`) documented in `src/lib/openAccess.ts` so re-enabling is a single revert.
+- **No dead UI**: hide (not disable) the Upgrade button, plan badge upsell state, ad strip, ad interstitial, "locked" overlays on neuron cards, and paywall CTA in ⌘K. Keeps the surface clean rather than showing greyed-out affordances (Nielsen: remove rather than disable when action is unavailable indefinitely).
+- **Accessibility / clarity**: no lingering "Free plan" copy or lock icons that would confuse screen readers now that nothing is actually locked.
+- **Reversibility**: a single constant toggles everything back. Documented at top of `openAccess.ts`.
 
 ## Changes
 
-**File:** `src/pages/Auth.tsx`
+1. **New `src/lib/openAccess.ts`** — exports `OPEN_ACCESS = true` with a comment explaining the kill switch and what to revert.
 
-1. Widen `max-w-md` → `max-w-md` for the form but wrap form + video in a single `max-w-md` column so nothing shifts. (Keeps current visual hierarchy.)
-2. Below the existing glass-panel `<section>` (the sign-in card), add a new sibling block:
-   - Small uppercase eyebrow label: "Watch the intro".
-   - `<div class="aspect-video rounded-xl overflow-hidden border border-outline-variant/10 shadow-lg bg-black">` containing the iframe.
-   - Iframe attributes:
-     - `src="https://www.youtube-nocookie.com/embed/1Cgc0kXEv-4?rel=0&modestbranding=1"`
-     - `title="Bookworm Studio intro"`
-     - `loading="lazy"`
-     - `referrerPolicy="strict-origin-when-cross-origin"`
-     - `allow="clipboard-write; encrypted-media; picture-in-picture; web-share; fullscreen"`
-     - `allowFullScreen`
-     - `className="w-full h-full"`
-3. No changes to auth logic, no new deps, no schema changes.
+2. **`src/hooks/useEntitlements.ts`** — when `OPEN_ACCESS` is on, short-circuit `refreshEntitlements` / `ensureLoaded` to publish `{ isAdmin: current, plan: "lifetime", subscribed: true, isPaid: true, billingIssue: false, subscriptionEnd: null, cancelAtPeriodEnd: false, lockedWikiIds: ∅, loaded: true }` immediately after auth. Skip the `my_entitlements` RPC and the `check-subscription` invoke entirely. Admin flag still fetched cheaply (or left as false — doesn't matter since everyone is Pro).
+
+3. **`src/lib/neuronAccess.ts`** — `computeLockedWikiIds` returns empty set when `OPEN_ACCESS` is on (belt + suspenders in case any caller bypasses entitlements).
+
+4. **`src/components/ads/AdBanner.tsx`** and **`src/components/ads/AdInterstitial.tsx`** — early `return null` when `OPEN_ACCESS`. Ads never render.
+
+5. **`src/components/PricingDialog.tsx`** — `openPricing()` becomes a no-op when `OPEN_ACCESS` (no dialog, no console noise). Any component still calling it silently does nothing.
+
+6. **Plan badge / Upgrade button** — locate the header/nav plan badge (likely `PlanBadgeButton` referenced from `usePlan.ts` comment) and hide it entirely under `OPEN_ACCESS`. If it also serves as an account menu, keep the account menu portion and drop only the plan/upgrade affordance.
+
+7. **`src/pages/Auth.tsx`** — no changes needed to the sign-in form; keep the intro video block added earlier. Remove any "Free plan starts here" style copy if present.
+
+8. **`src/pages/PaymentSuccess.tsx`** — keep the route reachable (in case of stray links) but render a neutral "You're all set — everything is open right now, no payment needed" message and a button back to `/`. No Stripe polling.
+
+9. **Locked overlays** — anywhere neuron cards, ⌘K switcher, or BRAIN tab render a lock icon or "Upgrade to unlock" tooltip, gate that JSX on `!OPEN_ACCESS`. Driven off `lockedWikiIds` being empty, so mostly automatic, but audit visible strings (`Locked`, `Upgrade`, `Pro`) and hide the ones that no longer apply.
+
+10. **Chat tools / Deep Research / auto-chapterize** — already gated on `isPaid`; with entitlements forced to paid, these enable for everyone. No code change beyond step 2.
 
 ## Out of scope
+- Deleting Stripe edge functions or removing `stripe` deps.
+- DB migrations to `subscribers` / `user_roles`.
+- Changing pricing copy in marketing pages (none present in-app).
+- Rotating Stripe keys.
 
-- Autoplay, custom thumbnail/lite-youtube-embed component, or moving the video into a two-column split (can revisit if you want it side-by-side on desktop).
+## Re-enabling later
+Flip `OPEN_ACCESS` to `false` in `src/lib/openAccess.ts`. Everything reverts to server-driven entitlements with no other code changes.
+
+## Verification
+- Load `/auth`, sign in, confirm: no ad strip, no Upgrade button, all neurons unlocked, ⌘K shows no locks, Deep Research toggle available, Pricing dialog cannot be opened, `PaymentSuccess` shows the neutral message.
+- Network tab: no calls to `check-subscription`, `create-checkout`, `customer-portal`, or `my_entitlements` RPC after sign-in.

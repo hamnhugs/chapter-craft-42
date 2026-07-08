@@ -1,6 +1,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { OPEN_ACCESS } from "@/lib/openAccess";
 
 // Single source of truth for plan + admin + locked-neuron set.
 // One server RPC (my_entitlements) returns everything atomically so the UI
@@ -44,6 +45,20 @@ const subscribe = (l: () => void) => { listeners.add(l); return () => { listener
 const getSnapshot = () => snapshot;
 
 export async function refreshEntitlements(): Promise<Entitlements> {
+  if (OPEN_ACCESS) {
+    publish({
+      isAdmin: false,
+      plan: "lifetime",
+      subscribed: true,
+      isPaid: true,
+      billingIssue: false,
+      subscriptionEnd: null,
+      cancelAtPeriodEnd: false,
+      lockedWikiIds: new Set<string>(),
+      loaded: true,
+    });
+    return snapshot;
+  }
   try {
     const { data, error } = await supabase.rpc("my_entitlements" as any);
     if (!error && data) {

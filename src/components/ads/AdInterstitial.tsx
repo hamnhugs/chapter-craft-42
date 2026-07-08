@@ -3,6 +3,7 @@ import { usePlan } from "@/hooks/usePlan";
 import { openPricing } from "@/components/PricingDialog";
 import { HOUSE_ADS } from "@/lib/houseAds";
 import { Button } from "@/components/ui/button";
+import { OPEN_ACCESS } from "@/lib/openAccess";
 
 const INTERVAL_MS = 5 * 60_000; // one interstitial per 5 minutes of foreground use
 const SKIP_DELAY_S = 5;
@@ -61,6 +62,7 @@ const AdInterstitial: React.FC = () => {
     if (open && skipIn <= 0) skipRef.current?.focus();
   }, [open, skipIn]);
 
+  if (OPEN_ACCESS) return null;
   if (!isFree || !open) return null;
 
   const ad = HOUSE_ADS[adIndex];

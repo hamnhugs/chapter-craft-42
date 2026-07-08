@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { usePlan, type PlanTier } from "@/hooks/usePlan";
+import { OPEN_ACCESS } from "@/lib/openAccess";
 
 // Module-level open/close store so any component (a locked neuron card, the
 // deep-research toggle, an ad) can summon the pricing dialog without prop
@@ -28,6 +29,7 @@ const subscribeDialog = (l: () => void) => {
 const getDialogState = () => dialogState;
 
 export function openPricing(reason?: string) {
+  if (OPEN_ACCESS) return;
   setDialogState({ open: true, reason: reason ?? null });
 }
 
@@ -62,6 +64,7 @@ const FeatureValue: React.FC<{ value: string | boolean }> = ({ value }) =>
 /** Small plan indicator for the top app bar: Upgrade CTA for free users, plan badge for paid. */
 export const PlanBadgeButton: React.FC = () => {
   const { plan, loaded, isPaid, billingIssue } = usePlan();
+  if (OPEN_ACCESS) return null;
   if (!loaded) return null;
   if (!isPaid) {
     return (
@@ -93,6 +96,7 @@ const PricingDialog: React.FC = () => {
   const { open, reason } = useSyncExternalStore(subscribeDialog, getDialogState, getDialogState);
   const { plan, isPaid, billingIssue, cancelAtPeriodEnd, subscriptionEnd } = usePlan();
   const [busy, setBusy] = useState<"monthly" | "lifetime" | "portal" | null>(null);
+  if (OPEN_ACCESS) return null;
 
   const startCheckout = async (target: "monthly" | "lifetime") => {
     setBusy(target);
