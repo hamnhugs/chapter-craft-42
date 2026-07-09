@@ -4,10 +4,7 @@ import { useChat } from "@/context/ChatContext";
 import { useAuth } from "@/hooks/useAuth";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Slider } from "@/components/ui/slider";
-import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import { extractKnowledge } from "@/lib/knowledgeApi";
@@ -15,15 +12,11 @@ import { Loader2, StickyNote, BookmarkPlus } from "lucide-react";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { usePlan } from "@/hooks/usePlan";
 import { openPricing } from "@/components/PricingDialog";
-import { openSetupWizard } from "@/components/SetupWizard";
 import { useReadAloud } from "@/hooks/useReadAloud";
 import { useHandsFree } from "@/hooks/useHandsFree";
-import AiPermissionsSettings from "@/components/AiPermissionsSettings";
-import ImageModelsSettings from "@/components/ImageModelsSettings";
-
 import { isEmbeddingModel } from "@/lib/utils";
 import { useDictation } from "@/hooks/useDictation";
-import PromptLibrary from "@/components/PromptLibrary";
+import { requestSettingsSection } from "@/lib/settingsNav";
 import VoiceNotesPanel, { appendVoiceNote } from "@/components/VoiceNotesPanel";
 import ResponseBlocks from "@/components/ResponseBlocks";
 import GeneratedImage from "@/components/GeneratedImage";
@@ -33,30 +26,28 @@ import { workspaceStore, deriveResearchTitle, useWorkspaceItems } from "@/lib/wo
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations, isSearchRateLimited } from "@/lib/chatTools";
-import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
 import { useDownloadableTtsId, downloadTtsAudio } from "@/lib/ttsAudioCache";
 import { fileToDownscaledDataUrl, isAcceptedImage, uploadChatImage, persistImageMemory, type PendingChatImage } from "@/lib/imageUpload";
 
 
 const VOICE_QUICK_SEARCH_KEY = "voice_quick_search";
-const VOICE_QUICK_SEARCH_MODEL_KEY = "voice_quick_search_model";
 
 const SEARCH_INTENT_RE =
   /\b(search|look up|look for|find|google|what is|what are|who is|who are|tell me about|research|check online|latest|current|news about)\b/i;
 
 const ChatPanel: React.FC = () => {
-  const { books, activeBookId, activeWiki, activeWikiId } = useApp();
+  const { books, activeBookId, activeWiki, activeWikiId, setActiveTab } = useApp();
   const { user } = useAuth();
   const isMobile = useIsMobile();
   const {
-    apiKey, savedModels, selectedModel, deepResearchModel, voiceModel, visionModel, ttsRate, autoReadReplies, customSystemPrompt, burplexityApiToken, inworldApiKey, inworldEnabled, inworldVoiceId, accessAllNeurons, loaded,
-    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel, setVoiceModel, setVisionModel, setTtsRate, setAutoReadReplies, setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey, setInworldEnabled, setInworldVoiceId, setAccessAllNeurons,
+    apiKey, savedModels, selectedModel, voiceModel, autoReadReplies, burplexityApiToken, accessAllNeurons, loaded,
+    setSelectedModel, setAutoReadReplies,
   } = useChatSettings();
   const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort } = useChat();
   const { isPaid } = usePlan();
   const { speakingId, speak, stop: stopSpeaking } = useReadAloud();
-  const [settingsTab, setSettingsTab] = useState<"models" | "research" | "voice" | "prompts" | "permissions" | "images">("models");
-  const [bargeInEnabled, setBargeInEnabled] = useState(() => localStorage.getItem("hands_free_barge_in") === "true");
+  // Configured in the Settings tab; re-read here on mount (tab switches remount this panel).
+  const [bargeInEnabled] = useState(() => localStorage.getItem("hands_free_barge_in") === "true");
   const handsFree = useHandsFree({
     onUtterance: (text) => sendMessage(text, { voiceMode: true, modelOverride: voiceModel || undefined }),
     speak: (text, opts) => speak(text, opts),
@@ -64,7 +55,13 @@ const ChatPanel: React.FC = () => {
     bargeIn: bargeInEnabled,
   });
 
-  const [input, setInput] = useState("");
+  // Draft survives tab switches (e.g. a trip to Settings unmounts this panel —
+  // the old in-place settings sheet never did, so losing the draft here would
+  // be a regression). sessionStorage: per-tab, cleared when the browser closes.
+  const [input, setInput] = useState(() => sessionStorage.getItem("counsel_draft") || "");
+  useEffect(() => {
+    try { sessionStorage.setItem("counsel_draft", input); } catch { /* quota — drop */ }
+  }, [input]);
   // Pending image attachments for the next send (composer-local).
   const [pendingImages, setPendingImages] = useState<PendingChatImage[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -92,21 +89,15 @@ const ChatPanel: React.FC = () => {
   const removePendingImage = useCallback((localId: string) => {
     setPendingImages((prev) => prev.filter((p) => p.localId !== localId));
   }, []);
-  const [showSettings, setShowSettings] = useState(false);
-  const [newModelInput, setNewModelInput] = useState("");
   const [extracting, setExtracting] = useState(false);
   const [deepSearching, setDeepSearching] = useState(false);
   const [digesting, setDigesting] = useState(false);
-  const [promptDraft, setPromptDraft] = useState("");
 
   // ---- Voice features absorbed from the former Echo (Voice) tab ----
   const [notesPanelOpen, setNotesPanelOpen] = useState(false);
-  const [voiceQuickSearch, setVoiceQuickSearch] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_KEY) === "true");
-  const [voiceQuickSearchModel, setVoiceQuickSearchModel] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_MODEL_KEY) || "");
+  // Configured in the Settings tab; read-only here.
+  const [voiceQuickSearch] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_KEY) === "true");
   const [pendingSearchCount, setPendingSearchCount] = useState(0);
-  const [inworldVoices, setInworldVoices] = useState<InworldVoice[]>([]);
-  const [loadingVoices, setLoadingVoices] = useState(false);
-  const [testingVoice, setTestingVoice] = useState(false);
   const [selectionCapture, setSelectionCapture] = useState<{ text: string; top: number; left: number } | null>(null);
   const [workspaceOpen, setWorkspaceOpen] = useState(() => localStorage.getItem("counsel_workspace_open") === "1");
   const [workspaceSelectedId, setWorkspaceSelectedId] = useState<string | null>(null);
@@ -117,15 +108,10 @@ const ChatPanel: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const settingsPanelRef = useRef<HTMLDivElement>(null);
   const inputBeforeDictationRef = useRef<string>("");
   // When a message is sent we stop the mic and ignore the recognizer's trailing
   // final callback, so it can't repopulate the just-cleared composer.
   const suppressDictationRef = useRef(false);
-
-  useEffect(() => { localStorage.setItem(VOICE_QUICK_SEARCH_KEY, String(voiceQuickSearch)); }, [voiceQuickSearch]);
-  useEffect(() => { localStorage.setItem(VOICE_QUICK_SEARCH_MODEL_KEY, voiceQuickSearchModel); }, [voiceQuickSearchModel]);
-  useEffect(() => { localStorage.setItem("hands_free_barge_in", String(bargeInEnabled)); }, [bargeInEnabled]);
 
   const dictation = useDictation({
     onInterim: (text) => {
@@ -147,7 +133,6 @@ const ChatPanel: React.FC = () => {
   };
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
-  useEffect(() => { setPromptDraft(customSystemPrompt || ""); }, [customSystemPrompt, showSettings]);
 
   // Autogrow the composer up to ~10 lines, then scroll internally.
   useEffect(() => {
@@ -185,29 +170,6 @@ const ChatPanel: React.FC = () => {
       }
     }, 2500);
   }, [messages]);
-
-  // ESC + click-outside to close the settings panel.
-  useEffect(() => {
-    if (!showSettings) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setShowSettings(false); };
-    const onDown = (e: MouseEvent | TouchEvent) => {
-      const target = e.target as Node | null;
-      if (!target) return;
-      if (settingsPanelRef.current && !settingsPanelRef.current.contains(target)) {
-        const toggle = document.getElementById("chat-settings-toggle");
-        if (toggle && toggle.contains(target)) return;
-        setShowSettings(false);
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("touchstart", onDown, { passive: true });
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("touchstart", onDown);
-    };
-  }, [showSettings]);
 
   // Chat cannot use embedding-only models (they're for Wiki reindex). Auto-switch away.
   const chatModels = savedModels.filter((m) => !isEmbeddingModel(m));
@@ -342,51 +304,10 @@ const ChatPanel: React.FC = () => {
     }
   };
 
-  const handleSaveApiKey = (key: string) => { saveApiKey(key); setShowSettings(false); };
-  const handleAddModel = () => { const m = newModelInput.trim(); if (!m) return; addModel(m); setNewModelInput(""); };
-
-  // ----- Inworld voice management (settings) -----
-  const loadInworldVoices = useCallback(async () => {
-    setLoadingVoices(true);
-    try {
-      const voices = await fetchInworldVoices(inworldApiKey);
-      setInworldVoices(voices);
-      if (loaded && !inworldVoiceId) setInworldVoiceId(voices[0]?.voice_id || "Ashley");
-    } catch (err: any) {
-      toast.error(`Could not load Inworld voices: ${err.message}`);
-    } finally {
-      setLoadingVoices(false);
-    }
-  }, [inworldApiKey, inworldVoiceId, loaded, setInworldVoiceId]);
-
-  const inworldVoiceLoadedRef = useRef(false);
-  useEffect(() => {
-    if (!inworldVoiceLoadedRef.current && inworldApiKey) {
-      inworldVoiceLoadedRef.current = true;
-      loadInworldVoices();
-    }
-  }, [inworldApiKey, loadInworldVoices]);
-
-  const saveInworldKey = (key: string) => {
-    setInworldApiKey(key.trim());
-    if (key.trim()) { inworldVoiceLoadedRef.current = true; loadInworldVoices(); }
-  };
-
-  const testInworldVoice = async () => {
-    if (!inworldVoiceId) { toast.error("Pick a voice first"); return; }
-    setTestingVoice(true);
-    try {
-      const buf = await synthesizeSpeech("Testing one, two, three.", inworldApiKey, inworldVoiceId);
-      const url = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
-      const audio = new Audio(url);
-      audio.onended = audio.onerror = () => { try { URL.revokeObjectURL(url); } catch { /* no-op */ } };
-      await audio.play();
-      toast.success("Voice working");
-    } catch (err: any) {
-      toast.error(`Inworld TTS failed: ${err?.message || err}`);
-    } finally {
-      setTestingVoice(false);
-    }
+  // Navigate to the consolidated Settings tab, optionally landing on a section.
+  const openSettings = (section?: string) => {
+    if (section) requestSettingsSection(section);
+    setActiveTab("settings");
   };
 
   const selectedBook = books.find((b) => b.id === activeBookId);
@@ -524,7 +445,7 @@ const ChatPanel: React.FC = () => {
     const text = input.trim();
     const imagesToSend = pendingImages;
     if (!text && imagesToSend.length === 0) return;
-    if (!apiKey) { toast.error("Please set your OpenRouter API key first"); setShowSettings(true); return; }
+    if (!apiKey) { toast.error("Please set your OpenRouter API key first"); openSettings("models"); return; }
     suppressDictationRef.current = true;
     dictation.stop();
     setInput("");
@@ -575,382 +496,6 @@ const ChatPanel: React.FC = () => {
   return (
     <div className="flex h-full overflow-hidden">
       <div className="flex flex-col h-full flex-1 min-w-0 relative">
-      {/* Settings bar */}
-      {showSettings && (
-        <>
-          {/* Mobile scrim — tap to dismiss the settings sheet */}
-          <div
-            className="md:hidden fixed inset-0 z-[55] bg-black/50 animate-in fade-in-0"
-            aria-hidden
-            onClick={() => setShowSettings(false)}
-          />
-        <div
-          ref={settingsPanelRef}
-          className="space-y-4 overflow-y-auto overscroll-contain bg-surface-container-low fixed inset-x-0 bottom-0 z-[60] max-h-[88vh] rounded-t-2xl border-t border-outline-variant/10 px-4 pt-2 shadow-2xl max-md:animate-in max-md:slide-in-from-bottom max-md:duration-300 md:static md:z-auto md:max-h-[70vh] md:rounded-none md:border-b md:border-t-0 md:py-4 md:shadow-none"
-          style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 0.75rem)" }}
-        >
-          <div className="sticky top-0 -mx-4 -mt-2 md:-mt-3 px-4 pt-2 pb-2 bg-surface-container-low/95 backdrop-blur-sm z-10">
-            {/* Mobile grab handle */}
-            <div className="md:hidden mx-auto mb-2 h-1.5 w-10 rounded-full bg-outline-variant/40" aria-hidden />
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-widest text-on-surface-variant">Settings</span>
-              <button
-                onClick={() => setShowSettings(false)}
-                aria-label="Close settings"
-                className="inline-flex items-center justify-center h-10 w-10 md:h-8 md:w-8 rounded-lg text-on-surface-variant hover:bg-surface-container-high active:scale-95 transition-all"
-              >
-                <span className="material-symbols-outlined text-[22px] md:text-[20px]">close</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Section tabs — settings grouped by goal so each view stays scannable */}
-          <div role="tablist" aria-label="Settings sections" className="flex gap-1.5 overflow-x-auto hide-scrollbar">
-            {([
-              ["models", "tune", "Models & Keys"],
-              ["images", "image", "Images"],
-              ["research", "science", "Research"],
-              ["voice", "record_voice_over", "Voice"],
-              ["prompts", "history_edu", "Prompts"],
-              ["permissions", "shield_person", "AI Permissions"],
-            ] as const).map(([id, icon, label]) => (
-
-              <button
-                key={id}
-                role="tab"
-                aria-selected={settingsTab === id}
-                onClick={() => setSettingsTab(id)}
-                className={`shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-bold transition-colors ${settingsTab === id ? "bg-primary-container text-on-primary-container" : "bg-surface-container-high text-on-surface-variant hover:text-foreground"}`}
-              >
-                <span className="material-symbols-outlined text-sm">{icon}</span>
-                {label}
-              </button>
-            ))}
-          </div>
-
-          {/* ── Models & Keys ── */}
-          {settingsTab === "models" && (
-          <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-3 md:p-4 rounded-xl bg-surface-container-low">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">OpenRouter API Key</label>
-              <div className="relative">
-                <input
-                  className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 pr-10 focus:ring-1 focus:ring-primary/40 transition-all"
-                  type="password" placeholder="sk-or-v1-..." defaultValue={apiKey}
-                  id="openrouter-key-input"
-                  onKeyDown={(e) => { if (e.key === "Enter") handleSaveApiKey((e.target as HTMLInputElement).value); }}
-                />
-                <span className="material-symbols-outlined absolute right-3 top-2.5 text-on-surface-variant text-sm">key</span>
-              </div>
-              <div className="flex gap-2 mt-1">
-                <Button size="sm" onClick={() => { const el = document.getElementById("openrouter-key-input") as HTMLInputElement; handleSaveApiKey(el?.value || ""); }}>Save</Button>
-                {apiKey && <Button size="sm" variant="destructive" onClick={() => handleSaveApiKey("")}>Remove</Button>}
-              </div>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Active Model</label>
-              <select
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40"
-              >
-                {chatModels.map((m) => (<option key={m} value={m}>{m}</option>))}
-              </select>
-              <div className="flex gap-2 mt-1">
-                <Input type="text" placeholder="provider/model-name" value={newModelInput} onChange={(e) => setNewModelInput(e.target.value)} className="text-sm font-mono bg-surface-container-high border-none" onKeyDown={(e) => { if (e.key === "Enter") handleAddModel(); }} />
-                <Button size="sm" onClick={handleAddModel}>Add</Button>
-              </div>
-              <div className="flex flex-wrap gap-1.5 mt-1">
-                {savedModels.map((m) => {
-                  const embed = isEmbeddingModel(m);
-                  return (
-                    <span key={m} title={embed ? "Embedding model — used by Neuron reindex, not Chat" : undefined} className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md ${m === selectedModel ? "bg-primary-container/20 text-primary border border-primary-container/30" : embed ? "bg-surface-container-highest/50 text-on-surface-variant/60 italic" : "bg-surface-container-highest text-on-surface-variant"}`}>
-                      <button onClick={() => { if (embed) { toast.error("Embedding model — pick it in Neuron Settings, not Chat."); return; } setSelectedModel(m); }} className="hover:underline">{m}{embed ? " (embed)" : ""}</button>
-                      <button onClick={() => removeModel(m)} className="hover:text-destructive ml-0.5 material-symbols-outlined text-xs">close</button>
-                    </span>
-                  );
-                })}
-              </div>
-              <button
-                onClick={() => window.open("#/models", "_blank")}
-                className="self-start inline-flex items-center gap-1 mt-1 px-1 text-[11px] font-semibold text-primary hover:underline"
-              >
-                <span className="material-symbols-outlined text-sm">leaderboard</span>
-                Browse top models by category
-              </button>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Focus Context</label>
-              <div className="flex items-center gap-3 bg-surface-container-high rounded-lg py-2.5 px-4 border border-outline-variant/10">
-                <div className="w-2 h-2 rounded-full bg-primary-container shadow-[0_0_8px_rgba(255,191,0,0.4)]" />
-                <span className="text-sm font-headline italic text-primary">{selectedBook?.title || "No book selected"}</span>
-              </div>
-            </div>
-          </section>
-          )}
-
-          {/* ── Research & Search ── */}
-          {settingsTab === "research" && (
-          <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-3 md:p-4 rounded-xl bg-surface-container-low">
-            <div className="flex flex-col gap-1.5 lg:col-span-3">
-              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
-                <span className="material-symbols-outlined text-xs align-middle mr-1">neurology</span>Neuron access
-              </label>
-              <div className="flex items-center justify-between gap-3 bg-surface-container-high rounded-lg py-3 px-4 border border-outline-variant/10">
-                <span className="text-sm text-primary flex items-center gap-1.5">
-                  {!isPaid && <span className="material-symbols-outlined text-sm" aria-hidden>lock</span>}
-                  {accessAllNeurons && isPaid ? "Reading all neurons at once" : "Reading only the loaded neuron"}
-                </span>
-                <Switch
-                  checked={accessAllNeurons && isPaid}
-                  onCheckedChange={(v) => {
-                    if (!isPaid) { openPricing("all-neurons"); return; }
-                    setAccessAllNeurons(v);
-                    toast.success(v ? "Counsel can now read all your neurons" : "Counsel reads only the loaded neuron");
-                  }}
-                  aria-label="Access all neurons at once"
-                />
-              </div>
-              <p className="text-[10px] text-on-surface-variant px-1">
-                Off = answers draw only on the neuron you've loaded (focused, cheaper, usually more accurate). On = Counsel searches every neuron in your brain at once.{!isPaid && " Pro feature."}
-              </p>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Burplexity API Token <span className="text-on-surface-variant/60 normal-case tracking-normal">(web search)</span></label>
-              <div className="relative">
-                <input
-                  className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 pr-10 focus:ring-1 focus:ring-primary/40 transition-all"
-                  type="password" placeholder="pp_..." defaultValue={burplexityApiToken}
-                  id="burplexity-token-input"
-                  onKeyDown={(e) => { if (e.key === "Enter") { setBurplexityApiToken((e.target as HTMLInputElement).value); toast.success("Burplexity token saved"); } }}
-                />
-                <span className="material-symbols-outlined absolute right-3 top-2.5 text-on-surface-variant text-sm">travel_explore</span>
-              </div>
-              <div className="flex gap-2 mt-1">
-                <Button size="sm" onClick={() => { const el = document.getElementById("burplexity-token-input") as HTMLInputElement; setBurplexityApiToken(el?.value || ""); toast.success(el?.value ? "Burplexity token saved" : "Burplexity token removed"); }}>Save</Button>
-                {burplexityApiToken && <Button size="sm" variant="destructive" onClick={() => setBurplexityApiToken("")}>Remove</Button>}
-              </div>
-              <p className="text-[10px] text-on-surface-variant px-1">Enables the live <code>web_search</code> tool. Generate at your Burplexity app → API Keys.</p>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
-                <span className="material-symbols-outlined text-xs align-middle mr-1">science</span>Deep Research Model
-              </label>
-              <select
-                value={deepResearchModel}
-                onChange={(e) => setDeepResearchModel(e.target.value)}
-                className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40"
-              >
-                {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
-              </select>
-              <p className="text-[10px] text-on-surface-variant px-1">Used when Deep Research is ON. Pick a strong reasoning model for best results.</p>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
-                <span className="material-symbols-outlined text-xs align-middle mr-1">travel_explore</span>Background Quick Search
-              </label>
-              <div className="flex items-center justify-between gap-3 bg-surface-container-high rounded-lg py-3 px-4 border border-outline-variant/10">
-                <span className="text-sm text-primary">{voiceQuickSearch ? "On" : "Off"}</span>
-                <Switch checked={voiceQuickSearch} onCheckedChange={setVoiceQuickSearch} disabled={!burplexityApiToken} aria-label="Background Quick Search" />
-              </div>
-              <p className="text-[10px] text-on-surface-variant px-1">
-                {burplexityApiToken ? "When a message looks like a search, results are fetched in the background and added to the chat." : "Requires a Burplexity API token above."}
-              </p>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Quick Search Model <span className="text-on-surface-variant/60 normal-case tracking-normal">(lightweight preferred)</span></label>
-              <select value={voiceQuickSearchModel || selectedModel} onChange={(e) => setVoiceQuickSearchModel(e.target.value)} className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40">
-                {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
-              </select>
-            </div>
-          </section>
-          )}
-
-          {/* ── Voice (input + output) ── */}
-          {settingsTab === "voice" && (
-          <section className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-3 md:p-4 rounded-xl bg-surface-container-low">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
-                <span className="material-symbols-outlined text-xs align-middle mr-1">record_voice_over</span>Auto-read replies
-              </label>
-              <div className="flex items-center justify-between gap-3 bg-surface-container-high rounded-lg py-3 px-4 border border-outline-variant/10">
-                <span className="text-sm text-primary">{autoReadReplies ? "On — replies will be read aloud" : "Off"}</span>
-                <Switch checked={autoReadReplies} onCheckedChange={setAutoReadReplies} aria-label="Auto-read assistant replies" />
-              </div>
-              <p className="text-[10px] text-on-surface-variant px-1">Reads each new assistant reply aloud using the voice + speed below.</p>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center justify-between">
-                <span><span className="material-symbols-outlined text-xs align-middle mr-1">volume_up</span>Voice Playback Speed</span>
-                <span className="text-primary normal-case tracking-normal">{ttsRate.toFixed(2)}×</span>
-              </label>
-              <div className="bg-surface-container-high rounded-lg py-3 px-4 border border-outline-variant/10">
-                <Slider
-                  value={[ttsRate]}
-                  min={0.5}
-                  max={2}
-                  step={0.05}
-                  onValueChange={(v) => setTtsRate(v[0])}
-                />
-              </div>
-              <p className="text-[10px] text-on-surface-variant px-1">Used for read-aloud buttons and auto-read here.</p>
-            </div>
-            <div className="flex flex-col gap-1.5 lg:col-span-2">
-              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center gap-1">
-                <span className="material-symbols-outlined text-xs align-middle">record_voice_over</span>Inworld Voice (TTS Upgrade)
-              </label>
-              <div className="flex items-center justify-between gap-3 bg-surface-container-high rounded-lg py-2.5 px-4">
-                <span className="text-sm text-primary">{inworldEnabled ? "Inworld TTS on" : "Browser TTS"}</span>
-                <Switch
-                  checked={inworldEnabled}
-                  onCheckedChange={setInworldEnabled}
-                  disabled={!inworldApiKey || !inworldVoiceId}
-                  aria-label="Enable Inworld TTS"
-                />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
-                <div className="relative">
-                  <input
-                    className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 pr-10 focus:ring-1 focus:ring-primary/40"
-                    type="password"
-                    placeholder="Inworld API key…"
-                    defaultValue={inworldApiKey}
-                    id="inworld-key-input"
-                    onKeyDown={(e) => { if (e.key === "Enter") saveInworldKey((e.target as HTMLInputElement).value); }}
-                  />
-                  <span className="material-symbols-outlined absolute right-3 top-2.5 text-on-surface-variant text-sm">key</span>
-                </div>
-                <div className="flex gap-2">
-                  <Button size="sm" onClick={() => { const el = document.getElementById("inworld-key-input") as HTMLInputElement; saveInworldKey(el?.value || ""); }}>
-                    Save &amp; Load Voices
-                  </Button>
-                  {inworldApiKey && (
-                    <Button size="sm" variant="destructive" onClick={() => { setInworldApiKey(""); setInworldEnabled(false); setInworldVoices([]); }}>
-                      Remove
-                    </Button>
-                  )}
-                </div>
-              </div>
-              {inworldApiKey && (
-                <div className="flex items-center gap-2 mt-1">
-                  {loadingVoices ? (
-                    <div className="flex items-center gap-2 text-xs text-on-surface-variant">
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading voices…
-                    </div>
-                  ) : inworldVoices.length > 0 ? (
-                    <select
-                      value={inworldVoiceId}
-                      onChange={(e) => setInworldVoiceId(e.target.value)}
-                      className="flex-1 bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40"
-                    >
-                      {inworldVoices.map((v) => (
-                        <option key={v.voice_id} value={v.voice_id}>
-                          {v.name}{v.tags?.length ? ` (${v.tags.join(", ")})` : ""}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <Button size="sm" variant="outline" onClick={loadInworldVoices}>
-                      Retry loading voices
-                    </Button>
-                  )}
-                  {inworldVoices.length > 0 && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={testInworldVoice}
-                      disabled={testingVoice || !inworldVoiceId}
-                      title="Play a short test phrase with the selected voice"
-                    >
-                      {testingVoice ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Test voice"}
-                    </Button>
-                  )}
-                </div>
-              )}
-              <p className="text-[10px] text-on-surface-variant px-1">
-                When enabled, read-aloud uses an Inworld character voice instead of the browser&apos;s built-in TTS. Use <em>Test voice</em> to confirm the key and voice work.
-              </p>
-            </div>
-            <div className="flex flex-col gap-1.5 lg:col-span-2">
-              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
-                <span className="material-symbols-outlined text-xs align-middle mr-1">bolt</span>Voice Model <span className="text-on-surface-variant/60 normal-case tracking-normal">(reserved for spoken replies / hands-free)</span>
-              </label>
-              <select value={voiceModel || ""} onChange={(e) => setVoiceModel(e.target.value)} className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40">
-                <option value="">Same as Active model</option>
-                {savedModels.map((m: string) => (<option key={m} value={m}>{m}</option>))}
-              </select>
-              <p className="text-[10px] text-on-surface-variant px-1">Pick a fast model (e.g. <code>google/gemini-2.5-flash-lite</code>) for snappier spoken replies. Used by hands-free voice.</p>
-            </div>
-            <div className="flex flex-col gap-1.5 lg:col-span-2">
-              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
-                <span className="material-symbols-outlined text-xs align-middle mr-1">image_search</span>Vision Model <span className="text-on-surface-variant/60 normal-case tracking-normal">(used when you attach an image)</span>
-              </label>
-              <select value={visionModel || ""} onChange={(e) => setVisionModel(e.target.value)} className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40">
-                <option value="">Same as Active model</option>
-                {savedModels.map((m: string) => (<option key={m} value={m}>{m}</option>))}
-              </select>
-              <p className="text-[10px] text-on-surface-variant px-1">For best image understanding pick a vision-strong model like <code>google/gemini-2.5-flash</code> (cheap, great at docs/OCR) or <code>google/gemini-2.5-pro</code> (best reasoning). Falls back to your Active model if blank.</p>
-            </div>
-            <div className="flex flex-col gap-1.5 lg:col-span-2">
-              <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">
-                <span className="material-symbols-outlined text-xs align-middle mr-1">front_hand</span>Barge-in (interrupt the assistant)
-              </label>
-              <div className="flex items-center justify-between gap-3 bg-surface-container-high rounded-lg py-3 px-4 border border-outline-variant/10">
-                <span className="text-sm text-primary">{bargeInEnabled ? "On — talk over replies to interrupt" : "Off — turn-based (no echo)"}</span>
-                <Switch checked={bargeInEnabled} onCheckedChange={setBargeInEnabled} aria-label="Enable barge-in" />
-              </div>
-              <p className="text-[10px] text-on-surface-variant px-1">When on, hands-free keeps listening while the assistant speaks and stops it the moment you start talking (uses on-device voice detection). Headphones give the most reliable results. When off, the mic is closed during playback to avoid echo.</p>
-            </div>
-          </section>
-          )}
-
-          {/* ── Prompts ── */}
-          {settingsTab === "prompts" && (
-          <>
-          <PromptLibrary scopeHint="chat" />
-          <section className="p-3 md:p-4 rounded-xl bg-surface-container-low">
-            <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center gap-1">
-              <span className="material-symbols-outlined text-xs align-middle">history_edu</span>Legacy Custom Instructions
-            </label>
-            <p className="text-[10px] text-on-surface-variant px-1 mt-1 mb-2">Used only if no prompt above is active. Prefer the Prompt Library for new prompts.</p>
-            <Textarea
-              value={promptDraft}
-              onChange={(e) => setPromptDraft(e.target.value)}
-              rows={3}
-              placeholder="e.g. Always answer as a no-nonsense literary critic."
-              className="bg-surface-container-high border-none text-sm"
-            />
-            <div className="flex gap-2 mt-2">
-              <Button size="sm" onClick={() => { setCustomSystemPrompt(promptDraft); toast.success("Saved"); }}>Save</Button>
-              {customSystemPrompt && (
-                <Button size="sm" variant="destructive" onClick={() => { setCustomSystemPrompt(""); setPromptDraft(""); toast.success("Cleared"); }}>Clear</Button>
-              )}
-            </div>
-          </section>
-          </>
-          )}
-
-          {settingsTab === "images" && <ImageModelsSettings />}
-          {settingsTab === "permissions" && <AiPermissionsSettings />}
-
-
-
-          {/* Help row — always visible regardless of tab */}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 pb-1">
-            <button onClick={() => openSetupWizard(0)} className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary hover:underline">
-              <span className="material-symbols-outlined text-sm">school</span>
-              New here? Run the setup helper
-            </button>
-            <span className="text-outline-variant" aria-hidden>•</span>
-            <button onClick={() => window.open("#/models", "_blank")} className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary hover:underline">
-              <span className="material-symbols-outlined text-sm">leaderboard</span>
-              Top OpenRouter models
-            </button>
-          </div>
-        </div>
-        </>
-      )}
-
       {/* Active-book indicator — confirms to the user (and signals that the AI
           knows) which book Counsel is currently focused on. */}
       {selectedBook && (
@@ -1011,7 +556,7 @@ const ChatPanel: React.FC = () => {
                 : "Select a book in Read, then come here to counsel with the AI about it."}
             </p>
             {!apiKey && loaded && (
-              <button onClick={() => setShowSettings(true)} className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-lg text-primary text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all">
+              <button onClick={() => openSettings("models")} className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-lg text-primary text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all">
                 <span className="material-symbols-outlined text-sm">key</span> Set API Key
               </button>
             )}
@@ -1275,8 +820,8 @@ const ChatPanel: React.FC = () => {
             <div className="flex items-center gap-4 flex-nowrap overflow-x-auto hide-scrollbar snap-x flex-1 min-w-0 [&>*]:shrink-0 [&>*]:snap-start [&>*]:min-h-[40px] md:flex-wrap md:overflow-visible md:[&>*]:min-h-0">
               {/* Scope indicator — always shows what Counsel can read (NotebookLM-style transparency). */}
               <button
-                onClick={() => { setShowSettings(true); setSettingsTab("research"); }}
-                title="What Counsel can read — click to change in settings"
+                onClick={() => openSettings("research")}
+                title="What Counsel can read — click to change in Settings"
                 className="text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 text-on-surface-variant hover:text-primary transition-colors max-w-[180px]"
               >
                 <span className="material-symbols-outlined text-sm" aria-hidden>neurology</span>
@@ -1351,7 +896,7 @@ const ChatPanel: React.FC = () => {
               >
                 <StickyNote className="w-3.5 h-3.5" /> Notes
               </button>
-              <button id="chat-settings-toggle" onClick={() => setShowSettings(!showSettings)} className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-1 hover:text-primary transition-colors">
+              <button onClick={() => openSettings()} className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-1 hover:text-primary transition-colors" title="Open the Settings tab">
                 <span className="material-symbols-outlined text-sm">tune</span> Settings
               </button>
               {messages.length > 0 && (

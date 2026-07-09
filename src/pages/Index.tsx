@@ -24,6 +24,9 @@ import { useAutoSleepCycle } from "@/hooks/useAutoSleepCycle";
 
 // Admin-only surface: lazy so regular users never download it.
 const AdminPanel = React.lazy(() => import("@/components/AdminPanel"));
+// Settings: visited rarely (a small minority of users ever change settings —
+// Nielsen's "power of defaults"), so its chunk shouldn't weigh down startup.
+const SettingsPanel = React.lazy(() => import("@/components/SettingsPanel"));
 
 // Navigation — Craft Workshop theme
 // Workflow reads left-to-right: Vault → Read → Counsel (intake & processing)
@@ -43,6 +46,7 @@ const tabs = [
   { id: "wiki" as const, icon: "menu_book", label: "Neuron" },
   { id: "wikis" as const, icon: "collections_bookmark", label: "​BRAIN" },
   { id: "video" as const, icon: "smart_display", label: "Reel" },
+  { id: "settings" as const, icon: "settings", label: "Settings" },
 ];
 
 // The "admin" tab is appended at runtime for admin accounts only. Existing
@@ -256,6 +260,16 @@ const Index: React.FC = () => {
             <WikiLibrary />
           ) : activeTab === "video" ? (
             <VideoTranscript />
+          ) : activeTab === "settings" ? (
+            <React.Suspense
+              fallback={
+                <div className="flex items-center justify-center h-full text-muted-foreground">
+                  Loading…
+                </div>
+              }
+            >
+              <SettingsPanel />
+            </React.Suspense>
           ) : activeTab === "admin" ? (
             <React.Suspense
               fallback={

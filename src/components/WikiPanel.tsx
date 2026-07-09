@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -11,7 +11,7 @@ import {
   EpisodicLogEntry, SleepCycleReport, MemoryMode,
   fetchKnowledgeEntries, fetchMemoryGraph,
   deleteKnowledgeEntry, updateKnowledgeEntry,
-  runLint, ingestBook,
+  runLint,
   fetchConflicts, updateConflictStatus, reindexEmbeddings,
   fetchEpisodicLog, getMemoryMode, setMemoryMode, triggerSleepCycle,
   fetchConsolidationQueue, ConsolidationQueueItem,
@@ -21,14 +21,21 @@ import GeneratedImage from "@/components/GeneratedImage";
 import { fetchImagesForEntries, deleteImageAttachment, type ImageAttachmentRow } from "@/lib/imageGen";
 
 import { Link } from "react-router-dom";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useChatSettings } from "@/hooks/useChatSettings";
+import { requestSettingsSection } from "@/lib/settingsNav";
 
 type WikiView = "entries" | "detail" | "lint" | "conflicts" | "episodic" | "queue";
+type EntriesView = "map" | "list";
+
+// Lazy: shares the three.js chunk with the Vault/BRAIN graphs; only fetched
+// when the mind-map view renders (it's the default entries view).
+const EntryNeuronGraph = React.lazy(() => import("@/components/EntryNeuronGraph"));
+
+const ENTRIES_VIEW_KEY = "neuron_entries_view";
 
 const WikiPanel: React.FC = () => {
-  const { books, activeBookId, activeWikiId, wikis, setActiveWiki } = useApp();
+  const { books, activeBookId, activeWikiId, wikis, setActiveWiki, setActiveTab } = useApp();
   const [entries, setEntries] = useState<KnowledgeEntry[]>([]);
   const [graph, setGraph] = useState<MemoryGraphEdge[]>([]);
   const [loading, setLoading] = useState(true);
@@ -43,10 +50,8 @@ const WikiPanel: React.FC = () => {
   const [entryImages, setEntryImages] = useState<ImageAttachmentRow[]>([]);
   const [lintResult, setLintResult] = useState<LintResult | null>(null);
   const [lintLoading, setLintLoading] = useState(false);
-  const [ingestLoading, setIngestLoading] = useState(false);
   const [conflicts, setConflicts] = useState<KnowledgeConflict[]>([]);
   const [reindexing, setReindexing] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [memoryMode, setMemoryModeState] = useState<MemoryMode>("recording");
   const [memoryModeLoading, setMemoryModeLoading] = useState(false);
   const [sleepCycleRunning, setSleepCycleRunning] = useState(false);
@@ -57,7 +62,12 @@ const WikiPanel: React.FC = () => {
   // Scope toggle: when "wiki", every panel / action is bound to the active wiki.
   // When "all", we keep the legacy global view (cross-wiki graph, conflicts, etc.).
   const [scope, setScope] = useState<"wiki" | "all">("wiki");
-  const { savedModels, wikiModel, setWikiModel, apiKey: openrouterKey } = useChatSettings();
+  // Entries render as a neuron mind map by default; list stays one tap away.
+  const [entriesView, setEntriesView] = useState<EntriesView>(() =>
+    localStorage.getItem(ENTRIES_VIEW_KEY) === "list" ? "list" : "map",
+  );
+  useEffect(() => { localStorage.setItem(ENTRIES_VIEW_KEY, entriesView); }, [entriesView]);
+  const { wikiModel } = useChatSettings();
 
   const activeWiki = wikis.find((w) => w.id === activeWikiId) || null;
   // The id we pass to scoped APIs. Null means "all wikis" / global.
@@ -169,14 +179,17 @@ const WikiPanel: React.FC = () => {
     }
   };
 
-  const filteredEntries = entries.filter((e) => {
+  // Memoized: the mind map keys its graphData on this array's identity, so an
+  // unstable reference would tear down and re-layout the whole 3D scene on
+  // every unrelated render (same convention as Library/WikiLibrary).
+  const filteredEntries = useMemo(() => entries.filter((e) => {
     if (filterType !== "all" && e.entry_type !== filterType) return false;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       return e.title.toLowerCase().includes(q) || e.content.toLowerCase().includes(q) || e.tags.some(t => t.toLowerCase().includes(q));
     }
     return true;
-  });
+  }), [entries, filterType, searchQuery]);
 
   const getRelatedEntries = (entryId: string) => {
     const relationships: { entry: KnowledgeEntry; relationship: string; direction: "from" | "to" }[] = [];
@@ -223,17 +236,6 @@ const WikiPanel: React.FC = () => {
     finally { setLintLoading(false); }
   };
 
-  const handleIngest = async (bookId: string) => {
-    setIngestLoading(true);
-    try {
-      const result = await ingestBook(bookId, activeWikiId);
-      toast.success(`Extracted ${result.entries_created} entries${result.splits ? `, split ${result.splits}` : ""}${result.conflicts ? `, ${result.conflicts} conflict(s) flagged` : ""}`);
-      loadData();
-    }
-    catch (err: any) { toast.error(err.message); }
-    finally { setIngestLoading(false); }
-  };
-
   const handleReindex = async () => {
     setReindexing(true);
     try {
@@ -271,7 +273,7 @@ const WikiPanel: React.FC = () => {
   const openConflicts = () => setView("conflicts");
   const openConflictsCount = conflicts.filter(c => c.status === "open").length;
 
-  const openDetail = (entry: KnowledgeEntry) => { setSelectedEntry(entry); setView("detail"); setEditing(false); };
+  const openDetail = useCallback((entry: KnowledgeEntry) => { setSelectedEntry(entry); setView("detail"); setEditing(false); }, []);
   const startEdit = () => {
     if (!selectedEntry) return;
     setEditTitle(selectedEntry.title);
@@ -426,56 +428,26 @@ const WikiPanel: React.FC = () => {
             <button onClick={loadData} disabled={loading} className="p-3 bg-surface-container-high rounded-xl border border-outline-variant/10 hover:bg-surface-container-highest transition-all">
               <span className={`material-symbols-outlined ${loading ? "animate-spin" : ""}`}>refresh</span>
             </button>
-            <button onClick={() => setSettingsOpen(true)} className="p-3 bg-surface-container-high rounded-xl border border-outline-variant/10 hover:bg-surface-container-highest transition-all" title="Neuron settings">
+            <button
+              onClick={() => { requestSettingsSection("memory"); setActiveTab("settings"); }}
+              className="p-3 bg-surface-container-high rounded-xl border border-outline-variant/10 hover:bg-surface-container-highest transition-all"
+              title="Neuron settings (opens the Settings tab)"
+            >
               <span className="material-symbols-outlined">settings</span>
             </button>
           </div>
         </section>
 
         <div className="mb-6 -mt-6 text-xs text-on-surface-variant">
-          Neuron model: <span className="font-mono text-foreground">{wikiModel || "Default (Gemini Flash)"}</span>
+          Neuron model:{" "}
+          <button
+            onClick={() => { requestSettingsSection("memory"); setActiveTab("settings"); }}
+            className="font-mono text-foreground hover:text-primary hover:underline"
+            title="Change in Settings"
+          >
+            {wikiModel || "Default (Gemini Flash)"}
+          </button>
         </div>
-
-        <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Neuron Settings</DialogTitle>
-              <DialogDescription>
-                Choose which model powers neuron ingest, extract, and health checks.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 py-2">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Model</label>
-                <Select
-                  value={wikiModel || "__default__"}
-                  onValueChange={(v) => setWikiModel(v === "__default__" ? "" : v)}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__default__">Default (Gemini Flash)</SelectItem>
-                    {savedModels.map((m) => (
-                      <SelectItem key={m} value={m}>{m}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-on-surface-variant">
-                  Models come from your saved list in Chat Settings. Custom models use OpenRouter and require your API key there.
-                </p>
-                {wikiModel && !openrouterKey && (
-                  <p className="text-xs text-destructive">
-                    No OpenRouter API key found. Add one in Chat Settings, or neuron ops will fall back to the default model.
-                  </p>
-                )}
-              </div>
-            </div>
-            <DialogFooter>
-              <Button onClick={() => setSettingsOpen(false)}>Done</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
 
         {loading && entries.length === 0 ? (
           <div className="flex items-center justify-center py-20">
@@ -493,47 +465,80 @@ const WikiPanel: React.FC = () => {
               />
             </div>
 
-            {/* Filter pills */}
-            <div className="flex items-center gap-3 mb-6 overflow-x-auto pb-2 hide-scrollbar">
-              {entryTypes.map((type) => (
-                <button
-                  key={type}
-                  onClick={() => setFilterType(type)}
-                  className={`px-4 py-2 rounded-full text-xs font-bold transition-colors capitalize ${
-                    filterType === type
-                      ? "bg-secondary-container text-on-secondary-container ring-1 ring-primary/20"
-                      : "hover:bg-surface-container-high text-on-surface-variant"
-                  }`}
-                >
-                  {type === "all" ? "All Entries" : type}
-                </button>
-              ))}
+            {/* Filter pills + map/list view toggle */}
+            <div className="flex items-center gap-3 mb-6">
+              <div className="flex items-center gap-3 overflow-x-auto pb-2 hide-scrollbar flex-1 min-w-0">
+                {entryTypes.map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => setFilterType(type)}
+                    className={`shrink-0 px-4 py-2 rounded-full text-xs font-bold transition-colors capitalize ${
+                      filterType === type
+                        ? "bg-secondary-container text-on-secondary-container ring-1 ring-primary/20"
+                        : "hover:bg-surface-container-high text-on-surface-variant"
+                    }`}
+                  >
+                    {type === "all" ? "All Entries" : type}
+                  </button>
+                ))}
+              </div>
+              <div
+                role="group"
+                aria-label="Entries view"
+                className="flex items-center gap-1 rounded-full border border-outline-variant/20 bg-surface-container-low p-1 shrink-0 self-start"
+                onMouseEnter={() => { void import("@/components/EntryNeuronGraph"); }}
+              >
+                {([
+                  ["map", "hub", "Mind map"],
+                  ["list", "view_list", "List"],
+                ] as const).map(([id, icon, label]) => (
+                  <button
+                    key={id}
+                    onClick={() => setEntriesView(id)}
+                    aria-pressed={entriesView === id}
+                    title={label}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${
+                      entriesView === id
+                        ? "bg-primary/15 text-primary"
+                        : "text-on-surface-variant hover:text-foreground"
+                    }`}
+                  >
+                    <span
+                      className="material-symbols-outlined text-base"
+                      style={entriesView === id ? { fontVariationSettings: "'FILL' 1" } : undefined}
+                      aria-hidden
+                    >
+                      {icon}
+                    </span>
+                    <span className="hidden sm:inline">{label}</span>
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {/* Book ingest */}
-            {books.filter(b => b.chapters.length > 0).length > 0 && (
-              <div className="bg-surface-container-low rounded-xl p-4 mb-6 border border-outline-variant/5">
-                <p className="text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-3">Ingest Book Knowledge</p>
-                <div className="flex gap-2 flex-wrap">
-                  {books.filter(b => b.chapters.length > 0).map((book) => (
-                    <button key={book.id} onClick={() => handleIngest(book.id)} disabled={ingestLoading}
-                      className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-lg text-sm text-foreground border border-outline-variant/10 hover:bg-surface-container-highest transition-all disabled:opacity-50">
-                      {ingestLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <span className="material-symbols-outlined text-sm">bolt</span>}
-                      {book.title}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Entry cards */}
+            {/* Entries — neuron mind map (default) or card list */}
             {filteredEntries.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant gap-3">
                 <span className="material-symbols-outlined text-5xl">menu_book</span>
                 <p className="text-sm text-center">
-                  {entries.length === 0 ? "Your neuron is empty. Chat about your books or ingest chapters." : "No entries match your search."}
+                  {entries.length === 0 ? "Your neuron is empty. Chat about your books to grow it." : "No entries match your search."}
                 </p>
               </div>
+            ) : entriesView === "map" ? (
+              <React.Suspense
+                fallback={
+                  <div className="flex items-center justify-center h-[62vh] min-h-[440px]">
+                    <Loader2 className="w-8 h-8 animate-spin text-on-surface-variant" />
+                  </div>
+                }
+              >
+                <EntryNeuronGraph
+                  entries={filteredEntries}
+                  edges={graph}
+                  conflicts={conflicts}
+                  onOpen={openDetail}
+                />
+              </React.Suspense>
             ) : (
               <div className="space-y-4">
                 {filteredEntries.map((entry) => {
