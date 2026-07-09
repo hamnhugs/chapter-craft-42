@@ -128,23 +128,6 @@ const Auth: React.FC = () => {
           </form>
         </section>
 
-        {/* Intro video */}
-        <section className="flex flex-col gap-3">
-          <span className="text-xs font-semibold uppercase tracking-[0.2em] text-on-surface-variant text-center">
-            Watch the intro
-          </span>
-          <div className="aspect-video rounded-xl overflow-hidden border border-outline-variant/10 shadow-[0px_10px_40px_rgba(0,0,0,0.5)] bg-black">
-            <iframe
-              src="https://www.youtube-nocookie.com/embed/1Cgc0kXEv-4?rel=0&modestbranding=1"
-              title="Bookworm Studio intro"
-              loading="lazy"
-              referrerPolicy="strict-origin-when-cross-origin"
-              allow="clipboard-write; encrypted-media; picture-in-picture; web-share; fullscreen"
-              allowFullScreen
-              className="w-full h-full"
-            />
-          </div>
-        </section>
       </main>
 
       {/* Decorative */}
