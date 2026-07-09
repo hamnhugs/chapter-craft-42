@@ -91,7 +91,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       let [list, activeId] = await Promise.all([fetchWikis(), fetchActiveWikiId()]);
       if (list.length === 0) {
-        const created = await createWiki({ name: "My Wiki", description: "Your default wiki — extracted knowledge lives here." });
+        const created = await createWiki({ name: "My 1st Neuron", description: "Your default neuron — extracted knowledge lives here." });
         await loadWikiApi(created.id);
         list = [created]; activeId = created.id;
       } else if (!activeId) {
