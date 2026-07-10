@@ -1,6 +1,5 @@
 import React, { useRef, useState, useMemo, useEffect, lazy, Suspense } from "react";
 import { useApp } from "@/context/AppContext";
-import ApiKeyManager from "@/components/ApiKeyManager";
 import { BookDocument } from "@/types/library";
 import { pdfjs } from "react-pdf";
 import { Progress } from "@/components/ui/progress";
@@ -11,6 +10,9 @@ import { openPricing } from "@/components/PricingDialog";
 import { structureJobs, useStructureJobs, StructureJob } from "@/lib/structureJobs";
 import { autoTagBooks } from "@/lib/autoTag";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import LibraryFolders from "@/components/LibraryFolders";
 import LibraryCollections from "@/components/LibraryCollections";
 
@@ -20,10 +22,14 @@ import LibraryList from "@/components/LibraryList";
 // only fetched when the user actually toggles the graph view on.
 const LibraryGraph = lazy(() => import("@/components/LibraryGraph"));
 
+// YouTube import (the former Reel tab) — lazy so its chunk loads only when
+// the dialog opens.
+const VideoTranscript = lazy(() => import("@/components/VideoTranscript"));
+
 // Chunk-load failures (offline mid-session, deploy in between) and WebGL
 // crashes degrade to a message instead of taking down the Library.
-class GraphErrorBoundary extends React.Component<
-  { children: React.ReactNode },
+class LazyErrorBoundary extends React.Component<
+  { children: React.ReactNode; title?: string; hint?: string },
   { failed: boolean }
 > {
   state = { failed: false };
@@ -35,14 +41,17 @@ class GraphErrorBoundary extends React.Component<
       return (
         <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant">
           <span className="material-symbols-outlined text-5xl mb-3 opacity-30">error</span>
-          <p className="font-headline text-lg">The mind map couldn't load</p>
-          <p className="text-sm mt-1">Check your connection and try toggling it again.</p>
+          <p className="font-headline text-lg">{this.props.title || "This view couldn't load"}</p>
+          <p className="text-sm mt-1">{this.props.hint || "Check your connection and try again."}</p>
         </div>
       );
     }
     return this.props.children;
   }
 }
+
+// Matches YouTube watch/short/share links pasted or dropped onto the Vault.
+const YOUTUBE_URL_RE = /https?:\/\/(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\/\S+/i;
 
 // Search matching is case- and diacritic-insensitive; every typed token must
 // appear somewhere in the book's title, category, or tags (AND semantics).
@@ -99,11 +108,11 @@ const VIEW_OPTIONS: { id: ViewMode; icon: string; label: string }[] = [
 const Library: React.FC = () => {
   const { books, addBook, removeBook, requestBookLoad, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile, activeWikiId } = useApp();
   const { apiKey } = useChatSettings();
+  const { user } = useAuth();
   const { isPaid, loaded: planLoaded } = usePlan();
   const jobs = useStructureJobs();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const [showApiKeys, setShowApiKeys] = useState(false);
   const [sortBy, setSortBy] = useState<"date" | "name">("date");
   const [uploadStates, setUploadStates] = useState<UploadState[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -116,9 +125,87 @@ const Library: React.FC = () => {
   });
   const [tagProgress, setTagProgress] = useState<{ done: number; total: number } | null>(null);
 
+  // "From YouTube" import dialog (the former Reel tab). The dialog remounts
+  // VideoTranscript each open, so initialUrl is re-read every time.
+  const [youtubeOpen, setYoutubeOpen] = useState(false);
+  const [youtubeInitialUrl, setYoutubeInitialUrl] = useState("");
+  const [activeVideoJobs, setActiveVideoJobs] = useState(0);
+  const openYoutube = (initialUrl = "") => {
+    setYoutubeInitialUrl(initialUrl);
+    setYoutubeOpen(true);
+  };
+
   useEffect(() => {
     localStorage.setItem(VIEW_KEY, view);
   }, [view]);
+
+  // Transcript extractions run 1–3 minutes and finish server-side — the book
+  // then pops into the grid via the realtime INSERT subscription. While any
+  // job is in flight, show a status row here (status belongs where the result
+  // will appear). Poll only while something is active; re-check when the
+  // dialog closes since that's when new jobs get submitted.
+  useEffect(() => {
+    if (!user || youtubeOpen) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const check = async () => {
+      const { data, error } = await supabase
+        .from("video_jobs")
+        .select("id")
+        .eq("user_id", user.id)
+        .in("status", ["pending", "processing"]);
+      if (cancelled) return;
+      if (error) {
+        // Transient failure ≠ zero jobs — keep the row and retry.
+        timer = setTimeout(check, 8000);
+        return;
+      }
+      const n = data?.length ?? 0;
+      setActiveVideoJobs(n);
+      if (n > 0) timer = setTimeout(check, 8000);
+    };
+    check();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [user, youtubeOpen]);
+
+  // One-time signpost, shown only to users who actually used the Reel tab —
+  // having any video_jobs row is the precise signal for that. Brand-new
+  // accounts never see this.
+  useEffect(() => {
+    if (!user || localStorage.getItem("reel_moved_notice")) return;
+    supabase
+      .from("video_jobs")
+      .select("id")
+      .eq("user_id", user.id)
+      .limit(1)
+      .then(({ data }) => {
+        if (!data || data.length === 0) return;
+        if (localStorage.getItem("reel_moved_notice")) return;
+        localStorage.setItem("reel_moved_notice", "1");
+        toast("Reel has moved — grab YouTube transcripts with the “From YouTube” button in your Vault.");
+      });
+  }, [user]);
+
+  // Pasting a YouTube link anywhere in the Vault (outside a text field) jumps
+  // straight into the import flow with the URL pre-filled.
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      // Don't hijack paste while any modal layer is open (pricing, onboarding,
+      // quick switcher, ads, or this dialog itself) — the import dialog would
+      // stack on top of it. Dialog content only exists in the DOM while open.
+      if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return;
+      const text = e.clipboardData?.getData("text") || "";
+      const match = text.match(YOUTUBE_URL_RE);
+      if (match) openYoutube(match[0]);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, []);
 
   const sortedBooks = useMemo(() => {
     return [...books].sort((a, b) => {
@@ -406,7 +493,13 @@ const Library: React.FC = () => {
         input.files = dataTransfer.files;
         input.dispatchEvent(new Event("change", { bubbles: true }));
       }
+      return;
     }
+    // No files: a link dragged from another tab arrives as text — YouTube
+    // links open the import dialog pre-filled.
+    const text = dt.getData("text/uri-list") || dt.getData("text/plain");
+    const match = text.match(YOUTUBE_URL_RE);
+    if (match) openYoutube(match[0]);
   };
 
   return (
@@ -483,13 +576,6 @@ const Library: React.FC = () => {
                 </button>
               ))}
             </div>
-            <button
-              onClick={() => setShowApiKeys((v) => !v)}
-              className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all"
-            >
-              <span className="material-symbols-outlined text-xs">key</span>
-              API Keys
-            </button>
           </div>
         </section>
 
@@ -534,11 +620,19 @@ const Library: React.FC = () => {
           </div>
         )}
 
-        {/* API Key Manager */}
-        {showApiKeys && (
-          <div className="bg-surface-container-low rounded-2xl p-6 border border-outline-variant/10">
-            <ApiKeyManager />
-          </div>
+        {/* In-flight YouTube transcript extractions — the finished book pops
+            into the grid below via the realtime subscription */}
+        {activeVideoJobs > 0 && (
+          <button
+            onClick={() => openYoutube()}
+            className="flex items-center gap-3 bg-surface-container-low rounded-xl px-6 py-4 border border-outline-variant/5 text-left hover:bg-surface-container-high transition-colors"
+          >
+            <span className="material-symbols-outlined text-primary animate-spin">progress_activity</span>
+            <span className="flex-1 text-sm text-foreground">
+              Extracting {activeVideoJobs} YouTube transcript{activeVideoJobs === 1 ? "" : "s"}… the book lands in your Vault when done.
+            </span>
+            <span className="text-sm font-bold text-primary">View</span>
+          </button>
         )}
 
         {/* Upload Progress */}
@@ -599,14 +693,41 @@ const Library: React.FC = () => {
             {isUploading ? "Uploading…" : "Drop PDF or EPUB"}
           </h3>
           <p className="text-on-surface-variant text-sm mb-6">Max file size 50MB. Supports PDF, EPUB, HTML, DOC, TXT.</p>
-          <button
-            className="px-8 py-3 bg-primary-container text-on-primary-container font-bold rounded-xl active:scale-95 transition-transform"
-            onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
-            disabled={isUploading}
-          >
-            Browse files
-          </button>
+          <div className="flex items-center gap-3 flex-wrap justify-center">
+            <button
+              className="px-8 py-3 bg-primary-container text-on-primary-container font-bold rounded-xl active:scale-95 transition-transform"
+              onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
+              disabled={isUploading}
+            >
+              Browse files
+            </button>
+            <button
+              className="flex items-center gap-2 px-8 py-3 bg-surface-container-high text-foreground font-bold rounded-xl border border-outline-variant/20 hover:bg-surface-container-highest active:scale-95 transition-all"
+              onClick={(e) => { e.stopPropagation(); openYoutube(); }}
+              onMouseEnter={() => {
+                // Warm the chunk on hover so the dialog opens instantly.
+                void import("@/components/VideoTranscript");
+              }}
+            >
+              <span className="material-symbols-outlined text-xl" aria-hidden>smart_display</span>
+              From YouTube
+            </button>
+          </div>
         </div>
+        )}
+        {/* The dropzone (and its From YouTube button) is hidden in mind-map
+            view — keep a compact entry point so the importer stays reachable */}
+        {view === "graph" && (
+          <button
+            onClick={() => openYoutube()}
+            onMouseEnter={() => {
+              void import("@/components/VideoTranscript");
+            }}
+            className="self-start flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all"
+          >
+            <span className="material-symbols-outlined text-base" aria-hidden>smart_display</span>
+            From YouTube
+          </button>
         )}
         <input
           ref={fileInputRef}
@@ -637,7 +758,7 @@ const Library: React.FC = () => {
             </button>
           </div>
         ) : view === "graph" ? (
-          <GraphErrorBoundary>
+          <LazyErrorBoundary title="The mind map couldn't load" hint="Check your connection and try toggling it again.">
             <Suspense
               fallback={
                 <div className="flex flex-col items-center justify-center h-[60vh] min-h-[420px] rounded-2xl bg-surface-container-low border border-outline-variant/10 text-on-surface-variant">
@@ -648,7 +769,7 @@ const Library: React.FC = () => {
             >
               <LibraryGraph books={filteredBooks} onOpenBook={(id) => requestBookLoad(id)} />
             </Suspense>
-          </GraphErrorBoundary>
+          </LazyErrorBoundary>
         ) : view === "folders" ? (
           <LibraryFolders
             books={filteredBooks}
@@ -711,6 +832,29 @@ const Library: React.FC = () => {
             ))}
           </div>
         )}
+
+        {/* YouTube import (the former Reel tab) */}
+        <Dialog open={youtubeOpen} onOpenChange={setYoutubeOpen}>
+          <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="font-headline text-2xl text-primary">Import from YouTube</DialogTitle>
+              <DialogDescription>
+                Paste a YouTube URL to extract the full transcript as a readable book — it lands in your Vault automatically.
+              </DialogDescription>
+            </DialogHeader>
+            <LazyErrorBoundary title="The YouTube importer couldn't load" hint="Check your connection, close this dialog, and try again.">
+              <Suspense
+                fallback={
+                  <div className="flex items-center justify-center py-16 text-on-surface-variant">
+                    <span className="material-symbols-outlined animate-spin text-3xl">progress_activity</span>
+                  </div>
+                }
+              >
+                <VideoTranscript initialUrl={youtubeInitialUrl} />
+              </Suspense>
+            </LazyErrorBoundary>
+          </DialogContent>
+        </Dialog>
       </main>
     </div>
   );

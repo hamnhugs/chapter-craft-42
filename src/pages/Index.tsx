@@ -6,7 +6,6 @@ import ChatPanel from "@/components/ChatPanel";
 import WikiPanel from "@/components/WikiPanel";
 import WikiLibrary from "@/components/WikiLibrary";
 import WikiQuickSwitcher from "@/components/WikiQuickSwitcher";
-import VideoTranscript from "@/components/VideoTranscript";
 import ThemeSwitcher from "@/components/ThemeSwitcher";
 import ConflictNotifier from "@/components/ConflictNotifier";
 import StripeBar from "@/components/fruit-stripe/StripeBar";
@@ -45,7 +44,6 @@ const tabs = [
   { id: "chat" as const, icon: "psychology", label: "Counsel" },
   { id: "wiki" as const, icon: "menu_book", label: "Neuron" },
   { id: "wikis" as const, icon: "collections_bookmark", label: "​BRAIN" },
-  { id: "video" as const, icon: "smart_display", label: "Reel" },
   { id: "settings" as const, icon: "settings", label: "Settings" },
 ];
 
@@ -258,8 +256,6 @@ const Index: React.FC = () => {
             <WikiPanel />
           ) : activeTab === "wikis" ? (
             <WikiLibrary />
-          ) : activeTab === "video" ? (
-            <VideoTranscript />
           ) : activeTab === "settings" ? (
             <React.Suspense
               fallback={

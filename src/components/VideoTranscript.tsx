@@ -13,9 +13,12 @@ interface VideoJob {
   created_at: string;
 }
 
-const VideoTranscript: React.FC = () => {
+// Mounted inside the Vault's "From YouTube" dialog (the old Reel tab).
+// `initialUrl` pre-fills the field when a YouTube link was pasted or dropped
+// onto the Vault; the dialog remounts this component on every open.
+const VideoTranscript: React.FC<{ initialUrl?: string }> = ({ initialUrl = "" }) => {
   const { user } = useAuth();
-  const [url, setUrl] = useState("");
+  const [url, setUrl] = useState(initialUrl);
   const [jobs, setJobs] = useState<VideoJob[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -176,15 +179,7 @@ const VideoTranscript: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full p-6 max-w-2xl mx-auto gap-6">
-      {/* Header */}
-      <div>
-        <h2 className="font-headline font-bold text-2xl text-primary">Reel</h2>
-        <p className="text-secondary text-sm mt-1">
-          Paste a YouTube URL to extract a full raw transcript + downloadable PDF. Saved to your library automatically.
-        </p>
-      </div>
-
+    <div className="flex flex-col gap-6">
       {/* Format for Chapterization toggle */}
       <div className="bg-surface border border-border rounded-2xl p-4 flex flex-col gap-2">
         <button

@@ -22,6 +22,14 @@ async function sha256(text: string): Promise<Uint8Array> {
  * Lovable preview iframe, where external sites refuse to load in-frame).
  */
 export async function startOpenRouterConnect(): Promise<"redirected" | "popup"> {
+  // A verifier left over from an abandoned "Continue with Google" attempt
+  // makes supabase-js claim our bare ?code= callback as its own PKCE callback
+  // and POST the one-time OpenRouter code to Supabase's token endpoint. The
+  // user is already signed in here, so clearing it is always safe.
+  Object.keys(localStorage)
+    .filter((k) => k.startsWith("sb-") && k.endsWith("-code-verifier"))
+    .forEach((k) => localStorage.removeItem(k));
+
   const verifier = base64url(crypto.getRandomValues(new Uint8Array(48)));
   localStorage.setItem(VERIFIER_KEY, verifier);
   const challenge = base64url(await sha256(verifier));

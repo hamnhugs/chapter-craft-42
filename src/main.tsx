@@ -31,4 +31,17 @@ if ("serviceWorker" in navigator) {
   }
 }
 
+// Supabase auth returns some redirect errors in the URL fragment
+// (#error=...&error_description=...). HashRouter would parse that as a route
+// and render the 404 page. Rewrite it to #/auth?<params> before the router
+// reads the location so the auth page mounts and surfaces the message.
+const rawHash = window.location.hash;
+if (/^#(?!\/)/.test(rawHash) && /(^#|&)(error|error_code|error_description)=/.test(rawHash)) {
+  window.history.replaceState(
+    null,
+    "",
+    `${window.location.pathname}${window.location.search}#/auth?${rawHash.slice(1)}`,
+  );
+}
+
 createRoot(document.getElementById("root")!).render(<App />);

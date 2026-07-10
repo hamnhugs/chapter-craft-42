@@ -13,5 +13,11 @@ export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABL
     storage: localStorage,
     persistSession: true,
     autoRefreshToken: true,
+    // PKCE makes the OAuth callback arrive as ?code= in the query string.
+    // The default implicit flow returns an #access_token fragment, which
+    // HashRouter parses as a route — the user lands on NotFound and the
+    // sign-in appears to do nothing.
+    flowType: "pkce",
+    detectSessionInUrl: true,
   }
 });

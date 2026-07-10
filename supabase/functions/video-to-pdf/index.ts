@@ -42,6 +42,25 @@ Deno.serve(async (req) => {
       const { videoUrl, formatForChapterize } = await req.json();
       if (!videoUrl?.trim()) return json({ error: "videoUrl required" }, 400);
 
+      // Restrict to YouTube hosts — the engine's fetcher would otherwise be
+      // pointed at arbitrary/internal URLs (SSRF). The client-side check is
+      // UX only; this is the real boundary.
+      let parsedUrl: URL;
+      try {
+        parsedUrl = new URL(videoUrl.trim());
+      } catch {
+        return json({ error: "Invalid URL" }, 400);
+      }
+      const ALLOWED_HOSTS = new Set([
+        "youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be",
+      ]);
+      if (
+        !/^https?:$/.test(parsedUrl.protocol) ||
+        !ALLOWED_HOSTS.has(parsedUrl.hostname.toLowerCase())
+      ) {
+        return json({ error: "Only YouTube URLs are supported" }, 400);
+      }
+
       const submitRes = await fetch(`${VIDEO_ENGINE_URL}/video/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
