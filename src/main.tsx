@@ -31,17 +31,34 @@ if ("serviceWorker" in navigator) {
   }
 }
 
-// Supabase auth returns some redirect errors in the URL fragment
-// (#error=...&error_description=...). HashRouter would parse that as a route
-// and render the 404 page. Rewrite it to #/auth?<params> before the router
-// reads the location so the auth page mounts and surfaces the message.
+// Supabase OAuth can return either tokens or errors in the URL fragment.
+// HashRouter would interpret those fragments as routes and render 404,
+// so normalise them BEFORE the router reads location.
 const rawHash = window.location.hash;
-if (/^#(?!\/)/.test(rawHash) && /(^#|&)(error|error_code|error_description)=/.test(rawHash)) {
-  window.history.replaceState(
-    null,
-    "",
-    `${window.location.pathname}${window.location.search}#/auth?${rawHash.slice(1)}`,
-  );
+if (/^#(?!\/)/.test(rawHash)) {
+  const body = rawHash.slice(1);
+  const params = new URLSearchParams(body);
+
+  if (params.get("access_token") && params.get("refresh_token")) {
+    // Implicit-flow token return (e.g. Google sign-in landing on the custom
+    // domain). Hand tokens to Supabase, then clean the URL to #/ so the app
+    // renders the authenticated landing page instead of 404.
+    const access_token = params.get("access_token")!;
+    const refresh_token = params.get("refresh_token")!;
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#/`);
+    import("@/integrations/supabase/client").then(({ supabase }) => {
+      supabase.auth.setSession({ access_token, refresh_token }).catch((err) => {
+        console.warn("Failed to hydrate session from URL fragment:", err);
+      });
+    });
+  } else if (/(^|&)(error|error_code|error_description)=/.test(body)) {
+    // Surface OAuth errors on the auth page instead of 404.
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${window.location.search}#/auth?${body}`,
+    );
+  }
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
