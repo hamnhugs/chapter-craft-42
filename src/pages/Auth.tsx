@@ -49,12 +49,8 @@ const Auth: React.FC = () => {
       return;
     }
 
-    // Hand-off arrival from the embedded editor preview (see
-    // handleGoogleSignIn): this tab is top-level, start the real redirect.
-    if (window.self === window.top && hash.get("google") === "1") {
-      window.history.replaceState(null, "", `${window.location.pathname}#/auth`);
-      void handleGoogleSignIn();
-    }
+    // Managed Lovable OAuth works inside the editor iframe — no hand-off needed.
+
     // Runs once on mount; toast is stable and handleGoogleSignIn is
     // intentionally not a dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
