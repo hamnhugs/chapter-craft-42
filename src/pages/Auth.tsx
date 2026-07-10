@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { lovable } from "@/integrations/lovable";
 import { useToast } from "@/hooks/use-toast";
 
 const Auth: React.FC = () => {
@@ -48,12 +49,8 @@ const Auth: React.FC = () => {
       return;
     }
 
-    // Hand-off arrival from the embedded editor preview (see
-    // handleGoogleSignIn): this tab is top-level, start the real redirect.
-    if (window.self === window.top && hash.get("google") === "1") {
-      window.history.replaceState(null, "", `${window.location.pathname}#/auth`);
-      void handleGoogleSignIn();
-    }
+    // Managed Lovable OAuth works inside the editor iframe — no hand-off needed.
+
     // Runs once on mount; toast is stable and handleGoogleSignIn is
     // intentionally not a dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -97,39 +94,25 @@ const Auth: React.FC = () => {
 
   const handleGoogleSignIn = async () => {
     setGoogleLoading(true);
-    // A stale OpenRouter verifier makes SetupWizard's ?code= handler consume
-    // Supabase's OAuth code on the way back in. Clear it at the only moment
-    // it can do harm — right before Supabase's own ?code= round trip — so an
-    // OpenRouter connect interrupted by a session drop can still complete
-    // after a password re-login.
+    // Clear any stale OpenRouter PKCE verifier so it can't hijack a return code.
     localStorage.removeItem("or_oauth_verifier");
 
-    // Inside the Lovable editor the app runs in a cross-site iframe: Google
-    // refuses to render its consent screen in a frame, and browser storage
-    // partitioning traps the PKCE verifier in the iframe's own bucket, so a
-    // flow started here can never be finished elsewhere. Hand off to our own
-    // auth page in a top-level tab and let THAT tab run the whole flow.
-    if (window.self !== window.top) {
-      window.open(`${window.location.origin}${window.location.pathname}#/auth?google=1`, "_blank");
-      setGoogleLoading(false);
+    const result = await lovable.auth.signInWithOAuth("google", {
+      redirect_uri: window.location.origin,
+    });
+
+    if (result.error) {
       toast({
-        title: "Continue in the new tab",
-        description:
-          "Finish signing in there and keep using the app in that tab — this embedded preview can't share the session.",
+        title: "Google sign in failed",
+        description: result.error instanceof Error ? result.error.message : String(result.error),
+        variant: "destructive",
       });
+      setGoogleLoading(false);
       return;
     }
-
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: window.location.origin },
-    });
-    if (error) {
-      toast({ title: "Google sign in failed", description: error.message, variant: "destructive" });
-      setGoogleLoading(false);
-    }
-    // On success the page is navigating to Google; the pageshow handler
-    // re-enables the button if the user comes Back instead.
+    if (result.redirected) return;
+    // Session set by the SDK — pageshow handler resets loading if user comes Back.
+    setGoogleLoading(false);
   };
 
   return (
