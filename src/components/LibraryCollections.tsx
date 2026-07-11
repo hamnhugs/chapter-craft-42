@@ -1,9 +1,13 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { BookDocument } from "@/types/library";
 import { listFolders, createFolder, renameFolder, deleteFolder, moveBookToFolder, setFolderDefaultWiki, BookFolder } from "@/lib/bookFolders";
 import { enqueueIngestJobs } from "@/lib/knowledgeApi";
 import { useIngestJobs } from "@/hooks/useIngestJobs";
 import { useChatSettings } from "@/hooks/useChatSettings";
+import { useApp } from "@/context/AppContext";
+import { figureJobs } from "@/lib/figureJobs";
+import { usePlan } from "@/hooks/usePlan";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { fetchWikis, type Wiki } from "@/lib/wikisApi";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -35,7 +39,10 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [busy, setBusy] = useState(false);
-  const { libraryIngestModel, libraryIngestAutoFile, selectedModel, setLibraryIngestModel, setLibraryIngestAutoFile, savedModels } = useChatSettings();
+  const { libraryIngestModel, libraryIngestAutoFile, selectedModel, setLibraryIngestModel, setLibraryIngestAutoFile, savedModels, autoExtractFigures, imageExtractionModel, apiKey } = useChatSettings();
+  const { loadBookFile, books: allBooks } = useApp();
+  const { isPaid, loaded: planLoaded } = usePlan();
+  const { isAdmin, loaded: adminLoaded } = useIsAdmin();
   const [showSettings, setShowSettings] = useState(false);
   const [wikis, setWikis] = useState<Wiki[]>([]);
   // Pending single-doc digest prompt after a folder assignment.
@@ -46,6 +53,56 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
   // Live, cross-device view of the user's queue. Survives refresh/tab close
   // because work happens on the server.
   const { jobs, active, recent } = useIngestJobs();
+
+  // When a digest job finishes, the book's neurons exist — kick off figure
+  // extraction so illustrations land next to the concepts they teach.
+  // Detection is watermark-based, not transition-based: digests run
+  // server-side for minutes and the user is told it's "safe to close the
+  // tab", so completion usually happens while this component is unmounted.
+  // A per-book localStorage watermark (the handled job's finished_at) makes
+  // any sighting of a fresh succeeded job fire exactly once per browser,
+  // surviving unmounts, view switches, search filters, and stale refetches.
+  // The freshness window keeps pre-feature historical digests from firing.
+  const figureGateNoticeShown = useRef(false);
+  useEffect(() => {
+    if (!autoExtractFigures) return;
+    const FRESH_MS = 6 * 60 * 60 * 1000;
+    for (const j of jobs) {
+      if (j.status !== "succeeded" || !j.book_id || !j.finished_at) continue;
+      const finished = new Date(j.finished_at).getTime();
+      if (!Number.isFinite(finished) || Date.now() - finished > FRESH_MS) continue;
+      const wmKey = `figures_auto:${j.book_id}`;
+      let wm = 0;
+      try { wm = Number(localStorage.getItem(wmKey) || 0); } catch { /* private mode */ }
+      if (wm >= finished) continue;
+      const book = allBooks.find((b) => b.id === j.book_id);
+      if (!book || !book.fileName.toLowerCase().endsWith(".pdf")) continue;
+      // Keyless free users would burn the whole client-side scan only to hit
+      // the server's 402 Pro gate — skip up front and say so once.
+      if (!apiKey) {
+        if (!planLoaded || !adminLoaded) continue; // decide once entitlements resolve
+        if (!isPaid && !isAdmin) {
+          if (!figureGateNoticeShown.current) {
+            figureGateNoticeShown.current = true;
+            toast(`Skipping figure extraction for "${book.title}" — it needs your own OpenRouter key (Settings → AI Models & Keys) or a Pro plan.`);
+          }
+          continue;
+        }
+      }
+      try { localStorage.setItem(wmKey, String(finished)); } catch { /* storage full — worst case re-fires */ }
+      figureJobs.enqueue({
+        bookId: book.id,
+        bookTitle: book.title,
+        model: imageExtractionModel || undefined,
+        load: async () => {
+          const url = await loadBookFile(book.id);
+          if (!url) throw new Error("Could not load this book's file from storage.");
+          return { fileUrl: url };
+        },
+      });
+      toast(`Digested — now extracting figures from "${book.title}"…`, { id: `figures-${book.id}` });
+    }
+  }, [jobs, autoExtractFigures, imageExtractionModel, allBooks, loadBookFile, apiKey, isPaid, planLoaded, isAdmin, adminLoaded]);
 
   // On mount, ping the worker so any orphaned jobs from a previous session
   // get drained. Fire-and-forget; failures are non-fatal.

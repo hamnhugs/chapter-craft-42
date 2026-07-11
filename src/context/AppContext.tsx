@@ -407,6 +407,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         : [`${user.id}/${id}.pdf`];
 
       await supabase.storage.from("book-pdfs").remove(Array.from(new Set(storagePaths)));
+
+      // Extracted figures: the DB rows go with the book via ON DELETE
+      // CASCADE, but their JPEGs in generated-images would be orphaned
+      // forever — the cascaded rows are the only pointers to them.
+      try {
+        const dir = `${user.id}/figures/${id}`;
+        const { data: figs } = await supabase.storage.from("generated-images").list(dir, { limit: 200 });
+        if (figs && figs.length > 0) {
+          await supabase.storage.from("generated-images").remove(figs.map((f) => `${dir}/${f.name}`));
+        }
+      } catch { /* best-effort — never block the delete */ }
     }
 
     await supabase.from("books").delete().eq("id", id);

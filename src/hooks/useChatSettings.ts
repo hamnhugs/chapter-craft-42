@@ -28,6 +28,10 @@ interface ChatSettings {
   accessAllNeurons: boolean;
   /** Optional override model used for chat turns that include image attachments. Falls back to selectedModel if empty. */
   visionModel: string;
+  /** Vision model that describes figures extracted from uploaded documents. "" = built-in default. */
+  imageExtractionModel: string;
+  /** When true, figure extraction runs automatically after a book is digested. */
+  autoExtractFigures: boolean;
   libraryIngestModel: string;
   libraryIngestAutoFile: boolean;
   imageModelPrimary: string;
@@ -55,6 +59,8 @@ const defaults: ChatSettings = {
   inworldVoiceId: "",
   accessAllNeurons: false,
   visionModel: "",
+  imageExtractionModel: "",
+  autoExtractFigures: true,
   libraryIngestModel: "",
   libraryIngestAutoFile: true,
   imageModelPrimary: "",
@@ -136,6 +142,8 @@ function rowToSettings(data: any): ChatSettings {
     inworldVoiceId: data.inworld_voice_id || "",
     accessAllNeurons: !!data.access_all_neurons,
     visionModel: data.vision_model || "",
+    imageExtractionModel: data.image_extraction_model || "",
+    autoExtractFigures: data.auto_extract_figures !== false,
     libraryIngestModel: data.library_ingest_model || "",
     libraryIngestAutoFile: data.library_ingest_auto_file !== false,
     imageModelPrimary: data.image_model_primary || "",
@@ -198,6 +206,8 @@ function persistSettings(userId: string, next: ChatSettings) {
       inworld_voice_id: next.inworldVoiceId || "",
       access_all_neurons: next.accessAllNeurons,
       vision_model: next.visionModel || null,
+      image_extraction_model: next.imageExtractionModel || null,
+      auto_extract_figures: next.autoExtractFigures,
       library_ingest_model: next.libraryIngestModel || null,
       library_ingest_auto_file: next.libraryIngestAutoFile,
       image_model_primary: next.imageModelPrimary || null,
@@ -211,9 +221,17 @@ function persistSettings(userId: string, next: ChatSettings) {
     let { error } = await supabase
       .from("user_settings")
       .upsert(payload, { onConflict: "user_id" });
-    if (error && /access_all_neurons/i.test(error.message || "")) {
-      // Migration not applied yet — don't let one new column break every save.
-      delete payload.access_all_neurons;
+    // Migrations can lag the client deploy — strip any not-yet-migrated
+    // column and retry so one new column never breaks every settings save.
+    // PostgREST reports ONE missing column per attempt (alphabetically
+    // first), so keep retrying until no optional column is named.
+    const optionalColumns = ["access_all_neurons", "image_extraction_model", "auto_extract_figures"];
+    for (let pass = 0; error && pass < optionalColumns.length; pass++) {
+      const offender = optionalColumns.find(
+        (col) => col in payload && (error!.message || "").toLowerCase().includes(col),
+      );
+      if (!offender) break;
+      delete payload[offender];
       ({ error } = await supabase.from("user_settings").upsert(payload, { onConflict: "user_id" }));
     }
     if (error) console.error("Failed to save settings:", error);
@@ -290,6 +308,8 @@ export function useChatSettings() {
     setInworldVoiceId: (v: string) => update({ inworldVoiceId: v }),
     setAccessAllNeurons: (v: boolean) => update({ accessAllNeurons: v }),
     setVisionModel: (m: string) => update({ visionModel: m }),
+    setImageExtractionModel: (m: string) => update({ imageExtractionModel: m }),
+    setAutoExtractFigures: (v: boolean) => update({ autoExtractFigures: v }),
     setLibraryIngestModel: (m: string) => update({ libraryIngestModel: m }),
     setLibraryIngestAutoFile: (v: boolean) => update({ libraryIngestAutoFile: v }),
     setImageModelPrimary: (m: string) => update({ imageModelPrimary: m }),
