@@ -547,42 +547,61 @@ export type Database = {
       }
       image_attachments: {
         Row: {
+          book_id: string | null
           caption: string
           created_at: string
           entry_id: string | null
           id: string
+          kind: string
           mime: string
           model: string
+          page: number | null
+          phash: string | null
           prompt: string
           source_image_id: string | null
           storage_path: string
           user_id: string
         }
         Insert: {
+          book_id?: string | null
           caption?: string
           created_at?: string
           entry_id?: string | null
           id?: string
+          kind?: string
           mime?: string
           model?: string
+          page?: number | null
+          phash?: string | null
           prompt?: string
           source_image_id?: string | null
           storage_path: string
           user_id: string
         }
         Update: {
+          book_id?: string | null
           caption?: string
           created_at?: string
           entry_id?: string | null
           id?: string
+          kind?: string
           mime?: string
           model?: string
+          page?: number | null
+          phash?: string | null
           prompt?: string
           source_image_id?: string | null
           storage_path?: string
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "image_attachments_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
+            referencedRelation: "books"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "image_attachments_entry_id_fkey"
             columns: ["entry_id"]
@@ -1262,6 +1281,7 @@ export type Database = {
         Row: {
           access_all_neurons: boolean
           active_wiki_id: string | null
+          auto_extract_figures: boolean
           auto_read_replies: boolean
           burplexity_api_token: string | null
           chat_tool_permissions: Json
@@ -1270,6 +1290,7 @@ export type Database = {
           deep_research_model: string | null
           hands_free_tts_rate: number
           id: string
+          image_extraction_model: string | null
           image_model_fallback: string | null
           image_model_primary: string | null
           image_quality: string | null
@@ -1297,6 +1318,7 @@ export type Database = {
         Insert: {
           access_all_neurons?: boolean
           active_wiki_id?: string | null
+          auto_extract_figures?: boolean
           auto_read_replies?: boolean
           burplexity_api_token?: string | null
           chat_tool_permissions?: Json
@@ -1305,6 +1327,7 @@ export type Database = {
           deep_research_model?: string | null
           hands_free_tts_rate?: number
           id?: string
+          image_extraction_model?: string | null
           image_model_fallback?: string | null
           image_model_primary?: string | null
           image_quality?: string | null
@@ -1332,6 +1355,7 @@ export type Database = {
         Update: {
           access_all_neurons?: boolean
           active_wiki_id?: string | null
+          auto_extract_figures?: boolean
           auto_read_replies?: boolean
           burplexity_api_token?: string | null
           chat_tool_permissions?: Json
@@ -1340,6 +1364,7 @@ export type Database = {
           deep_research_model?: string | null
           hands_free_tts_rate?: number
           id?: string
+          image_extraction_model?: string | null
           image_model_fallback?: string | null
           image_model_primary?: string | null
           image_quality?: string | null
