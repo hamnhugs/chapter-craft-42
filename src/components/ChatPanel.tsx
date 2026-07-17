@@ -36,7 +36,7 @@ const SEARCH_INTENT_RE =
   /\b(search|look up|look for|find|google|what is|what are|who is|who are|tell me about|research|check online|latest|current|news about)\b/i;
 
 const ChatPanel: React.FC = () => {
-  const { books, activeBookId, activeWiki, activeWikiId, setActiveTab } = useApp();
+  const { books, activeBookId, activeWiki, activeWikiId, activeWikis, activeWikiIds, toggleNeuronInSession, setActiveTab } = useApp();
   const { user } = useAuth();
   const isMobile = useIsMobile();
   const {
@@ -509,17 +509,58 @@ const ChatPanel: React.FC = () => {
         </div>
       )}
 
-      {/* Active-wiki indicator */}
-      {activeWiki && (
-        <div className="px-4 pt-3 pb-1 flex items-center gap-2 text-xs font-body text-on-surface-variant">
-          <span
-            className="w-2 h-2 rounded-full flex-shrink-0"
-            style={{ backgroundColor: activeWiki.cover_color || "#7C3AED" }}
-            aria-hidden
-          />
-          <span>
-            Your Knowledge Neuron: <span className="font-semibold text-primary">{activeWiki.name}</span>
+      {/* Loaded-neuron chips — the set Counsel reads from. Secondary chips
+          can be unloaded inline; "+" opens the ⌘K switcher; 2+ loaded shows
+          a save-as-chain affordance (Linear-style: save at point of use). */}
+      {activeWikis.length > 0 && (
+        <div className="px-4 pt-3 pb-1 flex items-center gap-1.5 flex-wrap text-xs font-body text-on-surface-variant">
+          <span className="mr-0.5">
+            {activeWikis.length > 1 ? "Loaded neurons:" : "Your Knowledge Neuron:"}
           </span>
+          {activeWikis.map((w, i) => (
+            <span
+              key={w.id}
+              className="inline-flex items-center gap-1.5 pl-2 pr-1.5 py-0.5 rounded-full bg-surface-container-high border border-outline-variant/20 max-w-[160px]"
+              title={i === 0 ? `${w.name} — primary (new knowledge is saved here)` : w.name}
+            >
+              <span
+                className="w-2 h-2 rounded-full flex-shrink-0"
+                style={{ backgroundColor: w.cover_color || "#7C3AED" }}
+                aria-hidden
+              />
+              <span className="font-semibold text-primary truncate">{w.name}</span>
+              {i === 0 && activeWikis.length > 1 && (
+                <span className="text-[9px] font-bold uppercase tracking-widest text-on-surface-variant">primary</span>
+              )}
+              {i > 0 && (
+                <button
+                  onClick={() => toggleNeuronInSession(w.id).catch((e: any) => toast.error(e.message || "Couldn't unload"))}
+                  className="rounded-full hover:bg-surface-container-highest p-0.5 leading-none"
+                  title={`Unload "${w.name}"`}
+                  aria-label={`Unload ${w.name}`}
+                >
+                  <span className="material-symbols-outlined text-[12px] block">close</span>
+                </button>
+              )}
+            </span>
+          ))}
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent("open-neuron-switcher"))}
+            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full border border-dashed border-outline-variant/40 hover:border-primary/50 hover:text-primary transition-colors"
+            title="Load another neuron alongside (⌘K)"
+          >
+            <span className="material-symbols-outlined text-[14px]">add</span>
+          </button>
+          {activeWikis.length >= 2 && (
+            <button
+              onClick={() => import("@/components/ChainDialog").then((m) => m.openChainDialog({ prefillIds: activeWikiIds }))}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-outline-variant/40 hover:border-primary/50 hover:text-primary transition-colors"
+              title="Save these neurons as a chain"
+            >
+              <span className="material-symbols-outlined text-[14px]">link</span>
+              <span className="text-[10px] font-bold uppercase tracking-widest">Save chain</span>
+            </button>
+          )}
         </div>
       )}
 
@@ -826,7 +867,11 @@ const ChatPanel: React.FC = () => {
               >
                 <span className="material-symbols-outlined text-sm" aria-hidden>neurology</span>
                 <span className="truncate">
-                  {accessAllNeurons && isPaid ? "Reading: all neurons" : `Reading: ${activeWiki?.name || "no neuron"}`}
+                  {accessAllNeurons && isPaid
+                    ? "Reading: all neurons"
+                    : activeWikis.length > 1
+                      ? `Reading: ${activeWikis.length} neurons`
+                      : `Reading: ${activeWiki?.name || "no neuron"}`}
                 </span>
               </button>
               <button onClick={() => { if (!isPaid) { openPricing("deep-research"); return; } setChatDeepResearch(!chatDeepResearch); }} title={isPaid ? undefined : "Deep Research is a Pro feature"} className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${chatDeepResearch && isPaid ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`}>

@@ -3,7 +3,8 @@ import { flushSync } from "react-dom";
 import { BookDocument, Chapter } from "@/types/library";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { Wiki, fetchWikis, fetchActiveWikiId, loadWiki as loadWikiApi, createWiki } from "@/lib/wikisApi";
+import { Wiki, fetchWikis, fetchActiveWikiIds, loadWiki as loadWikiApi, loadWikiSet, createWiki } from "@/lib/wikisApi";
+import { MAX_ACTIVE_NEURONS } from "@/lib/neuronAccess";
 
 type TabId = "library" | "viewer" | "chat" | "wiki" | "wikis" | "settings" | "admin";
 
@@ -14,6 +15,10 @@ interface AppState {
   wikis: Wiki[];
   activeWikiId: string | null;
   activeWiki: Wiki | undefined;
+  /** Full ordered loaded set — [0] is the primary (= activeWikiId). */
+  activeWikiIds: string[];
+  /** Loaded neurons in order, primary first (ids resolved against `wikis`). */
+  activeWikis: Wiki[];
   addBook: (book: BookDocument, sourceFile?: File) => Promise<string>;
   removeBook: (id: string) => void;
   setActiveBook: (id: string) => void;
@@ -22,8 +27,8 @@ interface AppState {
   pendingBookLoadId: string | null;
   /** Entry point for loading a book from the Vault: opens the neuron-pick dialog. */
   requestBookLoad: (bookId: string) => void;
-  /** Resolves the load dialog: loads the chosen neuron (if any/changed) then opens the book. neuronId null = skip / keep current. */
-  resolveBookLoad: (neuronId: string | null) => Promise<void>;
+  /** Resolves the load dialog: loads the chosen neuron (if any/changed) then opens the book. neuronId null = skip / keep current. chainWikiIds (when set) loads that whole set instead. */
+  resolveBookLoad: (neuronId: string | null, chainWikiIds?: string[]) => Promise<void>;
   setActiveTab: (tab: TabId) => void;
   addChapter: (bookId: string, chapter: Chapter) => Promise<void>;
   updateChapter: (bookId: string, chapterId: string, name: string) => void;
@@ -34,6 +39,10 @@ interface AppState {
   loadBookFile: (bookId: string) => Promise<string>;
   refreshWikis: () => Promise<void>;
   setActiveWiki: (wikiId: string) => Promise<void>;
+  /** Replace the loaded set. ids[0] becomes the primary; capped at MAX_ACTIVE_NEURONS. */
+  setActiveNeurons: (wikiIds: string[]) => Promise<void>;
+  /** Add/remove a secondary neuron from the loaded set (primary can't be removed). Resolves to the new set. */
+  toggleNeuronInSession: (wikiId: string) => Promise<string[]>;
   signOut: () => void;
 }
 
@@ -66,6 +75,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [activeTab, setActiveTab] = useState<TabId>("library");
   const [wikis, setWikis] = useState<Wiki[]>([]);
   const [activeWikiId, setActiveWikiId] = useState<string | null>(null);
+  // Full ordered loaded set — invariant: activeWikiIds[0] === activeWikiId.
+  const [activeWikiIds, setActiveWikiIds] = useState<string[]>([]);
+  // Synchronously-updated mirror of the loaded set. Mutations read and write
+  // THIS (before their awaits), so two quick toggles compose instead of the
+  // second overwriting the first from a stale closure.
+  const activeWikiIdsRef = useRef<string[]>([]);
+
+  const commitActiveSet = useCallback((ids: string[]) => {
+    activeWikiIdsRef.current = ids;
+    setActiveWikiId(ids[0] ?? null);
+    setActiveWikiIds(ids);
+  }, []);
   const { user, signOut } = useAuth();
 
   // Navigate between tabs with a View Transitions cross-fade where supported.
@@ -87,21 +108,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const refreshWikis = useCallback(async () => {
-    if (!user) { setWikis([]); setActiveWikiId(null); return; }
+    if (!user) { setWikis([]); setActiveWikiId(null); setActiveWikiIds([]); activeWikiIdsRef.current = []; return; }
     try {
-      let [list, activeId] = await Promise.all([fetchWikis(), fetchActiveWikiId()]);
+      let [list, active] = await Promise.all([fetchWikis(), fetchActiveWikiIds()]);
       if (list.length === 0) {
         const created = await createWiki({ name: "My 1st Neuron", description: "Your default neuron — extracted knowledge lives here." });
         await loadWikiApi(created.id);
-        list = [created]; activeId = created.id;
-      } else if (!activeId) {
+        list = [created]; active = { primary: created.id, set: [created.id] };
+      }
+      // Self-heal: drop set members that no longer exist (deleted elsewhere;
+      // active_wiki_ids has no FK, so dead ids can linger there). If the
+      // primary itself is gone/null, promote the next loaded neuron — or fall
+      // back to the first wiki — and persist that repair.
+      const existing = new Set(list.map((w) => w.id));
+      let set = active.set.filter((id) => existing.has(id));
+      let primary = active.primary && existing.has(active.primary) ? active.primary : set[0] ?? null;
+      if (!primary) {
         const fallback = list[0];
         await loadWikiApi(fallback.id);
-        activeId = fallback.id;
+        primary = fallback.id;
+        set = [fallback.id];
+      } else if (set[0] !== primary) {
+        set = [primary, ...set.filter((id) => id !== primary)];
       }
-      setWikis(list); setActiveWikiId(activeId);
+      setWikis(list);
+      commitActiveSet(set);
     } catch (err) { console.error("Failed to load wikis:", err); }
-  }, [user]);
+  }, [user, commitActiveSet]);
 
   useEffect(() => { refreshWikis(); }, [refreshWikis]);
 
@@ -112,11 +145,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => window.removeEventListener("wiki-active-changed", handler);
   }, [refreshWikis]);
 
+  // Shared write path: claim the ref BEFORE the network round-trips so a
+  // second mutation started while this one is in flight composes with it
+  // (instead of overwriting from a stale snapshot); roll back on failure.
+  const applyActiveSet = useCallback(async (ids: string[]) => {
+    const prev = activeWikiIdsRef.current;
+    activeWikiIdsRef.current = ids;
+    try {
+      await loadWikiSet(ids);
+    } catch (err) {
+      // Only roll back if no later mutation has claimed the ref meanwhile.
+      if (activeWikiIdsRef.current === ids) activeWikiIdsRef.current = prev;
+      throw err;
+    }
+    commitActiveSet(activeWikiIdsRef.current);
+    const nowIso = new Date().toISOString();
+    setWikis((p) => p.map((w) => (ids.includes(w.id) ? { ...w, last_loaded_at: nowIso } : w)));
+  }, [commitActiveSet]);
+
   const setActiveWiki = useCallback(async (wikiId: string) => {
-    await loadWikiApi(wikiId);
-    setActiveWikiId(wikiId);
-    setWikis((prev) => prev.map((w) => (w.id === wikiId ? { ...w, last_loaded_at: new Date().toISOString() } : w)));
-  }, []);
+    // Single-load replaces the whole set (activation replaces context, never
+    // silently appends) — the long-standing behavior of every "Load" button.
+    await applyActiveSet([wikiId]);
+  }, [applyActiveSet]);
+
+  const setActiveNeurons = useCallback(async (wikiIds: string[]) => {
+    const ids = Array.from(new Set(wikiIds)).slice(0, MAX_ACTIVE_NEURONS);
+    if (ids.length === 0) throw new Error("No neurons to load — they may have been deleted.");
+    await applyActiveSet(ids);
+  }, [applyActiveSet]);
+
+  const toggleNeuronInSession = useCallback(async (wikiId: string): Promise<string[]> => {
+    const current = activeWikiIdsRef.current;
+    if (wikiId === current[0]) return current; // the primary can't be unloaded
+    let next: string[];
+    if (current.includes(wikiId)) {
+      next = current.filter((id) => id !== wikiId);
+    } else {
+      if (current.length >= MAX_ACTIVE_NEURONS) {
+        throw new Error(`You can load up to ${MAX_ACTIVE_NEURONS} neurons at once — unload one first.`);
+      }
+      next = [...current, wikiId];
+    }
+    await applyActiveSet(next);
+    return next;
+  }, [applyActiveSet]);
 
   const getAuthenticatedUserId = useCallback(async () => {
     if (user?.id) return user.id;
@@ -442,21 +515,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setPendingBookLoadId(bookId);
   }, []);
 
-  const resolveBookLoad = useCallback(async (neuronId: string | null) => {
+  const resolveBookLoad = useCallback(async (neuronId: string | null, chainWikiIds?: string[]) => {
     const bookId = pendingBookLoadId;
     setPendingBookLoadId(null);
     if (!bookId) return;
-    // Only switch neurons when the user picked a different one — avoids a
-    // redundant loadWiki round-trip when they keep the current neuron.
-    if (neuronId && neuronId !== activeWikiId) {
-      try {
+    try {
+      if (chainWikiIds && chainWikiIds.length > 0) {
+        // A chain was picked — load the whole set alongside the book.
+        await setActiveNeurons(chainWikiIds);
+      } else if (neuronId && neuronId !== activeWikiId) {
+        // Only switch neurons when the user picked a different one — avoids a
+        // redundant loadWiki round-trip when they keep the current neuron.
         await setActiveWiki(neuronId);
-      } catch (err) {
-        console.error("Failed to load neuron alongside book:", err);
       }
+    } catch (err) {
+      console.error("Failed to load neuron alongside book:", err);
     }
     setActiveBook(bookId);
-  }, [pendingBookLoadId, activeWikiId, setActiveWiki, setActiveBook]);
+  }, [pendingBookLoadId, activeWikiId, setActiveWiki, setActiveNeurons, setActiveBook]);
 
   const addChapter = useCallback(async (bookId: string, chapter: Chapter) => {
     const userId = await getAuthenticatedUserId();
@@ -592,6 +668,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [user, books]);
 
   const activeWiki = wikis.find((w) => w.id === activeWikiId);
+  const activeWikis = activeWikiIds
+    .map((id) => wikis.find((w) => w.id === id))
+    .filter((w): w is Wiki => !!w);
 
   return (
     <AppContext.Provider
@@ -602,6 +681,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         wikis,
         activeWikiId,
         activeWiki,
+        activeWikiIds,
+        activeWikis,
         addBook,
         removeBook,
         setActiveBook,
@@ -619,6 +700,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         loadBookFile,
         refreshWikis,
         setActiveWiki,
+        setActiveNeurons,
+        toggleNeuronInSession,
         signOut,
       }}
     >

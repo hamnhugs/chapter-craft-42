@@ -82,6 +82,19 @@ const WikiControlsGuide: React.FC = () => {
           <Control icon="swap_horiz" name="Neuron switcher dropdown" analogy="The bookshelf next to your desk.">
             <p>Jump straight to another neuron without going back to the Neurons page. Handy when you bounce between projects.</p>
           </Control>
+          <Control icon="link" name="Loaded neurons & chains" analogy="Spreading two or three notebooks open on the desk at once.">
+            <p>
+              You can load up to 5 neurons at the same time (press <strong>⌘K</strong> and use the <strong>+</strong> button on a
+              neuron, or just ask Counsel). The <strong>primary</strong> neuron is where new knowledge is saved; the others are read
+              alongside so Counsel can compare and connect ideas across them — mixing related topics is one of the best-proven ways
+              to make learning stick.
+            </p>
+            <p>
+              A <strong>chain</strong> is a saved combo (like "Traffic Signs" + "Road Rules") you can activate in one click from the
+              BRAIN tab's Chains section, the ⌘K switcher, or the book-load dialog. 2–3 related neurons is the sweet spot — more
+              than that dilutes the connections.
+            </p>
+          </Control>
         </Group>
 
         <Group title="Day-to-day controls" subtitle="The two you'll actually use often.">

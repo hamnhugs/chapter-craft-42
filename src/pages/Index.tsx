@@ -15,6 +15,7 @@ import AdBanner from "@/components/ads/AdBanner";
 import AdInterstitial from "@/components/ads/AdInterstitial";
 import WelcomeGate from "@/components/WelcomeGate";
 import LoadNeuronDialog from "@/components/LoadNeuronDialog";
+import ChainDialog from "@/components/ChainDialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { useTheme } from "@/context/ThemeContext";
 import { useVisitTracker } from "@/hooks/useVisitTracker";
@@ -185,7 +186,7 @@ const TabletRail: React.FC<{
 );
 
 const Index: React.FC = () => {
-  const { activeTab, setActiveTab, getActiveBook, signOut, activeWiki } = useApp();
+  const { activeTab, setActiveTab, getActiveBook, signOut, activeWiki, activeWikis } = useApp();
   const { isAdmin } = useIsAdmin();
   useAutoSleepCycle();
   const [moreOpen, setMoreOpen] = useState(false);
@@ -218,15 +219,27 @@ const Index: React.FC = () => {
           {activeWiki && (
             <button
               onClick={() => setActiveTab("wikis")}
-              title={`Active neuron: ${activeWiki.name} — press ⌘K to switch`}
-              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent/10 hover:bg-accent/20 transition-colors text-xs font-body font-medium text-accent max-w-[180px] truncate"
+              title={
+                activeWikis.length > 1
+                  ? `Loaded neurons: ${activeWikis.map((w) => w.name).join(", ")} — press ⌘K to switch`
+                  : `Active neuron: ${activeWiki.name} — press ⌘K to switch`
+              }
+              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent/10 hover:bg-accent/20 transition-colors text-xs font-body font-medium text-accent max-w-[200px] truncate"
             >
-              <span
-                className="w-2 h-2 rounded-full flex-shrink-0"
-                style={{ backgroundColor: activeWiki.cover_color || "#7C3AED" }}
-                aria-hidden
-              />
+              {/* One dot per loaded neuron, overlapping — primary first. */}
+              <span className="flex items-center flex-shrink-0" aria-hidden>
+                {(activeWikis.length > 0 ? activeWikis : [activeWiki]).slice(0, 5).map((w, i) => (
+                  <span
+                    key={w.id}
+                    className="w-2 h-2 rounded-full ring-1 ring-background"
+                    style={{ backgroundColor: w.cover_color || "#7C3AED", marginLeft: i === 0 ? 0 : -3 }}
+                  />
+                ))}
+              </span>
               <span className="truncate">{activeWiki.name}</span>
+              {activeWikis.length > 1 && (
+                <span className="flex-shrink-0 font-bold">+{activeWikis.length - 1}</span>
+              )}
             </button>
           )}
           <PlanBadgeButton />
@@ -402,6 +415,7 @@ const Index: React.FC = () => {
       </nav>
       <WikiQuickSwitcher />
       <LoadNeuronDialog />
+      <ChainDialog />
       <PricingDialog />
       <WelcomeGate />
       <SetupWizard />

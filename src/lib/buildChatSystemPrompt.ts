@@ -13,11 +13,14 @@ interface BuildOpts {
   latestUserQuery?: string;
   /** Free-form user-supplied instructions prepended at the very top. */
   customSystemPrompt?: string;
-  /** Active wiki name — surfaced to the model so it knows which wiki is in focus. */
-  activeWikiName?: string | null;
-  /** Active wiki id — scopes retrieval to that wiki (+ bridged entries). */
-  activeWikiId?: string | null;
-  /** When true (paid "Access all neurons" setting), retrieval spans every neuron instead of only the active one. */
+  /**
+   * The loaded neuron set, primary first. Retrieval is scoped to these ids
+   * (+ bridged entries); names are surfaced to the model. A locked neuron is
+   * passed with name "" — still scoping retrieval (RLS hides its content)
+   * without revealing its name.
+   */
+  activeNeurons?: { id: string; name: string }[];
+  /** When true (paid "Access all neurons" setting), retrieval spans every neuron instead of only the loaded ones. */
   allNeurons?: boolean;
 }
 
@@ -69,10 +72,14 @@ function isChapterContextRelevant(query: string | undefined, book: BookDocument)
 //     the context best, so the retrieved memories — the most query-specific,
 //     highest-value content — go LAST, right before the conversation.
 export async function buildChatSystemPrompt({
-  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeWikiName, activeWikiId, allNeurons,
+  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeNeurons = [], allNeurons,
 }: BuildOpts): Promise<BuiltPrompt> {
   const parts: string[] = [];
   const usedMemories: UsedMemory[] = [];
+
+  const namedNeurons = activeNeurons.filter((n) => n.name);
+  const activeWikiName = namedNeurons[0]?.name || null;
+  const scopeIds = activeNeurons.map((n) => n.id);
 
   if (customSystemPrompt && customSystemPrompt.trim()) {
     parts.push("## User Custom Instructions", customSystemPrompt.trim(), "");
@@ -88,14 +95,23 @@ export async function buildChatSystemPrompt({
   );
   if (allNeurons) {
     parts.push(`The user has enabled "Access all neurons": your knowledge retrieval and \`search_wiki\` span ALL of their wikis (neurons) at once${activeWikiName ? `, with "${activeWikiName}" as the active one where new knowledge is captured` : ""}. When you draw on retrieved knowledge, mention which wiki it came from when that helps.`);
+  } else if (namedNeurons.length > 1) {
+    const list = namedNeurons
+      .map((n, i) => (i === 0 ? `"${n.name}" (primary — new knowledge captured this session is saved here)` : `"${n.name}"`))
+      .join(", ");
+    parts.push(
+      `The user has ${namedNeurons.length} neurons (knowledge wikis) LOADED TOGETHER: ${list}. Your knowledge retrieval and \`search_wiki\` span all of the loaded neurons — but not the user's other, unloaded neurons.`,
+      "The user loaded these together to learn ACROSS them. When concepts from different loaded neurons genuinely bear on the current question, connect and compare them inline in your explanation — juxtaposing related-but-confusable items and naming which neuron each came from (research: comparing related cases roughly triples transfer, and interleaving related topics substantially improves retention). Two rules keep this useful: (1) only draw a cross-neuron link when it does explanatory work for the current question — decorative \"fun fact\" connections measurably hurt learning; (2) if a loaded neuron has nothing relevant to the question, leave it out entirely rather than forcing it in.",
+    );
   } else if (activeWikiName) {
     parts.push(`The user's active knowledge wiki is "${activeWikiName}". Your knowledge retrieval and \`search_wiki\` are scoped to ONLY this wiki — you cannot read the user's other wikis unless they load one or enable "Access all neurons" in settings. New knowledge captured this session is scoped to it.`);
   }
   parts.push(
-    "You have these tools: list_books, get_book, get_chapter_text, set_active_book, isolate_chapter, rename_chapter, delete_chapter, list_conflicts, get_conflict, resolve_conflict, update_conflict_status, list_wikis, get_active_wiki, switch_wiki, create_wiki, and TWO search tools:",
+    "You have these tools: list_books, get_book, get_chapter_text, set_active_book, isolate_chapter, rename_chapter, delete_chapter, list_conflicts, get_conflict, resolve_conflict, update_conflict_status, list_wikis, get_active_wiki, switch_wiki, create_wiki, set_active_neurons, list_chains, activate_chain, and TWO search tools:",
     "- `search_wiki` → search ONLY the user's locally saved knowledge wiki. Use it for things they've already studied/ingested.",
     "- `web_search` → LIVE INTERNET search via the user's Burplexity instance. Use this WHENEVER the user asks to 'search', 'look up', 'google', 'check online', 'what's the latest', or anything time-sensitive or not in the wiki. You may call both `search_wiki` and `web_search` in the same turn when useful. Don't refuse online searches — call `web_search`.",
     "When the user asks about which wiki is active, to list wikis, switch to another wiki, or create a new one, USE the wiki tools (`list_wikis`, `get_active_wiki`, `switch_wiki`, `create_wiki`) — never claim a switch happened without calling `switch_wiki`.",
+    "The user can also load SEVERAL neurons at once (up to 5), and save named neuron chains that load together. When they ask to study/load multiple neurons together, call `set_active_neurons` (first id = primary, where new knowledge is saved). For saved chains use `list_chains` and `activate_chain` (activating a chain REPLACES the loaded set). Never claim neurons or chains were loaded without the tool call succeeding. If the user asks to load more than 5, explain that 2–3 related neurons is the research-backed sweet spot and 5 is the ceiling.",
     "## Images",
     "You can create and remember images:",
     "- `generate_image` → create AI images (Nano Banana), shown inline and saved to memory as neurons by default. Supports multiple images per call: pass `count` (2–4) for variations of the same prompt, or `prompts: [...]` (2–4 entries) for a distinct set in one call. You may also issue several `generate_image` tool calls in parallel within a single turn (e.g. one batch of character variants + one batch of background concepts). Each image costs a few cents — match the count to what the user asked for, don't pad.",
@@ -184,11 +200,68 @@ export async function buildChatSystemPrompt({
   // model recalls it best. Nodes arrive ranked best-first.
   if (latestUserQuery && latestUserQuery.trim().length > 0) {
     try {
-      const retrieval = await retrieveKnowledge(latestUserQuery, {
-        deep: deepResearch,
-        // null = unscoped (all neurons); RLS still hides locked-neuron content.
-        wiki_id: allNeurons ? null : activeWikiId ?? null,
-      });
+      let retrieval: { nodes: any[]; edges: any[] };
+      if (allNeurons || scopeIds.length <= 1) {
+        retrieval = await retrieveKnowledge(latestUserQuery, {
+          deep: deepResearch,
+          // null = unscoped (all neurons); RLS still hides locked-neuron content.
+          wiki_id: allNeurons ? null : scopeIds[0] ?? null,
+        });
+      } else {
+        // Multi-neuron: fan out one scoped call per loaded neuron against the
+        // already-deployed knowledge-retrieve function, then fuse client-side.
+        // One embedding model + per-call normalized scores → merge by max
+        // score per node id. The FINAL budget stays constant regardless of N
+        // (more retrieved chunks past ~18 measurably hurt generation), with a
+        // floor: each neuron's own top hit always survives the cut so every
+        // loaded neuron is represented for cross-linking.
+        const nameById = new Map(activeNeurons.map((n) => [n.id, n.name]));
+        const perWiki = await Promise.all(
+          scopeIds.map((id) =>
+            retrieveKnowledge(latestUserQuery, { deep: deepResearch, wiki_id: id })
+              .then((r) => ({ wikiId: id, r }))
+              .catch(() => null),
+          ),
+        );
+        const ok = perWiki.filter((x): x is { wikiId: string; r: any } => !!x && !!x.r);
+        if (ok.length === 0) throw new Error("Multi-neuron retrieval failed for every loaded neuron");
+        const nodeMap = new Map<string, any>();
+        const floorIds: string[] = [];
+        for (const { wikiId, r } of ok) {
+          const label = nameById.get(wikiId) || "";
+          (r.nodes || []).forEach((n: any, idx: number) => {
+            const existing = nodeMap.get(n.id);
+            if (existing) {
+              existing.score = Math.max(existing.score ?? 0, n.score ?? 0);
+              if (label) existing.fromNeurons.add(label);
+            } else {
+              nodeMap.set(n.id, { ...n, fromNeurons: new Set(label ? [label] : []) });
+            }
+            if (idx === 0) floorIds.push(n.id);
+          });
+        }
+        const cap = deepResearch ? 30 : 18;
+        const floorSet = new Set(floorIds);
+        const ranked = Array.from(nodeMap.values()).sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+        const floors = ranked.filter((n) => floorSet.has(n.id));
+        const rest = ranked.filter((n) => !floorSet.has(n.id));
+        const fusedNodes = [...floors, ...rest]
+          .slice(0, cap)
+          .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+        const keptIds = new Set(fusedNodes.map((n) => n.id));
+        const edgeKeys = new Set<string>();
+        const fusedEdges: any[] = [];
+        for (const { r } of ok) {
+          for (const e of r.edges || []) {
+            if (!keptIds.has(e.source_entry_id) || !keptIds.has(e.target_entry_id)) continue;
+            const key = `${e.source_entry_id}|${e.target_entry_id}|${e.relationship}`;
+            if (edgeKeys.has(key)) continue;
+            edgeKeys.add(key);
+            fusedEdges.push(e);
+          }
+        }
+        retrieval = { nodes: fusedNodes, edges: fusedEdges };
+      }
       if (retrieval && retrieval.nodes.length > 0) {
         // Attached images: a lightweight note (id + prompt) per the
         // "caption by default, pixels on demand" pattern — the model can
@@ -207,7 +280,10 @@ export async function buildChatSystemPrompt({
         const idToTitle = new Map(retrieval.nodes.map((n: any) => [n.id, n.title]));
         for (const node of retrieval.nodes) {
           usedMemories.push({ id: node.id, title: node.title });
-          parts.push("", `### ${node.title}${node.hop > 0 ? ` _(via ${node.via}, hop ${node.hop})_` : ""}`);
+          const neuronTag = node.fromNeurons && node.fromNeurons.size > 0
+            ? ` _(neuron: ${Array.from(node.fromNeurons as Set<string>).join(", ")})_`
+            : "";
+          parts.push("", `### ${node.title}${node.hop > 0 ? ` _(via ${node.via}, hop ${node.hop})_` : ""}${neuronTag}`);
           const maxLen = voiceMode ? 1200 : 4000;
           const text = (node.content || "").length > maxLen
             ? (node.content || "").slice(0, maxLen) + "\n[...truncated]"
@@ -231,7 +307,14 @@ export async function buildChatSystemPrompt({
     } catch (err) {
       console.warn("retrieveKnowledge failed, falling back to legacy dump:", err);
       // Fallback: small legacy dump so chat still works if retrieval errors
-      const knowledgeEntries = await fetchKnowledgeEntries(allNeurons ? null : activeWikiId ?? null).catch(() => []);
+      let knowledgeEntries: Awaited<ReturnType<typeof fetchKnowledgeEntries>> = [];
+      if (allNeurons || scopeIds.length <= 1) {
+        knowledgeEntries = await fetchKnowledgeEntries(allNeurons ? null : scopeIds[0] ?? null).catch(() => []);
+      } else {
+        const lists = await Promise.all(scopeIds.map((id) => fetchKnowledgeEntries(id).catch(() => [])));
+        const seen = new Set<string>();
+        knowledgeEntries = lists.flat().filter((e) => (seen.has(e.id) ? false : (seen.add(e.id), true)));
+      }
       if (knowledgeEntries.length > 0) {
         parts.push("", "## Your Knowledge Wiki (fallback)");
         const relevant = selectedBook

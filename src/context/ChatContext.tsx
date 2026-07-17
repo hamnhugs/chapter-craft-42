@@ -100,7 +100,7 @@ function loadRollingSummary(uid: string): RollingSummary {
 
 export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
-  const { books, activeBookId, activeWiki, activeWikiId, wikis, addChapter, updateChapter, removeChapter, setActiveBookSilent } = useApp();
+  const { books, activeBookId, activeWiki, activeWikiId, activeWikis, wikis, addChapter, updateChapter, removeChapter, setActiveBookSilent } = useApp();
 
   const { apiKey, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, visionModel, imageModelPrimary, imageModelFallback } = useChatSettings();
   const { isPaid, loaded: planLoaded } = usePlan();
@@ -379,7 +379,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // locked-neuron content never leaves the database for free accounts.
       const allNeurons = accessAllNeurons && isPaid;
       const lockedIds = computeLockedWikiIds(wikis, isPaid, planLoaded);
-      const activeIsLocked = !!activeWikiId && lockedIds.has(activeWikiId);
+      // Locked neurons keep scoping retrieval (RLS hides their content) but
+      // their names are withheld from the prompt — same rule as before, now
+      // applied per member of the loaded set.
+      const activeNeurons = (activeWikis.length > 0 ? activeWikis : activeWiki ? [activeWiki] : [])
+        .map((w) => ({ id: w.id, name: lockedIds.has(w.id) ? "" : w.name }));
 
       const { prompt: systemPrompt, usedMemories } = await buildChatSystemPrompt({
         books,
@@ -388,8 +392,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         voiceMode: isVoice,
         latestUserQuery: trimmed,
         customSystemPrompt: promptToInject,
-        activeWikiName: activeIsLocked ? null : activeWiki?.name || null,
-        activeWikiId: activeWikiId || null,
+        activeNeurons,
         allNeurons,
       });
 
@@ -726,7 +729,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
       }
     },
-    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, wikis, activeWiki, activeWikiId, selectedModel, deepResearchModel, visionModel, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
+    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
   );
 
 

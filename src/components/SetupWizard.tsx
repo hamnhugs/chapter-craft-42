@@ -44,7 +44,7 @@ const TOUR_ROWS: { icon: string; name: string; metaphor: string; real: string }[
   { icon: "archive", name: "The Vault", metaphor: "Your bookshelf.", real: "Upload PDFs and EPUBs — they live here." },
   { icon: "psychology", name: "Counsel", metaphor: "Your reading companion.", real: "Chat (or talk) with an AI about any book." },
   { icon: "menu_book", name: "Neurons", metaphor: "Pockets of knowledge.", real: "As you chat and save, the AI builds a neuron — its memory of a topic." },
-  { icon: "collections_bookmark", name: "The BRAIN", metaphor: "All your neurons together.", real: "Switch which neuron is active anytime." },
+  { icon: "collections_bookmark", name: "The BRAIN", metaphor: "All your neurons together.", real: "Switch neurons anytime — or load a few together as a chain." },
 ];
 
 const SetupWizard: React.FC = () => {

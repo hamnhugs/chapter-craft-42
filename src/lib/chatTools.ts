@@ -8,6 +8,9 @@ import {
   deleteImageAttachment, deleteImageMemory,
   IMAGE_ASPECT_RATIOS, type ChatImageRef,
 } from "@/lib/imageGen";
+import { fetchChains, touchChainUsed, emitChainsChanged, isChainsMigrationMissing, CHAINS_MIGRATION_MESSAGE } from "@/lib/chainsApi";
+import { MAX_ACTIVE_NEURONS } from "@/lib/neuronAccess";
+import { OPEN_ACCESS } from "@/lib/openAccess";
 
 export interface ToolDeps {
   books: BookDocument[];
@@ -53,19 +56,73 @@ export function isSearchRateLimited(status: number, message?: string): boolean {
 
 const RATE_LIMIT_MESSAGE = "The web search service is busy (rate-limited). Please try again in a moment.";
 
-// Resolve the AI's neuron scope for this user: which wiki is active, and
+// Resolve the AI's neuron scope for this user: which wiki is active (primary),
+// the full LOADED SET (active_wiki_ids — the multi-neuron feature), and
 // whether the paid "Access all neurons" setting widens search/conflict tools
 // to every wiki. (Locked-neuron content is additionally blocked by RLS, so
 // even an unscoped query can never surface it for free accounts.)
-async function getNeuronScope(): Promise<{ activeWikiId: string | null; allNeurons: boolean }> {
+// active_wiki_ids is read in its own error-tolerant query: a combined select
+// would 400 — taking active_wiki_id down with it — until the neuron-chains
+// migration is applied.
+async function getNeuronScope(): Promise<{ activeWikiId: string | null; activeWikiIds: string[]; allNeurons: boolean }> {
   const [{ data: settings }, { data: sub }] = await Promise.all([
     supabase.from("user_settings").select("active_wiki_id, access_all_neurons" as any).maybeSingle(),
     supabase.from("subscribers" as any).select("subscribed").maybeSingle(),
   ]);
+  const activeWikiId = (settings as any)?.active_wiki_id || null;
+  let set: string[] = [];
+  {
+    const { data, error } = await supabase.from("user_settings").select("active_wiki_ids" as any).maybeSingle();
+    if (!error) set = (((data as any)?.active_wiki_ids as string[]) || []).filter(Boolean);
+  }
+  if (activeWikiId && !set.includes(activeWikiId)) set = [activeWikiId, ...set];
   return {
-    activeWikiId: (settings as any)?.active_wiki_id || null,
+    activeWikiId,
+    activeWikiIds: set,
     allNeurons: !!(settings as any)?.access_all_neurons && !!(sub as any)?.subscribed,
   };
+}
+
+// Persist a new loaded neuron set (ids[0] = primary). Retries without the
+// active_wiki_ids column while the neuron-chains migration is missing, so
+// the primary still switches (multi-load degrades to primary-only).
+async function persistActiveSet(uid: string, ids: string[]): Promise<{ degraded: boolean }> {
+  await supabase.from("wikis" as any).update({ last_loaded_at: new Date().toISOString() } as any).in("id", ids);
+  const payload: Record<string, unknown> = { user_id: uid, active_wiki_id: ids[0] ?? null, active_wiki_ids: ids };
+  let { error } = await supabase.from("user_settings").upsert(payload as any, { onConflict: "user_id" });
+  let degraded = false;
+  if (error && /active_wiki_ids/i.test(error.message || "")) {
+    degraded = true;
+    delete payload.active_wiki_ids;
+    ({ error } = await supabase.from("user_settings").upsert(payload as any, { onConflict: "user_id" }));
+  }
+  if (error) throw error;
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("wiki-active-changed"));
+  return { degraded };
+}
+
+// Free plan: only the OLDEST neuron is unlocked (mirrors accessible_wiki_ids()
+// and the ⌘K/BRAIN gates); admins bypass. Returns an error string when the
+// requested ids aren't allowed, else null.
+async function checkNeuronPlanGate(ids: string[]): Promise<string | null> {
+  if (OPEN_ACCESS) return null; // paywall retired — mirror computeLockedWikiIds
+  const { data: isAdminData } = await supabase.rpc("is_admin" as any);
+  if (isAdminData) return null;
+  const { data: sub } = await supabase.from("subscribers" as any).select("subscribed, plan").maybeSingle();
+  const paid = !!(sub as any)?.subscribed && (sub as any)?.plan !== "free";
+  if (paid) return null;
+  const { data: oldest } = await supabase
+    .from("wikis" as any)
+    .select("id")
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  const oldestId = (oldest as any)?.id || null;
+  if (ids.length > 1 || (ids[0] && ids[0] !== oldestId)) {
+    return "Loading multiple neurons (and any neuron other than the oldest) requires Pro. Tell the user that upgrading to Pro or Lifetime unlocks all of their neurons and neuron chains.";
+  }
+  return null;
 }
 
 export function pickCitations(j: any): Array<{ title: string; url: string; snippet: string }> {
@@ -309,6 +366,49 @@ export const CHAT_TOOL_DEFINITIONS = [
           activate: { type: "boolean", description: "If true, set this as active after creation. Default true." },
         },
         required: ["name"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "set_active_neurons",
+      description:
+        "Replace the LOADED neuron set with 1–5 wikis (use ids from list_wikis). The FIRST id becomes the primary neuron — where new knowledge is saved; the rest are loaded alongside so retrieval and search span all of them. Use when the user asks to load/study several neurons together. Suggest 2–3 related neurons; 5 is the hard cap.",
+      parameters: {
+        type: "object",
+        properties: {
+          wiki_ids: {
+            type: "array",
+            items: { type: "string" },
+            description: "Ordered wiki ids — first = primary. 1 to 5 entries.",
+          },
+        },
+        required: ["wiki_ids"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_chains",
+      description:
+        "List the user's saved neuron chains (named sets of neurons that load together in one click): id, name, description, and member neuron names in order.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "activate_chain",
+      description:
+        "Activate a saved neuron chain by id or name — REPLACES the loaded neuron set with the chain's members (first member = primary). Use after the user asks to load/activate a chain; find it with list_chains if unsure.",
+      parameters: {
+        type: "object",
+        properties: {
+          chain_id: { type: "string", description: "Chain id (preferred when known)." },
+          name: { type: "string", description: "Chain name — case-insensitive match when chain_id is absent." },
+        },
       },
     },
   },
@@ -662,13 +762,13 @@ export async function executeChatTool(
         const q = String(args.query || "").trim();
         if (!q) return { result: { error: "Empty query" }, event: { name, summary: "Empty query", ok: false } };
         const limit = Math.min(25, Math.max(1, Number(args.limit) || 10));
-        const { activeWikiId, allNeurons } = await getNeuronScope();
+        const { activeWikiId, activeWikiIds, allNeurons } = await getNeuronScope();
         let q1: any = supabase
           .from("knowledge_entries")
           .select("id, title, content, entry_type, confidence, source_book_id, tags, wiki_id")
           .or(`title.ilike.%${q}%,content.ilike.%${q}%`)
           .limit(limit);
-        if (!allNeurons && activeWikiId) q1 = q1.eq("wiki_id", activeWikiId);
+        if (!allNeurons && activeWikiIds.length > 0) q1 = q1.in("wiki_id", activeWikiIds);
         const { data, error } = await q1;
         if (error) throw error;
         const entries = (data || []).map((e: any) => ({
@@ -678,7 +778,13 @@ export async function executeChatTool(
           confidence: e.confidence,
           snippet: (e.content || "").slice(0, 400),
         }));
-        const scopeNote = allNeurons ? " across all neurons" : activeWikiId ? " in active wiki" : "";
+        const scopeNote = allNeurons
+          ? " across all neurons"
+          : activeWikiIds.length > 1
+            ? ` across ${activeWikiIds.length} loaded neurons`
+            : activeWikiId
+              ? " in active wiki"
+              : "";
         return { result: entries, event: { name, summary: `Searched wiki for "${q}" — ${entries.length} hit(s)${scopeNote}`, ok: true } };
       }
       case "web_search": {
@@ -739,14 +845,15 @@ export async function executeChatTool(
           ? await supabase.from("knowledge_entries").select("id, title, content, entry_type, confidence, source_book_id, wiki_id" as any).in("id", ids)
           : { data: [] as any[] };
         const byId = new Map(((ents as any[]) || []).map((e: any) => [e.id, e]));
-        // Scope to active wiki when one is set — both entries must live in it (or be
-        // unscoped legacy entries). "Access all neurons" (paid) lifts the filter.
-        const { activeWikiId, allNeurons } = await getNeuronScope();
+        // Scope to the loaded neuron set — entries must live in one of the
+        // loaded neurons (or be unscoped legacy entries). "Access all
+        // neurons" (paid) lifts the filter.
+        const { activeWikiId, activeWikiIds, allNeurons } = await getNeuronScope();
         const inScope = (id: string) => {
-          if (allNeurons || !activeWikiId) return true;
+          if (allNeurons || activeWikiIds.length === 0) return true;
           const e: any = byId.get(id);
           if (!e) return true; // missing — surface anyway so user knows
-          return !e.wiki_id || e.wiki_id === activeWikiId;
+          return !e.wiki_id || activeWikiIds.includes(e.wiki_id);
         };
         const hydrate = (id: string) => {
           const e: any = byId.get(id);
@@ -857,13 +964,13 @@ export async function executeChatTool(
         const { data: userData } = await supabase.auth.getUser();
         const uid = userData.user?.id;
         if (!uid) return { result: { error: "Not signed in" }, event: { name, summary: "Not signed in", ok: false } };
-        const [{ data: wikis, error: wErr }, { data: settings }, { data: counts }] = await Promise.all([
+        const [{ data: wikis, error: wErr }, scope, { data: counts }] = await Promise.all([
           supabase.from("wikis" as any).select("id, name, description, is_default, is_meta, created_at, updated_at").order("updated_at", { ascending: false }),
-          supabase.from("user_settings").select("active_wiki_id" as any).maybeSingle(),
+          getNeuronScope(),
           supabase.from("knowledge_entries").select("wiki_id" as any),
         ]);
         if (wErr) throw wErr;
-        const activeId = (settings as any)?.active_wiki_id || null;
+        const activeId = scope.activeWikiId;
         const countMap = new Map<string, number>();
         for (const r of ((counts as any[]) || [])) {
           if (!r?.wiki_id) continue;
@@ -871,16 +978,25 @@ export async function executeChatTool(
         }
         const out = ((wikis as any[]) || []).map((w) => ({
           id: w.id, name: w.name, description: w.description, is_default: w.is_default, is_meta: w.is_meta,
-          is_active: w.id === activeId, entry_count: countMap.get(w.id) || 0,
+          is_active: w.id === activeId, is_loaded: scope.activeWikiIds.includes(w.id),
+          is_primary: w.id === activeId, entry_count: countMap.get(w.id) || 0,
         }));
         return { result: out, event: { name, summary: `Listed ${out.length} wiki(s)`, ok: true } };
       }
       case "get_active_wiki": {
-        const { data: settings } = await supabase.from("user_settings").select("active_wiki_id" as any).maybeSingle();
-        const activeId = (settings as any)?.active_wiki_id || null;
-        if (!activeId) return { result: { active_wiki_id: null }, event: { name, summary: "No active wiki set", ok: true } };
-        const { data: wiki } = await supabase.from("wikis" as any).select("id, name, description, is_default, is_meta").eq("id", activeId).maybeSingle();
-        return { result: { active_wiki_id: activeId, wiki: wiki || null }, event: { name, summary: `Active wiki: ${(wiki as any)?.name || activeId.slice(0, 8)}`, ok: true } };
+        const scope = await getNeuronScope();
+        const activeId = scope.activeWikiId;
+        if (!activeId) return { result: { active_wiki_id: null, loaded_neurons: [] }, event: { name, summary: "No active wiki set", ok: true } };
+        const { data: loadedWikis } = scope.activeWikiIds.length
+          ? await supabase.from("wikis" as any).select("id, name, description, is_default, is_meta").in("id", scope.activeWikiIds)
+          : { data: [] as any[] };
+        const byId = new Map(((loadedWikis as any[]) || []).map((w: any) => [w.id, w]));
+        const loaded = scope.activeWikiIds.map((id) => byId.get(id)).filter(Boolean);
+        const wiki = byId.get(activeId) || null;
+        return {
+          result: { active_wiki_id: activeId, wiki, loaded_neurons: loaded },
+          event: { name, summary: `Active wiki: ${(wiki as any)?.name || activeId.slice(0, 8)}${loaded.length > 1 ? ` (+${loaded.length - 1} loaded alongside)` : ""}`, ok: true },
+        };
       }
       case "switch_wiki": {
         const wid = String(args.wiki_id || "");
@@ -914,10 +1030,9 @@ export async function executeChatTool(
             }
           }
         }
-        await supabase.from("wikis" as any).update({ last_loaded_at: new Date().toISOString() } as any).eq("id", wid);
-        const { error } = await supabase.from("user_settings").upsert({ user_id: uid, active_wiki_id: wid } as any, { onConflict: "user_id" });
-        if (error) throw error;
-        if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("wiki-active-changed"));
+        // Switching replaces the whole loaded set with just this wiki — the
+        // same semantics as every "Load" button in the UI.
+        await persistActiveSet(uid, [wid]);
         return { result: { ok: true, active_wiki_id: wid, name: (wiki as any).name }, event: { name, summary: `Switched to "${(wiki as any).name}"`, ok: true } };
       }
       case "create_wiki": {
@@ -932,10 +1047,117 @@ export async function executeChatTool(
         if (error || !data) throw error || new Error("Create failed");
         const activate = args.activate !== false;
         if (activate) {
-          await supabase.from("user_settings").upsert({ user_id: uid, active_wiki_id: (data as any).id } as any, { onConflict: "user_id" });
+          await persistActiveSet(uid, [(data as any).id]);
+        } else if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("wiki-active-changed"));
         }
-        if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("wiki-active-changed"));
         return { result: { ok: true, id: (data as any).id, name: wname, activated: activate }, event: { name, summary: `Created wiki "${wname}"${activate ? " (active)" : ""}`, ok: true } };
+      }
+      case "set_active_neurons": {
+        const rawIds = Array.isArray(args.wiki_ids) ? args.wiki_ids.map((x: unknown) => String(x)) : [];
+        const ids = Array.from(new Set(rawIds)).filter(Boolean) as string[];
+        if (ids.length === 0) return { result: { error: "wiki_ids required (1–5 ids from list_wikis)" }, event: { name, summary: "Missing wiki_ids", ok: false } };
+        if (ids.length > MAX_ACTIVE_NEURONS) {
+          return {
+            result: { error: `At most ${MAX_ACTIVE_NEURONS} neurons can be loaded at once. Suggest the user pick the 2–3 most related to their current goal.` },
+            event: { name, summary: `Refused: more than ${MAX_ACTIVE_NEURONS} neurons`, ok: false },
+          };
+        }
+        const { data: userData } = await supabase.auth.getUser();
+        const uid = userData.user?.id;
+        if (!uid) return { result: { error: "Not signed in" }, event: { name, summary: "Not signed in", ok: false } };
+        const { data: found, error: fErr } = await supabase
+          .from("wikis" as any)
+          .select("id, name")
+          .in("id", ids);
+        if (fErr) throw fErr;
+        const byId = new Map(((found as any[]) || []).map((w: any) => [w.id, w]));
+        const missing = ids.filter((id) => !byId.has(id));
+        if (missing.length > 0) {
+          return { result: { error: `Unknown wiki id(s): ${missing.join(", ")}. Use list_wikis to get valid ids.` }, event: { name, summary: "Unknown wiki id(s)", ok: false } };
+        }
+        const gateError = await checkNeuronPlanGate(ids);
+        if (gateError) return { result: { error: gateError }, event: { name, summary: "Blocked by free plan", ok: false } };
+        const { degraded } = await persistActiveSet(uid, ids);
+        const names = ids.map((id) => (byId.get(id) as any).name);
+        return {
+          result: {
+            ok: true,
+            loaded_neurons: names,
+            primary: names[0],
+            ...(degraded ? { note: "The multi-neuron database migration isn't applied yet — only the primary neuron persisted." } : {}),
+          },
+          event: { name, summary: `Loaded ${names.length} neuron(s): ${names.join(", ")}`, ok: true },
+        };
+      }
+      case "list_chains": {
+        try {
+          const chains = await fetchChains();
+          const wikiIds = Array.from(new Set(chains.flatMap((c) => c.wiki_ids)));
+          const { data: wikiRows } = wikiIds.length
+            ? await supabase.from("wikis" as any).select("id, name").in("id", wikiIds)
+            : { data: [] as any[] };
+          const nameById = new Map(((wikiRows as any[]) || []).map((w: any) => [w.id, w.name]));
+          const out = chains.map((c) => ({
+            id: c.id,
+            name: c.name,
+            description: c.description,
+            neurons: c.wiki_ids.map((id) => nameById.get(id) || id.slice(0, 8)),
+          }));
+          return { result: out, event: { name, summary: `Listed ${out.length} chain(s)`, ok: true } };
+        } catch (e) {
+          if (isChainsMigrationMissing(e)) {
+            return { result: { error: CHAINS_MIGRATION_MESSAGE }, event: { name, summary: "Chains migration not applied yet", ok: false } };
+          }
+          throw e;
+        }
+      }
+      case "activate_chain": {
+        const chainId = String(args.chain_id || "").trim();
+        const chainName = String(args.name || "").trim();
+        if (!chainId && !chainName) {
+          return { result: { error: "Provide chain_id or name (see list_chains)." }, event: { name, summary: "Missing chain reference", ok: false } };
+        }
+        let chains;
+        try {
+          chains = await fetchChains();
+        } catch (e) {
+          if (isChainsMigrationMissing(e)) {
+            return { result: { error: CHAINS_MIGRATION_MESSAGE }, event: { name, summary: "Chains migration not applied yet", ok: false } };
+          }
+          throw e;
+        }
+        const lower = chainName.toLowerCase();
+        const chain =
+          (chainId && chains.find((c) => c.id === chainId)) ||
+          (lower && (chains.find((c) => c.name.toLowerCase() === lower) || chains.find((c) => c.name.toLowerCase().includes(lower)))) ||
+          null;
+        if (!chain) return { result: { error: "Chain not found. Call list_chains to see the user's chains." }, event: { name, summary: "Chain not found", ok: false } };
+        const ids = chain.wiki_ids.slice(0, MAX_ACTIVE_NEURONS);
+        if (ids.length === 0) return { result: { error: `Chain "${chain.name}" has no member neurons.` }, event: { name, summary: "Empty chain", ok: false } };
+        const { data: userData } = await supabase.auth.getUser();
+        const uid = userData.user?.id;
+        if (!uid) return { result: { error: "Not signed in" }, event: { name, summary: "Not signed in", ok: false } };
+        // Drop members whose neuron was deleted since the chain was saved.
+        const { data: found } = await supabase.from("wikis" as any).select("id, name").in("id", ids);
+        const byId = new Map(((found as any[]) || []).map((w: any) => [w.id, w]));
+        const liveIds = ids.filter((id) => byId.has(id));
+        if (liveIds.length === 0) return { result: { error: `All neurons in chain "${chain.name}" have been deleted.` }, event: { name, summary: "Chain members deleted", ok: false } };
+        const gateError = await checkNeuronPlanGate(liveIds);
+        if (gateError) return { result: { error: gateError }, event: { name, summary: "Blocked by free plan", ok: false } };
+        const { degraded } = await persistActiveSet(uid, liveIds);
+        touchChainUsed(chain.id);
+        const names = liveIds.map((id) => (byId.get(id) as any).name);
+        return {
+          result: {
+            ok: true,
+            chain: chain.name,
+            loaded_neurons: names,
+            primary: names[0],
+            ...(degraded ? { note: "The multi-neuron database migration isn't applied yet — only the primary neuron persisted." } : {}),
+          },
+          event: { name, summary: `Activated chain "${chain.name}" — ${names.length} neuron(s) loaded`, ok: true },
+        };
       }
       case "delete_wiki": {
         // Per-tool permission gate. Defaults to allowed.
@@ -990,7 +1212,8 @@ export async function executeChatTool(
           };
         }
 
-        const wasActive = ((prefs as any)?.active_wiki_id || null) === wid;
+        const scopeBefore = await getNeuronScope();
+        const wasActive = scopeBefore.activeWikiId === wid;
         const { error: dErr } = await supabase
           .from("wikis" as any)
           .delete()
@@ -998,16 +1221,20 @@ export async function executeChatTool(
           .eq("user_id", uid);
         if (dErr) throw dErr;
 
-        if (wasActive) {
-          const nextActive = wikis.find((w) => w.id !== wid)?.id || null;
-          await supabase.from("user_settings").upsert(
-            { user_id: uid, active_wiki_id: nextActive } as any,
-            { onConflict: "user_id" },
-          );
+        // Prune the deleted wiki out of the loaded set; if it was the
+        // primary, the next loaded neuron (or the oldest survivor) takes over.
+        if (scopeBefore.activeWikiIds.includes(wid) || wasActive) {
+          let nextSet = scopeBefore.activeWikiIds.filter((id) => id !== wid);
+          if (nextSet.length === 0) {
+            const survivor = wikis.find((w) => w.id !== wid)?.id || null;
+            nextSet = survivor ? [survivor] : [];
+          }
+          await persistActiveSet(uid, nextSet);
         }
         try {
           window.dispatchEvent(new CustomEvent("wiki-active-changed"));
           window.dispatchEvent(new Event("knowledge-entries-changed"));
+          emitChainsChanged(); // membership rows cascaded away with the wiki
         } catch {}
         return {
           result: { ok: true, deleted_id: wid, name: (target as any).name },

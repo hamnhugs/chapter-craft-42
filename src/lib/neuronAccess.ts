@@ -8,6 +8,13 @@ import { OPEN_ACCESS } from "@/lib/openAccess";
 
 export const FREE_NEURON_LIMIT = 1;
 
+// Hard cap on simultaneously loaded neurons. Working memory holds ~4 chunks
+// (Cowan 2001) and cross-linking N knowledge sets is a high element-
+// interactivity task (Sweller); retrieval quality also degrades as more
+// collections feed the prompt. 2–3 related neurons is the sweet spot the UI
+// promotes; 5 is the ceiling (mirrors NVIDIA's multi-collection RAG cap).
+export const MAX_ACTIVE_NEURONS = 5;
+
 interface WikiLike {
   id: string;
   created_at: string;

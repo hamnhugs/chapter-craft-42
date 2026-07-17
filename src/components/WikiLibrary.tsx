@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Link } from "react-router-dom";
-import { Loader2, Plus, Check, Search, Sparkles, ArrowRight, HelpCircle, Lock, Image as ImageIcon } from "lucide-react";
+import { Loader2, Plus, Check, Search, Sparkles, ArrowRight, HelpCircle, Lock, Image as ImageIcon, Link2, Pencil } from "lucide-react";
 import ImagesPanel from "@/components/ImagesPanel";
 import { toast } from "sonner";
 import {
@@ -30,7 +30,9 @@ import { usePlan } from "@/hooks/usePlan";
 import { useAuth } from "@/hooks/useAuth";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { openPricing } from "@/components/PricingDialog";
-import { FREE_NEURON_LIMIT, computeLockedWikiIds } from "@/lib/neuronAccess";
+import { FREE_NEURON_LIMIT, MAX_ACTIVE_NEURONS, computeLockedWikiIds } from "@/lib/neuronAccess";
+import { openChainDialog } from "@/components/ChainDialog";
+import { useChains, touchChainUsed, emitChainsChanged, NeuronChain, CHAINS_MIGRATION_MESSAGE } from "@/lib/chainsApi";
 import {
   AdminWikiRow,
   AdminWikiEntry,
@@ -67,8 +69,156 @@ const formatRelative = (iso: string | null) => {
 // is_admin() server-side, so this set exists only to satisfy NeuronGraph.
 const EMPTY_LOCKED = new Set<string>();
 
+// Chains sub-tab: saved neuron chains — named sets that load together.
+const ChainsSection: React.FC<{
+  wikis: WikiWithStats[];
+  activeWikiIds: string[];
+  lockedIds: Set<string>;
+  onActivate: (chain: NeuronChain) => void;
+}> = ({ wikis, activeWikiIds, lockedIds, onActivate }) => {
+  const { chains, loaded, migrationMissing } = useChains();
+  const wikiById = useMemo(() => new Map(wikis.map((w) => [w.id, w])), [wikis]);
+
+  const isCurrentSet = (chain: NeuronChain) =>
+    chain.wiki_ids.length === activeWikiIds.length &&
+    chain.wiki_ids.every((id, i) => activeWikiIds[i] === id);
+
+  if (!loaded) {
+    return (
+      <div className="flex justify-center py-16">
+        <Loader2 className="w-6 h-6 animate-spin text-on-surface-variant" />
+      </div>
+    );
+  }
+
+  if (migrationMissing) {
+    return (
+      <div className="rounded-2xl bg-surface-container-low border border-outline-variant/10 p-8 text-center max-w-xl mx-auto">
+        <Link2 className="w-8 h-8 mx-auto mb-3 text-on-surface-variant" />
+        <p className="text-sm text-on-surface-variant">{CHAINS_MIGRATION_MESSAGE}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <p className="text-sm text-on-surface-variant max-w-lg">
+          A chain loads several related neurons together in one click — comparing
+          connected topics builds stronger memory than studying them alone.
+        </p>
+        <button
+          onClick={() => openChainDialog({ prefillIds: activeWikiIds.length >= 2 ? activeWikiIds : undefined })}
+          className="flex items-center gap-1.5 bg-primary-container text-on-primary-container px-3 py-1.5 rounded-lg font-bold text-sm active:scale-95 transition-transform shadow-md shrink-0"
+        >
+          <Plus className="w-4 h-4" />
+          <span>NEW CHAIN</span>
+        </button>
+      </div>
+
+      {chains.length === 0 ? (
+        <div className="rounded-2xl bg-surface-container-low border border-outline-variant/10 p-10 text-center max-w-xl mx-auto">
+          <Link2 className="w-8 h-8 mx-auto mb-3 text-on-surface-variant" />
+          <h3 className="font-headline font-bold text-xl text-primary mb-2">Save your first chain</h3>
+          <p className="text-sm text-on-surface-variant mb-5">
+            Group the neurons you use together — like "Traffic Signs" + "Road
+            Rules" — so you can load them in one click and let Counsel connect
+            ideas across them.
+          </p>
+          <Button onClick={() => openChainDialog({ prefillIds: activeWikiIds.length >= 2 ? activeWikiIds : undefined })}>
+            <Plus className="w-4 h-4 mr-1" /> New chain
+          </Button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {chains.map((chain) => {
+            const members = chain.wiki_ids.map((id) => wikiById.get(id)).filter(Boolean) as WikiWithStats[];
+            const hasLocked = chain.wiki_ids.some((id) => lockedIds.has(id));
+            const current = isCurrentSet(chain);
+            return (
+              <div
+                key={chain.id}
+                className="bg-surface-container-high rounded-xl overflow-hidden border border-outline-variant/10 flex flex-col"
+              >
+                <div
+                  className="h-14 relative"
+                  style={{ background: `linear-gradient(135deg, ${chain.cover_color}, ${chain.cover_color}88)` }}
+                >
+                  {current && (
+                    <span className="absolute top-2 right-2 inline-flex items-center gap-1 bg-background/90 backdrop-blur-sm rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-primary">
+                      <Check className="w-3 h-3" /> Active
+                    </span>
+                  )}
+                </div>
+                <div className="p-4 flex-1 flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <Link2 className="w-4 h-4 shrink-0" style={{ color: chain.cover_color }} />
+                    <h3 className="font-headline font-bold text-lg text-foreground truncate">{chain.name}</h3>
+                  </div>
+                  {chain.description && (
+                    <p className="text-xs text-on-surface-variant line-clamp-2">{chain.description}</p>
+                  )}
+                  <div className="flex flex-col gap-1 mt-1">
+                    {chain.wiki_ids.slice(0, MAX_ACTIVE_NEURONS).map((id, i) => {
+                      const w = wikiById.get(id);
+                      return (
+                        <div key={id} className="flex items-center gap-2 text-xs">
+                          <span
+                            className="w-2.5 h-2.5 rounded-full shrink-0"
+                            style={{ background: w?.cover_color || "#7C3AED" }}
+                          />
+                          <span className={`truncate ${w ? "text-foreground" : "text-on-surface-variant line-through"}`}>
+                            {w?.name || "deleted neuron"}
+                          </span>
+                          {i === 0 && (
+                            <span className="text-[9px] font-bold uppercase tracking-widest text-on-surface-variant shrink-0">
+                              primary
+                            </span>
+                          )}
+                          {lockedIds.has(id) && <Lock className="w-3 h-3 text-on-surface-variant shrink-0" />}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="text-[10px] text-on-surface-variant mt-auto pt-2">
+                    {members.length} neuron{members.length === 1 ? "" : "s"} · {chain.last_used_at ? `used ${formatRelative(chain.last_used_at)}` : "never used"}
+                  </div>
+                </div>
+                <div className="px-4 pb-4 flex gap-2">
+                  <Button
+                    size="sm"
+                    className="flex-1"
+                    disabled={current || members.length === 0}
+                    title={members.length === 0 ? "All neurons in this chain have been deleted" : undefined}
+                    onClick={() => onActivate(chain)}
+                  >
+                    {current ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 mr-1" /> Loaded
+                      </>
+                    ) : hasLocked ? (
+                      <>
+                        <Lock className="w-3.5 h-3.5 mr-1" /> Activate
+                      </>
+                    ) : (
+                      "Activate"
+                    )}
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => openChainDialog({ chain })} title="Edit chain">
+                    <Pencil className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const WikiLibrary: React.FC = () => {
-  const { activeWikiId, setActiveWiki, refreshWikis, setActiveTab } = useApp();
+  const { activeWikiId, activeWikiIds, setActiveWiki, setActiveNeurons, refreshWikis, setActiveTab } = useApp();
   const { isPaid, loaded: planLoaded } = usePlan();
   const { user } = useAuth();
   const { isAdmin } = useIsAdmin();
@@ -81,7 +231,7 @@ const WikiLibrary: React.FC = () => {
   const [selected, setSelected] = useState<WikiWithStats | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [activeView, setActiveView] = useState<"wikis" | "suggestions">("wikis");
+  const [activeView, setActiveView] = useState<"wikis" | "chains" | "suggestions">("wikis");
   const [pendingCount, setPendingCount] = useState(0);
 
   // Cross-wiki semantic search state
@@ -324,9 +474,31 @@ const WikiLibrary: React.FC = () => {
     }
   };
 
+  const handleActivateChain = async (chain: NeuronChain) => {
+    // Wiki deletes cascade out of chain membership — validate against the
+    // live list so a shrunken/emptied chain can't false-succeed.
+    const liveIds = chain.wiki_ids.filter((id) => wikisWithStats.some((w) => w.id === id));
+    if (liveIds.length === 0) {
+      toast.error(`The neurons in "${chain.name}" have been deleted — edit or delete the chain.`);
+      return;
+    }
+    if (liveIds.some((id) => lockedIds.has(id))) {
+      openPricing("neuron-chains");
+      return;
+    }
+    try {
+      await setActiveNeurons(liveIds);
+      touchChainUsed(chain.id);
+      toast.success(`Activated chain "${chain.name}" — ${liveIds.length} neuron${liveIds.length === 1 ? "" : "s"} loaded`);
+      setActiveTab("chat");
+    } catch (err: any) {
+      toast.error(err.message || "Chain activation failed");
+    }
+  };
+
   const handleDelete = async (wiki: WikiWithStats) => {
-    if (wiki.id === activeWikiId) {
-      toast.error("Cannot delete the active neuron. Load another one first.");
+    if (activeWikiIds.includes(wiki.id) || wiki.id === activeWikiId) {
+      toast.error("Cannot delete a loaded neuron. Load another one first.");
       return;
     }
     if (!confirm(`Delete "${wiki.name}" and all ${wiki.entry_count} of its entries? This cannot be undone.`)) {
@@ -336,6 +508,9 @@ const WikiLibrary: React.FC = () => {
       await deleteWiki(wiki.id);
       toast.success("Neuron deleted");
       setSelected(null);
+      // Membership rows cascade away — refresh chain lists everywhere (the
+      // globally-mounted ⌘K switcher would otherwise hold dangling ids).
+      emitChainsChanged();
       await Promise.all([load(), refreshWikis()]);
     } catch (err: any) {
       toast.error(err.message || "Delete failed");
@@ -471,6 +646,19 @@ const WikiLibrary: React.FC = () => {
             )}
           </button>
           <button
+            onClick={() => setActiveView("chains")}
+            className={`px-4 py-3 text-sm font-bold transition-colors relative flex items-center gap-2 ${
+              activeView === "chains"
+                ? "text-primary"
+                : "text-on-surface-variant hover:text-foreground"
+            }`}
+          >
+            Chains
+            {activeView === "chains" && (
+              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-t" />
+            )}
+          </button>
+          <button
             onClick={() => setActiveView("suggestions")}
             className={`px-4 py-3 text-sm font-bold transition-colors relative flex items-center gap-2 ${
               activeView === "suggestions"
@@ -492,6 +680,13 @@ const WikiLibrary: React.FC = () => {
 
         {activeView === "suggestions" ? (
           <SuggestionsTab onChanged={loadPendingCount} />
+        ) : activeView === "chains" ? (
+          <ChainsSection
+            wikis={wikisWithStats}
+            activeWikiIds={activeWikiIds}
+            lockedIds={lockedIds}
+            onActivate={handleActivateChain}
+          />
         ) : isAdmin && scope === "all" ? (
           <AdminAllNeurons
             viewMode={viewMode}
