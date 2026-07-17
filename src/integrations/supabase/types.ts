@@ -1281,6 +1281,7 @@ export type Database = {
         Row: {
           access_all_neurons: boolean
           active_wiki_id: string | null
+          active_wiki_ids: string[]
           auto_extract_figures: boolean
           auto_read_replies: boolean
           burplexity_api_token: string | null
@@ -1318,6 +1319,7 @@ export type Database = {
         Insert: {
           access_all_neurons?: boolean
           active_wiki_id?: string | null
+          active_wiki_ids?: string[]
           auto_extract_figures?: boolean
           auto_read_replies?: boolean
           burplexity_api_token?: string | null
@@ -1355,6 +1357,7 @@ export type Database = {
         Update: {
           access_all_neurons?: boolean
           active_wiki_id?: string | null
+          active_wiki_ids?: string[]
           auto_extract_figures?: boolean
           auto_read_replies?: boolean
           burplexity_api_token?: string | null
@@ -1481,6 +1484,75 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      wiki_chain_members: {
+        Row: {
+          chain_id: string
+          created_at: string
+          position: number
+          wiki_id: string
+        }
+        Insert: {
+          chain_id: string
+          created_at?: string
+          position?: number
+          wiki_id: string
+        }
+        Update: {
+          chain_id?: string
+          created_at?: string
+          position?: number
+          wiki_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wiki_chain_members_chain_id_fkey"
+            columns: ["chain_id"]
+            isOneToOne: false
+            referencedRelation: "wiki_chains"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "wiki_chain_members_wiki_id_fkey"
+            columns: ["wiki_id"]
+            isOneToOne: false
+            referencedRelation: "wikis"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      wiki_chains: {
+        Row: {
+          cover_color: string
+          created_at: string
+          description: string
+          id: string
+          last_used_at: string | null
+          name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          cover_color?: string
+          created_at?: string
+          description?: string
+          id?: string
+          last_used_at?: string | null
+          name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          cover_color?: string
+          created_at?: string
+          description?: string
+          id?: string
+          last_used_at?: string | null
+          name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
       }
       wiki_health_alerts: {
         Row: {
