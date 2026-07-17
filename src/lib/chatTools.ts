@@ -9,7 +9,8 @@ import {
   IMAGE_ASPECT_RATIOS, type ChatImageRef,
 } from "@/lib/imageGen";
 import { fetchChains, touchChainUsed, emitChainsChanged, isChainsMigrationMissing, CHAINS_MIGRATION_MESSAGE } from "@/lib/chainsApi";
-import { MAX_ACTIVE_NEURONS } from "@/lib/neuronAccess";
+import { sessionActiveWikiIds } from "@/lib/wikisApi";
+import { MAX_ACTIVE_NEURONS, FREE_NEURON_LIMIT } from "@/lib/neuronAccess";
 import { OPEN_ACCESS } from "@/lib/openAccess";
 
 export interface ToolDeps {
@@ -73,7 +74,13 @@ async function getNeuronScope(): Promise<{ activeWikiId: string | null; activeWi
   let set: string[] = [];
   {
     const { data, error } = await supabase.from("user_settings").select("active_wiki_ids" as any).maybeSingle();
-    if (!error) set = (((data as any)?.active_wiki_ids as string[]) || []).filter(Boolean);
+    if (!error) {
+      set = (((data as any)?.active_wiki_ids as string[]) || []).filter(Boolean);
+    } else {
+      // Column missing (migration not applied): honor this session's
+      // multi-load so the tools' scope matches what the prompt promises.
+      set = sessionActiveWikiIds.current.slice();
+    }
   }
   if (activeWikiId && !set.includes(activeWikiId)) set = [activeWikiId, ...set];
   return {
@@ -866,7 +873,14 @@ export async function executeChatTool(
             conflict_id: c.id, kind: c.kind, status: c.status, rationale: c.rationale,
             entry_a: hydrate(c.entry_a), entry_b: hydrate(c.entry_b),
           }));
-        return { result: out, event: { name, summary: `Listed ${out.length} ${status} conflict(s)${activeWikiId ? " in active wiki" : ""}`, ok: true } };
+        const conflictScopeNote = allNeurons
+          ? " across all neurons"
+          : activeWikiIds.length > 1
+            ? ` across ${activeWikiIds.length} loaded neurons`
+            : activeWikiId
+              ? " in active wiki"
+              : "";
+        return { result: out, event: { name, summary: `Listed ${out.length} ${status} conflict(s)${conflictScopeNote}`, ok: true } };
       }
       case "get_conflict": {
         const id = String(args.conflict_id || "");
@@ -1009,26 +1023,14 @@ export async function executeChatTool(
         if (!wiki) return { result: { error: "Wiki not found" }, event: { name, summary: "Wiki not found", ok: false } };
         // Free plan: only the oldest neuron is unlocked — the AI must not be a
         // side door into locked ones (mirrors the BRAIN tab and ⌘K switcher).
-        // Admins bypass all plan gates (same rule as accessible_wiki_ids()).
-        const { data: isAdminData } = await supabase.rpc("is_admin" as any);
-        if (!isAdminData) {
-          const { data: sub } = await supabase.from("subscribers" as any).select("subscribed, plan").maybeSingle();
-          const paid = !!(sub as any)?.subscribed && (sub as any)?.plan !== "free";
-          if (!paid) {
-            const { data: oldest } = await supabase
-              .from("wikis" as any)
-              .select("id")
-              .order("created_at", { ascending: true })
-              .order("id", { ascending: true })
-              .limit(1)
-              .maybeSingle();
-            if (oldest && (oldest as any).id !== wid) {
-              return {
-                result: { error: `"${(wiki as any).name}" is locked on the free plan. Tell the user that upgrading to Pro or Lifetime unlocks all of their neurons.` },
-                event: { name, summary: `"${(wiki as any).name}" is locked on the free plan`, ok: false },
-              };
-            }
-          }
+        // One shared gate with set_active_neurons/activate_chain so the AI
+        // paths can never diverge (it honors OPEN_ACCESS and admin bypass).
+        const switchGateError = await checkNeuronPlanGate([wid]);
+        if (switchGateError) {
+          return {
+            result: { error: `"${(wiki as any).name}" is locked on the free plan. Tell the user that upgrading to Pro or Lifetime unlocks all of their neurons.` },
+            event: { name, summary: `"${(wiki as any).name}" is locked on the free plan`, ok: false },
+          };
         }
         // Switching replaces the whole loaded set with just this wiki — the
         // same semantics as every "Load" button in the UI.
@@ -1041,6 +1043,28 @@ export async function executeChatTool(
         const { data: userData } = await supabase.auth.getUser();
         const uid = userData.user?.id;
         if (!uid) return { result: { error: "Not signed in" }, event: { name, summary: "Not signed in", ok: false } };
+        // Mirror the UI's neuron-limit gate (WikiLibrary.handleNewWiki): the
+        // AI must not be a side door into creating — and auto-activating — a
+        // neuron that the free plan immediately locks. Dormant under
+        // OPEN_ACCESS; the DB trigger enforce_neuron_limit backstops anyway.
+        if (!OPEN_ACCESS) {
+          const { data: isAdminData } = await supabase.rpc("is_admin" as any);
+          if (!isAdminData) {
+            const { data: sub } = await supabase.from("subscribers" as any).select("subscribed, plan").maybeSingle();
+            const paid = !!(sub as any)?.subscribed && (sub as any)?.plan !== "free";
+            if (!paid) {
+              const { count } = await supabase
+                .from("wikis" as any)
+                .select("id", { count: "exact", head: true });
+              if ((count ?? 0) >= FREE_NEURON_LIMIT) {
+                return {
+                  result: { error: "The free plan includes one neuron. Tell the user that upgrading to Pro or Lifetime unlocks creating more neurons." },
+                  event: { name, summary: "Neuron limit reached on the free plan", ok: false },
+                };
+              }
+            }
+          }
+        }
         const { data, error } = await supabase.from("wikis" as any).insert({
           user_id: uid, name: wname, description: String(args.description || ""), tags: [],
         } as any).select().single();
@@ -1139,7 +1163,10 @@ export async function executeChatTool(
         const uid = userData.user?.id;
         if (!uid) return { result: { error: "Not signed in" }, event: { name, summary: "Not signed in", ok: false } };
         // Drop members whose neuron was deleted since the chain was saved.
-        const { data: found } = await supabase.from("wikis" as any).select("id, name").in("id", ids);
+        // (Propagate query failures — a transient error must not read as
+        // "all your neurons were deleted".)
+        const { data: found, error: foundErr } = await supabase.from("wikis" as any).select("id, name").in("id", ids);
+        if (foundErr) throw foundErr;
         const byId = new Map(((found as any[]) || []).map((w: any) => [w.id, w]));
         const liveIds = ids.filter((id) => byId.has(id));
         if (liveIds.length === 0) return { result: { error: `All neurons in chain "${chain.name}" have been deleted.` }, event: { name, summary: "Chain members deleted", ok: false } };

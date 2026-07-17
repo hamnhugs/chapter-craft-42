@@ -68,15 +68,27 @@ export async function fetchChains(): Promise<NeuronChain[]> {
   }));
 }
 
+// Add-then-prune (never delete-then-insert): if the write fails midway the
+// chain keeps its old members (or a superset) — never ends up emptied.
 async function replaceMembers(chainId: string, wikiIds: string[]): Promise<void> {
-  const { error: delErr } = await (supabase.from("wiki_chain_members" as any) as any)
-    .delete()
-    .eq("chain_id", chainId);
-  if (delErr) throw delErr;
-  if (wikiIds.length === 0) return;
-  const { error: insErr } = await (supabase.from("wiki_chain_members" as any) as any)
-    .insert(wikiIds.map((wiki_id, i) => ({ chain_id: chainId, wiki_id, position: i })));
-  if (insErr) throw insErr;
+  if (wikiIds.length > 0) {
+    const { error: upErr } = await (supabase.from("wiki_chain_members" as any) as any)
+      .upsert(
+        wikiIds.map((wiki_id, i) => ({ chain_id: chainId, wiki_id, position: i })),
+        { onConflict: "chain_id,wiki_id" },
+      );
+    if (upErr) throw upErr;
+    const { error: delErr } = await (supabase.from("wiki_chain_members" as any) as any)
+      .delete()
+      .eq("chain_id", chainId)
+      .not("wiki_id", "in", `(${wikiIds.join(",")})`);
+    if (delErr) throw delErr;
+  } else {
+    const { error: delErr } = await (supabase.from("wiki_chain_members" as any) as any)
+      .delete()
+      .eq("chain_id", chainId);
+    if (delErr) throw delErr;
+  }
 }
 
 export async function createChain(input: {

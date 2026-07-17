@@ -144,20 +144,34 @@ export async function fetchActiveWikiId(): Promise<string | null> {
 }
 
 /**
+ * The loaded set as this browser session sees it — kept in sync by
+ * AppContext. Lets the AI chat tools honor session-only multi-loads while
+ * the migration is missing (the DB then only knows the primary), so the
+ * prompt's "search spans all loaded neurons" claim stays true.
+ */
+export const sessionActiveWikiIds = { current: [] as string[] };
+
+/**
  * The loaded neuron set: primary + full ordered set. Two queries on purpose —
  * a combined select would 400 (taking active_wiki_id down with it) while the
- * active_wiki_ids column doesn't exist yet.
+ * active_wiki_ids column doesn't exist yet. setPersisted=false means the
+ * array column is missing (migration not applied) and `set` was derived from
+ * the primary alone.
  */
-export async function fetchActiveWikiIds(): Promise<{ primary: string | null; set: string[] }> {
+export async function fetchActiveWikiIds(): Promise<{ primary: string | null; set: string[]; setPersisted: boolean }> {
   const primary = await fetchActiveWikiId();
   let set: string[] = [];
+  let setPersisted = false;
   {
     const { data, error } = await supabase
       .from("user_settings")
       .select("active_wiki_ids" as any)
       .maybeSingle();
-    if (!error) set = (((data as any)?.active_wiki_ids as string[]) || []).filter(Boolean);
+    if (!error) {
+      setPersisted = true;
+      set = (((data as any)?.active_wiki_ids as string[]) || []).filter(Boolean);
+    }
   }
   if (primary && !set.includes(primary)) set = [primary, ...set];
-  return { primary: primary ?? set[0] ?? null, set };
+  return { primary: primary ?? set[0] ?? null, set, setPersisted };
 }

@@ -3,7 +3,7 @@ import { flushSync } from "react-dom";
 import { BookDocument, Chapter } from "@/types/library";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { Wiki, fetchWikis, fetchActiveWikiIds, loadWiki as loadWikiApi, loadWikiSet, createWiki } from "@/lib/wikisApi";
+import { Wiki, fetchWikis, fetchActiveWikiIds, loadWiki as loadWikiApi, loadWikiSet, createWiki, sessionActiveWikiIds } from "@/lib/wikisApi";
 import { MAX_ACTIVE_NEURONS } from "@/lib/neuronAccess";
 
 type TabId = "library" | "viewer" | "chat" | "wiki" | "wikis" | "settings" | "admin";
@@ -84,6 +84,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const commitActiveSet = useCallback((ids: string[]) => {
     activeWikiIdsRef.current = ids;
+    sessionActiveWikiIds.current = ids; // chat tools read this when the DB can't hold the set
     setActiveWikiId(ids[0] ?? null);
     setActiveWikiIds(ids);
   }, []);
@@ -114,12 +115,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (list.length === 0) {
         const created = await createWiki({ name: "My 1st Neuron", description: "Your default neuron — extracted knowledge lives here." });
         await loadWikiApi(created.id);
-        list = [created]; active = { primary: created.id, set: [created.id] };
+        list = [created]; active = { primary: created.id, set: [created.id], setPersisted: true };
       }
       // Self-heal: drop set members that no longer exist (deleted elsewhere;
       // active_wiki_ids has no FK, so dead ids can linger there). If the
       // primary itself is gone/null, promote the next loaded neuron — or fall
-      // back to the first wiki — and persist that repair.
+      // back to the first wiki. Persist any repair: the DB primary is what
+      // the AI tools and the ingest/extract edge functions write to, so a
+      // local-only heal would leave them targeting NULL/dead ids forever.
       const existing = new Set(list.map((w) => w.id));
       let set = active.set.filter((id) => existing.has(id));
       let primary = active.primary && existing.has(active.primary) ? active.primary : set[0] ?? null;
@@ -128,8 +131,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await loadWikiApi(fallback.id);
         primary = fallback.id;
         set = [fallback.id];
-      } else if (set[0] !== primary) {
-        set = [primary, ...set.filter((id) => id !== primary)];
+      } else {
+        if (set[0] !== primary) set = [primary, ...set.filter((id) => id !== primary)];
+        if (primary !== active.primary || set.length !== active.set.length) {
+          try { await loadWikiSet(set); } catch { /* best-effort — retried on next refresh */ }
+        }
+      }
+      // Pre-migration the array column can't persist the set — keep this
+      // session's extra loaded neurons instead of collapsing to the primary
+      // every time something unrelated triggers a refresh. (Post-migration
+      // setPersisted is true and the DB is authoritative.)
+      if (!active.setPersisted && activeWikiIdsRef.current[0] === primary) {
+        const extras = activeWikiIdsRef.current.filter((id) => existing.has(id) && !set.includes(id));
+        set = [...set, ...extras].slice(0, MAX_ACTIVE_NEURONS);
       }
       setWikis(list);
       commitActiveSet(set);

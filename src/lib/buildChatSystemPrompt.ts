@@ -78,7 +78,10 @@ export async function buildChatSystemPrompt({
   const usedMemories: UsedMemory[] = [];
 
   const namedNeurons = activeNeurons.filter((n) => n.name);
-  const activeWikiName = namedNeurons[0]?.name || null;
+  // The write target is ALWAYS activeNeurons[0] (the primary). When it's
+  // locked its name is blank — then make no active-wiki claim at all rather
+  // than promoting a secondary to "active" in the prompt.
+  const activeWikiName = activeNeurons[0]?.name || null;
   const scopeIds = activeNeurons.map((n) => n.id);
 
   if (customSystemPrompt && customSystemPrompt.trim()) {
@@ -97,7 +100,7 @@ export async function buildChatSystemPrompt({
     parts.push(`The user has enabled "Access all neurons": your knowledge retrieval and \`search_wiki\` span ALL of their wikis (neurons) at once${activeWikiName ? `, with "${activeWikiName}" as the active one where new knowledge is captured` : ""}. When you draw on retrieved knowledge, mention which wiki it came from when that helps.`);
   } else if (namedNeurons.length > 1) {
     const list = namedNeurons
-      .map((n, i) => (i === 0 ? `"${n.name}" (primary — new knowledge captured this session is saved here)` : `"${n.name}"`))
+      .map((n) => (n.id === activeNeurons[0]?.id ? `"${n.name}" (primary — new knowledge captured this session is saved here)` : `"${n.name}"`))
       .join(", ");
     parts.push(
       `The user has ${namedNeurons.length} neurons (knowledge wikis) LOADED TOGETHER: ${list}. Your knowledge retrieval and \`search_wiki\` span all of the loaded neurons — but not the user's other, unloaded neurons.`,
@@ -312,8 +315,18 @@ export async function buildChatSystemPrompt({
         knowledgeEntries = await fetchKnowledgeEntries(allNeurons ? null : scopeIds[0] ?? null).catch(() => []);
       } else {
         const lists = await Promise.all(scopeIds.map((id) => fetchKnowledgeEntries(id).catch(() => [])));
+        // Round-robin interleave so the downstream slice(0, 15) samples EVERY
+        // loaded neuron instead of just the primary's most-recent entries.
         const seen = new Set<string>();
-        knowledgeEntries = lists.flat().filter((e) => (seen.has(e.id) ? false : (seen.add(e.id), true)));
+        const interleaved: typeof knowledgeEntries = [];
+        const maxLen = Math.max(0, ...lists.map((l) => l.length));
+        for (let i = 0; i < maxLen; i++) {
+          for (const list of lists) {
+            const e = list[i];
+            if (e && !seen.has(e.id)) { seen.add(e.id); interleaved.push(e); }
+          }
+        }
+        knowledgeEntries = interleaved;
       }
       if (knowledgeEntries.length > 0) {
         parts.push("", "## Your Knowledge Wiki (fallback)");
