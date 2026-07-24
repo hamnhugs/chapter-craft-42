@@ -970,6 +970,88 @@ export type Database = {
           },
         ]
       }
+      master_assets: {
+        Row: {
+          assembly_tag: string
+          banned_traits: string[]
+          created_at: string
+          entry_id: string | null
+          front_azimuth_deg: number
+          hero_image_id: string | null
+          id: string
+          name: string
+          negative_constraints: string[]
+          palette: string[]
+          ref_embeddings: Json | null
+          splat_id: string | null
+          style_lock: string
+          tech_pack_text: string
+          updated_at: string
+          user_id: string
+          view_image_ids: string[]
+        }
+        Insert: {
+          assembly_tag?: string
+          banned_traits?: string[]
+          created_at?: string
+          entry_id?: string | null
+          front_azimuth_deg?: number
+          hero_image_id?: string | null
+          id?: string
+          name: string
+          negative_constraints?: string[]
+          palette?: string[]
+          ref_embeddings?: Json | null
+          splat_id?: string | null
+          style_lock?: string
+          tech_pack_text?: string
+          updated_at?: string
+          user_id: string
+          view_image_ids?: string[]
+        }
+        Update: {
+          assembly_tag?: string
+          banned_traits?: string[]
+          created_at?: string
+          entry_id?: string | null
+          front_azimuth_deg?: number
+          hero_image_id?: string | null
+          id?: string
+          name?: string
+          negative_constraints?: string[]
+          palette?: string[]
+          ref_embeddings?: Json | null
+          splat_id?: string | null
+          style_lock?: string
+          tech_pack_text?: string
+          updated_at?: string
+          user_id?: string
+          view_image_ids?: string[]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "master_assets_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "master_assets_hero_image_id_fkey"
+            columns: ["hero_image_id"]
+            isOneToOne: false
+            referencedRelation: "image_attachments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "master_assets_splat_id_fkey"
+            columns: ["splat_id"]
+            isOneToOne: false
+            referencedRelation: "splat_generations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       memory_graph: {
         Row: {
           created_at: string
@@ -1455,7 +1537,10 @@ export type Database = {
           video_default_duration: number | null
           video_default_resolution: string | null
           video_generate_audio: boolean | null
+          video_identity_scale: number | null
           video_model_primary: string | null
+          video_motion_model: string | null
+          video_qc_enabled: boolean | null
           vision_model: string | null
           voice_model: string | null
           wiki_model: string | null
@@ -1508,7 +1593,10 @@ export type Database = {
           video_default_duration?: number | null
           video_default_resolution?: string | null
           video_generate_audio?: boolean | null
+          video_identity_scale?: number | null
           video_model_primary?: string | null
+          video_motion_model?: string | null
+          video_qc_enabled?: boolean | null
           vision_model?: string | null
           voice_model?: string | null
           wiki_model?: string | null
@@ -1561,7 +1649,10 @@ export type Database = {
           video_default_duration?: number | null
           video_default_resolution?: string | null
           video_generate_audio?: boolean | null
+          video_identity_scale?: number | null
           video_model_primary?: string | null
+          video_motion_model?: string | null
+          video_qc_enabled?: boolean | null
           vision_model?: string | null
           voice_model?: string | null
           wiki_model?: string | null
@@ -1579,7 +1670,9 @@ export type Database = {
       video_generations: {
         Row: {
           aspect_ratio: string | null
+          assembly_instruction: string | null
           caption: string
+          condition_mode: string | null
           cost: number | null
           created_at: string
           duration_s: number | null
@@ -1587,12 +1680,22 @@ export type Database = {
           error: string | null
           has_audio: boolean | null
           id: string
+          identity_scale: number | null
           job_id: string
+          lock_palette: string[] | null
+          master_id: string | null
           mime: string
           model: string
+          motion_mode: string | null
+          motion_video_id: string | null
+          negative_constraints: string[] | null
           poster_path: string | null
           prompt: string
+          provider: string
+          qc: Json | null
           resolution: string | null
+          source_image_ids: string[] | null
+          source_splat_id: string | null
           status: string
           storage_path: string | null
           updated_at: string
@@ -1600,7 +1703,9 @@ export type Database = {
         }
         Insert: {
           aspect_ratio?: string | null
+          assembly_instruction?: string | null
           caption?: string
+          condition_mode?: string | null
           cost?: number | null
           created_at?: string
           duration_s?: number | null
@@ -1608,12 +1713,22 @@ export type Database = {
           error?: string | null
           has_audio?: boolean | null
           id?: string
+          identity_scale?: number | null
           job_id: string
+          lock_palette?: string[] | null
+          master_id?: string | null
           mime?: string
           model?: string
+          motion_mode?: string | null
+          motion_video_id?: string | null
+          negative_constraints?: string[] | null
           poster_path?: string | null
           prompt?: string
+          provider?: string
+          qc?: Json | null
           resolution?: string | null
+          source_image_ids?: string[] | null
+          source_splat_id?: string | null
           status?: string
           storage_path?: string | null
           updated_at?: string
@@ -1621,7 +1736,9 @@ export type Database = {
         }
         Update: {
           aspect_ratio?: string | null
+          assembly_instruction?: string | null
           caption?: string
+          condition_mode?: string | null
           cost?: number | null
           created_at?: string
           duration_s?: number | null
@@ -1629,12 +1746,22 @@ export type Database = {
           error?: string | null
           has_audio?: boolean | null
           id?: string
+          identity_scale?: number | null
           job_id?: string
+          lock_palette?: string[] | null
+          master_id?: string | null
           mime?: string
           model?: string
+          motion_mode?: string | null
+          motion_video_id?: string | null
+          negative_constraints?: string[] | null
           poster_path?: string | null
           prompt?: string
+          provider?: string
+          qc?: Json | null
           resolution?: string | null
+          source_image_ids?: string[] | null
+          source_splat_id?: string | null
           status?: string
           storage_path?: string | null
           updated_at?: string
@@ -1646,6 +1773,27 @@ export type Database = {
             columns: ["entry_id"]
             isOneToOne: false
             referencedRelation: "knowledge_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "video_generations_master_id_fkey"
+            columns: ["master_id"]
+            isOneToOne: false
+            referencedRelation: "master_assets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "video_generations_motion_video_id_fkey"
+            columns: ["motion_video_id"]
+            isOneToOne: false
+            referencedRelation: "video_generations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "video_generations_source_splat_id_fkey"
+            columns: ["source_splat_id"]
+            isOneToOne: false
+            referencedRelation: "splat_generations"
             referencedColumns: ["id"]
           },
         ]
