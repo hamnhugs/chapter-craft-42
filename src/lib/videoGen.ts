@@ -1,6 +1,10 @@
 import { supabase } from "@/integrations/supabase/client";
 import { reindexEmbeddings } from "@/lib/knowledgeApi";
-import { DEFAULT_VIDEO_MODEL } from "@/lib/videoCatalog";
+import { getSignedImageUrl } from "@/lib/imageGen";
+import {
+  DEFAULT_VIDEO_MODEL, providerSlugFor, negativePromptKey, identityScaleKey,
+  type VideoModel, type FrameImageType,
+} from "@/lib/videoCatalog";
 
 // Video generation via OpenRouter's async jobs API, billed to the user's own
 // OpenRouter key (same key as chat + image generation). Unlike images (a single
@@ -28,6 +32,23 @@ export interface ChatVideoRef {
 
 export type VideoStatus = "pending" | "processing" | "completed" | "failed";
 
+export type ConditionMode = "first_frame" | "reference" | "identity_lock";
+export type MotionMode = "text" | "motion_plate";
+
+/** Post-generation consistency scores logged on the row (advisory only). */
+export interface VideoQcResult {
+  qc_version: number;
+  model_id: string;
+  device: string;
+  frame_timestamps: number[];
+  ref_sim_mean: number | null;
+  ref_sim_min: number | null;
+  temporal_mean: number | null;
+  palette_delta_e: number | null;
+  verdict: "green" | "amber" | "red";
+  runtime_ms: number;
+}
+
 export interface VideoGenerationRow {
   id: string;
   user_id: string;
@@ -48,6 +69,128 @@ export interface VideoGenerationRow {
   error: string | null;
   created_at: string;
   updated_at?: string;
+  // Identity-conditioning columns (video_identity migration). Absent/null on
+  // rows created before the migration — every reader must tolerate undefined.
+  provider?: string;
+  source_image_ids?: string[] | null;
+  source_splat_id?: string | null;
+  master_id?: string | null;
+  condition_mode?: string | null;
+  motion_mode?: string | null;
+  motion_video_id?: string | null;
+  identity_scale?: number | null;
+  assembly_instruction?: string | null;
+  negative_constraints?: string[] | null;
+  lock_palette?: string[] | null;
+  qc?: VideoQcResult | null;
+}
+
+/** True when the identity-conditioning columns exist (migration applied).
+ *  Pure text-to-video works either way; identity features refuse cleanly
+ *  until the migration runs. */
+export async function videoIdentityMigrated(): Promise<boolean> {
+  try {
+    const { error } = await (supabase.from("video_generations" as any) as any)
+      .select("source_image_ids", { head: true, count: "exact" })
+      .limit(1);
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+// ── Source image resolution ─────────────────────────────────────────────────
+
+/** Resolve stored image ids into URLs OpenRouter's upstream providers can
+ *  fetch. Images live in a private bucket, so this signs time-limited URLs
+ *  (24h — far longer than a submit needs). Throws when any id is missing:
+ *  silently dropping an identity reference is exactly the failure mode this
+ *  feature exists to eliminate. */
+export async function resolveVideoSourceImages(imageIds: string[]): Promise<{
+  urls: string[];
+  ids: string[];
+}> {
+  const ids = imageIds.map((s) => String(s || "").trim()).filter(Boolean);
+  if (ids.length === 0) return { urls: [], ids: [] };
+  const { data, error } = await (supabase.from("image_attachments" as any) as any)
+    .select("id, storage_path")
+    .in("id", ids);
+  if (error) throw new Error(`Could not look up source images: ${error.message}`);
+  const byId = new Map<string, string>(
+    ((data as any[]) || []).map((r) => [r.id, r.storage_path]),
+  );
+  const urls: string[] = [];
+  for (const id of ids) {
+    const path = byId.get(id);
+    if (!path) throw new Error(`Image ${id} was not found (was it deleted?).`);
+    const signed = await getSignedImageUrl(path);
+    if (!signed) throw new Error(`Could not prepare image ${id} for generation.`);
+    urls.push(signed);
+  }
+  return { urls, ids };
+}
+
+// ── Provider passthrough (negatives + identity strength) ────────────────────
+
+export interface PassthroughPlan {
+  /** provider.options payload for the submit body, or null when nothing to send. */
+  providerOptions: Record<string, unknown> | null;
+  /** What was actually applied — surfaced to the model so it reports honestly. */
+  applied: { negative_prompt: boolean; identity_scale: boolean };
+  /** Human-readable notes for anything requested but NOT applicable. */
+  skipped: string[];
+}
+
+/** Build the provider.options passthrough for negatives + identity strength,
+ *  gated on the model's live allowed_passthrough_parameters. Negatives are
+ *  normalized to descriptive noun lists (Google's documented guidance: no
+ *  "no"/"don't" phrasing — instructive language is ignored). */
+export function buildPassthrough(opts: {
+  modelId: string;
+  catalogModel: Pick<VideoModel, "allowed_passthrough_parameters"> | null;
+  negatives?: string[];
+  identityScale?: number | null;
+}): PassthroughPlan {
+  const skipped: string[] = [];
+  const applied = { negative_prompt: false, identity_scale: false };
+  const slug = providerSlugFor(opts.modelId);
+  const params: Record<string, unknown> = {};
+
+  const negatives = (opts.negatives || [])
+    .map((n) => String(n || "").trim().replace(/^(no|don'?t|never|avoid)\s+/i, ""))
+    .filter(Boolean);
+
+  if (negatives.length > 0) {
+    const key = opts.catalogModel ? negativePromptKey(opts.catalogModel) : null;
+    if (key && slug) {
+      params[key] = negatives.join(", ").slice(0, 2000);
+      applied.negative_prompt = true;
+    } else {
+      skipped.push(`negative constraints (model "${opts.modelId}" exposes no negative-prompt parameter — enforce via QC instead)`);
+    }
+  }
+
+  const scale = typeof opts.identityScale === "number"
+    ? Math.min(1, Math.max(0, opts.identityScale))
+    : null;
+  if (scale != null) {
+    const key = opts.catalogModel ? identityScaleKey(opts.catalogModel) : null;
+    if (key && slug) {
+      params[key] = scale;
+      applied.identity_scale = true;
+    } else {
+      skipped.push(`identity_scale (model "${opts.modelId}" exposes no conditioning-strength parameter)`);
+    }
+  }
+
+  if (!slug || Object.keys(params).length === 0) {
+    return { providerOptions: null, applied, skipped };
+  }
+  return {
+    providerOptions: { options: { [slug]: { parameters: params } } },
+    applied,
+    skipped,
+  };
 }
 
 interface SubmitArgs {
@@ -59,6 +202,15 @@ interface SubmitArgs {
   aspectRatio?: string;
   generateAudio?: boolean;
   seed?: number;
+  /** Exact frame anchors ({url, frameType}). Core field — hard 400 when the
+   *  model's supported_frame_images doesn't include the type, so callers gate
+   *  first. */
+  frameImages?: Array<{ url: string; frameType: FrameImageType }>;
+  /** Multi-image identity pack URLs. NEVER combined with frameImages — when
+   *  both are present OpenRouter silently ignores input_references. */
+  inputReferences?: string[];
+  /** provider.options passthrough (from buildPassthrough). */
+  providerOptions?: Record<string, unknown> | null;
 }
 
 const orHeaders = (apiKey: string) => ({
@@ -71,6 +223,7 @@ const orHeaders = (apiKey: string) => ({
 /** Kick off a video generation job. Returns the OpenRouter job id. */
 export async function submitVideo({
   apiKey, model, prompt, duration, resolution, aspectRatio, generateAudio, seed,
+  frameImages, inputReferences, providerOptions,
 }: SubmitArgs): Promise<{ jobId: string }> {
   const body: Record<string, unknown> = { model: model || DEFAULT_VIDEO_MODEL, prompt };
   if (duration) body.duration = duration;
@@ -78,6 +231,24 @@ export async function submitVideo({
   if (aspectRatio) body.aspect_ratio = aspectRatio;
   if (typeof generateAudio === "boolean") body.generate_audio = generateAudio;
   if (typeof seed === "number") body.seed = seed;
+  // frame_images and input_references are mutually exclusive by policy:
+  // OpenRouter treats a request with both as image-to-video (frame_images
+  // wins, references silently ignored) — callers decide ONE conditioning mode.
+  if (frameImages && frameImages.length > 0) {
+    body.frame_images = frameImages.map((f) => ({
+      type: "image_url",
+      image_url: { url: f.url },
+      frame_type: f.frameType,
+    }));
+  } else if (inputReferences && inputReferences.length > 0) {
+    body.input_references = inputReferences.map((url) => ({
+      type: "image_url",
+      image_url: { url },
+    }));
+  }
+  if (providerOptions && Object.keys(providerOptions).length > 0) {
+    body.provider = providerOptions;
+  }
 
   const res = await fetch(`${OR_BASE}/videos`, {
     method: "POST",
@@ -101,6 +272,9 @@ export interface PollSnapshot {
   cost: number | null;
   error: string | null;
   ready: boolean;
+  /** 401/403: the KEY is bad, not the job. The clip may still be rendering
+   *  and billed — callers must NOT mark the row failed; fix the key + retry. */
+  authError?: boolean;
 }
 
 /** Poll a job's status. Never throws for normal not-ready states. */
@@ -109,10 +283,14 @@ export async function pollVideo(apiKey: string, jobId: string): Promise<PollSnap
     headers: orHeaders(apiKey),
   });
   if (!res.ok) {
-    // Terminal: the job is gone (404/410 purged or expired) or the key is
-    // rejected (401/403) — fail rather than polling forever. Other non-2xx
-    // (5xx, 429) are transient, so keep polling.
-    if (res.status === 404 || res.status === 410 || res.status === 401 || res.status === 403) {
+    // 401/403 is a KEY problem, not a job problem: stop polling but leave the
+    // row alone so the paid clip stays recoverable after the key is fixed.
+    if (res.status === 401 || res.status === 403) {
+      return { status: "failed", cost: null, error: "OpenRouter rejected the API key — the clip may still be rendering. Fix the key in Settings and press Try again.", ready: false, authError: true };
+    }
+    // Terminal: the job is gone (404/410 purged or expired) — fail rather
+    // than polling forever. Other non-2xx (5xx, 429) are transient.
+    if (res.status === 404 || res.status === 410) {
       return { status: "failed", cost: null, error: `Video job unavailable (HTTP ${res.status}).`, ready: false };
     }
     return { status: "processing", cost: null, error: null, ready: false };
@@ -140,8 +318,9 @@ export async function downloadVideoContent(apiKey: string, jobId: string, index 
 }
 
 /** Best-effort first-frame capture for a poster image. Returns null on failure
- *  (unsupported codec, no DOM) — callers fall back to the native first frame. */
-async function posterFromVideoBlob(blob: Blob): Promise<Blob | null> {
+ *  (unsupported codec, no DOM) — callers fall back to the native first frame.
+ *  Exported for the fal video path, which finalizes through the same bucket. */
+export async function posterFromVideoBlob(blob: Blob): Promise<Blob | null> {
   if (typeof document === "undefined") return null;
   return new Promise((resolve) => {
     let settled = false;
@@ -190,26 +369,63 @@ export async function insertPendingVideo(opts: {
   aspectRatio?: string | null;
   hasAudio?: boolean | null;
   estCost?: number | null;
+  /** Identity-conditioning linkage (video_identity migration). Only included
+   *  in the insert when set, so pure-text clips still insert cleanly on a
+   *  database without the migration. */
+  provider?: string;
+  sourceImageIds?: string[] | null;
+  sourceSplatId?: string | null;
+  masterId?: string | null;
+  conditionMode?: string | null;
+  motionMode?: string | null;
+  motionVideoId?: string | null;
+  identityScale?: number | null;
+  assemblyInstruction?: string | null;
+  negativeConstraints?: string[] | null;
+  lockPalette?: string[] | null;
 }): Promise<string | null> {
   const { data: userData } = await supabase.auth.getUser();
   const uid = userData.user?.id;
   if (!uid) throw new Error("Not signed in");
-  const { data, error } = await (supabase.from("video_generations" as any) as any)
-    .insert({
-      user_id: uid,
-      job_id: opts.jobId,
-      model: opts.model,
-      prompt: opts.prompt.slice(0, 2000),
-      caption: "",
-      duration_s: opts.durationS ?? null,
-      resolution: opts.resolution ?? null,
-      aspect_ratio: opts.aspectRatio ?? null,
-      has_audio: opts.hasAudio ?? null,
-      cost: opts.estCost ?? null,
-      status: "pending",
-    })
+  const row: Record<string, unknown> = {
+    user_id: uid,
+    job_id: opts.jobId,
+    model: opts.model,
+    prompt: opts.prompt.slice(0, 2000),
+    caption: "",
+    duration_s: opts.durationS ?? null,
+    resolution: opts.resolution ?? null,
+    aspect_ratio: opts.aspectRatio ?? null,
+    has_audio: opts.hasAudio ?? null,
+    cost: opts.estCost ?? null,
+    status: "pending",
+  };
+  const identityKeys: string[] = [];
+  const setIdent = (k: string, v: unknown) => { row[k] = v; identityKeys.push(k); };
+  if (opts.provider) setIdent("provider", opts.provider);
+  if (opts.sourceImageIds && opts.sourceImageIds.length > 0) setIdent("source_image_ids", opts.sourceImageIds);
+  if (opts.sourceSplatId) setIdent("source_splat_id", opts.sourceSplatId);
+  if (opts.masterId) setIdent("master_id", opts.masterId);
+  if (opts.conditionMode) setIdent("condition_mode", opts.conditionMode);
+  if (opts.motionMode && opts.motionMode !== "text") setIdent("motion_mode", opts.motionMode);
+  if (opts.motionVideoId) setIdent("motion_video_id", opts.motionVideoId);
+  if (typeof opts.identityScale === "number") setIdent("identity_scale", opts.identityScale);
+  if (opts.assemblyInstruction) setIdent("assembly_instruction", opts.assemblyInstruction.slice(0, 2000));
+  if (opts.negativeConstraints && opts.negativeConstraints.length > 0) setIdent("negative_constraints", opts.negativeConstraints);
+  if (opts.lockPalette && opts.lockPalette.length > 0) setIdent("lock_palette", opts.lockPalette);
+  const ins = () => (supabase.from("video_generations" as any) as any)
+    .insert({ ...row })
     .select("id")
     .single();
+  let { data, error } = await ins();
+  // The identity columns are newer than the base table. On a database without
+  // the video_identity migration, retry WITHOUT them so the pending row (which
+  // list_videos and reload-resume depend on) survives — e.g. a pure-text clip
+  // that merely carried negative_constraints must not lose its row.
+  if (error && identityKeys.length > 0) {
+    for (const k of identityKeys) delete row[k];
+    ({ data, error } = await ins());
+  }
   if (error) throw new Error(`Video record failed: ${error.message}`);
   return (data as any)?.id || null;
 }
@@ -231,12 +447,19 @@ export async function fetchVideoById(id: string): Promise<VideoGenerationRow | n
 }
 
 /** Create a memory neuron for a generated video (text-proxy embedding: prompt +
- *  model caption + duration). Mirrors saveImageNeuron. */
+ *  model caption + duration + identity linkage). Mirrors saveImageNeuron. */
 export async function saveVideoNeuron(opts: {
   prompt: string;
   caption: string;
   model: string;
   durationS?: number | null;
+  /** Identity linkage, persisted in the neuron text so recall knows which
+   *  master/sources a clip was locked to. */
+  sourceImageIds?: string[] | null;
+  sourceSplatId?: string | null;
+  masterId?: string | null;
+  conditionMode?: string | null;
+  motionMode?: string | null;
 }): Promise<string | null> {
   const { data: userData } = await supabase.auth.getUser();
   const uid = userData.user?.id;
@@ -247,11 +470,20 @@ export async function saveVideoNeuron(opts: {
     .maybeSingle();
   const wikiId = (settings as any)?.active_wiki_id || null;
   const shortPrompt = opts.prompt.length > 60 ? opts.prompt.slice(0, 57).trimEnd() + "…" : opts.prompt;
+  const identityConditioned = (opts.sourceImageIds?.length || 0) > 0 || !!opts.masterId || !!opts.sourceSplatId;
   const content = [
     `AI-generated video clip.`,
     `Prompt: ${opts.prompt}`,
     opts.caption && opts.caption !== opts.prompt ? `Description: ${opts.caption}` : "",
     `${opts.durationS ? `${opts.durationS}s ` : ""}clip generated with ${opts.model}.`,
+    identityConditioned
+      ? `Identity-locked clip${opts.conditionMode ? ` (${opts.conditionMode})` : ""}${opts.motionMode && opts.motionMode !== "text" ? `, motion: ${opts.motionMode}` : ""}.`
+      : "",
+    opts.masterId ? `Master asset: ${opts.masterId}` : "",
+    opts.sourceImageIds && opts.sourceImageIds.length > 0
+      ? `Source image id(s): ${opts.sourceImageIds.join(", ")}`
+      : "",
+    opts.sourceSplatId ? `Source splat id: ${opts.sourceSplatId}` : "",
   ].filter(Boolean).join("\n");
   const { data: entry, error } = await supabase
     .from("knowledge_entries")
@@ -260,7 +492,7 @@ export async function saveVideoNeuron(opts: {
       title: `Video: ${shortPrompt}`,
       content: content.slice(0, 4000),
       entry_type: "concept",
-      tags: ["video", "generated"],
+      tags: identityConditioned ? ["video", "generated", "identity-locked"] : ["video", "generated"],
       confidence: 0.9,
       ...(wikiId ? { wiki_id: wikiId } : {}),
     } as any)
@@ -341,6 +573,11 @@ export async function finalizeVideoJob(opts: {
         caption: existing.caption || "",
         model: existing.model,
         durationS: existing.duration_s,
+        sourceImageIds: existing.source_image_ids || null,
+        sourceSplatId: existing.source_splat_id || null,
+        masterId: existing.master_id || null,
+        conditionMode: existing.condition_mode || null,
+        motionMode: existing.motion_mode || null,
       });
     }
   }
@@ -372,16 +609,25 @@ export async function markVideoJobFailed(jobId: string, error: string): Promise<
 }
 
 export async function searchVideos(query: string | undefined, limit = 10): Promise<VideoGenerationRow[]> {
-  let q = (supabase.from("video_generations" as any) as any)
-    .select("id, job_id, entry_id, prompt, caption, model, storage_path, poster_path, duration_s, resolution, cost, status, created_at")
-    .order("created_at", { ascending: false })
-    .limit(Math.min(25, Math.max(1, limit)));
-  const trimmed = (query || "").trim();
-  if (trimmed) {
-    const safe = trimmed.replace(/[%,()]/g, " ");
-    q = q.or(`prompt.ilike.%${safe}%,caption.ilike.%${safe}%`);
-  }
-  const { data } = await q;
+  // Identity columns are newer — cascade to the legacy select if the migration
+  // hasn't been applied so list_videos never fails outright.
+  const buildQuery = (cols: string) => {
+    let q = (supabase.from("video_generations" as any) as any)
+      .select(cols)
+      .order("created_at", { ascending: false })
+      .limit(Math.min(25, Math.max(1, limit)));
+    const trimmed = (query || "").trim();
+    if (trimmed) {
+      const safe = trimmed.replace(/[%,()]/g, " ");
+      q = q.or(`prompt.ilike.%${safe}%,caption.ilike.%${safe}%`);
+    }
+    return q;
+  };
+  const LEGACY_COLS = "id, job_id, entry_id, prompt, caption, model, storage_path, poster_path, duration_s, resolution, cost, status, created_at";
+  const IDENTITY_COLS = `${LEGACY_COLS}, provider, source_image_ids, source_splat_id, master_id, condition_mode, motion_mode, qc`;
+  let { data, error } = await buildQuery(IDENTITY_COLS);
+  if (error) ({ data, error } = await buildQuery(LEGACY_COLS));
+  if (error) return [];
   return (data as VideoGenerationRow[]) || [];
 }
 

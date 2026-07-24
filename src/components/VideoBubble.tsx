@@ -2,11 +2,35 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import {
   fetchVideoByJobId, pollVideo, finalizeVideoJob, markVideoJobFailed,
-  getSignedVideoUrl, type ChatVideoRef, type VideoGenerationRow,
+  getSignedVideoUrl, resolveVideoSourceImages,
+  type ChatVideoRef, type VideoGenerationRow, type VideoQcResult,
 } from "@/lib/videoGen";
+import { isFalJobId, pollFalVideo, finalizeFalVideoJob } from "@/lib/falVideoGen";
 import { formatUSD } from "@/lib/videoCatalog";
 
 type Phase = "loading" | "generating" | "completed" | "failed" | "stopped";
+
+/** True when this clip was identity-conditioned and should get a QC pass. */
+const isIdentityClip = (row: VideoGenerationRow): boolean =>
+  !!(row.condition_mode || (row.motion_mode && row.motion_mode !== "text") || row.master_id
+     || (row.source_image_ids && row.source_image_ids.length > 0));
+
+const QC_DOT: Record<string, string> = {
+  green: "bg-emerald-500",
+  amber: "bg-amber-500",
+  red: "bg-red-500",
+};
+
+const qcTitle = (qc: VideoQcResult): string => {
+  const parts: string[] = [];
+  if (qc.ref_sim_mean != null) parts.push(`identity similarity ${qc.ref_sim_mean} (min ${qc.ref_sim_min})`);
+  if (qc.temporal_mean != null) parts.push(`temporal consistency ${qc.temporal_mean}`);
+  if (qc.palette_delta_e != null) parts.push(`palette drift ΔE ${qc.palette_delta_e}`);
+  const advice = qc.verdict === "green"
+    ? "Consistent with the locked identity."
+    : "Possible identity drift — consider regenerating with a higher identity_scale or a reference-capable model.";
+  return `Consistency check (advisory): ${parts.join(" · ")}. ${advice}`;
+};
 
 const POLL_MS = 4000;
 const MAX_ELAPSED_S = 900; // stop actively watching a job after 15 min
@@ -23,7 +47,7 @@ const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, 
  *  it downloads + stores the clip and swaps in a player. The `video_generations`
  *  row (keyed by job_id) is the source of truth, so a reload resumes correctly. */
 const VideoBubble: React.FC<{ video: ChatVideoRef }> = ({ video }) => {
-  const { apiKey, loaded } = useChatSettings();
+  const { apiKey, falApiKey, videoQcEnabled, loaded } = useChatSettings();
   const [phase, setPhase] = useState<Phase>("loading");
   const [url, setUrl] = useState<string | null>(null);
   const [posterUrl, setPosterUrl] = useState<string | null>(null);
@@ -32,21 +56,67 @@ const VideoBubble: React.FC<{ video: ChatVideoRef }> = ({ video }) => {
   const [cost, setCost] = useState<number | null>(null);
   const [savedToMemory, setSavedToMemory] = useState(false);
   const [retryable, setRetryable] = useState(false);
+  const [identityMode, setIdentityMode] = useState<string | null>(null);
+  const [qc, setQc] = useState<VideoQcResult | null>(null);
+  const [qcRunning, setQcRunning] = useState(false);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const busyRef = useRef(false);
   const mountedRef = useRef(true);
   const startRef = useRef(0);
+  const qcStartedRef = useRef(false);
+
+  // Motion-transfer / draft clips are fal queue jobs (job_id "fal:…") and
+  // poll/finalize with the fal key; everything else is an OpenRouter job.
+  const isFal = isFalJobId(video.job_id);
+  const activeKey = isFal ? falApiKey : apiKey;
 
   const stopTimers = useCallback(() => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
   }, []);
 
+  /** Post-completion consistency check — advisory, background, and strictly
+   *  best-effort: any failure just means no chip. Runs once per mount, only
+   *  for identity-conditioned clips, and never re-runs when scores exist. */
+  const maybeRunQc = useCallback(async (row: VideoGenerationRow, signedUrl: string) => {
+    if (row.qc) { qcStartedRef.current = true; setQc(row.qc); return; }
+    // Don't consult (or latch on) the QC toggle before settings actually load —
+    // the module default is `true`, and latching against it would either run a
+    // check the user disabled or permanently skip one they left enabled. The
+    // settings arrival re-runs init() → showCompleted → here.
+    if (!loaded) return;
+    if (qcStartedRef.current) return;
+    qcStartedRef.current = true;
+    if (videoQcEnabled === false || !isIdentityClip(row)) return;
+    const refIds = row.source_image_ids || [];
+    if (refIds.length === 0) return; // nothing to compare identity against
+    setQcRunning(true);
+    try {
+      const { urls } = await resolveVideoSourceImages(refIds);
+      // Lazy import: the DINOv2 embedder (~22-44 MB, CDN-cached) must never
+      // load for users who don't use identity video.
+      const { runVideoQc, writeQcResult } = await import("@/lib/videoQc");
+      const result = await runVideoQc({
+        videoUrl: signedUrl,
+        refImageUrls: urls,
+        lockPalette: row.lock_palette || null,
+      });
+      if (!mountedRef.current) return;
+      setQc(result);
+      void writeQcResult(row.job_id, result);
+    } catch (e) {
+      console.warn("[VideoBubble] QC skipped:", e);
+    } finally {
+      if (mountedRef.current) setQcRunning(false);
+    }
+  }, [videoQcEnabled, loaded]);
+
   const showCompleted = useCallback(async (row: VideoGenerationRow) => {
     stopTimers();
     setSavedToMemory(!!row.entry_id);
+    setIdentityMode(row.condition_mode || (row.motion_mode && row.motion_mode !== "text" ? row.motion_mode : null));
     const u = row.storage_path ? await getSignedVideoUrl(row.storage_path) : null;
     if (!mountedRef.current) return;
     if (typeof row.cost === "number") setCost(row.cost);
@@ -54,15 +124,21 @@ const VideoBubble: React.FC<{ video: ChatVideoRef }> = ({ video }) => {
       const p = await getSignedVideoUrl(row.poster_path);
       if (mountedRef.current && p) setPosterUrl(p);
     }
-    if (u) { setUrl(u); setPhase("completed"); }
+    if (u) {
+      setUrl(u);
+      setPhase("completed");
+      if (mountedRef.current) void maybeRunQc(row, u);
+    }
     else { setError("The clip was stored but could not be loaded."); setRetryable(true); setPhase("failed"); }
-  }, [stopTimers]);
+  }, [stopTimers, maybeRunQc]);
 
   const finalize = useCallback(async (snapCost?: number | null) => {
-    if (busyRef.current || !apiKey) return;
+    if (busyRef.current || !activeKey) return;
     busyRef.current = true;
     try {
-      const row = await finalizeVideoJob({ apiKey, jobId: video.job_id, cost: snapCost, model: video.model, prompt: video.prompt });
+      const row = isFal
+        ? await finalizeFalVideoJob({ apiKey: activeKey, jobId: video.job_id, model: video.model, prompt: video.prompt })
+        : await finalizeVideoJob({ apiKey: activeKey, jobId: video.job_id, cost: snapCost, model: video.model, prompt: video.prompt });
       await showCompleted(row);
     } catch (e: any) {
       if (!mountedRef.current) return;
@@ -73,10 +149,10 @@ const VideoBubble: React.FC<{ video: ChatVideoRef }> = ({ video }) => {
     } finally {
       busyRef.current = false;
     }
-  }, [apiKey, video.job_id, video.model, video.prompt, showCompleted, stopTimers]);
+  }, [activeKey, isFal, video.job_id, video.model, video.prompt, showCompleted, stopTimers]);
 
   const startPolling = useCallback(() => {
-    if (pollRef.current || !apiKey) return;
+    if (pollRef.current || !activeKey) return;
     setError("");
     setRetryable(false);
     setPhase("generating");
@@ -99,19 +175,29 @@ const VideoBubble: React.FC<{ video: ChatVideoRef }> = ({ video }) => {
     pollRef.current = setInterval(async () => {
       if (busyRef.current) return;
       try {
-        const snap = await pollVideo(apiKey, video.job_id);
+        const snap = isFal
+          ? await pollFalVideo(activeKey, { model: video.model, jobId: video.job_id })
+          : await pollVideo(activeKey, video.job_id);
         if (!mountedRef.current) return;
-        if (typeof snap.cost === "number") setCost(snap.cost);
+        const snapCost = (snap as any).cost;
+        if (typeof snapCost === "number") setCost(snapCost);
         if (snap.status === "completed") {
-          await finalize(snap.cost);
+          await finalize(typeof snapCost === "number" ? snapCost : null);
         } else if (snap.status === "failed") {
           stopTimers();
-          await markVideoJobFailed(video.job_id, snap.error || "Generation failed");
-          if (mountedRef.current) { setError(snap.error || "Generation failed"); setRetryable(false); setPhase("failed"); }
+          if (snap.authError) {
+            // The KEY is bad, not the job — the paid clip may still be
+            // rendering. Leave the row alone so it stays recoverable, and
+            // offer a retry for after the key is fixed.
+            if (mountedRef.current) { setError(snap.error || "The API key was rejected."); setRetryable(true); setPhase("failed"); }
+          } else {
+            await markVideoJobFailed(video.job_id, snap.error || "Generation failed");
+            if (mountedRef.current) { setError(snap.error || "Generation failed"); setRetryable(false); setPhase("failed"); }
+          }
         }
       } catch { /* transient network — keep polling */ }
     }, POLL_MS);
-  }, [apiKey, video.job_id, finalize, stopTimers]);
+  }, [activeKey, isFal, video.job_id, video.model, finalize, stopTimers]);
 
   const init = useCallback(async () => {
     const row = await fetchVideoByJobId(video.job_id);
@@ -121,16 +207,18 @@ const VideoBubble: React.FC<{ video: ChatVideoRef }> = ({ video }) => {
       if (row.status === "completed" && row.storage_path) { await showCompleted(row); return; }
       if (row.status === "failed") { setError(row.error || "Generation failed"); setRetryable(false); setPhase("failed"); return; }
     }
-    if (!apiKey) {
+    if (!activeKey) {
       // Settings load asynchronously — don't flash a false error before they do.
-      if (!loaded) return; // the effect re-runs when `loaded`/apiKey arrive
-      setError("Add your OpenRouter key in Settings to load this clip.");
+      if (!loaded) return; // the effect re-runs when `loaded`/key arrive
+      setError(isFal
+        ? "Add your fal.ai key in Settings to load this clip."
+        : "Add your OpenRouter key in Settings to load this clip.");
       setRetryable(false);
       setPhase("failed");
       return;
     }
     startPolling();
-  }, [video.job_id, apiKey, loaded, showCompleted, startPolling]);
+  }, [video.job_id, activeKey, isFal, loaded, showCompleted, startPolling]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -158,6 +246,27 @@ const VideoBubble: React.FC<{ video: ChatVideoRef }> = ({ video }) => {
         <figcaption className="mt-1 text-[11px] text-on-surface-variant/70 max-w-sm truncate">
           {video.prompt}{savedToMemory ? " · saved to memory" : ""}{cost != null ? ` · ${formatUSD(cost)}` : ""}
         </figcaption>
+        {(identityMode || qc || qcRunning) && (
+          <div className="mt-0.5 flex items-center gap-2 max-w-sm text-[10px] text-on-surface-variant/70">
+            {identityMode && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-surface-container-high/80 border border-outline-variant/20 px-1.5 py-px">
+                <span className="material-symbols-outlined text-[11px] leading-none">fingerprint</span>
+                {identityMode === "motion_plate" ? "motion transfer" : `identity lock (${identityMode})`}
+              </span>
+            )}
+            {qcRunning && <span className="opacity-70">checking consistency…</span>}
+            {qc && (
+              <span
+                className="inline-flex items-center gap-1 cursor-help"
+                title={qcTitle(qc)}
+              >
+                <span className={`inline-block h-1.5 w-1.5 rounded-full ${QC_DOT[qc.verdict] || "bg-outline-variant"}`} />
+                {qc.verdict === "green" ? "consistent" : qc.verdict === "amber" ? "some drift" : "identity drift"}
+                {qc.ref_sim_mean != null ? ` · ${qc.ref_sim_mean}` : ""}
+              </span>
+            )}
+          </div>
+        )}
       </figure>
     );
   }
@@ -171,7 +280,7 @@ const VideoBubble: React.FC<{ video: ChatVideoRef }> = ({ video }) => {
           <span className="font-medium">Video didn't finish</span>
         </div>
         <p className="text-[11px] text-on-surface-variant mt-1 break-words">{error || "The generation failed."}</p>
-        {retryable && apiKey && (
+        {retryable && activeKey && (
           <button
             onClick={() => { setRetryable(false); void init(); }}
             className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"

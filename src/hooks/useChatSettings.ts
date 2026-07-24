@@ -48,6 +48,9 @@ interface ChatSettings {
   videoDefaultAspect: string; // "" = auto
   videoGenerateAudio: boolean;
   videoConfirmThreshold: number; // USD estimate above which generate_video must be confirmed
+  videoIdentityScale: number; // default appearance-pinning strength (0-1) for identity-locked clips
+  videoQcEnabled: boolean; // run the client-side consistency check on identity-locked clips
+  videoMotionModel: string; // preferred fal motion-transfer endpoint ("" = default)
   /** 3D Gaussian splat generation (fal.ai). Billed to a SEPARATE fal key. */
   falApiKey: string;
   splatModelPrimary: string;
@@ -93,6 +96,9 @@ const defaults: ChatSettings = {
   videoDefaultAspect: "",
   videoGenerateAudio: true,
   videoConfirmThreshold: 1.0,
+  videoIdentityScale: 0.85,
+  videoQcEnabled: true,
+  videoMotionModel: "",
   falApiKey: "",
   splatModelPrimary: "",
   splatDefaultQuality: "standard",
@@ -193,6 +199,9 @@ function rowToSettings(data: any): ChatSettings {
     videoDefaultAspect: data.video_default_aspect || "",
     videoGenerateAudio: data.video_generate_audio !== false,
     videoConfirmThreshold: typeof data.video_confirm_threshold === "number" ? data.video_confirm_threshold : 1.0,
+    videoIdentityScale: typeof data.video_identity_scale === "number" ? data.video_identity_scale : 0.85,
+    videoQcEnabled: data.video_qc_enabled !== false,
+    videoMotionModel: data.video_motion_model || "",
     falApiKey: data.fal_api_key || "",
     splatModelPrimary: data.splat_model_primary || "",
     splatDefaultQuality: data.splat_default_quality || "standard",
@@ -269,6 +278,9 @@ function persistSettings(userId: string, next: ChatSettings) {
       video_default_aspect: next.videoDefaultAspect || null,
       video_generate_audio: next.videoGenerateAudio,
       video_confirm_threshold: next.videoConfirmThreshold,
+      video_identity_scale: next.videoIdentityScale,
+      video_qc_enabled: next.videoQcEnabled,
+      video_motion_model: next.videoMotionModel || null,
       fal_api_key: next.falApiKey || "",
       splat_model_primary: next.splatModelPrimary || null,
       splat_default_quality: next.splatDefaultQuality || null,
@@ -289,6 +301,7 @@ function persistSettings(userId: string, next: ChatSettings) {
     const optionalColumns = ["access_all_neurons", "image_extraction_model", "auto_extract_figures",
       "video_model_primary", "saved_video_models", "video_default_duration", "video_default_resolution",
       "video_default_aspect", "video_generate_audio", "video_confirm_threshold",
+      "video_identity_scale", "video_qc_enabled", "video_motion_model",
       "fal_api_key", "splat_model_primary", "splat_default_quality", "splat_max_file_mb",
       "splat_confirm_threshold", "splat_click_to_activate", "splat_monthly_quota", "splat_auto_fallback"];
     for (let pass = 0; error && pass < optionalColumns.length; pass++) {
@@ -401,6 +414,9 @@ export function useChatSettings() {
     setVideoDefaultAspect: (a: string) => update({ videoDefaultAspect: a }),
     setVideoGenerateAudio: (v: boolean) => update({ videoGenerateAudio: v }),
     setVideoConfirmThreshold: (n: number) => update({ videoConfirmThreshold: Math.max(0, Number(n) || 0) }),
+    setVideoIdentityScale: (n: number) => update({ videoIdentityScale: Math.min(1, Math.max(0, Number(n) || 0)) }),
+    setVideoQcEnabled: (v: boolean) => update({ videoQcEnabled: v }),
+    setVideoMotionModel: (m: string) => update({ videoMotionModel: m }),
     addVideoModel: (m: string) => {
       const id = m.trim(); if (!id) return;
       const cur = getSnapshot().settings;

@@ -17,6 +17,92 @@ export interface VideoModel {
   generate_audio: boolean | null;
   seed: boolean | null;
   pricing_skus: Record<string, string>;
+  /** Provider-passthrough parameter names this model accepts (live from the
+   *  catalog). Unrecognized passthrough keys are SILENTLY DROPPED by
+   *  OpenRouter, so features like negative prompts must gate on this list —
+   *  an error will never tell you the parameter was ignored. */
+  allowed_passthrough_parameters?: string[] | null;
+}
+
+export type FrameImageType = "first_frame" | "last_frame";
+
+/** Does this model accept a first/last-frame conditioning image? Core request
+ *  fields hard-fail with a 400 when unsupported (unlike passthrough), so the
+ *  client must gate on this before spending. */
+export function supportsFrameImage(
+  model: Pick<VideoModel, "supported_frame_images"> | null | undefined,
+  type: FrameImageType,
+): boolean {
+  return Array.isArray(model?.supported_frame_images)
+    && (model!.supported_frame_images as string[]).includes(type);
+}
+
+// Models whose upstream provider honors multi-image `input_references`
+// (identity packs). The catalog exposes NO structured flag for this — the
+// official cookbook says to confirm support per model — so this list is
+// curated from the providers' own model descriptions and must be revisited
+// when the catalog changes. maxRefs is the provider's documented cap (or a
+// conservative default where undocumented).
+const REFERENCE_CAPABLE: Record<string, { maxRefs: number }> = {
+  "bytedance/seedance-2.0": { maxRefs: 9 },       // "multimodal reference-to-video"
+  "bytedance/seedance-2.0-fast": { maxRefs: 9 },
+  "alibaba/wan-2.7": { maxRefs: 4 },              // multi-image reference-to-video
+  "x-ai/grok-imagine-video": { maxRefs: 7 },      // "up to seven reference images"
+  "x-ai/grok-imagine-video-1.5": { maxRefs: 7 },
+  "alibaba/happyhorse-1.1": { maxRefs: 4 },       // "a set of reference images"
+  "alibaba/happyhorse-1.0": { maxRefs: 4 },
+  "minimax/hailuo-2.3": { maxRefs: 4 },           // "accepts reference images"
+};
+
+export function supportsReferenceImages(modelId: string): boolean {
+  return modelId in REFERENCE_CAPABLE;
+}
+
+export function maxReferenceImages(modelId: string): number {
+  return REFERENCE_CAPABLE[modelId]?.maxRefs ?? 0;
+}
+
+/** Reference-capable model ids, cheapest-ish first — used in error messages so
+ *  the assistant can suggest a working alternative instead of dead-ending. */
+export function referenceCapableModelIds(): string[] {
+  return Object.keys(REFERENCE_CAPABLE);
+}
+
+// ── Provider passthrough (negative prompts, identity strength) ──────────────
+// Passthrough parameters ride under provider.options.<slug>.parameters. Only
+// `google-vertex` is documented by OpenRouter; the rest are the vendors'
+// OpenRouter provider slugs (GET /api/v1/providers). A wrong slug is a silent
+// no-op (documented), never an error — so applyPassthrough reports back what
+// it actually sent and the tool result surfaces that honestly.
+const VENDOR_SLUGS: Record<string, string> = {
+  google: "google-vertex", // documented
+  kwaivgi: "streamlake",   // Kuaishou's cloud brand on OpenRouter — unverified
+  alibaba: "alibaba",
+  minimax: "minimax",
+  "x-ai": "xai",
+  bytedance: "seed",
+  openai: "openai",
+};
+
+export function providerSlugFor(modelId: string): string | null {
+  const vendor = modelId.split("/")[0] || "";
+  return VENDOR_SLUGS[vendor] || null;
+}
+
+/** The passthrough key this model uses for a negative prompt, if any. */
+export function negativePromptKey(model: Pick<VideoModel, "allowed_passthrough_parameters">): string | null {
+  const allowed = model?.allowed_passthrough_parameters || [];
+  if (allowed.includes("negative_prompt")) return "negative_prompt";
+  if (allowed.includes("negativePrompt")) return "negativePrompt";
+  return null;
+}
+
+/** The passthrough key this model uses for identity/conditioning strength. */
+export function identityScaleKey(model: Pick<VideoModel, "allowed_passthrough_parameters">): string | null {
+  const allowed = model?.allowed_passthrough_parameters || [];
+  if (allowed.includes("conditioningScale")) return "conditioningScale"; // Veo
+  if (allowed.includes("cfg_scale")) return "cfg_scale";                 // Kling
+  return null;
 }
 
 // User's chosen default (confirmed available on OpenRouter). Google DeepMind's
@@ -72,11 +158,12 @@ export function resolutionToken(res?: string | null): string {
  *  treat null as "usage-based, typically pennies" rather than a hard cost. */
 export function estimatePerSecondUSD(
   model: Pick<VideoModel, "pricing_skus">,
-  opts: { resolution?: string | null; audio?: boolean } = {},
+  opts: { resolution?: string | null; audio?: boolean; imageInput?: boolean } = {},
 ): number | null {
   const skus = model?.pricing_skus || {};
   const resTok = resolutionToken(opts.resolution);
   const audio = opts.audio;
+  const imageInput = opts.imageInput === true;
   const RES_TOKENS = ["480p", "720p", "1080p", "1024p", "1k", "2k", "4k"];
 
   const entries = Object.entries(skus)
@@ -94,7 +181,10 @@ export function estimatePerSecondUSD(
     if (audio === true && /with_audio/.test(kl)) s += 1;
     if (audio === false && /without_audio/.test(kl)) s += 1;
     if (audio === true && /without_audio/.test(kl)) s -= 1;
-    if (/image_to_video/.test(kl)) s -= 1; // default is text-to-video
+    // Some providers price image-to-video on its own SKU (wan-2.6 charges ~25%
+    // more per second). Prefer the SKU matching how this clip is conditioned.
+    if (/image_to_video/.test(kl)) s += imageInput ? 2 : -2;
+    if (/text_to_video/.test(kl)) s += imageInput ? -2 : 2;
     return s;
   };
   if (durKeys.length) {
@@ -120,15 +210,33 @@ export function estimatePerSecondUSD(
   return null;
 }
 
+/** Flat per-input-image fee some providers bill on top of per-second output
+ *  (Grok: cents_per_image_input). 0 when the model doesn't charge one. */
+export function estimateImageInputFeeUSD(
+  model: Pick<VideoModel, "pricing_skus">,
+  imageCount: number,
+): number {
+  if (!imageCount) return 0;
+  const skus = model?.pricing_skus || {};
+  for (const [k, v] of Object.entries(skus)) {
+    if (/cents_per_image_input/i.test(k)) {
+      const cents = parseFloat(v);
+      if (Number.isFinite(cents)) return (cents / 100) * imageCount;
+    }
+  }
+  return 0;
+}
+
 /** Estimated USD cost of a clip. null => usage-based (typically very cheap). */
 export function estimateClipCostUSD(
   model: Pick<VideoModel, "pricing_skus">,
-  opts: { duration: number; resolution?: string | null; audio?: boolean },
+  opts: { duration: number; resolution?: string | null; audio?: boolean; imageInputCount?: number },
 ): number | null {
-  const perSec = estimatePerSecondUSD(model, opts);
+  const imageCount = Math.max(0, Number(opts.imageInputCount) || 0);
+  const perSec = estimatePerSecondUSD(model, { ...opts, imageInput: imageCount > 0 });
   if (perSec == null) return null;
   const dur = Math.max(1, Number(opts.duration) || 0);
-  return perSec * dur;
+  return perSec * dur + estimateImageInputFeeUSD(model, imageCount);
 }
 
 /** True when a model is token-priced (e.g. Seedance's video_tokens) — it has no

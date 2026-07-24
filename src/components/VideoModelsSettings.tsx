@@ -4,6 +4,7 @@ import {
   fetchVideoModels, FALLBACK_VIDEO_MODELS, DEFAULT_VIDEO_MODEL,
   clipCostLabel, type VideoModel,
 } from "@/lib/videoCatalog";
+import { FAL_VIDEO_MODELS, DEFAULT_MOTION_MODEL } from "@/lib/falVideoGen";
 import { Button } from "@/components/ui/button";
 
 const COMMON_ASPECTS = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"];
@@ -13,8 +14,10 @@ const VideoModelsSettings: React.FC = () => {
     videoModelPrimary, savedVideoModels,
     videoDefaultDuration, videoDefaultResolution, videoDefaultAspect,
     videoGenerateAudio, videoConfirmThreshold,
+    videoIdentityScale, videoQcEnabled, videoMotionModel,
     setVideoModelPrimary, setVideoDefaultDuration, setVideoDefaultResolution,
     setVideoDefaultAspect, setVideoGenerateAudio, setVideoConfirmThreshold,
+    setVideoIdentityScale, setVideoQcEnabled, setVideoMotionModel,
     addVideoModel, removeVideoModel,
   } = useChatSettings();
 
@@ -137,6 +140,56 @@ const VideoModelsSettings: React.FC = () => {
         {costLabel && (
           <span className="text-[11px] text-on-surface-variant tabular-nums" aria-live="polite">{costLabel}</span>
         )}
+      </div>
+
+      <div className="flex flex-col gap-3 pt-1 border-t border-outline-variant/15">
+        <div className="flex flex-col gap-1">
+          <h4 className="text-xs font-bold text-foreground">Identity lock</h4>
+          <p className="text-[11px] text-on-surface-variant">
+            When a clip is generated from a master asset or image, identity comes from the reference images.
+            These control how hard the look is pinned and whether a consistency check runs afterwards.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="video-identity-scale" className={labelCls}>
+              Identity strength — {videoIdentityScale.toFixed(2)}
+            </label>
+            <input
+              id="video-identity-scale"
+              type="range" min={0} max={1} step={0.05} value={videoIdentityScale}
+              onChange={(e) => setVideoIdentityScale(parseFloat(e.target.value))}
+              className="w-full accent-accent"
+            />
+            <span className="text-[10px] text-on-surface-variant px-1">
+              Higher = stricter look, slightly less motion. Mapped to each model's own knob where one exists.
+            </span>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="video-motion-model" className={labelCls}>Motion transfer model (fal key)</label>
+            <select id="video-motion-model" value={videoMotionModel} onChange={(e) => setVideoMotionModel(e.target.value)} className={selectCls}>
+              <option value="">Auto — {DEFAULT_MOTION_MODEL}</option>
+              {FAL_VIDEO_MODELS.filter((m) => m.kind === "motion").map((m) => (
+                <option key={m.id} value={m.id}>{m.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <button
+          type="button" role="switch" aria-checked={videoQcEnabled}
+          onClick={() => setVideoQcEnabled(!videoQcEnabled)}
+          className="flex items-center gap-2.5 text-left"
+        >
+          <span className={`relative w-10 h-6 rounded-full transition-colors flex-shrink-0 ${videoQcEnabled ? "bg-accent" : "bg-outline-variant/40"}`}>
+            <span className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${videoQcEnabled ? "translate-x-4" : "translate-x-0"}`} />
+          </span>
+          <span className="flex flex-col">
+            <span className="text-sm font-medium text-foreground">Consistency check on finished clips</span>
+            <span className="text-[10px] text-on-surface-variant">
+              Runs on your device (a small vision model downloads once, ~25-45 MB). Warns about identity drift — never blocks or deletes a clip.
+            </span>
+          </span>
+        </button>
       </div>
 
       <div className="flex flex-col gap-2">

@@ -113,6 +113,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const { apiKey, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, visionModel, imageModelPrimary, imageModelFallback,
     videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold,
+    videoIdentityScale, videoQcEnabled, videoMotionModel,
     falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback } = useChatSettings();
   const { isPaid, loaded: planLoaded } = usePlan();
   const { getActiveBodyForScope, migrate } = usePromptPresets();
@@ -602,6 +603,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               videoDefaultAspect,
               videoGenerateAudio,
               videoConfirmThreshold,
+              videoIdentityScale,
+              videoQcEnabled,
+              videoMotionModel,
               falApiKey,
               splatModelPrimary,
               splatDefaultQuality,
@@ -777,7 +781,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
       }
     },
-    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
+    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
   );
 
 

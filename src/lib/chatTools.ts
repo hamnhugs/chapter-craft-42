@@ -11,8 +11,47 @@ import {
 import {
   submitVideo, insertPendingVideo, fetchVideoById, searchVideos,
   deleteVideoGeneration, DEFAULT_VIDEO_MODEL, type ChatVideoRef,
+  videoIdentityMigrated, resolveVideoSourceImages, buildPassthrough,
+  getSignedVideoUrl,
 } from "@/lib/videoGen";
-import { fetchVideoModels, estimateClipCostUSD, isTokenPriced, formatUSD } from "@/lib/videoCatalog";
+import {
+  fetchVideoModels, estimateClipCostUSD, isTokenPriced, formatUSD,
+  supportsFrameImage, supportsReferenceImages, maxReferenceImages,
+  referenceCapableModelIds, type VideoModel,
+} from "@/lib/videoCatalog";
+import {
+  submitMotionTransfer, submitReferenceDraft, estimateFalVideoCostUSD,
+  getFalVideoModel, DEFAULT_MOTION_MODEL, DRAFT_RESOLUTIONS, hasInFlightFalVideo,
+} from "@/lib/falVideoGen";
+import {
+  mastersMigrated, resolveMaster, listMasterAssets, createMasterAsset,
+  updateMasterAsset, deleteMasterAsset, masterNegatives,
+  type MasterAssetRow,
+} from "@/lib/masterAssets";
+import { renderSplatViews } from "@/lib/splatViews";
+
+/** Best-effort reverse lookup: which master(s) reference these images/splats.
+ *  Returns empty maps when the master_assets migration isn't applied — the
+ *  list tools must keep working without it. */
+async function masterLinkageFor(): Promise<{
+  byImage: Map<string, string>;
+  bySplat: Map<string, string>;
+}> {
+  const byImage = new Map<string, string>();
+  const bySplat = new Map<string, string>();
+  try {
+    if (!(await mastersMigrated())) return { byImage, bySplat };
+    for (const m of await listMasterAssets()) {
+      const label = `@${m.name}`;
+      if (m.hero_image_id && !byImage.has(m.hero_image_id)) byImage.set(m.hero_image_id, `${label} (hero)`);
+      for (const v of m.view_image_ids || []) {
+        if (v && !byImage.has(v)) byImage.set(v, `${label} (view)`);
+      }
+      if (m.splat_id && !bySplat.has(m.splat_id)) bySplat.set(m.splat_id, label);
+    }
+  } catch { /* advisory linkage only */ }
+  return { byImage, bySplat };
+}
 import {
   submitSplat, insertPendingSplat, fetchSplatById, searchSplats,
   deleteSplatGeneration, resolveSourceImageUrl, hasInFlightSplat,
@@ -50,6 +89,12 @@ export interface ToolDeps {
   videoGenerateAudio?: boolean;
   /** Estimated-cost (USD) above which generate_video must be confirmed. */
   videoConfirmThreshold?: number;
+  /** Default identity-pinning strength (0-1) for image-conditioned video. */
+  videoIdentityScale?: number;
+  /** Run the client-side consistency scorer on identity-conditioned clips. */
+  videoQcEnabled?: boolean;
+  /** Preferred fal motion-transfer endpoint for motion_plate clips. */
+  videoMotionModel?: string;
   /** fal.ai key — 3D splat generation bills to this, NOT the OpenRouter key. */
   falApiKey?: string;
   splatModelPrimary?: string;
@@ -597,13 +642,26 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "generate_video",
       description:
-        "Generate a short AI VIDEO clip from a text prompt and show it to the user inline as a live 'generating…' card that fills in when the clip is ready (generation takes ~30s to a few minutes). By default the clip is saved to memory as a video neuron. Video is billed PER SECOND to the user's OpenRouter key and is MUCH more expensive than an image (a few cents up to several dollars) — keep clips short, match the length/resolution to what the user asked, and prefer the default fast model unless the user asks for another. If the estimated cost exceeds the user's threshold the tool refuses until you confirm the exact cost with the user and call again with confirm:true. Use when the user asks for a video, clip, animation, or a moving/animated version of something.",
+        "Generate a short AI VIDEO clip, shown inline as a live 'generating…' card that fills in when ready (~30s to a few minutes). Saved to memory as a video neuron by default. Billed PER SECOND to the user's OpenRouter key (motion transfer / draft tier bill to the fal key instead) — keep clips short and prefer the default fast model. IDENTITY LOCK (critical): when the user wants to animate an EXISTING character/asset — anything with a master asset, generated image, or splat — you MUST pass master_id or image_id instead of re-describing it in text. Text prompts CANNOT hold a character's identity; the reference images do. With any identity input attached, write the prompt as MOTION + CAMERA ONLY (e.g. 'walks forward, slow push-in'), ONE motion verb per clip (walk OR wave OR turn — stacked actions cause redesign drift), and NEVER re-describe the character's appearance (appearance text fights the image conditioning). If a master exists for the subject, refuse to generate from pure text unless the user explicitly says to ignore the master. If the estimated cost exceeds the user's threshold the tool refuses until you confirm the exact cost with the user and call again with confirm:true. After submitting, report to the user: which master/source images were used, the condition_mode, identity_scale, and that a consistency check runs when the clip completes.",
       parameters: {
         type: "object",
         properties: {
-          prompt: { type: "string", description: "Detailed description of the video: subject, motion, camera movement, style, mood." },
-          model: { type: "string", description: "Optional OpenRouter video model id (e.g. google/veo-3.1-fast, openai/sora-2-pro, minimax/hailuo-2.3). Defaults to the user's chosen video model." },
-          duration: { type: "integer", description: "Clip length in seconds; snapped to the model's allowed lengths. Keep short (default ~6s) to control cost." },
+          prompt: { type: "string", description: "With identity inputs: MOTION + CAMERA only, one motion verb ('turns slowly to the right, camera orbits'). Without identity inputs: full scene description." },
+          master_id: { type: "string", description: "PREFERRED. Master asset id or @name (from list_master_assets). Auto-loads its hero image, multi-view pack, assembly tag, negative constraints, and palette." },
+          image_id: { type: "string", description: "Identity/first-frame source image (from generate_image / list_images). Use when no master exists." },
+          image_url: { type: "string", description: "Public http(s) image URL as the identity source, if the user supplied one directly." },
+          reference_image_ids: { type: "array", items: { type: "string" }, description: "Up to 4 image ids forming a multi-view identity pack (front, 3/4, side, back). Requires a reference-capable model." },
+          splat_id: { type: "string", description: "A 3D splat as the identity source: consistent multi-view stills are rendered from it automatically and used as the reference pack (honest path — the splat itself is not animated)." },
+          condition_mode: { type: "string", enum: ["identity_lock", "first_frame", "reference"], description: "identity_lock (default) auto-picks the strongest mode the model supports. first_frame = exact composition anchor. reference = multi-image identity pack." },
+          identity_scale: { type: "number", description: "0-1, how hard to pin appearance (default from user settings, 0.85). Mapped to the model's own knob (Veo conditioningScale, Kling cfg_scale); reported as skipped when the model has none." },
+          assembly_instruction: { type: "string", description: "ONE short discriminative tag matching the references ('the teal-and-white cartoon robot'). Kept short BY DESIGN — long appearance prose fights image conditioning. Defaults from the master." },
+          negative_constraints: { type: "array", items: { type: "string" }, description: "Hard bans as descriptive noun phrases ('extra limbs', 'new panels', 'palette shift') — never 'no X' phrasing. Sent via the model's negative-prompt parameter when it has one; enforced by the QC check otherwise." },
+          lock_palette: { type: "array", items: { type: "string" }, description: "Hex colors (#RRGGBB) the clip must stay inside — drives the post-generation palette-drift score. Defaults from the master." },
+          motion_mode: { type: "string", enum: ["text", "motion_plate"], description: "motion_plate = transfer kinematics from a driving video (motion_video_id) onto the identity image, via the user's fal key. The driving clip must show a HUMAN performer, unoccluded, head + upper body visible." },
+          motion_video_id: { type: "string", description: "video_id (from list_videos) of the driving clip for motion_plate." },
+          tier: { type: "string", enum: ["standard", "draft"], description: "draft = cheap flat-priced reference clip (~$0.10-0.30, Vidu Q2 on the fal key) for iterating on identity before a premium render. Requires reference images." },
+          model: { type: "string", description: "Optional OpenRouter video model id (e.g. google/veo-3.1-fast). For identity work the tool validates the model supports the requested conditioning and errors with alternatives if not." },
+          duration: { type: "integer", description: "Clip length in seconds; snapped to the model's allowed lengths. Keep short (5-8s holds identity best)." },
           resolution: { type: "string", description: "e.g. 720p, 1080p, 4K. Defaults to a cost-efficient option the model supports." },
           aspect_ratio: { type: "string", description: "e.g. 16:9, 9:16, 1:1. Optional." },
           generate_audio: { type: "boolean", description: "Generate native audio (default true for models that support it)." },
@@ -718,6 +776,73 @@ export const CHAT_TOOL_DEFINITIONS = [
           confirm: { type: "boolean", description: "Must be true — proof the user just approved this exact deletion." },
         },
         required: ["splat_id", "confirm"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "render_splat_views",
+      description:
+        "Render consistent multi-view stills (turntable) from a generated 3D splat — FREE, runs on the user's GPU in ~5-15s, no API spend. Each view is saved as an image with an image_id, so the set works as a multi-view identity pack for generate_video (reference_image_ids) or as a master asset's view pack. Default set: front, three_quarter, side, back — the back view matters most (video models hallucinate turnarounds without one). This is the honest splat→video path: the splat itself is never animated; it contributes geometry-consistent reference stills.",
+      parameters: {
+        type: "object",
+        properties: {
+          splat_id: { type: "string", description: "The id from list_splats (must be a completed splat)." },
+          views: { type: "array", items: { type: "string", enum: ["front", "three_quarter", "side", "back", "three_quarter_left", "side_left"] }, description: "Which views to render. Default: front, three_quarter, side, back." },
+          resolution: { type: "integer", description: "Square output size in px (512-1024, default 768)." },
+          attach_to_master: { type: "string", description: "Optional master id or @name — the rendered views are appended to that master's identity pack." },
+        },
+        required: ["splat_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "lock_master_asset",
+      description:
+        "Lock an image and/or splat as a named MASTER ASSET — the single source of truth for a character/asset's identity. Use when the user says 'lock this as the master', 'save this character', or approves a design. Once locked, generate_video takes master_id (or @name) and auto-loads the hero image, multi-view pack, assembly tag, negative constraints, and palette — the user never has to re-describe the character. Free (writes a record + an Asset Factory neuron; if a splat is given without views, a 4-view pack is rendered from it on the user's GPU). Keep assembly_tag SHORT ('the teal-and-white cartoon robot') — it goes into prompts, and long appearance text fights image conditioning; put full construction details in tech_pack instead.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Handle for @name references (2-40 chars: letters, digits, - or _). E.g. 'robby'." },
+          hero_image_id: { type: "string", description: "The canonical hero image (from generate_image / list_images). Required unless splat_id is given." },
+          splat_id: { type: "string", description: "Optional 3D splat. A 4-view reference pack is auto-rendered from it unless view_image_ids are supplied." },
+          view_image_ids: { type: "array", items: { type: "string" }, description: "Optional multi-view pack image ids (front, 3/4, side, back)." },
+          assembly_tag: { type: "string", description: "ONE short discriminative identity tag used in prompts. Keep under ~15 words." },
+          tech_pack: { type: "string", description: "Full technical spec (body construction, materials, joints, eye type…). Stored for QC and the Asset Factory neuron; NOT injected into prompts." },
+          negative_constraints: { type: "array", items: { type: "string" }, description: "Hard bans as noun phrases ('second design language', 'new panels', 'proportion drift', 'extra limbs')." },
+          banned_traits: { type: "array", items: { type: "string" }, description: "Traits this character must never have ('antenna', 'tracks')." },
+          palette: { type: "array", items: { type: "string" }, description: "Locked palette as hex (#RRGGBB)." },
+          style_lock: { type: "string", enum: ["vector", "soft_3d", "live_action", "custom"], description: "Rendering style family. Default custom." },
+        },
+        required: ["name"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_master_assets",
+      description:
+        "List the user's locked master assets: master_id, @name, assembly tag, whether each has a hero image / view pack / splat, palette and negative constraints. ALWAYS check this before generating character video — if a master exists for the subject, pass its master_id to generate_video instead of describing the character in text.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_master_asset",
+      description:
+        "Delete a master asset bundle (the record only — its hero image, views, splat and neuron are NOT deleted). DESTRUCTIVE: paraphrase the master (@name) back to the user, get a clear 'yes', then call with confirm:true. Honors per-tool permissions in Settings.",
+      parameters: {
+        type: "object",
+        properties: {
+          master_id: { type: "string", description: "The id (or @name) from list_master_assets." },
+          confirm: { type: "boolean", description: "Must be true — proof the user just approved this exact deletion." },
+        },
+        required: ["master_id", "confirm"],
       },
     },
   },
@@ -1620,12 +1745,14 @@ export async function executeChatTool(
       case "list_images": {
         const limit = Math.min(25, Math.max(1, Number(args.limit) || 10));
         const rows = await searchImages(args.query ? String(args.query) : undefined, limit);
+        const { byImage } = await masterLinkageFor();
         const out = rows.map((r) => ({
           image_id: r.id,
           prompt: (r.prompt || "").slice(0, 200),
           caption: (r.caption || "").slice(0, 200),
           entry_id: r.entry_id,
           created_at: r.created_at,
+          ...(byImage.has(r.id) ? { master: byImage.get(r.id) } : {}),
         }));
         return { result: out, event: { name, summary: `Listed ${out.length} image(s)${args.query ? ` matching "${String(args.query).slice(0, 40)}"` : ""}`, ok: true } };
       }
@@ -1728,19 +1855,15 @@ export async function executeChatTool(
         }
       }
       case "generate_video": {
-        const apiKey = (deps.openRouterApiKey || "").trim();
-        if (!apiKey) {
-          return { result: { error: "OpenRouter API key not configured — ask the user to add one in Settings." }, event: { name, summary: "OpenRouter key missing", ok: false } };
-        }
         if (deps.isPaid === false) {
           return { result: { error: "Video generation is a Pro feature. Tell the user that upgrading to Pro or Lifetime unlocks it." }, event: { name, summary: "Video generation is a Pro feature", ok: false } };
         }
         const prompt = String(args.prompt || "").trim();
         if (!prompt) return { result: { error: "prompt required" }, event: { name, summary: "Missing prompt", ok: false } };
 
-        // Pre-flight: don't spend on OpenRouter if the video tables/bucket aren't
-        // migrated yet (Lovable doesn't auto-run migrations). Refuse cleanly so
-        // the user isn't billed for a clip that can't be stored or shown.
+        // Pre-flight: don't spend if the video tables/bucket aren't migrated
+        // yet (Lovable doesn't auto-run migrations). Refuse cleanly so the
+        // user isn't billed for a clip that can't be stored or shown.
         {
           const { error: capErr } = await (supabase.from("video_generations" as any) as any)
             .select("id", { head: true, count: "exact" }).limit(1);
@@ -1752,14 +1875,341 @@ export async function executeChatTool(
           }
         }
 
+        // ── Identity inputs (explicit args override the master's bundle) ────
+        const motionMode = String(args.motion_mode || "text").trim();
+        const tierArg = String(args.tier || "standard").trim();
+        const refIdsArg: string[] = Array.isArray(args.reference_image_ids)
+          ? args.reference_image_ids.map((s: any) => String(s || "").trim()).filter(Boolean).slice(0, 4)
+          : [];
+        const wantsIdentity = !!(args.master_id || args.image_id || args.image_url || args.splat_id
+          || refIdsArg.length > 0 || motionMode === "motion_plate" || tierArg === "draft");
+
+        // Identity features need their migration; pure text-to-video does not.
+        if (wantsIdentity && !(await videoIdentityMigrated())) {
+          return {
+            result: { error: "Identity-conditioned video isn't set up yet — the video_identity SQL migration hasn't been applied (plain text-to-video still works). Tell the user to run it in Supabase, then try again." },
+            event: { name, summary: "Identity migration not applied", ok: false },
+          };
+        }
+
+        let master: MasterAssetRow | null = null;
+        if (args.master_id) {
+          if (!(await mastersMigrated())) {
+            return {
+              result: { error: "Master assets aren't set up yet — the master_assets SQL migration hasn't been applied. Tell the user to run it in Supabase. Meanwhile you can pass image_id / reference_image_ids directly." },
+              event: { name, summary: "Master assets not migrated yet", ok: false },
+            };
+          }
+          master = await resolveMaster(String(args.master_id));
+          if (!master) {
+            return {
+              result: { error: `No master asset "${String(args.master_id)}" found. Use list_master_assets to see what exists, or lock_master_asset to create one.` },
+              event: { name, summary: "Master asset not found", ok: false },
+            };
+          }
+        }
+
+        const heroImageId: string | null = String(args.image_id || "").trim() || master?.hero_image_id || null;
+        const heroImageUrlDirect: string | null = String(args.image_url || "").trim() || null;
+        if (heroImageUrlDirect && !/^https?:\/\//i.test(heroImageUrlDirect)) {
+          return { result: { error: "image_url must be an http(s) URL." }, event: { name, summary: "Bad image_url", ok: false } };
+        }
+        const refIds: string[] = refIdsArg.length > 0 ? refIdsArg : (master?.view_image_ids || []);
+        const splatId: string | null = String(args.splat_id || "").trim() || master?.splat_id || null;
+        const masterId = master?.id || null;
+
+        const negatives: string[] = [
+          ...(Array.isArray(args.negative_constraints)
+            ? args.negative_constraints
+            : typeof args.negative_constraints === "string" && args.negative_constraints.trim()
+              ? [args.negative_constraints]
+              : []),
+          ...(master ? masterNegatives(master) : []),
+        ].map((s: any) => String(s || "").trim()).filter(Boolean)
+          .filter((s: string, i: number, a: string[]) => a.indexOf(s) === i).slice(0, 20);
+        const lockPalette: string[] = (Array.isArray(args.lock_palette) && args.lock_palette.length > 0
+          ? args.lock_palette : (master?.palette || []))
+          .map((s: any) => String(s || "").trim()).filter(Boolean).slice(0, 12);
+        const assemblyTag = (String(args.assembly_instruction || "").trim() || master?.assembly_tag || "").slice(0, 300);
+        const identityScale = typeof args.identity_scale === "number"
+          ? Math.min(1, Math.max(0, args.identity_scale))
+          : (typeof deps.videoIdentityScale === "number" ? deps.videoIdentityScale : 0.85);
+        const threshold = typeof deps.videoConfirmThreshold === "number" ? deps.videoConfirmThreshold : 1.0;
+
+        // ── Branch 1: motion transfer (fal key — OpenRouter has no driving-video path) ──
+        if (motionMode === "motion_plate") {
+          const falKey = (deps.falApiKey || "").trim();
+          if (!falKey) {
+            return {
+              result: { error: "Motion transfer bills to a fal.ai key (separate from OpenRouter), and none is set. Tell the user to add one in Settings → 3D models." },
+              event: { name, summary: "No fal.ai key for motion transfer", ok: false },
+            };
+          }
+          const motionVideoId = String(args.motion_video_id || "").trim();
+          if (!motionVideoId) {
+            return {
+              result: { error: "motion_plate needs motion_video_id — a stored clip (see list_videos) of a HUMAN performing the motion (unoccluded, head and upper body visible). The character's identity comes from the master/image; the clip only supplies kinematics." },
+              event: { name, summary: "Missing motion_video_id", ok: false },
+            };
+          }
+          const driver = await fetchVideoById(motionVideoId);
+          if (!driver || driver.status !== "completed" || !driver.storage_path) {
+            return { result: { error: "That driving clip wasn't found or isn't finished yet." }, event: { name, summary: "Driving clip unavailable", ok: false } };
+          }
+          // One paid fal job at a time (fal keys have no spend ceiling) —
+          // same cross-tab rail the splat path uses.
+          try {
+            if (await hasInFlightFalVideo()) {
+              return {
+                result: { error: "A fal-billed video is already generating. Wait for it to finish before starting another." },
+                event: { name, summary: "A fal video is already in flight", ok: false },
+              };
+            }
+          } catch { /* if the check itself fails, fall through rather than block */ }
+          let motionModel = String(args.model || "").trim();
+          if (!getFalVideoModel(motionModel) || getFalVideoModel(motionModel)?.kind !== "motion") {
+            motionModel = (deps.videoMotionModel && getFalVideoModel(deps.videoMotionModel)?.kind === "motion")
+              ? deps.videoMotionModel : DEFAULT_MOTION_MODEL;
+          }
+          const mInfo = getFalVideoModel(motionModel)!;
+          // The output length follows the DRIVER clip. Reconstructed rows can
+          // have duration_s null — unknown length means unknown price AND an
+          // unverifiable driving-length cap, so it must fail safe to explicit
+          // confirmation instead of assuming the cheapest case.
+          const knownDuration = typeof driver.duration_s === "number" && driver.duration_s > 0
+            ? driver.duration_s : null;
+          const cap = mInfo.maxDrivingSeconds || 30;
+          if (knownDuration != null && knownDuration > cap) {
+            return {
+              result: { error: `The driving clip is ${knownDuration}s but ${motionModel} caps driving video at ${cap}s. Use a shorter clip${motionModel === DEFAULT_MOTION_MODEL ? "" : ` or the default ${DEFAULT_MOTION_MODEL} (30s cap)`}.` },
+              event: { name, summary: "Driving clip too long", ok: false },
+            };
+          }
+          if (knownDuration == null && args.confirm !== true) {
+            return {
+              result: {
+                needs_confirmation: true, model: motionModel,
+                error: `The driving clip's length isn't recorded, so I can't estimate the cost (billed per output second to the user's fal.ai key, up to ~${formatUSD((mInfo.perSecondUSD || 0.126) * cap)} at the ${cap}s cap) or verify it fits the model's ${cap}s driving limit. Tell the user this and only recall with confirm:true after they accept the unknown cost.`,
+              },
+              event: { name, summary: "Confirm needed — driving clip length unknown", ok: false },
+            };
+          }
+          const durationS = knownDuration ?? cap; // post-confirm: estimate at the cap, never below
+          const refsIgnoredNote = refIdsArg.length > 0
+            ? "reference_image_ids do not apply to motion transfer (identity comes from the single character image) — they were not sent."
+            : null;
+          let charUrl: string;
+          let sourceIds: string[] = [];
+          if (heroImageUrlDirect) {
+            charUrl = heroImageUrlDirect;
+          } else if (heroImageId) {
+            try {
+              const r = await resolveVideoSourceImages([heroImageId]);
+              charUrl = r.urls[0];
+              sourceIds = [heroImageId];
+            } catch (e: any) {
+              return { result: { error: e?.message || "Could not prepare the identity image." }, event: { name, summary: "Identity image unavailable", ok: false } };
+            }
+          } else {
+            return {
+              result: { error: "Motion transfer needs an identity image — pass master_id (preferred) or image_id so the character's appearance is locked." },
+              event: { name, summary: "No identity image for motion transfer", ok: false },
+            };
+          }
+          const estCost = estimateFalVideoCostUSD(motionModel, { durationS });
+          if (args.confirm !== true) {
+            if (estCost != null && estCost > threshold) {
+              return {
+                result: {
+                  needs_confirmation: true, estimated_cost_usd: Number(estCost.toFixed(2)), model: motionModel, duration_s: durationS,
+                  error: `This ${durationS}s motion-transfer clip on ${motionModel} will cost about ${formatUSD(estCost)}, billed to the user's fal.ai key. Tell the user and only recall with confirm:true after they agree.`,
+                },
+                event: { name, summary: `Confirm needed — ~${formatUSD(estCost)} motion transfer`, ok: false },
+              };
+            }
+            if (estCost == null) {
+              return {
+                result: { needs_confirmation: true, model: motionModel, error: `I couldn't verify the price for "${motionModel}". Ask the user to approve before proceeding; only then recall with confirm:true.` },
+                event: { name, summary: `Confirm needed — price unknown for ${motionModel}`, ok: false },
+              };
+            }
+          }
+          const driverUrl = await getSignedVideoUrl(driver.storage_path);
+          if (!driverUrl) {
+            return { result: { error: "Could not prepare the driving clip." }, event: { name, summary: "Driving clip unavailable", ok: false } };
+          }
+          let jobId: string;
+          try {
+            ({ jobId } = await submitMotionTransfer({
+              apiKey: falKey, model: motionModel,
+              characterImageUrl: charUrl, drivingVideoUrl: driverUrl, prompt,
+            }));
+          } catch (e: any) {
+            return { result: { error: e?.message || "Motion transfer submit failed" }, event: { name, summary: "Motion transfer submit failed", ok: false } };
+          }
+          try {
+            await insertPendingVideo({
+              // Store the KNOWN duration only — durationS may be the cap used
+              // for a conservative estimate, which is not clip metadata.
+              jobId, model: motionModel, prompt, durationS: knownDuration, estCost,
+              provider: "fal", motionMode: "motion_plate", motionVideoId,
+              sourceImageIds: sourceIds, masterId,
+              assemblyInstruction: assemblyTag || null,
+              negativeConstraints: negatives, lockPalette,
+            });
+          } catch (e) {
+            console.warn("[generate_video] insertPendingVideo failed", e);
+          }
+          const ref: ChatVideoRef = { job_id: jobId, prompt, model: motionModel };
+          return {
+            result: {
+              ok: true, job_id: jobId, provider: "fal", model: motionModel, motion_mode: "motion_plate",
+              duration_s: knownDuration, estimated_cost_usd: estCost != null ? Number(estCost.toFixed(2)) : null,
+              source: { master: master?.name || null, image_ids: sourceIds, motion_video_id: motionVideoId },
+              ...(refsIgnoredNote ? { not_applicable: [refsIgnoredNote] } : {}),
+              note: "A live 'generating video' card is shown inline. Identity comes from the image; kinematics from the driving clip (which must show a human performer — if it doesn't, the model will likely fail or produce garbage; warn the user if unsure). Report the source master/image and driving clip to the user. Do NOT claim the video is ready.",
+              __videos: [ref],
+            },
+            event: { name, summary: `Motion transfer from clip ${motionVideoId.slice(0, 8)}`, ok: true },
+          };
+        }
+
+        // ── Branch 2: draft reference tier (fal / Vidu Q2, flat-priced) ─────
+        if (tierArg === "draft") {
+          const falKey = (deps.falApiKey || "").trim();
+          if (!falKey) {
+            return {
+              result: { error: "The draft tier bills to a fal.ai key (separate from OpenRouter), and none is set. Tell the user to add one in Settings → 3D models, or use the standard tier." },
+              event: { name, summary: "No fal.ai key for draft tier", ok: false },
+            };
+          }
+          // One paid fal job at a time — same rail as the motion branch.
+          try {
+            if (await hasInFlightFalVideo()) {
+              return {
+                result: { error: "A fal-billed video is already generating. Wait for it to finish before starting another." },
+                event: { name, summary: "A fal video is already in flight", ok: false },
+              };
+            }
+          } catch { /* if the check itself fails, fall through rather than block */ }
+          const draftModel = "fal-ai/vidu/q2/reference-to-video";
+          const durationS = Math.min(8, Math.max(1, Number(args.duration) || 4));
+          // Snap the resolution BEFORE pricing so the estimate always matches
+          // what is actually submitted (an unknown string must never be
+          // silently priced as another tier).
+          let resolution = String(args.resolution || "720p").toLowerCase();
+          if (!(DRAFT_RESOLUTIONS as readonly string[]).includes(resolution)) resolution = "720p";
+          // Cost gate FIRST — the price doesn't depend on the pack, and
+          // gating early avoids rendering splat views on a call that only
+          // comes back as needs_confirmation.
+          const estCost = estimateFalVideoCostUSD(draftModel, { durationS, resolution });
+          if (args.confirm !== true) {
+            if (estCost != null && estCost > threshold) {
+              return {
+                result: {
+                  needs_confirmation: true, estimated_cost_usd: Number(estCost.toFixed(2)), model: draftModel,
+                  error: `This ${durationS}s ${resolution} draft clip costs about ${formatUSD(estCost)}, billed to the user's fal.ai key. Confirm with the user, then recall with confirm:true.`,
+                },
+                event: { name, summary: `Confirm needed — ~${formatUSD(estCost)} draft clip`, ok: false },
+              };
+            }
+            if (estCost == null) {
+              // Unknown price must fail safe — never assume the cheap tier.
+              return {
+                result: { needs_confirmation: true, model: draftModel, error: `I couldn't verify the draft-tier price for ${resolution}. Ask the user to approve before proceeding; only then recall with confirm:true.` },
+                event: { name, summary: "Confirm needed — draft price unknown", ok: false },
+              };
+            }
+          }
+          let packIds: string[] = [];
+          if (heroImageId) packIds.push(heroImageId);
+          for (const r of refIds) if (!packIds.includes(r)) packIds.push(r);
+          let sourceSplatId: string | null = null;
+          if (packIds.length === 0 && !heroImageUrlDirect && splatId) {
+            try {
+              const rendered = await renderSplatViews({
+                splatId, frontAzimuthDeg: master?.front_azimuth_deg || 0,
+                promptStem: assemblyTag || prompt,
+              });
+              packIds = rendered.map((r) => r.image.id);
+              sourceSplatId = splatId;
+            } catch (e: any) {
+              return { result: { error: `Couldn't render reference views from the splat: ${e?.message || "render failed"}` }, event: { name, summary: "Splat view render failed", ok: false } };
+            }
+          }
+          if (packIds.length === 0 && !heroImageUrlDirect) {
+            return {
+              result: { error: "The draft tier is reference-to-video — it needs identity images. Pass master_id, image_id, image_url, or reference_image_ids." },
+              event: { name, summary: "Draft tier needs references", ok: false },
+            };
+          }
+          // Vidu takes at most 7 references. Cap EXPLICITLY (direct URL first,
+          // then ids in order) and report anything cut — never silently drop
+          // an identity input, and never record an image that wasn't sent.
+          const VIDU_MAX_REFS = 7;
+          const idBudget = VIDU_MAX_REFS - (heroImageUrlDirect ? 1 : 0);
+          const sentIds = packIds.slice(0, Math.max(0, idBudget));
+          const droppedIds = packIds.slice(Math.max(0, idBudget));
+          let urls: string[];
+          try {
+            ({ urls } = await resolveVideoSourceImages(sentIds));
+          } catch (e: any) {
+            return { result: { error: e?.message || "Could not prepare the reference images." }, event: { name, summary: "Reference images unavailable", ok: false } };
+          }
+          if (heroImageUrlDirect) urls.unshift(heroImageUrlDirect);
+          const draftPrompt = `${assemblyTag ? assemblyTag + ". " : ""}${prompt} Keep the character exactly as shown in the reference images; change only what the motion describes.`;
+          let jobId: string;
+          try {
+            ({ jobId } = await submitReferenceDraft({
+              apiKey: falKey, prompt: draftPrompt, referenceImageUrls: urls,
+              durationS, resolution, aspectRatio: String(args.aspect_ratio || "").trim() || undefined,
+            }));
+          } catch (e: any) {
+            return { result: { error: e?.message || "Draft submit failed" }, event: { name, summary: "Draft submit failed", ok: false } };
+          }
+          try {
+            await insertPendingVideo({
+              jobId, model: draftModel, prompt: draftPrompt, durationS, resolution, estCost,
+              provider: "fal", conditionMode: "reference", identityScale,
+              // Only images that were ACTUALLY sent — the row feeds QC.
+              sourceImageIds: sentIds, sourceSplatId, masterId,
+              assemblyInstruction: assemblyTag || null,
+              negativeConstraints: negatives, lockPalette,
+            });
+          } catch (e) {
+            console.warn("[generate_video] insertPendingVideo failed", e);
+          }
+          const ref: ChatVideoRef = { job_id: jobId, prompt: draftPrompt, model: draftModel };
+          return {
+            result: {
+              ok: true, job_id: jobId, provider: "fal", model: draftModel, tier: "draft",
+              condition_mode: "reference", reference_count: urls.length,
+              estimated_cost_usd: estCost != null ? Number(estCost.toFixed(2)) : null,
+              source: { master: master?.name || null, image_ids: sentIds, splat_id: sourceSplatId },
+              ...(droppedIds.length > 0 ? {
+                refs_truncated: `${droppedIds.length} reference image(s) exceeded Vidu's ${VIDU_MAX_REFS}-image cap and were NOT sent: ${droppedIds.join(", ")}. Mention this to the user; trim the master's view pack if it grew too large.`,
+              } : {}),
+              note: "Draft identity clip generating (flat-priced). Report the sources and condition_mode to the user; suggest re-rendering the winning motion on the standard tier for final quality. Do NOT claim the video is ready.",
+              __videos: [ref],
+            },
+            event: { name, summary: `Draft identity clip (${urls.length} refs): "${prompt.slice(0, 40)}"`, ok: true },
+          };
+        }
+
+        // ── Branch 3: standard OpenRouter path (text or image-conditioned) ──
+        const apiKey = (deps.openRouterApiKey || "").trim();
+        if (!apiKey) {
+          return { result: { error: "OpenRouter API key not configured — ask the user to add one in Settings." }, event: { name, summary: "OpenRouter key missing", ok: false } };
+        }
+
         const model = String(args.model || deps.videoModelPrimary || DEFAULT_VIDEO_MODEL).trim();
 
         // Load the (cached) video catalog to validate params + estimate cost.
-        let catalogModel: any = null;
+        let catalogModel: VideoModel | null = null;
         try {
           const models = await fetchVideoModels();
           catalogModel = models.find((m) => m.id === model) || null;
-        } catch { /* offline — proceed with best-effort defaults */ }
+        } catch { /* offline — handled below: identity needs the catalog, text doesn't */ }
 
         const supportedDurations: number[] = catalogModel?.supported_durations || [];
         const supportedResolutions: string[] = catalogModel?.supported_resolutions || [];
@@ -1780,8 +2230,174 @@ export async function executeChatTool(
           ? args.generate_audio
           : (typeof deps.videoGenerateAudio === "boolean" ? deps.videoGenerateAudio : undefined);
 
-        const estCost = catalogModel ? estimateClipCostUSD(catalogModel, { duration, resolution, audio: generateAudio }) : null;
-        const threshold = typeof deps.videoConfirmThreshold === "number" ? deps.videoConfirmThreshold : 1.0;
+        // ── Resolve the conditioning mode. NEVER silently drop an identity
+        //    input: unsupported combinations error with working alternatives,
+        //    and anything not sent is REPORTED, never omitted quietly. ──
+        let frameImages: Array<{ url: string; frameType: "first_frame" | "last_frame" }> | undefined;
+        let inputReferences: string[] | undefined;
+        let conditionMode: "first_frame" | "reference" | null = null;
+        let sourceImageIds: string[] = [];
+        let sourceSplatId: string | null = null;
+        const identityNotes: string[] = [];
+
+        if (wantsIdentity) {
+          if (!catalogModel) {
+            return {
+              result: { error: `Couldn't load the video model catalog to validate image conditioning for "${model}" (offline?). Try again, or generate without identity inputs.` },
+              event: { name, summary: "Catalog unavailable for identity validation", ok: false },
+            };
+          }
+          // Early cost gate on the BASE estimate (no conditioning surcharge
+          // yet): when even the base price needs confirmation, return before
+          // the splat render below so the confirm round-trip doesn't create a
+          // duplicate set of view images.
+          if (args.confirm !== true && splatId && !heroImageId && refIds.length === 0 && !heroImageUrlDirect) {
+            const baseEst = estimateClipCostUSD(catalogModel, { duration, resolution, audio: generateAudio });
+            if (baseEst != null && baseEst > threshold) {
+              return {
+                result: {
+                  needs_confirmation: true,
+                  estimated_cost_usd: Number(baseEst.toFixed(2)),
+                  model, duration_s: duration, resolution,
+                  error: `This ${duration}s ${resolution} clip on ${model} will cost about ${formatUSD(baseEst)} (image conditioning can add slightly more on some models), billed to the user's OpenRouter key. Tell the user and only recall with confirm:true after they agree.`,
+                },
+                event: { name, summary: `Confirm needed — ~${formatUSD(baseEst)} for a ${duration}s clip`, ok: false },
+              };
+            }
+          }
+          // Splat → auto-rendered multi-view pack (free, client GPU) when no
+          // explicit images were given. The splat is never animated directly.
+          let effHeroId = heroImageId;
+          let effRefIds = [...refIds];
+          if (splatId && !effHeroId && effRefIds.length === 0 && !heroImageUrlDirect) {
+            try {
+              const rendered = await renderSplatViews({
+                splatId, frontAzimuthDeg: master?.front_azimuth_deg || 0,
+                promptStem: assemblyTag || prompt,
+              });
+              effHeroId = rendered.find((r) => r.view === "front")?.image.id || rendered[0]?.image.id || null;
+              effRefIds = rendered.map((r) => r.image.id).filter((id) => id !== effHeroId);
+              sourceSplatId = splatId;
+            } catch (e: any) {
+              return { result: { error: `Couldn't render views from the splat: ${e?.message || "render failed"}. You can call render_splat_views yourself, then pass the image ids.` }, event: { name, summary: "Splat view render failed", ok: false } };
+            }
+          } else if (splatId) {
+            sourceSplatId = splatId;
+          }
+
+          // Precedence when BOTH a stored image and a direct URL are given:
+          // the stored image wins (it stays recorded on the row and drives
+          // QC); the URL is set aside and the override is reported.
+          let heroUrlDirect: string | null = heroImageUrlDirect;
+          if (effHeroId && heroUrlDirect) {
+            identityNotes.push("Both image_id and image_url were given — the stored image (image_id) was used; the raw image_url was not sent.");
+            heroUrlDirect = null;
+          }
+
+          const canFirst = supportsFrameImage(catalogModel, "first_frame");
+          const canRefs = supportsReferenceImages(model);
+          const requested = String(args.condition_mode || "identity_lock");
+          const hasHero = !!(effHeroId || heroUrlDirect);
+          const hasRefs = effRefIds.length > 0;
+
+          // A view pack with no hero on a first-frame-only model: promote the
+          // first view (front, by pack construction) to the frame anchor
+          // rather than dead-ending — common for splat-locked masters on the
+          // default Veo model.
+          const promoteViewToHero = () => {
+            effHeroId = effRefIds[0];
+            effRefIds = effRefIds.slice(1);
+            identityNotes.push(`No hero image was set, so the pack's front view (${effHeroId}) anchors the first frame.`);
+          };
+
+          let mode: "first_frame" | "reference";
+          if (requested === "first_frame") {
+            if (!canFirst) {
+              return {
+                result: { error: `"${model}" does not support first-frame image conditioning — no silent ignore. Switch to a model that does (e.g. ${DEFAULT_VIDEO_MODEL}, kwaivgi/kling-v3.0-std, alibaba/wan-2.7) or detach the image.` },
+                event: { name, summary: `${model} can't do first_frame`, ok: false },
+              };
+            }
+            if (!hasHero && hasRefs) promoteViewToHero();
+            else if (!hasHero) return { result: { error: "condition_mode first_frame needs image_id (or a master with a hero image)." }, event: { name, summary: "first_frame needs an image", ok: false } };
+            mode = "first_frame";
+          } else if (requested === "reference") {
+            if (!hasHero && !hasRefs) return { result: { error: "condition_mode reference needs reference_image_ids and/or image_id (or a master with a view pack)." }, event: { name, summary: "reference needs images", ok: false } };
+            if (!canRefs) {
+              return {
+                result: { error: `"${model}" does not support multi-image reference packs — no silent ignore. Reference-capable models: ${referenceCapableModelIds().join(", ")}. Or use condition_mode first_frame with just image_id.` },
+                event: { name, summary: `${model} can't do reference packs`, ok: false },
+              };
+            }
+            mode = "reference";
+          } else {
+            // identity_lock: strongest mode this model supports.
+            if (hasRefs && canRefs) mode = "reference";
+            else if (hasHero && canFirst) mode = "first_frame";
+            else if ((hasHero || hasRefs) && canRefs) mode = "reference";
+            else if (hasRefs && canFirst) { promoteViewToHero(); mode = "first_frame"; }
+            else {
+              return {
+                result: { error: `"${model}" supports no image conditioning at all (e.g. Sora 2 Pro is text-only on this API) — attaching identity inputs would either fail or be silently ignored, so this call is refused. Use ${DEFAULT_VIDEO_MODEL} (first-frame) or a reference-capable model: ${referenceCapableModelIds().slice(0, 3).join(", ")}.` },
+                event: { name, summary: `${model} does not support identity lock`, ok: false },
+              };
+            }
+          }
+
+          // Resolve the actual URLs (signed, 24h) — after mode selection so we
+          // never sign images that won't be sent, and record ONLY what is sent.
+          try {
+            if (mode === "first_frame") {
+              let heroUrl = heroUrlDirect;
+              if (effHeroId) {
+                const r = await resolveVideoSourceImages([effHeroId]);
+                heroUrl = r.urls[0];
+                sourceImageIds = [effHeroId];
+              }
+              frameImages = [{ url: heroUrl as string, frameType: "first_frame" }];
+              if (effRefIds.length > 0) {
+                identityNotes.push(`first_frame mode uses only the anchor image — the ${effRefIds.length}-image reference pack was NOT sent. For full multi-view identity lock use one of: ${referenceCapableModelIds().slice(0, 4).join(", ")} — or tier:"draft".`);
+              }
+            } else {
+              const maxRefs = Math.max(1, maxReferenceImages(model));
+              const allIds = [...(effHeroId ? [effHeroId] : []), ...effRefIds]
+                .filter((id, i, a) => a.indexOf(id) === i);
+              const idBudget = maxRefs - (heroUrlDirect ? 1 : 0);
+              const sentIds = allIds.slice(0, Math.max(0, idBudget));
+              const droppedIds = allIds.slice(Math.max(0, idBudget));
+              const r = await resolveVideoSourceImages(sentIds);
+              const urls = heroUrlDirect ? [heroUrlDirect, ...r.urls] : [...r.urls];
+              inputReferences = urls;
+              sourceImageIds = sentIds;
+              if (droppedIds.length > 0) {
+                identityNotes.push(`${droppedIds.length} reference image(s) exceeded "${model}"'s ${maxRefs}-image cap and were NOT sent: ${droppedIds.join(", ")}. Mention this to the user.`);
+              }
+            }
+          } catch (e: any) {
+            return { result: { error: e?.message || "Could not prepare the identity images." }, event: { name, summary: "Identity images unavailable", ok: false } };
+          }
+          conditionMode = mode;
+        }
+
+        // Prompt composition: identity lives in the images; the text carries
+        // ONE short tag + motion/camera. The tag must never contradict the refs.
+        const finalPrompt = conditionMode
+          ? `${assemblyTag ? assemblyTag + ". " : ""}${prompt}${conditionMode === "reference" ? " Keep the character exactly as shown in the reference images; change only what the motion describes." : ""}`
+          : prompt;
+
+        // Negatives + identity strength via provider passthrough, gated on the
+        // model's live allowlist (unknown keys are silently dropped upstream,
+        // so we report what was actually applied).
+        const passthrough = buildPassthrough({
+          modelId: model, catalogModel,
+          negatives: conditionMode ? negatives : (negatives.length > 0 ? negatives : undefined),
+          identityScale: conditionMode ? identityScale : undefined,
+        });
+
+        const imageInputCount = frameImages ? frameImages.length : (inputReferences?.length || 0);
+        const estCost = catalogModel
+          ? estimateClipCostUSD(catalogModel, { duration, resolution, audio: generateAudio, imageInputCount })
+          : null;
         // A null estimate is only "safe/cheap" for a KNOWN token-priced model
         // (e.g. Seedance). A null from a missing catalog OR an unrecognized
         // per-second pricing shape must fail safe and confirm.
@@ -1793,7 +2409,7 @@ export async function executeChatTool(
                 needs_confirmation: true,
                 estimated_cost_usd: Number(estCost.toFixed(2)),
                 model, duration_s: duration, resolution,
-                error: `This ${duration}s ${resolution} clip on ${model} will cost about ${formatUSD(estCost)}, billed to the user's OpenRouter key. Tell the user the estimated cost and ask them to confirm; only then call generate_video again with confirm:true.`,
+                error: `This ${duration}s ${resolution} clip on ${model}${imageInputCount ? ` (${imageInputCount} conditioning image${imageInputCount > 1 ? "s" : ""} — some providers price image-conditioned video higher)` : ""} will cost about ${formatUSD(estCost)}, billed to the user's OpenRouter key. Tell the user the estimated cost and ask them to confirm; only then call generate_video again with confirm:true.`,
               },
               event: { name, summary: `Confirm needed — ~${formatUSD(estCost)} for a ${duration}s clip`, ok: false },
             };
@@ -1815,29 +2431,47 @@ export async function executeChatTool(
 
         let jobId: string;
         try {
-          ({ jobId } = await submitVideo({ apiKey, model, prompt, duration, resolution: resolution || undefined, aspectRatio, generateAudio }));
+          ({ jobId } = await submitVideo({
+            apiKey, model, prompt: finalPrompt, duration,
+            resolution: resolution || undefined, aspectRatio, generateAudio,
+            frameImages, inputReferences, providerOptions: passthrough.providerOptions,
+          }));
         } catch (e: any) {
           return { result: { error: e?.message || "Video submit failed" }, event: { name, summary: "Video submit failed", ok: false } };
         }
         try {
           await insertPendingVideo({
-            jobId, model, prompt,
+            jobId, model, prompt: finalPrompt,
             durationS: duration, resolution: resolution || null,
             aspectRatio: aspectRatio || null, hasAudio: generateAudio ?? null, estCost,
+            sourceImageIds: sourceImageIds.length > 0 ? sourceImageIds : null,
+            sourceSplatId, masterId,
+            conditionMode, identityScale: conditionMode ? identityScale : null,
+            assemblyInstruction: conditionMode && assemblyTag ? assemblyTag : null,
+            negativeConstraints: negatives, lockPalette,
           });
         } catch (e: any) {
           // The job is running on OpenRouter; the bubble can still poll by job_id.
           console.warn("[generate_video] insertPendingVideo failed", e);
         }
-        const ref: ChatVideoRef = { job_id: jobId, prompt, model };
+        const ref: ChatVideoRef = { job_id: jobId, prompt: finalPrompt, model };
         return {
           result: {
-            ok: true, job_id: jobId, model, prompt, duration_s: duration, resolution,
+            ok: true, job_id: jobId, model, prompt: finalPrompt, duration_s: duration, resolution,
             estimated_cost_usd: estCost != null ? Number(estCost.toFixed(2)) : null,
-            note: "A live 'generating video' card is now shown to the user inline; it will fill in when the clip is ready (~30s to a few minutes). Do NOT claim the video is ready or output any video/markdown link — just briefly tell the user it's generating.",
+            ...(conditionMode ? {
+              condition_mode: conditionMode,
+              identity_scale: identityScale,
+              identity_scale_applied: passthrough.applied.identity_scale,
+              negative_prompt_applied: passthrough.applied.negative_prompt,
+              ...(passthrough.skipped.length > 0 ? { not_applicable: passthrough.skipped } : {}),
+              source: { master: master?.name || null, image_ids: sourceImageIds, splat_id: sourceSplatId },
+              ...(identityNotes.length > 0 ? { identity_notes: identityNotes } : {}),
+            } : {}),
+            note: `A live 'generating video' card is now shown to the user inline; it will fill in when the clip is ready (~30s to a few minutes). Do NOT claim the video is ready or output any video/markdown link — just briefly tell the user it's generating${conditionMode ? `, and report: the identity source (master/images), condition_mode=${conditionMode}, identity_scale=${identityScale}, and that a consistency check runs automatically when it completes` : ""}.`,
             __videos: [ref],
           },
-          event: { name, summary: `Generating a ${duration}s video: "${prompt.slice(0, 50)}"`, ok: true },
+          event: { name, summary: `Generating a ${duration}s ${conditionMode ? "identity-locked " : ""}video: "${prompt.slice(0, 50)}"`, ok: true },
         };
       }
       case "show_video": {
@@ -1863,6 +2497,14 @@ export async function executeChatTool(
         const out = rows.map((r) => ({
           video_id: r.id, job_id: r.job_id, prompt: (r.prompt || "").slice(0, 200),
           model: r.model, status: r.status, saved_to_memory: !!r.entry_id, created_at: r.created_at,
+          // Identity linkage (absent on rows/databases from before the
+          // video_identity migration).
+          ...(r.master_id ? { master_id: r.master_id } : {}),
+          ...(r.condition_mode ? { condition_mode: r.condition_mode } : {}),
+          ...(r.motion_mode ? { motion_mode: r.motion_mode } : {}),
+          ...(r.source_image_ids && r.source_image_ids.length > 0 ? { source_image_ids: r.source_image_ids } : {}),
+          ...(r.source_splat_id ? { source_splat_id: r.source_splat_id } : {}),
+          ...(r.qc ? { qc_verdict: r.qc.verdict, qc_identity_sim: r.qc.ref_sim_mean } : {}),
         }));
         return { result: out, event: { name, summary: `Listed ${out.length} video(s)${args.query ? ` matching "${String(args.query).slice(0, 40)}"` : ""}`, ok: true } };
       }
@@ -2055,10 +2697,12 @@ export async function executeChatTool(
       case "list_splats": {
         const limit = Math.min(25, Math.max(1, Number(args.limit) || 10));
         const rows = await searchSplats(args.query ? String(args.query) : undefined, limit);
+        const { bySplat } = await masterLinkageFor();
         const out = rows.map((r) => ({
           splat_id: r.id, prompt: (r.prompt || "").slice(0, 200), model: r.model,
           status: r.status, format: r.format, splat_count: r.splat_count,
           file_bytes: r.file_bytes, saved_to_memory: !!r.entry_id, created_at: r.created_at,
+          ...(bySplat.has(r.id) ? { master: bySplat.get(r.id) } : {}),
         }));
         return { result: out, event: { name, summary: `Listed ${out.length} 3D model(s)${args.query ? ` matching "${String(args.query).slice(0, 40)}"` : ""}`, ok: true } };
       }
@@ -2082,6 +2726,153 @@ export async function executeChatTool(
         }
         try { window.dispatchEvent(new CustomEvent("splat-generations-changed", { detail: { deleted: [row.id] } })); } catch {}
         return { result: { ok: true, deleted_id: row.id, prompt: (row.prompt || "").slice(0, 80) }, event: { name, summary: `Deleted 3D model: "${(row.prompt || "").slice(0, 50)}"`, ok: true } };
+      }
+      case "render_splat_views": {
+        const splatId = String(args.splat_id || "").trim();
+        if (!splatId) return { result: { error: "splat_id required" }, event: { name, summary: "Missing splat_id", ok: false } };
+        // Free (client GPU) — but the rendered views become image rows, so the
+        // image table must exist; renderSplatViews surfaces that on its own.
+        let attachMaster: MasterAssetRow | null = null;
+        if (args.attach_to_master) {
+          if (!(await mastersMigrated())) {
+            return { result: { error: "Master assets aren't set up yet — run the master_assets SQL migration first, or call again without attach_to_master." }, event: { name, summary: "Master assets not migrated yet", ok: false } };
+          }
+          attachMaster = await resolveMaster(String(args.attach_to_master));
+          if (!attachMaster) {
+            return { result: { error: `No master asset "${String(args.attach_to_master)}" found — use list_master_assets.` }, event: { name, summary: "Master asset not found", ok: false } };
+          }
+        }
+        let rendered;
+        try {
+          rendered = await renderSplatViews({
+            splatId,
+            views: Array.isArray(args.views) ? args.views.map(String) : undefined,
+            resolution: Number(args.resolution) || undefined,
+            frontAzimuthDeg: attachMaster?.front_azimuth_deg || 0,
+          });
+        } catch (e: any) {
+          return { result: { error: e?.message || "Splat view render failed" }, event: { name, summary: "Splat view render failed", ok: false } };
+        }
+        if (attachMaster) {
+          try {
+            const merged = [...(attachMaster.view_image_ids || [])];
+            for (const r of rendered) if (!merged.includes(r.image.id)) merged.push(r.image.id);
+            await updateMasterAsset(attachMaster.id, { view_image_ids: merged });
+          } catch (e: any) {
+            // The views exist either way — report the partial failure honestly.
+            return {
+              result: {
+                ok: true,
+                views: rendered.map((r) => ({ view: r.view, azimuth_deg: r.azimuthDeg, image_id: r.image.id })),
+                warning: `Views rendered, but attaching them to @${attachMaster.name} failed: ${e?.message || "update failed"}`,
+                __images: rendered.map((r) => r.image),
+              },
+              event: { name, summary: `Rendered ${rendered.length} view(s); master attach failed`, ok: false },
+            };
+          }
+        }
+        return {
+          result: {
+            ok: true,
+            views: rendered.map((r) => ({ view: r.view, azimuth_deg: r.azimuthDeg, image_id: r.image.id })),
+            ...(attachMaster ? { attached_to_master: attachMaster.name } : {}),
+            note: "The rendered views are shown to the user inline. Use their image_ids as reference_image_ids in generate_video (or they're already on the master if attached).",
+            __images: rendered.map((r) => r.image),
+          },
+          event: { name, summary: `Rendered ${rendered.length} splat view(s)${attachMaster ? ` → @${attachMaster.name}` : ""}`, ok: true },
+        };
+      }
+      case "lock_master_asset": {
+        if (!(await mastersMigrated())) {
+          return {
+            result: { error: "Master assets aren't set up yet — the master_assets SQL migration hasn't been applied. Tell the user to run it in Supabase, then try again." },
+            event: { name, summary: "Master assets not migrated yet", ok: false },
+          };
+        }
+        const splatIdArg = String(args.splat_id || "").trim() || null;
+        let viewIds: string[] = Array.isArray(args.view_image_ids)
+          ? args.view_image_ids.map((s: any) => String(s || "").trim()).filter(Boolean)
+          : [];
+        // A splat with no explicit views → auto-render the 4-view pack (free).
+        let autoRendered = 0;
+        if (splatIdArg && viewIds.length === 0) {
+          try {
+            const rendered = await renderSplatViews({
+              splatId: splatIdArg,
+              promptStem: String(args.assembly_tag || args.name || "").trim() || undefined,
+            });
+            viewIds = rendered.map((r) => r.image.id);
+            autoRendered = rendered.length;
+          } catch (e: any) {
+            return { result: { error: `Couldn't render the view pack from the splat: ${e?.message || "render failed"}. Pass view_image_ids explicitly, or lock without the splat.` }, event: { name, summary: "Splat view render failed", ok: false } };
+          }
+        }
+        let created: MasterAssetRow;
+        try {
+          created = await createMasterAsset({
+            name: String(args.name || ""),
+            heroImageId: String(args.hero_image_id || "").trim() || null,
+            viewImageIds: viewIds,
+            splatId: splatIdArg,
+            assemblyTag: String(args.assembly_tag || ""),
+            techPack: String(args.tech_pack || ""),
+            negativeConstraints: Array.isArray(args.negative_constraints) ? args.negative_constraints.map(String) : [],
+            bannedTraits: Array.isArray(args.banned_traits) ? args.banned_traits.map(String) : [],
+            palette: Array.isArray(args.palette) ? args.palette.map(String) : [],
+            styleLock: String(args.style_lock || "custom"),
+          });
+        } catch (e: any) {
+          return { result: { error: e?.message || "Master asset could not be created" }, event: { name, summary: "Master lock failed", ok: false } };
+        }
+        return {
+          result: {
+            ok: true, master_id: created.id, name: `@${created.name}`,
+            hero_image_id: created.hero_image_id, view_count: created.view_image_ids.length,
+            splat_id: created.splat_id, palette: created.palette,
+            negative_constraints: created.negative_constraints, banned_traits: created.banned_traits,
+            ...(autoRendered > 0 ? { auto_rendered_views: autoRendered } : {}),
+            note: `Master locked. From now on, animate this asset by passing master_id "${created.id}" (or "@${created.name}") to generate_video — never re-describe its appearance in text.`,
+          },
+          event: { name, summary: `Locked master asset @${created.name}`, ok: true },
+        };
+      }
+      case "list_master_assets": {
+        if (!(await mastersMigrated())) {
+          return {
+            result: { masters: [], note: "The master_assets migration hasn't been applied yet — no masters can exist. If the user wants one, ask them to run the pending SQL migration first." },
+            event: { name, summary: "Master assets not migrated yet", ok: true },
+          };
+        }
+        const masters = await listMasterAssets();
+        const out = masters.map((m) => ({
+          master_id: m.id, name: `@${m.name}`, assembly_tag: m.assembly_tag,
+          has_hero: !!m.hero_image_id, view_count: (m.view_image_ids || []).length,
+          has_splat: !!m.splat_id, style_lock: m.style_lock,
+          palette: m.palette, negative_constraints: m.negative_constraints,
+          banned_traits: m.banned_traits, created_at: m.created_at,
+        }));
+        return { result: out, event: { name, summary: `Listed ${out.length} master asset(s)`, ok: true } };
+      }
+      case "delete_master_asset": {
+        const { data: prefs } = await supabase.from("user_settings").select("chat_tool_permissions" as any).maybeSingle();
+        const perms = (((prefs as any)?.chat_tool_permissions) || {}) as Record<string, boolean>;
+        if (perms[name] === false) {
+          return { result: { error: `Tool '${name}' is disabled in the user's AI permissions. Ask the user to enable it in Settings.` }, event: { name, summary: `${name} blocked by user settings`, ok: false } };
+        }
+        if (args.confirm !== true) {
+          return { result: { error: "Deletion requires confirm:true. Paraphrase the master (@name) back to the user, get explicit approval, then retry with confirm:true." }, event: { name, summary: "Refused: confirmation required", ok: false } };
+        }
+        const master = await resolveMaster(String(args.master_id || ""));
+        if (!master) return { result: { error: "Master asset not found" }, event: { name, summary: "Master not found", ok: false } };
+        try {
+          await deleteMasterAsset(master.id);
+        } catch (e: any) {
+          return { result: { error: e?.message || "Delete failed" }, event: { name, summary: "Master delete failed", ok: false } };
+        }
+        return {
+          result: { ok: true, deleted_id: master.id, name: `@${master.name}`, note: "Only the bundle was deleted — its images, splat and neuron still exist." },
+          event: { name, summary: `Deleted master asset @${master.name}`, ok: true },
+        };
       }
       case "create_artifact": {
         const art = parseArtifact(args);
