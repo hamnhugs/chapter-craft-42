@@ -8,6 +8,11 @@ import {
   deleteImageAttachment, deleteImageMemory,
   IMAGE_ASPECT_RATIOS, type ChatImageRef,
 } from "@/lib/imageGen";
+import {
+  submitVideo, insertPendingVideo, fetchVideoById, searchVideos,
+  deleteVideoGeneration, DEFAULT_VIDEO_MODEL, type ChatVideoRef,
+} from "@/lib/videoGen";
+import { fetchVideoModels, estimateClipCostUSD, isTokenPriced, formatUSD } from "@/lib/videoCatalog";
 import { fetchChains, touchChainUsed, emitChainsChanged, isChainsMigrationMissing, CHAINS_MIGRATION_MESSAGE } from "@/lib/chainsApi";
 import { sessionActiveWikiIds } from "@/lib/wikisApi";
 import { MAX_ACTIVE_NEURONS, FREE_NEURON_LIMIT } from "@/lib/neuronAccess";
@@ -28,6 +33,14 @@ export interface ToolDeps {
   /** Optional user-preferred image model overrides. */
   imageModelPrimary?: string;
   imageModelFallback?: string;
+  /** Optional user-preferred video model + generation defaults. */
+  videoModelPrimary?: string;
+  videoDefaultDuration?: number;
+  videoDefaultResolution?: string;
+  videoDefaultAspect?: string;
+  videoGenerateAudio?: boolean;
+  /** Estimated-cost (USD) above which generate_video must be confirmed. */
+  videoConfirmThreshold?: number;
 }
 
 
@@ -37,6 +50,7 @@ export interface ToolDeps {
  *  - `__vision`: data-URL image to inject as vision input next iteration. */
 export interface ToolSideChannel {
   __images?: ChatImageRef[];
+  __videos?: ChatVideoRef[];
   __vision?: string;
 }
 
@@ -556,6 +570,71 @@ export const CHAT_TOOL_DEFINITIONS = [
           confirm: { type: "boolean", description: "Must be true — proof the user just approved this exact deletion." },
         },
         required: ["memory_id", "confirm"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "generate_video",
+      description:
+        "Generate a short AI VIDEO clip from a text prompt and show it to the user inline as a live 'generating…' card that fills in when the clip is ready (generation takes ~30s to a few minutes). By default the clip is saved to memory as a video neuron. Video is billed PER SECOND to the user's OpenRouter key and is MUCH more expensive than an image (a few cents up to several dollars) — keep clips short, match the length/resolution to what the user asked, and prefer the default fast model unless the user asks for another. If the estimated cost exceeds the user's threshold the tool refuses until you confirm the exact cost with the user and call again with confirm:true. Use when the user asks for a video, clip, animation, or a moving/animated version of something.",
+      parameters: {
+        type: "object",
+        properties: {
+          prompt: { type: "string", description: "Detailed description of the video: subject, motion, camera movement, style, mood." },
+          model: { type: "string", description: "Optional OpenRouter video model id (e.g. google/veo-3.1-fast, openai/sora-2-pro, minimax/hailuo-2.3). Defaults to the user's chosen video model." },
+          duration: { type: "integer", description: "Clip length in seconds; snapped to the model's allowed lengths. Keep short (default ~6s) to control cost." },
+          resolution: { type: "string", description: "e.g. 720p, 1080p, 4K. Defaults to a cost-efficient option the model supports." },
+          aspect_ratio: { type: "string", description: "e.g. 16:9, 9:16, 1:1. Optional." },
+          generate_audio: { type: "boolean", description: "Generate native audio (default true for models that support it)." },
+          confirm: { type: "boolean", description: "Set true ONLY after the user has approved the estimated cost in the current turn." },
+        },
+        required: ["prompt"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "show_video",
+      description:
+        "Re-display a previously generated video clip to the user inline (free, instant). Use list_videos first to find the video_id.",
+      parameters: {
+        type: "object",
+        properties: { video_id: { type: "string", description: "The id from list_videos." } },
+        required: ["video_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_videos",
+      description:
+        "List the user's generated video clips (newest first), optionally filtered by a keyword matched against prompt/caption. Returns video_id, job_id, prompt, model, status, and whether each is saved to memory. Use to find a clip the user refers to.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Optional keyword filter." },
+          limit: { type: "number", description: "Default 10, max 25." },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_video",
+      description:
+        "Permanently delete a generated video clip (its row AND the stored MP4). DESTRUCTIVE: only call after the user has explicitly approved deleting this specific clip in the current turn — paraphrase the clip (prompt/date) back, get a clear 'yes', then call with confirm:true. Honors per-tool permissions in Settings.",
+      parameters: {
+        type: "object",
+        properties: {
+          video_id: { type: "string", description: "The id returned by list_videos." },
+          confirm: { type: "boolean", description: "Must be true — proof the user just approved this exact deletion." },
+        },
+        required: ["video_id", "confirm"],
       },
     },
   },
@@ -1564,6 +1643,166 @@ export async function executeChatTool(
             event: { name, summary: `Deleted image memory${(mem as any).caption ? `: "${(mem as any).caption.slice(0, 60)}"` : ""}`, ok: true },
           };
         }
+      }
+      case "generate_video": {
+        const apiKey = (deps.openRouterApiKey || "").trim();
+        if (!apiKey) {
+          return { result: { error: "OpenRouter API key not configured — ask the user to add one in Settings." }, event: { name, summary: "OpenRouter key missing", ok: false } };
+        }
+        if (deps.isPaid === false) {
+          return { result: { error: "Video generation is a Pro feature. Tell the user that upgrading to Pro or Lifetime unlocks it." }, event: { name, summary: "Video generation is a Pro feature", ok: false } };
+        }
+        const prompt = String(args.prompt || "").trim();
+        if (!prompt) return { result: { error: "prompt required" }, event: { name, summary: "Missing prompt", ok: false } };
+
+        // Pre-flight: don't spend on OpenRouter if the video tables/bucket aren't
+        // migrated yet (Lovable doesn't auto-run migrations). Refuse cleanly so
+        // the user isn't billed for a clip that can't be stored or shown.
+        {
+          const { error: capErr } = await (supabase.from("video_generations" as any) as any)
+            .select("id", { head: true, count: "exact" }).limit(1);
+          if (capErr) {
+            return {
+              result: { error: "Video generation isn't set up yet — the database migration (the generated-videos bucket + video_generations table) hasn't been applied. Tell the user to run the pending video SQL migration in Supabase, then try again." },
+              event: { name, summary: "Video tables not migrated yet", ok: false },
+            };
+          }
+        }
+
+        const model = String(args.model || deps.videoModelPrimary || DEFAULT_VIDEO_MODEL).trim();
+
+        // Load the (cached) video catalog to validate params + estimate cost.
+        let catalogModel: any = null;
+        try {
+          const models = await fetchVideoModels();
+          catalogModel = models.find((m) => m.id === model) || null;
+        } catch { /* offline — proceed with best-effort defaults */ }
+
+        const supportedDurations: number[] = catalogModel?.supported_durations || [];
+        const supportedResolutions: string[] = catalogModel?.supported_resolutions || [];
+
+        let duration = Number(args.duration) || Number(deps.videoDefaultDuration) || 6;
+        if (supportedDurations.length) {
+          duration = supportedDurations.reduce(
+            (best, d) => (Math.abs(d - duration) < Math.abs(best - duration) ? d : best),
+            supportedDurations[0],
+          );
+        }
+        let resolution = String(args.resolution || deps.videoDefaultResolution || "").trim();
+        if (supportedResolutions.length && (!resolution || !supportedResolutions.includes(resolution))) {
+          resolution = supportedResolutions.includes("720p") ? "720p" : supportedResolutions[0];
+        }
+        const aspectRatio = String(args.aspect_ratio || deps.videoDefaultAspect || "").trim() || undefined;
+        const generateAudio = typeof args.generate_audio === "boolean"
+          ? args.generate_audio
+          : (typeof deps.videoGenerateAudio === "boolean" ? deps.videoGenerateAudio : undefined);
+
+        const estCost = catalogModel ? estimateClipCostUSD(catalogModel, { duration, resolution, audio: generateAudio }) : null;
+        const threshold = typeof deps.videoConfirmThreshold === "number" ? deps.videoConfirmThreshold : 1.0;
+        // A null estimate is only "safe/cheap" for a KNOWN token-priced model
+        // (e.g. Seedance). A null from a missing catalog OR an unrecognized
+        // per-second pricing shape must fail safe and confirm.
+        const tokenPriced = catalogModel ? isTokenPriced(catalogModel) : false;
+        if (args.confirm !== true) {
+          if (estCost != null && estCost > threshold) {
+            return {
+              result: {
+                needs_confirmation: true,
+                estimated_cost_usd: Number(estCost.toFixed(2)),
+                model, duration_s: duration, resolution,
+                error: `This ${duration}s ${resolution} clip on ${model} will cost about ${formatUSD(estCost)}, billed to the user's OpenRouter key. Tell the user the estimated cost and ask them to confirm; only then call generate_video again with confirm:true.`,
+              },
+              event: { name, summary: `Confirm needed — ~${formatUSD(estCost)} for a ${duration}s clip`, ok: false },
+            };
+          }
+          if (estCost == null && !tokenPriced) {
+            // Fail safe: no per-second price (catalog unavailable or an
+            // unrecognized pricing shape). Don't silently spend — one unguarded
+            // clip can cost 10–50× an image. Require confirmation.
+            return {
+              result: {
+                needs_confirmation: true,
+                model, duration_s: duration, resolution,
+                error: `I couldn't verify the per-second price for "${model}" right now. Video is billed per second to the user's OpenRouter key, so tell the user you can't confirm the exact cost and ask them to approve before proceeding; only then call generate_video again with confirm:true.`,
+              },
+              event: { name, summary: `Confirm needed — price unknown for ${model}`, ok: false },
+            };
+          }
+        }
+
+        let jobId: string;
+        try {
+          ({ jobId } = await submitVideo({ apiKey, model, prompt, duration, resolution: resolution || undefined, aspectRatio, generateAudio }));
+        } catch (e: any) {
+          return { result: { error: e?.message || "Video submit failed" }, event: { name, summary: "Video submit failed", ok: false } };
+        }
+        try {
+          await insertPendingVideo({
+            jobId, model, prompt,
+            durationS: duration, resolution: resolution || null,
+            aspectRatio: aspectRatio || null, hasAudio: generateAudio ?? null, estCost,
+          });
+        } catch (e: any) {
+          // The job is running on OpenRouter; the bubble can still poll by job_id.
+          console.warn("[generate_video] insertPendingVideo failed", e);
+        }
+        const ref: ChatVideoRef = { job_id: jobId, prompt, model };
+        return {
+          result: {
+            ok: true, job_id: jobId, model, prompt, duration_s: duration, resolution,
+            estimated_cost_usd: estCost != null ? Number(estCost.toFixed(2)) : null,
+            note: "A live 'generating video' card is now shown to the user inline; it will fill in when the clip is ready (~30s to a few minutes). Do NOT claim the video is ready or output any video/markdown link — just briefly tell the user it's generating.",
+            __videos: [ref],
+          },
+          event: { name, summary: `Generating a ${duration}s video: "${prompt.slice(0, 50)}"`, ok: true },
+        };
+      }
+      case "show_video": {
+        const videoId = String(args.video_id || "").trim();
+        if (!videoId) return { result: { error: "video_id required" }, event: { name, summary: "Missing video_id", ok: false } };
+        const row = await fetchVideoById(videoId);
+        if (!row) return { result: { error: "Video not found" }, event: { name, summary: "Video not found", ok: false } };
+        const ref: ChatVideoRef = { job_id: row.job_id, prompt: row.prompt, model: row.model };
+        return {
+          result: {
+            ok: true, video_id: row.id, status: row.status, prompt: row.prompt,
+            note: row.status === "completed"
+              ? "The clip is now displayed to the user inline."
+              : "The clip is shown inline; it is still generating and will fill in when ready.",
+            __videos: [ref],
+          },
+          event: { name, summary: `Showed video: "${row.prompt.slice(0, 50)}"`, ok: true },
+        };
+      }
+      case "list_videos": {
+        const limit = Math.min(25, Math.max(1, Number(args.limit) || 10));
+        const rows = await searchVideos(args.query ? String(args.query) : undefined, limit);
+        const out = rows.map((r) => ({
+          video_id: r.id, job_id: r.job_id, prompt: (r.prompt || "").slice(0, 200),
+          model: r.model, status: r.status, saved_to_memory: !!r.entry_id, created_at: r.created_at,
+        }));
+        return { result: out, event: { name, summary: `Listed ${out.length} video(s)${args.query ? ` matching "${String(args.query).slice(0, 40)}"` : ""}`, ok: true } };
+      }
+      case "delete_video": {
+        const { data: prefs } = await supabase.from("user_settings").select("chat_tool_permissions" as any).maybeSingle();
+        const perms = (((prefs as any)?.chat_tool_permissions) || {}) as Record<string, boolean>;
+        if (perms[name] === false) {
+          return { result: { error: `Tool '${name}' is disabled in the user's AI permissions. Ask the user to enable it in Settings.` }, event: { name, summary: `${name} blocked by user settings`, ok: false } };
+        }
+        if (args.confirm !== true) {
+          return { result: { error: "Deletion requires confirm:true. Paraphrase the exact clip back to the user, get explicit approval, then retry with confirm:true." }, event: { name, summary: "Refused: confirmation required", ok: false } };
+        }
+        const videoId = String(args.video_id || "").trim();
+        if (!videoId) return { result: { error: "video_id required" }, event: { name, summary: "Missing video_id", ok: false } };
+        const row = await fetchVideoById(videoId);
+        if (!row) return { result: { error: "Video not found or not owned by current user" }, event: { name, summary: "Video not found", ok: false } };
+        try {
+          await deleteVideoGeneration({ id: row.id, storage_path: row.storage_path, poster_path: row.poster_path });
+        } catch (e: any) {
+          return { result: { error: e?.message || "Delete failed" }, event: { name, summary: "Video delete failed", ok: false } };
+        }
+        try { window.dispatchEvent(new CustomEvent("video-generations-changed", { detail: { deleted: [row.id] } })); } catch {}
+        return { result: { ok: true, deleted_id: row.id, prompt: (row.prompt || "").slice(0, 80) }, event: { name, summary: `Deleted video: "${(row.prompt || "").slice(0, 50)}"`, ok: true } };
       }
       case "create_artifact": {
         const art = parseArtifact(args);

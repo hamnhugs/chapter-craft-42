@@ -40,6 +40,14 @@ interface ChatSettings {
   imageSize: string;
   savedImageModels: string[];
   chatToolPermissions: Record<string, boolean>;
+  /** Video generation preferences (OpenRouter /api/v1/videos). */
+  videoModelPrimary: string;
+  savedVideoModels: string[];
+  videoDefaultDuration: number; // 0 = auto (model default)
+  videoDefaultResolution: string; // "" = auto
+  videoDefaultAspect: string; // "" = auto
+  videoGenerateAudio: boolean;
+  videoConfirmThreshold: number; // USD estimate above which generate_video must be confirmed
 }
 
 const defaults: ChatSettings = {
@@ -69,6 +77,13 @@ const defaults: ChatSettings = {
   imageSize: "",
   savedImageModels: [],
   chatToolPermissions: {},
+  videoModelPrimary: "",
+  savedVideoModels: [],
+  videoDefaultDuration: 0,
+  videoDefaultResolution: "",
+  videoDefaultAspect: "",
+  videoGenerateAudio: true,
+  videoConfirmThreshold: 1.0,
 };
 
 
@@ -154,7 +169,13 @@ function rowToSettings(data: any): ChatSettings {
     chatToolPermissions: (data.chat_tool_permissions && typeof data.chat_tool_permissions === "object")
       ? (data.chat_tool_permissions as Record<string, boolean>)
       : {},
-
+    videoModelPrimary: data.video_model_primary || "",
+    savedVideoModels: Array.isArray(data.saved_video_models) ? (data.saved_video_models as string[]) : [],
+    videoDefaultDuration: typeof data.video_default_duration === "number" ? data.video_default_duration : 0,
+    videoDefaultResolution: data.video_default_resolution || "",
+    videoDefaultAspect: data.video_default_aspect || "",
+    videoGenerateAudio: data.video_generate_audio !== false,
+    videoConfirmThreshold: typeof data.video_confirm_threshold === "number" ? data.video_confirm_threshold : 1.0,
   };
 }
 
@@ -216,6 +237,13 @@ function persistSettings(userId: string, next: ChatSettings) {
       image_size: next.imageSize || null,
       saved_image_models: next.savedImageModels as any,
       chat_tool_permissions: next.chatToolPermissions as any,
+      video_model_primary: next.videoModelPrimary || null,
+      saved_video_models: next.savedVideoModels as any,
+      video_default_duration: next.videoDefaultDuration || null,
+      video_default_resolution: next.videoDefaultResolution || null,
+      video_default_aspect: next.videoDefaultAspect || null,
+      video_generate_audio: next.videoGenerateAudio,
+      video_confirm_threshold: next.videoConfirmThreshold,
     };
 
     let { error } = await supabase
@@ -225,7 +253,9 @@ function persistSettings(userId: string, next: ChatSettings) {
     // column and retry so one new column never breaks every settings save.
     // PostgREST reports ONE missing column per attempt (alphabetically
     // first), so keep retrying until no optional column is named.
-    const optionalColumns = ["access_all_neurons", "image_extraction_model", "auto_extract_figures"];
+    const optionalColumns = ["access_all_neurons", "image_extraction_model", "auto_extract_figures",
+      "video_model_primary", "saved_video_models", "video_default_duration", "video_default_resolution",
+      "video_default_aspect", "video_generate_audio", "video_confirm_threshold"];
     for (let pass = 0; error && pass < optionalColumns.length; pass++) {
       const offender = optionalColumns.find(
         (col) => col in payload && (error!.message || "").toLowerCase().includes(col),
@@ -329,6 +359,25 @@ export function useChatSettings() {
       const primary = cur.imageModelPrimary === m ? (next[0] || "") : cur.imageModelPrimary;
       const fallback = cur.imageModelFallback === m ? "" : cur.imageModelFallback;
       update({ savedImageModels: next, imageModelPrimary: primary, imageModelFallback: fallback });
+    },
+    setVideoModelPrimary: (m: string) => update({ videoModelPrimary: m }),
+    setVideoDefaultDuration: (d: number) => update({ videoDefaultDuration: Math.max(0, Math.floor(d) || 0) }),
+    setVideoDefaultResolution: (r: string) => update({ videoDefaultResolution: r }),
+    setVideoDefaultAspect: (a: string) => update({ videoDefaultAspect: a }),
+    setVideoGenerateAudio: (v: boolean) => update({ videoGenerateAudio: v }),
+    setVideoConfirmThreshold: (n: number) => update({ videoConfirmThreshold: Math.max(0, Number(n) || 0) }),
+    addVideoModel: (m: string) => {
+      const id = m.trim(); if (!id) return;
+      const cur = getSnapshot().settings;
+      if (cur.savedVideoModels.includes(id)) { toast.error("Video model already saved"); return; }
+      update({ savedVideoModels: [...cur.savedVideoModels, id], videoModelPrimary: cur.videoModelPrimary || id });
+      toast.success(`Video model "${id}" added`);
+    },
+    removeVideoModel: (m: string) => {
+      const cur = getSnapshot().settings;
+      const next = cur.savedVideoModels.filter(x => x !== m);
+      const primary = cur.videoModelPrimary === m ? (next[0] || "") : cur.videoModelPrimary;
+      update({ savedVideoModels: next, videoModelPrimary: primary });
     },
     setChatToolPermission: (tool: string, allowed: boolean) => {
       const cur = getSnapshot().settings;

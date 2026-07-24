@@ -16,6 +16,7 @@ import { openSetupWizard } from "@/components/SetupWizard";
 import PromptLibrary from "@/components/PromptLibrary";
 import ApiKeyManager from "@/components/ApiKeyManager";
 import ImageModelsSettings from "@/components/ImageModelsSettings";
+import VideoModelsSettings from "@/components/VideoModelsSettings";
 import AiPermissionsSettings from "@/components/AiPermissionsSettings";
 import { getMemoryMode, setMemoryMode, MemoryMode } from "@/lib/knowledgeApi";
 import { consumeSettingsSection } from "@/lib/settingsNav";
@@ -616,6 +617,7 @@ const SettingsPanel: React.FC = () => {
                 </div>
               </div>
               <ImageModelsSettings />
+              <VideoModelsSettings />
             </Section>
 
             {/* ── Neuron & Memory ── */}

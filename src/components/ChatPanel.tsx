@@ -20,6 +20,7 @@ import { requestSettingsSection } from "@/lib/settingsNav";
 import VoiceNotesPanel, { appendVoiceNote } from "@/components/VoiceNotesPanel";
 import ResponseBlocks from "@/components/ResponseBlocks";
 import GeneratedImage from "@/components/GeneratedImage";
+import VideoBubble from "@/components/VideoBubble";
 import WorkspacePanel from "@/components/WorkspacePanel";
 import type { Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle, useWorkspaceItems } from "@/lib/workspaceStore";
@@ -648,6 +649,13 @@ const ChatPanel: React.FC = () => {
             >
               {msg.role === "assistant" ? (
                 <>
+                  {msg.videos && msg.videos.length > 0 && (
+                    <div className={`grid gap-2 mb-2 ${msg.videos.length === 1 ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2"}`}>
+                      {msg.videos.map((v) => (
+                        <VideoBubble key={v.job_id} video={v} />
+                      ))}
+                    </div>
+                  )}
                   {msg.images && msg.images.length > 0 && (
                     <div
                       className={`grid gap-2 mb-2 ${

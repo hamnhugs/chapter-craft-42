@@ -9,6 +9,7 @@ import { usePromptPresets } from "@/hooks/usePromptPresets";
 import { buildChatSystemPrompt, type UsedMemory } from "@/lib/buildChatSystemPrompt";
 import { CHAT_TOOL_DEFINITIONS, executeChatTool, ToolEvent } from "@/lib/chatTools";
 import type { ChatImageRef } from "@/lib/imageGen";
+import type { ChatVideoRef } from "@/lib/videoGen";
 import { parseBlocks, type ResponseBlock } from "@/lib/responseBlocks";
 import { parseArtifact, type Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle } from "@/lib/workspaceStore";
@@ -34,6 +35,9 @@ export interface ChatMessage {
   /** Generated/recalled images rendered inline in the bubble (from the
    *  generate_image / edit_image / show_image tools). */
   images?: ChatImageRef[];
+  /** Generated video clips rendered inline in the bubble (from the
+   *  generate_video / show_video tools). Each resolves live via its job_id. */
+  videos?: ChatVideoRef[];
 }
 
 interface SendOpts {
@@ -102,7 +106,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { user } = useAuth();
   const { books, activeBookId, activeWiki, activeWikiId, activeWikis, wikis, addChapter, updateChapter, removeChapter, setActiveBookSilent } = useApp();
 
-  const { apiKey, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, visionModel, imageModelPrimary, imageModelFallback } = useChatSettings();
+  const { apiKey, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, visionModel, imageModelPrimary, imageModelFallback,
+    videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold } = useChatSettings();
   const { isPaid, loaded: planLoaded } = usePlan();
   const { getActiveBodyForScope, migrate } = usePromptPresets();
 
@@ -205,22 +210,18 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     let cancelled = false;
     (async () => {
-      // `images` is a newer column — fall back to the legacy select if the
-      // migration hasn't been applied yet so history never fails to load.
-      let { data, error } = await supabase
+      // `images`/`videos` are newer columns — cascade to older selects if a
+      // migration hasn't been applied yet so history never fails to load
+      // (dropping the videos column must not also drop images).
+      const loadSel = (cols: string) => supabase
         .from("chat_messages")
-        .select("id, role, content, created_at, images" as any)
+        .select(cols as any)
         .eq("user_id", user.id)
         .order("created_at", { ascending: true })
         .limit(200) as any;
-      if (error) {
-        ({ data, error } = await supabase
-          .from("chat_messages")
-          .select("id, role, content, created_at")
-          .eq("user_id", user.id)
-          .order("created_at", { ascending: true })
-          .limit(200) as any);
-      }
+      let { data, error } = await loadSel("id, role, content, created_at, images, videos");
+      if (error) ({ data, error } = await loadSel("id, role, content, created_at, images"));
+      if (error) ({ data, error } = await loadSel("id, role, content, created_at"));
       if (cancelled) return;
       if (error) {
         console.error("Failed to load chat history:", error);
@@ -232,6 +233,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .map((m: any) => ({
           id: m.id, role: m.role, content: m.content,
           images: Array.isArray(m.images) && m.images.length > 0 ? m.images : undefined,
+          videos: Array.isArray(m.videos) && m.videos.length > 0 ? m.videos : undefined,
         }));
       setMessages(loaded);
       loadedRef.current = true;
@@ -257,6 +259,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return [...prev, {
               id: m.id, role: m.role, content: m.content,
               images: Array.isArray(m.images) && m.images.length > 0 ? m.images : undefined,
+              videos: Array.isArray(m.videos) && m.videos.length > 0 ? m.videos : undefined,
             }];
           });
         }
@@ -274,22 +277,26 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [user]);
 
   const persistMessage = useCallback(
-    async (role: "user" | "assistant", content: string, bookId?: string | null, images?: ChatImageRef[]): Promise<string | undefined> => {
+    async (role: "user" | "assistant", content: string, bookId?: string | null, images?: ChatImageRef[], videos?: ChatVideoRef[]): Promise<string | undefined> => {
       if (!user) return undefined;
       const base: any = { user_id: user.id, role, content, book_id: bookId || null };
-      // `images` is a newer column — retry without it if the migration hasn't
-      // been applied yet (the picture is still safe in image_attachments).
-      let { data, error } = await supabase
-        .from("chat_messages")
-        .insert(images && images.length > 0 ? { ...base, images } : base)
-        .select("id")
-        .single();
-      if (error && images && images.length > 0) {
-        ({ data, error } = await supabase
-          .from("chat_messages")
-          .insert(base)
-          .select("id")
-          .single());
+      // `images`/`videos` are newer columns — cascade to fewer extras if a
+      // migration hasn't been applied yet (media stays safe in its own table,
+      // and dropping the videos column must not also drop images).
+      const ins = (row: any) => supabase.from("chat_messages").insert(row).select("id").single();
+      const hasImages = !!images && images.length > 0;
+      const hasVideos = !!videos && videos.length > 0;
+      const full: any = { ...base };
+      if (hasImages) full.images = images;
+      if (hasVideos) full.videos = videos;
+      let { data, error } = await ins(full);
+      if (error && hasVideos) {
+        const noVideos: any = { ...base };
+        if (hasImages) noVideos.images = images;
+        ({ data, error } = await ins(noVideos));
+      }
+      if (error && hasImages) {
+        ({ data, error } = await ins(base));
       }
       if (error) {
         console.error("Failed to persist chat message:", error);
@@ -422,6 +429,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Images generated/recalled via the image tools this turn — rendered
       // inline in the assistant's bubble and persisted with the message.
       const turnImages: ChatImageRef[] = [];
+      const turnVideos: ChatVideoRef[] = [];
       let assistantText = "";
       setMessages((prev) => [...prev, { role: "assistant", content: "", toolEvents: [], usedMemories: usedMemories.length > 0 ? usedMemories : undefined }]);
 
@@ -435,6 +443,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 content: assistantText,
                 toolEvents: [...assistantEvents],
                 images: turnImages.length > 0 ? [...turnImages] : copy[i].images,
+                videos: turnVideos.length > 0 ? [...turnVideos] : copy[i].videos,
               };
               break;
             }
@@ -567,6 +576,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               isPaid,
               imageModelPrimary,
               imageModelFallback,
+              videoModelPrimary,
+              videoDefaultDuration,
+              videoDefaultResolution,
+              videoDefaultAspect,
+              videoGenerateAudio,
+              videoConfirmThreshold,
             });
 
             assistantEvents.push(event);
@@ -577,11 +592,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               if (Array.isArray(r.__images) && r.__images.length > 0) {
                 turnImages.push(...r.__images);
               }
+              if (Array.isArray(r.__videos) && r.__videos.length > 0) {
+                turnVideos.push(...r.__videos);
+              }
               if (typeof r.__vision === "string" && r.__vision.startsWith("data:")) {
                 visionPayloads.push(r.__vision);
               }
-              if ("__images" in r || "__vision" in r) {
-                const { __images, __vision, ...clean } = r;
+              if ("__images" in r || "__videos" in r || "__vision" in r) {
+                const { __images, __videos, __vision, ...clean } = r;
                 modelResult = clean;
               }
             }
@@ -621,8 +639,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           updateAssistant();
         }
 
-        if (assistantText || turnImages.length > 0) {
-          const id = await persistMessage("assistant", assistantText, activeBookId, turnImages.length > 0 ? turnImages : undefined);
+        if (assistantText || turnImages.length > 0 || turnVideos.length > 0) {
+          const id = await persistMessage("assistant", assistantText, activeBookId, turnImages.length > 0 ? turnImages : undefined, turnVideos.length > 0 ? turnVideos : undefined);
           if (id) {
             setMessages((prev) => {
               const copy = [...prev];
@@ -729,7 +747,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
       }
     },
-    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
+    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
   );
 
 
