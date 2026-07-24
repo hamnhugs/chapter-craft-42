@@ -836,6 +836,7 @@ export type Database = {
       }
       knowledge_entries: {
         Row: {
+          archived: boolean
           atomicity_warning: string | null
           confidence: number
           content: string
@@ -843,15 +844,23 @@ export type Database = {
           embedding: string | null
           embedding_model: string | null
           embedding_v2: unknown
+          encoding_strength: number | null
           entry_type: string
           folder: string
           id: string
+          importance: number | null
           is_index: boolean
+          last_retrieved_at: string | null
           linked_wiki_id: string | null
           maturity: string
+          next_review_at: string | null
           pending_changes: Json
+          retrieval_count: number
+          review_count: number
           source_book_id: string | null
+          storage_strength: number
           subject: string | null
+          surprise: number | null
           tags: string[]
           title: string
           tsv: unknown
@@ -859,9 +868,11 @@ export type Database = {
           user_id: string
           valid_from: string | null
           valid_to: string | null
+          vibrancy: number
           wiki_id: string | null
         }
         Insert: {
+          archived?: boolean
           atomicity_warning?: string | null
           confidence?: number
           content?: string
@@ -869,15 +880,23 @@ export type Database = {
           embedding?: string | null
           embedding_model?: string | null
           embedding_v2?: unknown
+          encoding_strength?: number | null
           entry_type?: string
           folder?: string
           id?: string
+          importance?: number | null
           is_index?: boolean
+          last_retrieved_at?: string | null
           linked_wiki_id?: string | null
           maturity?: string
+          next_review_at?: string | null
           pending_changes?: Json
+          retrieval_count?: number
+          review_count?: number
           source_book_id?: string | null
+          storage_strength?: number
           subject?: string | null
+          surprise?: number | null
           tags?: string[]
           title: string
           tsv?: unknown
@@ -885,9 +904,11 @@ export type Database = {
           user_id: string
           valid_from?: string | null
           valid_to?: string | null
+          vibrancy?: number
           wiki_id?: string | null
         }
         Update: {
+          archived?: boolean
           atomicity_warning?: string | null
           confidence?: number
           content?: string
@@ -895,15 +916,23 @@ export type Database = {
           embedding?: string | null
           embedding_model?: string | null
           embedding_v2?: unknown
+          encoding_strength?: number | null
           entry_type?: string
           folder?: string
           id?: string
+          importance?: number | null
           is_index?: boolean
+          last_retrieved_at?: string | null
           linked_wiki_id?: string | null
           maturity?: string
+          next_review_at?: string | null
           pending_changes?: Json
+          retrieval_count?: number
+          review_count?: number
           source_book_id?: string | null
+          storage_strength?: number
           subject?: string | null
+          surprise?: number | null
           tags?: string[]
           title?: string
           tsv?: unknown
@@ -911,6 +940,7 @@ export type Database = {
           user_id?: string
           valid_from?: string | null
           valid_to?: string | null
+          vibrancy?: number
           wiki_id?: string | null
         }
         Relationships: [
@@ -2024,9 +2054,23 @@ export type Database = {
         }
       }
       delete_entries_bulk: { Args: { entry_ids: string[] }; Returns: number }
+      entries_due_for_review: {
+        Args: { _limit?: number; _wiki_id?: string }
+        Returns: {
+          content: string
+          entry_type: string
+          id: string
+          next_review_at: string
+          storage_strength: number
+          title: string
+          vibrancy: number
+          wiki_id: string
+        }[]
+      }
       entries_for_wiki: {
         Args: { target_wiki_id: string }
         Returns: {
+          archived: boolean
           atomicity_warning: string | null
           confidence: number
           content: string
@@ -2034,15 +2078,23 @@ export type Database = {
           embedding: string | null
           embedding_model: string | null
           embedding_v2: unknown
+          encoding_strength: number | null
           entry_type: string
           folder: string
           id: string
+          importance: number | null
           is_index: boolean
+          last_retrieved_at: string | null
           linked_wiki_id: string | null
           maturity: string
+          next_review_at: string | null
           pending_changes: Json
+          retrieval_count: number
+          review_count: number
           source_book_id: string | null
+          storage_strength: number
           subject: string | null
+          surprise: number | null
           tags: string[]
           title: string
           tsv: unknown
@@ -2050,6 +2102,7 @@ export type Database = {
           user_id: string
           valid_from: string | null
           valid_to: string | null
+          vibrancy: number
           wiki_id: string | null
         }[]
         SetofOptions: {
@@ -2203,6 +2256,14 @@ export type Database = {
         }
       }
       my_entitlements: { Args: never; Returns: Json }
+      record_review: {
+        Args: { _entry_id: string; _recalled?: boolean }
+        Returns: string
+      }
+      renormalize_vibrancy: {
+        Args: { _target_mean?: number; _user_id: string; _wiki_id?: string }
+        Returns: number
+      }
       requeue_stuck_ingest_jobs: {
         Args: never
         Returns: {
