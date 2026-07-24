@@ -50,9 +50,10 @@ export interface SleepCycleReport {
   ok: boolean;
   elapsed_ms: number;
   phases: {
-    rerank:      { updated: number };
+    rerank:      { updated: number; renormalized?: number };
     consolidate: { processed: number; edges_created: number; conflicts_inserted: number };
     prune:       { orphans: string[] };
+    semanticize?: { created: number };
   };
 }
 

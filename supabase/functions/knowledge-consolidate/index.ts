@@ -40,6 +40,8 @@ import {
   MIN_EDGES_PER_CONSOLIDATION,
   QUEUE_PRIORITY,
 } from "../_shared/memory-layers.ts";
+import { embedOne } from "../_shared/embed.ts";
+import { embedAndStore } from "../_shared/atomicity.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -302,6 +304,113 @@ async function prune(supabase: any, userId: string, wikiId: string | null): Prom
   return { orphans: orphanIds };
 }
 
+// ── Phase 4: Semanticize (episodic → semantic consolidation) ──────────────────
+// The brain's central consolidation act: replay recent episodes and distill
+// recurring patterns into context-free semantic knowledge. Fully guarded — any
+// failure returns { created: 0 } and never affects the other phases.
+async function semanticize(
+  supabase: any,
+  userId: string,
+  llm: { url: string; headers: Record<string, string>; model: string },
+  wikiId: string | null,
+): Promise<{ created: number }> {
+  try {
+    let epq = supabase
+      .from("episodic_log")
+      .select("summary, key_facts, created_at, wiki_id")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(25);
+    if (wikiId) epq = epq.eq("wiki_id", wikiId);
+    const { data: eps } = await epq;
+    const episodes = (eps || []) as any[];
+    if (episodes.length < 3) return { created: 0 };
+
+    const facts: string[] = [];
+    for (const e of episodes) {
+      if (Array.isArray(e.key_facts)) for (const f of e.key_facts) if (typeof f === "string") facts.push(f);
+    }
+    if (facts.length < 6) return { created: 0 };
+
+    const resp = await fetch(llm.url, {
+      method: "POST",
+      headers: llm.headers,
+      body: JSON.stringify({
+        model: llm.model,
+        messages: [
+          { role: "system", content: "You consolidate episodic memories into semantic knowledge, like the brain does during sleep. From facts gathered across many sessions, distill 1-3 GENERAL, durable, context-free semantic facts that RECUR or generalize across episodes. Ignore one-off specifics. Each must be a genuine generalization, not a copy of a single fact. If nothing genuinely recurs, return an empty list. Reply only via the tool." },
+          { role: "user", content: `FACTS FROM RECENT SESSIONS:\n${facts.slice(0, 120).map((f) => `- ${f}`).join("\n")}` },
+        ],
+        tools: [{
+          type: "function",
+          function: {
+            name: "save_schema",
+            description: "Save generalized semantic facts",
+            parameters: {
+              type: "object",
+              properties: {
+                entries: {
+                  type: "array", maxItems: 3,
+                  items: { type: "object", properties: { title: { type: "string" }, content: { type: "string" } }, required: ["title", "content"] },
+                },
+              },
+              required: ["entries"],
+            },
+          },
+        }],
+        tool_choice: { type: "function", function: { name: "save_schema" } },
+      }),
+    });
+    if (!resp.ok) return { created: 0 };
+    const d = await resp.json();
+    const tc = d.choices?.[0]?.message?.tool_calls?.[0];
+    if (!tc) return { created: 0 };
+    let entries: any[] = [];
+    try { entries = JSON.parse(tc.function.arguments).entries || []; } catch { return { created: 0 }; }
+
+    let created = 0;
+    for (const e of entries.slice(0, 3)) {
+      const title = String(e.title || "").trim();
+      const content = String(e.content || "").trim();
+      if (!title || !content) continue;
+      // Dedup against existing memory so we never re-create the same schema.
+      try {
+        const vec = await embedOne(`${title}\n${content}`);
+        if (vec) {
+          const { data: near } = await supabase.rpc("match_knowledge", { query_embedding: vec as any, match_count: 1 });
+          const top = ((near || []) as any[])[0];
+          if (top && typeof top.similarity === "number" && top.similarity >= 0.85) {
+            // match_knowledge isn't wiki-scoped; when this cycle is wiki-scoped,
+            // only treat it as a duplicate if the match lives in the SAME wiki,
+            // so wiki B still gets a schema that merely resembles one in wiki A.
+            let sameScope = true;
+            if (wikiId) {
+              const { data: hit } = await supabase.from("knowledge_entries").select("wiki_id").eq("id", top.id).single();
+              sameScope = (hit as any)?.wiki_id === wikiId;
+            }
+            if (sameScope) continue; // already known in this scope
+          }
+        }
+      } catch { /* dedup best-effort */ }
+
+      const { data: ins } = await supabase.from("knowledge_entries").insert({
+        user_id: userId, title, content,
+        entry_type: "synthesis", tags: ["consolidated", "schema"],
+        confidence: 0.7, vibrancy: 0.6,
+        ...(wikiId ? { wiki_id: wikiId } : {}),
+      } as any).select("id").single();
+      if (ins?.id) {
+        try { await embedAndStore(supabase, ins.id, userId, title, content); } catch { /* reindex later */ }
+        created++;
+      }
+    }
+    return { created };
+  } catch (e) {
+    console.warn("semanticize skipped:", e);
+    return { created: 0 };
+  }
+}
+
 // ── Main handler ───────────────────────────────────────────────────────────────
 
 serve(async (req) => {
@@ -350,6 +459,9 @@ serve(async (req) => {
     // Phase 3
     const pruneResult      = await prune(supabase, user.id, wikiId);
 
+    // Phase 4 — Semanticize (episodic → semantic). Guarded; never breaks phases 1-3.
+    const semanticizeResult = await semanticize(supabase, user.id, llm, wikiId);
+
     // Record last run time.
     await supabase
       .from("user_settings")
@@ -365,6 +477,7 @@ serve(async (req) => {
         rerank:       { ...rerankResult, renormalized },
         consolidate:  consolidateResult,
         prune:        pruneResult,
+        semanticize:  semanticizeResult,
       },
     });
   } catch (e) {

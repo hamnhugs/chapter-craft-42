@@ -357,6 +357,7 @@ const WikiPanel: React.FC = () => {
       const bits = [
         p.rerank.updated > 0 ? `refreshed ${p.rerank.updated} ${p.rerank.updated === 1 ? "memory" : "memories"}` : null,
         p.consolidate.edges_created > 0 ? `connected ${p.consolidate.edges_created} ${p.consolidate.edges_created === 1 ? "idea" : "ideas"}` : null,
+        p.semanticize && p.semanticize.created > 0 ? `distilled ${p.semanticize.created} ${p.semanticize.created === 1 ? "insight" : "insights"}` : null,
         p.prune.orphans.length > 0 ? `flagged ${p.prune.orphans.length} for review` : null,
       ].filter(Boolean);
       toast.success(

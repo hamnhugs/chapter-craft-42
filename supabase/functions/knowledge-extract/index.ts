@@ -25,6 +25,37 @@ interface ExtractedEntry {
   relationships: { target_title: string; relationship: string }[];
 }
 
+// Discriminative merge check (dentate-gyrus pattern separation): do two
+// statements assert the SAME claim (safe to merge) or DIFFERENT/opposite claims
+// (must stay separate)? Fail-safe returns true (merge) so a gateway hiccup never
+// regresses the existing dedup behavior.
+async function sameClaim(
+  llm: { url: string; headers: Record<string, string>; model: string },
+  existingContent: string,
+  newContent: string,
+): Promise<boolean> {
+  try {
+    const r = await fetch(llm.url, {
+      method: "POST",
+      headers: llm.headers,
+      body: JSON.stringify({
+        model: llm.model,
+        messages: [
+          { role: "system", content: "Decide whether two knowledge statements assert essentially the SAME claim (safe to merge into one) or DIFFERENT/contradictory claims (must be kept separate). Reply only via the tool." },
+          { role: "user", content: `A: ${existingContent.slice(0, 700)}\n\nB: ${newContent.slice(0, 700)}` },
+        ],
+        tools: [{ type: "function", function: { name: "judge", description: "Report the comparison", parameters: { type: "object", properties: { same_claim: { type: "boolean" } }, required: ["same_claim"] } } }],
+        tool_choice: { type: "function", function: { name: "judge" } },
+      }),
+    });
+    if (!r.ok) return true;
+    const d = await r.json();
+    const tc = d.choices?.[0]?.message?.tool_calls?.[0];
+    if (!tc) return true;
+    return JSON.parse(tc.function.arguments).same_claim !== false;
+  } catch { return true; }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -243,6 +274,7 @@ Rules:
     const dedupIds = new Set((existingEntries || []).map((e: any) => e.id));
     for (const entry of atomicAdds) {
       let dedupHit: { id: string; similarity: number } | null = null;
+      let topSim = 0;
       try {
         const vecPre = await embedOne(`${entry.title}\n${entry.content}`);
         if (vecPre) {
@@ -254,7 +286,10 @@ Rules:
           const top = ((near || []) as any[]).find(
             (m) => dedupIds.has(m.id) && typeof m.similarity === "number",
           );
-          if (top && top.similarity >= 0.85) dedupHit = { id: top.id, similarity: top.similarity };
+          if (top) {
+            topSim = top.similarity;
+            if (top.similarity >= 0.85) dedupHit = { id: top.id, similarity: top.similarity };
+          }
         }
       } catch (err) { console.warn("semantic dedup check failed, treating as ADD:", err); }
 
@@ -263,31 +298,63 @@ Rules:
         continue;
       }
       if (dedupHit) {
-        await supabase.from("knowledge_entries").update({
-          content: entry.content,
-          tags: entry.tags || [],
-          confidence: Math.min(1, Math.max(0, entry.confidence || 0.8)),
-        }).eq("id", dedupHit.id).eq("user_id", user.id);
-        const vec = await embedAndStore(supabase, dedupHit.id, user.id, entry.title, entry.content);
-        savedEntries.push({ ...entry, id: dedupHit.id, action: "UPDATED", embedding: vec });
-        continue;
+        // Discriminative merge gate: in the 0.85–0.92 band only merge when the
+        // two entries assert the SAME claim, so distinct-but-similar (or
+        // opposite) facts aren't collapsed into one.
+        let merge = true;
+        try {
+          const { data: ex } = await supabase
+            .from("knowledge_entries").select("content").eq("id", dedupHit.id).eq("user_id", user.id).single();
+          if (ex?.content) merge = await sameClaim(llm, ex.content, entry.content);
+        } catch { merge = true; } // fail-safe: keep current merge behavior
+        if (merge) {
+          await supabase.from("knowledge_entries").update({
+            content: entry.content,
+            tags: entry.tags || [],
+            confidence: Math.min(1, Math.max(0, entry.confidence || 0.8)),
+          }).eq("id", dedupHit.id).eq("user_id", user.id);
+          const vec = await embedAndStore(supabase, dedupHit.id, user.id, entry.title, entry.content);
+          savedEntries.push({ ...entry, id: dedupHit.id, action: "UPDATED", embedding: vec });
+          continue;
+        }
+        // Different claim → keep it as a distinct memory (fall through to ADD).
       }
 
-      const { data: inserted, error: insertError } = await supabase
+      // ADD — encoding salience: birth strength from novelty + confidence, so
+      // surprising/novel facts encode more strongly (hippocampal-VTA idea).
+      const novelty = Math.max(0, Math.min(1, 1 - topSim));
+      const conf = Math.min(1, Math.max(0, entry.confidence || 0.8));
+      const importance = Math.min(1, 0.4 + 0.35 * novelty + 0.25 * conf);
+      const encodingStrength = Math.min(1, 0.6 + 0.4 * importance);
+      const baseInsert: Record<string, unknown> = {
+        user_id: user.id,
+        title: entry.title,
+        content: entry.content,
+        entry_type: entry.entry_type,
+        tags: entry.tags || [],
+        confidence: conf,
+        source_book_id: source_book_id || null,
+        wiki_id: effectiveWikiId,
+      };
+      let inserted: any = null;
+      let insertError: any = null;
+      ({ data: inserted, error: insertError } = await supabase
         .from("knowledge_entries")
-        .insert({
-          user_id: user.id,
-          title: entry.title,
-          content: entry.content,
-          entry_type: entry.entry_type,
-          tags: entry.tags || [],
-          confidence: Math.min(1, Math.max(0, entry.confidence || 0.8)),
-          source_book_id: source_book_id || null,
-          wiki_id: effectiveWikiId,
-        } as any)
-        .select("id")
-        .single();
-
+        .insert({ ...baseInsert, importance, surprise: novelty, encoding_strength: encodingStrength, vibrancy: encodingStrength } as any)
+        .select("id").single());
+      if (insertError) {
+        // ONLY retry when the salience columns aren't migrated yet. NOT on an
+        // RLS-filtered readback or a transient post-commit error — the first row
+        // may already have committed, so a blind retry would double-insert.
+        const msg = String(insertError.message || "");
+        const missingCol = insertError.code === "42703" || insertError.code === "PGRST204"
+          || /column .* does not exist/i.test(msg)
+          || /(importance|surprise|encoding_strength|vibrancy)/i.test(msg);
+        if (missingCol) {
+          ({ data: inserted, error: insertError } = await supabase
+            .from("knowledge_entries").insert(baseInsert as any).select("id").single());
+        }
+      }
       if (insertError) { console.error("insert failed:", insertError.message); continue; }
       if (!inserted) continue;
       const vec = await embedAndStore(supabase, inserted.id, user.id, entry.title, entry.content);
