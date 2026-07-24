@@ -350,8 +350,16 @@ const WikiPanel: React.FC = () => {
     try {
       const report = await triggerSleepCycle(maintenanceTargetId);
       setSleepCycleReport(report);
+      // Say what it actually did across all three real phases: ACT-R re-ranking
+      // (strengthen/fade), edge consolidation (connect), and orphan pruning.
+      const p = report.phases;
+      const bits = [
+        p.rerank.updated > 0 ? `refreshed ${p.rerank.updated} ${p.rerank.updated === 1 ? "memory" : "memories"}` : null,
+        p.consolidate.edges_created > 0 ? `connected ${p.consolidate.edges_created} ${p.consolidate.edges_created === 1 ? "idea" : "ideas"}` : null,
+        p.prune.orphans.length > 0 ? `flagged ${p.prune.orphans.length} for review` : null,
+      ].filter(Boolean);
       toast.success(
-        `Consolidated ${maintenanceTargetName} — connected ${report.phases.consolidate.edges_created} ideas, ${report.phases.prune.orphans.length} entries queued for review`,
+        `Consolidated ${maintenanceTargetName}${bits.length ? " — " + bits.join(", ") : " — nothing new to tidy"}`,
       );
       await loadData();
     } catch (err: any) {
@@ -414,6 +422,25 @@ const WikiPanel: React.FC = () => {
     }
     return true;
   }), [entries, filterType, searchQuery]);
+
+  // Reveal the ACT-R vibrancy the memory engine already tracks. The mind map
+  // must keep filteredEntries' stable identity (see above), so only the LIST is
+  // re-sorted by strength when the user asks.
+  const [sortByStrength, setSortByStrength] = useState<null | "fading" | "core">(null);
+  const sortedEntries = useMemo(() => {
+    if (!sortByStrength) return filteredEntries;
+    const dir = sortByStrength === "fading" ? 1 : -1;
+    return [...filteredEntries].sort((a, b) => dir * ((a.vibrancy ?? 1) - (b.vibrancy ?? 1)));
+  }, [filteredEntries, sortByStrength]);
+  const vitality = useMemo(() => {
+    let core = 0, fading = 0;
+    for (const e of filteredEntries) {
+      const v = e.vibrancy ?? 1;
+      if (v >= 0.7) core++;
+      else if (v < 0.35) fading++;
+    }
+    return { core, fading };
+  }, [filteredEntries]);
 
   const newThisWeek = useMemo(() => {
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
@@ -1097,7 +1124,38 @@ const WikiPanel: React.FC = () => {
               </React.Suspense>
             ) : (
               <div key="list" className="space-y-4 motion-safe:animate-fade-in">
-                {filteredEntries.map((entry) => {
+                {(vitality.core > 0 || vitality.fading > 0) && (
+                  <div className="flex items-center gap-2 text-[11px] text-on-surface-variant mb-1 flex-wrap">
+                    <span className="inline-flex items-center gap-1" title="Memory strength (ACT-R vibrancy): recalling a memory makes it vivid; unused ones gently fade over weeks.">
+                      <span className="material-symbols-outlined text-[13px]" aria-hidden>bolt</span>
+                      Memory vitality
+                    </span>
+                    {vitality.core > 0 && (
+                      <button
+                        onClick={() => setSortByStrength((s) => (s === "core" ? null : "core"))}
+                        aria-pressed={sortByStrength === "core"}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full transition-colors ${sortByStrength === "core" ? "bg-primary/15 text-primary" : "hover:bg-surface-container-high"}`}
+                      >
+                        <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-primary" />
+                        {vitality.core} core
+                      </button>
+                    )}
+                    {vitality.fading > 0 && (
+                      <button
+                        onClick={() => setSortByStrength((s) => (s === "fading" ? null : "fading"))}
+                        aria-pressed={sortByStrength === "fading"}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full transition-colors ${sortByStrength === "fading" ? "bg-primary/15 text-primary" : "hover:bg-surface-container-high"}`}
+                      >
+                        <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-primary/40" />
+                        {vitality.fading} fading
+                      </button>
+                    )}
+                    {sortByStrength && (
+                      <button onClick={() => setSortByStrength(null)} className="text-primary hover:underline">clear</button>
+                    )}
+                  </div>
+                )}
+                {sortedEntries.map((entry) => {
                   const relCount = graph.filter(g => g.source_entry_id === entry.id || g.target_entry_id === entry.id).length;
                   const sourceWiki = neuronNameByEntry?.[entry.id];
                   const sourceColor = sourceWiki ? wikis.find((w) => w.id === wikiByEntry[entry.id])?.cover_color : null;
@@ -1113,6 +1171,20 @@ const WikiPanel: React.FC = () => {
                             <span className="capitalize text-primary">{entry.entry_type}</span>
                             <span aria-hidden className="text-outline-variant">·</span>
                             <span>{Math.round(entry.confidence * 100)}% confidence</span>
+                            {typeof entry.vibrancy === "number" && entry.vibrancy < 0.999 && (
+                              <>
+                                <span aria-hidden className="text-outline-variant">·</span>
+                                <span
+                                  className="inline-flex items-center gap-1"
+                                  title={`Memory strength ${Math.round(entry.vibrancy * 100)}% — ${entry.vibrancy >= 0.7 ? "core: anchors related memories" : entry.vibrancy < 0.35 ? "fading: rarely recalled lately" : "active"}. Recalling it makes it more vivid; unused memories gently fade.`}
+                                >
+                                  <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-primary" style={{ opacity: 0.2 + 0.8 * entry.vibrancy }} />
+                                  {entry.vibrancy < 0.35
+                                    ? <span className="text-on-surface-variant/70">fading</span>
+                                    : entry.vibrancy >= 0.7 ? "core" : null}
+                                </span>
+                              </>
+                            )}
                             {relCount > 0 && (
                               <>
                                 <span aria-hidden className="text-outline-variant">·</span>
