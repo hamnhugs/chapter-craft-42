@@ -338,6 +338,7 @@ export type Database = {
           images: Json | null
           role: string
           user_id: string
+          videos: Json | null
         }
         Insert: {
           book_id?: string | null
@@ -347,6 +348,7 @@ export type Database = {
           images?: Json | null
           role: string
           user_id: string
+          videos?: Json | null
         }
         Update: {
           book_id?: string | null
@@ -356,6 +358,7 @@ export type Database = {
           images?: Json | null
           role?: string
           user_id?: string
+          videos?: Json | null
         }
         Relationships: []
       }
@@ -1306,12 +1309,19 @@ export type Database = {
           openrouter_api_key: string | null
           saved_image_models: Json
           saved_models: Json | null
+          saved_video_models: Json | null
           selected_model: string | null
           smart_filing_enabled: boolean
           trust_image_text: boolean
           tts_rate: number
           updated_at: string
           user_id: string
+          video_confirm_threshold: number | null
+          video_default_aspect: string | null
+          video_default_duration: number | null
+          video_default_resolution: string | null
+          video_generate_audio: boolean | null
+          video_model_primary: string | null
           vision_model: string | null
           voice_model: string | null
           wiki_model: string | null
@@ -1344,12 +1354,19 @@ export type Database = {
           openrouter_api_key?: string | null
           saved_image_models?: Json
           saved_models?: Json | null
+          saved_video_models?: Json | null
           selected_model?: string | null
           smart_filing_enabled?: boolean
           trust_image_text?: boolean
           tts_rate?: number
           updated_at?: string
           user_id: string
+          video_confirm_threshold?: number | null
+          video_default_aspect?: string | null
+          video_default_duration?: number | null
+          video_default_resolution?: string | null
+          video_generate_audio?: boolean | null
+          video_model_primary?: string | null
           vision_model?: string | null
           voice_model?: string | null
           wiki_model?: string | null
@@ -1382,12 +1399,19 @@ export type Database = {
           openrouter_api_key?: string | null
           saved_image_models?: Json
           saved_models?: Json | null
+          saved_video_models?: Json | null
           selected_model?: string | null
           smart_filing_enabled?: boolean
           trust_image_text?: boolean
           tts_rate?: number
           updated_at?: string
           user_id?: string
+          video_confirm_threshold?: number | null
+          video_default_aspect?: string | null
+          video_default_duration?: number | null
+          video_default_resolution?: string | null
+          video_generate_audio?: boolean | null
+          video_model_primary?: string | null
           vision_model?: string | null
           voice_model?: string | null
           wiki_model?: string | null
@@ -1398,6 +1422,80 @@ export type Database = {
             columns: ["active_wiki_id"]
             isOneToOne: false
             referencedRelation: "wikis"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      video_generations: {
+        Row: {
+          aspect_ratio: string | null
+          caption: string
+          cost: number | null
+          created_at: string
+          duration_s: number | null
+          entry_id: string | null
+          error: string | null
+          has_audio: boolean | null
+          id: string
+          job_id: string
+          mime: string
+          model: string
+          poster_path: string | null
+          prompt: string
+          resolution: string | null
+          status: string
+          storage_path: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          aspect_ratio?: string | null
+          caption?: string
+          cost?: number | null
+          created_at?: string
+          duration_s?: number | null
+          entry_id?: string | null
+          error?: string | null
+          has_audio?: boolean | null
+          id?: string
+          job_id: string
+          mime?: string
+          model?: string
+          poster_path?: string | null
+          prompt?: string
+          resolution?: string | null
+          status?: string
+          storage_path?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          aspect_ratio?: string | null
+          caption?: string
+          cost?: number | null
+          created_at?: string
+          duration_s?: number | null
+          entry_id?: string | null
+          error?: string | null
+          has_audio?: boolean | null
+          id?: string
+          job_id?: string
+          mime?: string
+          model?: string
+          poster_path?: string | null
+          prompt?: string
+          resolution?: string | null
+          status?: string
+          storage_path?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "video_generations_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_entries"
             referencedColumns: ["id"]
           },
         ]
