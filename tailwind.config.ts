@@ -115,6 +115,12 @@ export default {
           "25%": { transform: "rotate(-10deg)" },
           "75%": { transform: "rotate(10deg)" },
         },
+        // Opacity-only "alive" cue for the memory-recording dot — state-tied,
+        // slow, and safe under prefers-reduced-motion via motion-safe: usage.
+        breathe: {
+          "0%, 100%": { opacity: "1" },
+          "50%": { opacity: "0.35" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
@@ -123,6 +129,7 @@ export default {
         "slide-up": "slide-up 0.4s ease-out",
         "pulse-glow": "pulse-glow 2s ease-in-out infinite",
         "icon-wiggle": "icon-wiggle 2s ease-in-out infinite",
+        breathe: "breathe 3s ease-in-out infinite",
       },
     },
   },

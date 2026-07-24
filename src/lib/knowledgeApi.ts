@@ -103,6 +103,51 @@ export async function fetchKnowledgeEntries(wikiId?: string | null): Promise<Kno
   return (data || []) as unknown as KnowledgeEntry[];
 }
 
+/**
+ * Union of entries across a loaded neuron set (2-5 wikis), fetched via the
+ * same per-wiki RPC the single view uses so bridged entries stay included.
+ * Entries appearing in several wikis are deduped first-wins, so ordering the
+ * ids primary-first attributes shared entries to the primary. Returns a
+ * wiki-membership map so the UI can label each entry's source neuron.
+ */
+export async function fetchKnowledgeEntriesForSet(
+  wikiIds: string[],
+): Promise<{ entries: KnowledgeEntry[]; wikiByEntry: Record<string, string>; failedWikiIds: string[] }> {
+  const results = await Promise.allSettled(wikiIds.map((id) => fetchKnowledgeEntries(id)));
+  const failedWikiIds = wikiIds.filter((_, i) => results[i].status === "rejected");
+  // Total failure must surface as an error, not render as "your neurons are
+  // empty" — partial failures are returned so the caller can warn.
+  if (failedWikiIds.length === wikiIds.length && wikiIds.length > 0) {
+    throw (results[0] as PromiseRejectedResult).reason;
+  }
+  const wikiByEntry: Record<string, string> = {};
+  const seen = new Map<string, KnowledgeEntry>();
+  results.forEach((res, i) => {
+    if (res.status !== "fulfilled") return;
+    for (const e of res.value) {
+      if (!seen.has(e.id)) {
+        seen.set(e.id, e);
+        wikiByEntry[e.id] = wikiIds[i];
+      }
+    }
+  });
+  const entries = [...seen.values()].sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+  return { entries, wikiByEntry, failedWikiIds };
+}
+
+export async function fetchMemoryGraphForSet(wikiIds: string[]): Promise<MemoryGraphEdge[]> {
+  const results = await Promise.allSettled(wikiIds.map((id) => fetchMemoryGraph(id)));
+  if (wikiIds.length > 0 && results.every((r) => r.status === "rejected")) {
+    throw (results[0] as PromiseRejectedResult).reason;
+  }
+  const seen = new Map<string, MemoryGraphEdge>();
+  for (const res of results) {
+    if (res.status !== "fulfilled") continue;
+    for (const edge of res.value) if (!seen.has(edge.id)) seen.set(edge.id, edge);
+  }
+  return [...seen.values()];
+}
+
 export async function fetchMemoryGraph(wikiId?: string | null): Promise<MemoryGraphEdge[]> {
   if (wikiId) {
     const { data, error } = await supabase.rpc("memory_graph_for_wiki" as any, {
@@ -309,6 +354,22 @@ export async function fetchConflicts(
   return (data || []) as unknown as KnowledgeConflict[];
 }
 
+export async function fetchConflictsForSet(
+  wikiIds: string[],
+  status?: KnowledgeConflict["status"],
+): Promise<KnowledgeConflict[]> {
+  const results = await Promise.allSettled(wikiIds.map((id) => fetchConflicts(status, id)));
+  if (wikiIds.length > 0 && results.every((r) => r.status === "rejected")) {
+    throw (results[0] as PromiseRejectedResult).reason;
+  }
+  const seen = new Map<string, KnowledgeConflict>();
+  for (const res of results) {
+    if (res.status !== "fulfilled") continue;
+    for (const c of res.value) if (!seen.has(c.id)) seen.set(c.id, c);
+  }
+  return [...seen.values()].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+}
+
 export async function updateConflictStatus(id: string, status: KnowledgeConflict["status"]): Promise<void> {
   const { error } = await supabase.from("knowledge_conflicts").update({ status }).eq("id", id);
   if (error) throw error;
@@ -331,6 +392,18 @@ export async function fetchEpisodicLog(
     q = q.or(`wiki_id.eq.${wikiId},wiki_id.is.null`);
   }
   const { data, error } = await q;
+  if (error) throw error;
+  return (data || []) as unknown as EpisodicLogEntry[];
+}
+
+export async function fetchEpisodicLogForSet(wikiIds: string[], limit = 20): Promise<EpisodicLogEntry[]> {
+  const { data, error } = await supabase
+    .from("episodic_log")
+    .select("*")
+    // Loaded-set scope plus legacy untagged rows, same policy as the single-wiki path.
+    .or(`wiki_id.in.(${wikiIds.join(",")}),wiki_id.is.null`)
+    .order("created_at", { ascending: false })
+    .limit(limit);
   if (error) throw error;
   return (data || []) as unknown as EpisodicLogEntry[];
 }
@@ -381,6 +454,27 @@ export async function fetchConsolidationQueue(
   const { data, error } = await q;
   if (error) throw error;
   return (data || []) as unknown as ConsolidationQueueItem[];
+}
+
+export async function fetchConsolidationQueueForSet(
+  wikiIds: string[],
+  includingProcessed = false,
+): Promise<ConsolidationQueueItem[]> {
+  const settled = await Promise.allSettled(
+    wikiIds.map((id) => fetchConsolidationQueue(includingProcessed, id)),
+  );
+  if (wikiIds.length > 0 && settled.every((r) => r.status === "rejected")) {
+    throw (settled[0] as PromiseRejectedResult).reason;
+  }
+  const seen = new Map<string, ConsolidationQueueItem>();
+  for (const res of settled) {
+    if (res.status !== "fulfilled") continue;
+    for (const item of res.value) if (!seen.has(item.id)) seen.set(item.id, item);
+  }
+  return [...seen.values()].sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    return a.created_at < b.created_at ? -1 : 1;
+  });
 }
 
 // ── Sleep Cycle ────────────────────────────────────────────────────────────────

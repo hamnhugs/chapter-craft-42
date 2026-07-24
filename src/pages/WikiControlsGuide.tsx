@@ -10,7 +10,7 @@ const Control: React.FC<{ icon: string; name: string; analogy: string; children:
 }) => (
   <div className="bg-surface-container-low rounded-2xl p-5 md:p-6 border border-outline-variant/10">
     <div className="flex items-start gap-3 mb-2">
-      <span className="material-symbols-outlined text-2xl text-accent shrink-0">{icon}</span>
+      <span className="material-symbols-outlined text-2xl text-accent shrink-0" aria-hidden>{icon}</span>
       <div>
         <h4 className="font-headline font-bold text-xl text-primary leading-tight">{name}</h4>
         <p className="text-on-surface-variant italic font-headline text-sm mt-0.5">{analogy}</p>
@@ -37,10 +37,10 @@ const WikiControlsGuide: React.FC = () => {
             to="/"
             className="inline-flex items-center gap-2 text-sm font-body font-medium text-primary hover:text-accent transition-colors"
           >
-            <ArrowLeft className="w-4 h-4" />
+            <ArrowLeft className="w-4 h-4" aria-hidden />
             Back to Neuron
           </Link>
-          <span className="text-xs uppercase tracking-widest font-bold text-on-surface-variant">
+          <span className="text-[11px] uppercase tracking-wider font-bold text-on-surface-variant">
             Field Guide
           </span>
         </div>
@@ -48,15 +48,15 @@ const WikiControlsGuide: React.FC = () => {
 
       <main className="max-w-3xl mx-auto px-6 py-12 pb-32">
         <div className="mb-12">
-          <span className="px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded text-[10px] font-bold tracking-widest uppercase">
-            NEURON TAB
+          <span className="px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded text-[11px] font-bold tracking-wider uppercase">
+            Neuron Tab
           </span>
-          <h1 className="font-headline font-bold text-5xl md:text-6xl text-primary tracking-tight mt-3 mb-4">
-            What All These Buttons Do
+          <h1 className="font-headline font-bold text-4xl md:text-5xl text-primary tracking-tight mt-3 mb-4">
+            A Quick Tour of the Neuron Tab
           </h1>
           <p className="text-on-surface-variant text-lg font-body leading-relaxed">
-            The Neuron tab has a lot of controls. Most of them you'll only touch once in a while.
-            Here's a plain-English tour so nothing feels mysterious.
+            The Neuron tab shows what your AI actually knows. Here's the plain-English tour —
+            most of it you'll rarely need, because the tab mostly runs itself.
           </p>
         </div>
 
@@ -65,105 +65,106 @@ const WikiControlsGuide: React.FC = () => {
             The 30-second version
           </h2>
           <p className="text-on-primary-container/90 font-body leading-relaxed">
-            Most days you just <strong>chat</strong> and the neuron grows on its own. Pop in here to{" "}
-            <strong>resolve conflicts</strong> when a number appears, and once a week run{" "}
-            <strong>Sleep Cycle</strong> and <strong>Health Check</strong> to tidy things up. That's it.
+            Most days you just <strong>chat</strong> and your neurons grow on their own. Pop in here to{" "}
+            <strong>resolve conflicts</strong> when an amber chip appears, and glance at the{" "}
+            <strong>health ring</strong> now and then. That's it — everything else lives in the{" "}
+            <strong>⋯ care menu</strong> for when you're curious.
           </p>
         </section>
 
         <Group title="Scope & identity" subtitle="What you're looking at right now.">
-          <Control icon="filter_alt" name="This Neuron vs. All Neurons" analogy="One notebook, or all notebooks at once?">
+          <Control icon="join" name="Loaded-neuron chips" analogy="The notebooks open on your desk right now.">
             <p>
-              <strong>This Neuron</strong> shows only the wiki you've loaded — focused view.
-              <strong> All Neurons</strong> shows everything you've ever saved across every wiki.
-            </p>
-            <p>Pick "This Neuron" for normal work. Pick "All Neurons" when you can't remember which wiki something is in.</p>
-          </Control>
-          <Control icon="swap_horiz" name="Neuron switcher dropdown" analogy="The bookshelf next to your desk.">
-            <p>Jump straight to another neuron without going back to the Neurons page. Handy when you bounce between projects.</p>
-          </Control>
-          <Control icon="link" name="Loaded neurons & chains" analogy="Spreading two or three notebooks open on the desk at once.">
-            <p>
-              You can load up to 5 neurons at the same time (press <strong>⌘K</strong> and use the <strong>+</strong> button on a
-              neuron, or just ask Counsel). The <strong>primary</strong> neuron is where new knowledge is saved; the others are read
-              alongside so Counsel can compare and connect ideas across them — mixing related topics is one of the best-proven ways
-              to make learning stick.
+              The chips under the title are the neurons currently loaded — the exact set Counsel reads when you
+              chat. The one with the <strong>★</strong> is the <strong>primary</strong>: new knowledge saves there.
             </p>
             <p>
-              A <strong>chain</strong> is a saved combo (like "Traffic Signs" + "Road Rules") you can activate in one click from the
-              BRAIN tab's Chains section, the ⌘K switcher, or the book-load dialog. 2–3 related neurons is the sweet spot — more
-              than that dilutes the connections.
+              <strong>Tap a chip</strong> to focus the view on just that neuron; tap it again to widen back out.{" "}
+              <strong>+ Load</strong> opens the ⌘K switcher to load another neuron alongside (up to 5), and{" "}
+              <strong>Save chain</strong> keeps the current combo so you can re-activate it in one click later.
+              2–3 related neurons is the sweet spot — mixing related topics is one of the best-proven ways to make
+              learning stick.
             </p>
           </Control>
-        </Group>
-
-        <Group title="Day-to-day controls" subtitle="The two you'll actually use often.">
-          <Control icon="report" name="Conflicts" analogy="Two notes that disagree with each other.">
+          <Control icon="filter_alt" name="Loaded vs. Everything" analogy="The open notebooks, or the whole bookshelf?">
             <p>
-              When two cards say opposite things ("the meeting is Monday" vs. "Tuesday"), the system flags
-              them. Click here to review each pair and pick the right answer.
+              <strong>Loaded</strong> shows the neurons you're working with — what Counsel actually sees.{" "}
+              <strong>Everything</strong> shows every entry across every neuron you've ever made, loaded or not.
             </p>
-            <p>The red number = how many need your attention. Zero = you're all caught up.</p>
+            <p>Stay on "Loaded" for normal work. Flip to "Everything" when you can't remember which neuron something is in.</p>
           </Control>
-          <Control icon="edit" name="Recording / Retrieval mode" analogy="Pen down vs. pen up.">
+          <Control icon="fiber_manual_record" name="Memory chip" analogy="Pen down vs. pen up.">
             <p>
-              <strong>Recording mode</strong> — the AI writes new cards as you chat. The default.
+              The little pill that says <strong>"Memory on — saving to …"</strong> is Counsel's pen: while it reads
+              "on", new knowledge from your chats is saved to the primary neuron (on most devices the dot beside it
+              gently breathes too).
             </p>
             <p>
-              <strong>Retrieval mode</strong> — read-only. The AI can answer questions using the neuron but
-              won't add anything new. Use this when you want pure Q&A without growing the library.
+              Click it to pause: <strong>"Memory paused"</strong> means Counsel still answers from your neurons but
+              writes nothing new — and that applies to <em>all</em> neurons until you resume.
             </p>
           </Control>
         </Group>
 
-        <Group title="Tidy-up tools" subtitle="Run these once in a while. They keep the neuron sharp.">
-          <Control icon="bedtime" name="Sleep Cycle" analogy="A good night's sleep for your neuron.">
+        <Group title="Status at a glance" subtitle="The two signals worth acting on.">
+          <Control icon="health_and_safety" name="Health ring" analogy="A checkup, one glance.">
             <p>
-              Connects lonely cards to their neighbors, merges duplicates, and quietly cleans the web of
-              links. Just like real sleep helps your brain consolidate.
-            </p>
-            <p>Good habit: run it after a big chat session.</p>
-          </Control>
-          <Control icon="health_and_safety" name="Health Check" analogy="A quick checkup.">
-            <p>
-              Scans the neuron for problems — broken links, weird empty cards, anything that looks off — and
-              shows you what it found. Run it when something feels wrong.
+              The ring shows the last health score for the neuron you're viewing. Click it to run a fresh check —
+              it scans for duplicates, lonely entries, and anything that looks off, then shows you the report with
+              one-tap fixes.
             </p>
           </Control>
-          <Control icon="memory" name="Reindex" analogy="Re-sharpening the search.">
+          <Control icon="report" name="Conflicts chip" analogy="Two notes that disagree.">
             <p>
-              Rebuilds the search index so semantic search ("find me cards about X") stays accurate. Run
-              it if search results feel stale or you just imported a lot.
+              When two entries say opposite things ("the meeting is Monday" vs. "Tuesday"), an amber chip appears
+              with the count. Open it, compare the pair side by side, and tap <strong>"Keep this one"</strong> on
+              the entry that's right — you'll always be told exactly what gets deleted before anything happens.
             </p>
-          </Control>
-          <Control icon="refresh" name="Refresh" analogy="Pull-to-refresh.">
-            <p>Just reloads the page's data from the server. Nothing fancy.</p>
+            <p>No chip = nothing needs you.</p>
           </Control>
         </Group>
 
-        <Group title="Browse the history" subtitle="See what's been happening behind the scenes.">
-          <Control icon="history" name="Episodes" analogy="A diary of past chats.">
+        <Group title="The ⋯ care menu" subtitle="Occasional tools, out of the way until you want them.">
+          <Control icon="bedtime" name="Consolidate knowledge (Sleep Cycle)" analogy="A good night's sleep for your neuron.">
             <p>
-              Every conversation gets a short summary. Browse them to remember what you talked about last
-              week — or last month.
+              Connects lonely entries to their neighbors, merges duplicates, and quietly cleans the web of links —
+              just like real sleep consolidates memory. It also runs automatically once a day while you're using the
+              app, so the manual button is mostly for right after a big reading session.
             </p>
           </Control>
-          <Control icon="pending_actions" name="Queue" analogy="The to-do list for the next Sleep Cycle.">
-            <p>Cards waiting in line to be linked up and processed. Useful if you're curious what's pending.</p>
+          <Control icon="memory" name="Rebuild search" analogy="Re-sharpening the search.">
+            <p>Refreshes the index behind semantic search ("find me entries about X"). Run it if search feels stale.</p>
+          </Control>
+          <Control icon="history" name="Chat history" analogy="A diary of past conversations.">
+            <p>Every saved chat gets a short summary. Browse them to remember what you covered last week.</p>
+          </Control>
+          <Control icon="pending_actions" name="Pending tidy-ups" analogy="The to-do list for the next consolidation.">
+            <p>Entries waiting to be linked up or reviewed. Purely informational — the next consolidation clears it.</p>
+          </Control>
+          <Control icon="more_horiz" name="Conflict history & Refresh" analogy="The archive drawer and the reload lever.">
+            <p>
+              <strong>Conflict history</strong> appears in the menu once you've resolved past conflicts — a record of
+              old disagreements, all settled. <strong>Refresh data</strong> simply reloads the tab from the server.
+            </p>
+          </Control>
+          <Control icon="settings" name="Neuron settings" analogy="The control panel.">
+            <p>Pick which AI model your neurons use and tune advanced behavior. Lives in the Settings tab.</p>
           </Control>
         </Group>
 
-        <Group title="Settings & filters" subtitle="Less common, but here when you need them.">
-          <Control icon="settings" name="Settings (gear icon)" analogy="The control panel.">
+        <Group title="Finding things" subtitle="Search and slice the knowledge itself.">
+          <Control icon="search" name="Search & type filters" analogy="Sort by what kind of card.">
             <p>
-              Pick which AI model this neuron uses, change advanced options, and tweak how the neuron behaves.
+              Search covers titles, content, and tags across your current scope. The filter pills narrow by entry
+              type: <em>concepts</em>, <em>entities</em>, <em>facts</em>, <em>syntheses</em>, <em>summaries</em>,{" "}
+              <em>comparisons</em>.
             </p>
           </Control>
-          <Control icon="filter_list" name="Type filters" analogy="Sort by what kind of card.">
+          <Control icon="hub" name="Mind map & list" analogy="The web, or the index cards.">
             <p>
-              Inside the entries list you can filter by card type: <em>concept</em>, <em>entity</em>,{" "}
-              <em>fact</em>, <em>synthesis</em>, <em>summary</em>, <em>comparison</em>. Helps you find a
-              specific flavor of knowledge fast.
+              The mind map shows entries as glowing nodes connected by relationships — with several neurons loaded
+              (or in Everything scope), hover a node or scan a card's byline to see which neuron it came from. The
+              list view is the same knowledge as scannable cards, one tap away.
             </p>
           </Control>
         </Group>
@@ -173,7 +174,7 @@ const WikiControlsGuide: React.FC = () => {
             to="/"
             className="inline-flex items-center gap-2 bg-primary-container text-on-primary-container px-6 py-3 rounded-xl font-bold active:scale-95 transition-transform shadow-lg"
           >
-            <ArrowLeft className="w-4 h-4" />
+            <ArrowLeft className="w-4 h-4" aria-hidden />
             Back to Neuron
           </Link>
         </div>

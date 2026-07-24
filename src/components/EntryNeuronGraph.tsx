@@ -47,6 +47,8 @@ interface EntryNode {
   degree: number;
   conflicted: boolean;
   tags: string[];
+  /** Source neuron name in merged multi-neuron views (tooltip only — color stays type-coded). */
+  neuron?: string;
 }
 
 interface EntryLink {
@@ -139,7 +141,9 @@ const EntryNeuronGraph: React.FC<{
   edges: MemoryGraphEdge[];
   conflicts: KnowledgeConflict[];
   onOpen: (entry: KnowledgeEntry) => void;
-}> = ({ entries, edges, conflicts, onOpen }) => {
+  /** entry id → neuron name, for merged loaded-set views (shown in tooltips). */
+  neuronNameByEntry?: Record<string, string>;
+}> = ({ entries, edges, conflicts, onOpen, neuronNameByEntry }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const fgRef = useRef<any>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -271,11 +275,12 @@ const EntryNeuronGraph: React.FC<{
         degree: deg,
         conflicted: conflictedIds.has(e.id),
         tags: e.tags || [],
+        neuron: neuronNameByEntry?.[e.id],
       };
     });
 
     return { nodes, links };
-  }, [entries, edges, conflicts]);
+  }, [entries, edges, conflicts, neuronNameByEntry]);
 
   // One RAF loop throbs every registered conflict halo (~0.6Hz sine). The
   // simulation may be asleep but the brain keeps breathing.
@@ -411,7 +416,7 @@ const EntryNeuronGraph: React.FC<{
             nodeLabel={(n: any) =>
               `<div style="transform:translate(14px,-34px);font-family:Inter,system-ui,sans-serif;font-size:12px;padding:4px 9px;background:rgba(20,18,14,0.92);border-radius:6px;color:#f5efe6;pointer-events:none;max-width:260px">${
                 String(n.name).replace(/</g, "&lt;")
-              }<br/><span style="opacity:0.75;text-transform:capitalize">${n.entryType} · ${Math.round(n.confidence * 100)}% confidence${n.conflicted ? " · ⚠ conflict" : ""}</span></div>`
+              }<br/><span style="opacity:0.75;text-transform:capitalize">${n.entryType} · ${Math.round(n.confidence * 100)}% confidence${n.conflicted ? " · ⚠ conflict" : ""}${n.neuron ? ` · ${String(n.neuron).replace(/</g, "&lt;")}` : ""}</span></div>`
             }
             nodeThreeObject={nodeObject}
             nodeThreeObjectExtend={true}
