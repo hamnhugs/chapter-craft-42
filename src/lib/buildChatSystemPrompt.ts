@@ -22,6 +22,9 @@ interface BuildOpts {
   activeNeurons?: { id: string; name: string }[];
   /** When true (paid "Access all neurons" setting), retrieval spans every neuron instead of only the loaded ones. */
   allNeurons?: boolean;
+  /** "Reflex cues" (Phase 2): when true, the assistant proactively flags a
+   *  contradiction between the user's statement and a retrieved memory. */
+  reflex?: boolean;
 }
 
 /** A memory entry that was injected into the prompt — surfaced in the UI so
@@ -72,7 +75,7 @@ function isChapterContextRelevant(query: string | undefined, book: BookDocument)
 //     the context best, so the retrieved memories — the most query-specific,
 //     highest-value content — go LAST, right before the conversation.
 export async function buildChatSystemPrompt({
-  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeNeurons = [], allNeurons,
+  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeNeurons = [], allNeurons, reflex = true,
 }: BuildOpts): Promise<BuiltPrompt> {
   const parts: string[] = [];
   const usedMemories: UsedMemory[] = [];
@@ -115,6 +118,10 @@ export async function buildChatSystemPrompt({
     "- `web_search` → LIVE INTERNET search via the user's Burplexity instance. Use this WHENEVER the user asks to 'search', 'look up', 'google', 'check online', 'what's the latest', or anything time-sensitive or not in the wiki. You may call both `search_wiki` and `web_search` in the same turn when useful. Don't refuse online searches — call `web_search`.",
     "When the user asks about which wiki is active, to list wikis, switch to another wiki, or create a new one, USE the wiki tools (`list_wikis`, `get_active_wiki`, `switch_wiki`, `create_wiki`) — never claim a switch happened without calling `switch_wiki`.",
     "The user can also load SEVERAL neurons at once (up to 5), and save named neuron chains that load together. When they ask to study/load multiple neurons together, call `set_active_neurons` (first id = primary, where new knowledge is saved). For saved chains use `list_chains` and `activate_chain` (activating a chain REPLACES the loaded set). Never claim neurons or chains were loaded without the tool call succeeding. If the user asks to load more than 5, explain that 2–3 related neurons is the research-backed sweet spot and 5 is the ceiling.",
+    ...(reflex ? [
+      "## Contradiction reflex",
+      "When the user states something that directly CONTRADICTS a memory shown in the retrieved-memory context (e.g. they say a deadline is Tuesday but a saved memory says Monday), briefly and proactively point out the specific contradiction and ask which is correct. Only after they clearly indicate which is right may you reconcile it — use update_memory_entry to correct the memory, or resolve_conflict if the system already flagged it — and never silently overwrite or delete. If nothing in the retrieved memory contradicts what they said, do NOT mention this at all (no false alarms). It's a gentle safety check, not a challenge to everything the user says.",
+    ] : []),
     "## Images",
     "You can create and remember images:",
     "- `generate_image` → create AI images (Nano Banana), shown inline and saved to memory as neurons by default. Supports multiple images per call: pass `count` (2–4) for variations of the same prompt, or `prompts: [...]` (2–4 entries) for a distinct set in one call. You may also issue several `generate_image` tool calls in parallel within a single turn (e.g. one batch of character variants + one batch of background concepts). Each image costs a few cents — match the count to what the user asked for, don't pad.",

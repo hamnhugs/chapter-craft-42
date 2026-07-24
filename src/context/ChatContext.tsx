@@ -7,6 +7,7 @@ import { usePlan } from "@/hooks/usePlan";
 import { computeLockedWikiIds } from "@/lib/neuronAccess";
 import { usePromptPresets } from "@/hooks/usePromptPresets";
 import { buildChatSystemPrompt, type UsedMemory } from "@/lib/buildChatSystemPrompt";
+import { isReflexEnabled } from "@/lib/reflex";
 import { CHAT_TOOL_DEFINITIONS, executeChatTool, ToolEvent } from "@/lib/chatTools";
 import type { ChatImageRef } from "@/lib/imageGen";
 import type { ChatVideoRef } from "@/lib/videoGen";
@@ -401,6 +402,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         customSystemPrompt: promptToInject,
         activeNeurons,
         allNeurons,
+        reflex: isReflexEnabled(),
       });
 
       // Sliding window: replace messages older than the window with the

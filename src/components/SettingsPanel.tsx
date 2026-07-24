@@ -17,6 +17,7 @@ import PromptLibrary from "@/components/PromptLibrary";
 import ApiKeyManager from "@/components/ApiKeyManager";
 import ImageModelsSettings from "@/components/ImageModelsSettings";
 import VideoModelsSettings from "@/components/VideoModelsSettings";
+import { useReflexEnabled, setReflexEnabled } from "@/lib/reflex";
 import AiPermissionsSettings from "@/components/AiPermissionsSettings";
 import { getMemoryMode, setMemoryMode, MemoryMode } from "@/lib/knowledgeApi";
 import { consumeSettingsSection } from "@/lib/settingsNav";
@@ -154,6 +155,7 @@ const SettingsPanel: React.FC = () => {
   } = useChatSettings();
 
   const [newModelInput, setNewModelInput] = useState("");
+  const reflexCues = useReflexEnabled();
   const [promptDraft, setPromptDraft] = useState(customSystemPrompt || "");
   useEffect(() => { setPromptDraft(customSystemPrompt || ""); }, [customSystemPrompt]);
 
@@ -639,6 +641,18 @@ const SettingsPanel: React.FC = () => {
                   />
                 </div>
                 <Hint>Also toggleable from the Neuron tab toolbar.</Hint>
+              </div>
+              <div>
+                <FieldLabel>Reflex cues</FieldLabel>
+                <div className="mt-1.5">
+                  <ToggleRow
+                    text={reflexCues ? "On — flag contradictions & mark conflicting entries" : "Off"}
+                    checked={reflexCues}
+                    onChange={setReflexEnabled}
+                    ariaLabel="Toggle reflex cues"
+                  />
+                </div>
+                <Hint>A fast salience layer: the assistant proactively points out when something you say contradicts a saved memory (and offers to reconcile it), and neuron cards show an amber marker when an entry is part of an open conflict. A convenience over the existing conflict detection — not a claim about neuroscience.</Hint>
               </div>
               <div>
                 <FieldLabel>Wiki Model</FieldLabel>

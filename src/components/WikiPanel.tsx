@@ -40,6 +40,7 @@ import { Link } from "react-router-dom";
 import GeneratedImage from "@/components/GeneratedImage";
 import { fetchImagesForEntries, deleteImageAttachment, type ImageAttachmentRow } from "@/lib/imageGen";
 import { requestSettingsSection } from "@/lib/settingsNav";
+import { useReflexEnabled } from "@/lib/reflex";
 
 type WikiView = "entries" | "detail" | "lint" | "conflicts" | "episodic" | "queue";
 type EntriesView = "map" | "list";
@@ -608,6 +609,15 @@ const WikiPanel: React.FC = () => {
   };
 
   const openConflictsCount = conflicts.filter(c => c.status === "open").length;
+  const reflexOn = useReflexEnabled();
+  // Reflex cue: entries that are part of an OPEN conflict get a marker on their card.
+  const conflictEntryIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const c of conflicts) {
+      if (c.status === "open") { if (c.entry_a) s.add(c.entry_a); if (c.entry_b) s.add(c.entry_b); }
+    }
+    return s;
+  }, [conflicts]);
 
   // `from` records where Back should return to; "preserve" keeps the current
   // origin across related-entry hops inside the detail view.
@@ -1091,10 +1101,11 @@ const WikiPanel: React.FC = () => {
                   const relCount = graph.filter(g => g.source_entry_id === entry.id || g.target_entry_id === entry.id).length;
                   const sourceWiki = neuronNameByEntry?.[entry.id];
                   const sourceColor = sourceWiki ? wikis.find((w) => w.id === wikiByEntry[entry.id])?.cover_color : null;
+                  const inConflict = reflexOn && conflictEntryIds.has(entry.id);
                   return (
                     <button
                       key={entry.id} onClick={() => openDetail(entry)}
-                      className="group w-full text-left rounded-xl p-6 hover:shadow-2xl transition-all duration-300 border-l-4 bg-surface-container-high border-transparent hover:border-primary-container"
+                      className={`group w-full text-left rounded-xl p-6 hover:shadow-2xl transition-all duration-300 border-l-4 bg-surface-container-high ${inConflict ? "border-amber-500/60 hover:border-amber-500" : "border-transparent hover:border-primary-container"}`}
                     >
                       <div className="flex justify-between items-start mb-3">
                         <div>
@@ -1116,6 +1127,15 @@ const WikiPanel: React.FC = () => {
                                     <span aria-hidden className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: sourceColor }} />
                                   )}
                                   {sourceWiki}
+                                </span>
+                              </>
+                            )}
+                            {inConflict && (
+                              <>
+                                <span aria-hidden className="text-outline-variant">·</span>
+                                <span className="inline-flex items-center gap-1 text-amber-500 font-semibold bg-amber-500/10 px-1.5 py-0.5 rounded">
+                                  <span className="material-symbols-outlined text-[13px]" aria-hidden>report</span>
+                                  in conflict
                                 </span>
                               </>
                             )}
