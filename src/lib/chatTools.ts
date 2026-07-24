@@ -13,6 +13,15 @@ import {
   deleteVideoGeneration, DEFAULT_VIDEO_MODEL, type ChatVideoRef,
 } from "@/lib/videoGen";
 import { fetchVideoModels, estimateClipCostUSD, isTokenPriced, formatUSD } from "@/lib/videoCatalog";
+import {
+  submitSplat, insertPendingSplat, fetchSplatById, searchSplats,
+  deleteSplatGeneration, resolveSourceImageUrl, hasInFlightSplat,
+  countSplatsThisMonth, tierToSubmitParams, DEFAULT_SPLAT_MODEL, type ChatSplatRef,
+} from "@/lib/splatGen";
+import {
+  getTier, getSplatModel, estimateSplatCostUSD, tierSizeLabel,
+  FALLBACK_SPLAT_MODEL, type QualityTier,
+} from "@/lib/splatCatalog";
 import { fetchChains, touchChainUsed, emitChainsChanged, isChainsMigrationMissing, CHAINS_MIGRATION_MESSAGE } from "@/lib/chainsApi";
 import { sessionActiveWikiIds } from "@/lib/wikisApi";
 import { MAX_ACTIVE_NEURONS, FREE_NEURON_LIMIT } from "@/lib/neuronAccess";
@@ -41,6 +50,15 @@ export interface ToolDeps {
   videoGenerateAudio?: boolean;
   /** Estimated-cost (USD) above which generate_video must be confirmed. */
   videoConfirmThreshold?: number;
+  /** fal.ai key — 3D splat generation bills to this, NOT the OpenRouter key. */
+  falApiKey?: string;
+  splatModelPrimary?: string;
+  splatDefaultQuality?: string;
+  splatMaxFileMb?: number;
+  splatConfirmThreshold?: number;
+  splatMonthlyQuota?: number;
+  /** Retry a rejected splat once on the cheaper fallback model. */
+  splatAutoFallback?: boolean;
 }
 
 
@@ -51,6 +69,7 @@ export interface ToolDeps {
 export interface ToolSideChannel {
   __images?: ChatImageRef[];
   __videos?: ChatVideoRef[];
+  __splats?: ChatSplatRef[];
   __vision?: string;
 }
 
@@ -635,6 +654,70 @@ export const CHAT_TOOL_DEFINITIONS = [
           confirm: { type: "boolean", description: "Must be true — proof the user just approved this exact deletion." },
         },
         required: ["video_id", "confirm"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "generate_splat",
+      description:
+        "Turn an IMAGE into an interactive 3D Gaussian splat and show it to the user inline (they can orbit it in the chat). Takes about 5-20 seconds and costs about $0.05, billed to the user's fal.ai key. IMPORTANT: there is NO text-to-3D — this tool needs an image. If the user asks for a 3D version of something that doesn't exist yet, call generate_image FIRST, then pass that image's id here. If they refer to an image already in the chat or their library, use list_images to find its id. The result is saved to memory as a 3D neuron by default. Use when the user asks for a 3D model, a 3D version, a splat, or something they can rotate/spin/look around.",
+      parameters: {
+        type: "object",
+        properties: {
+          image_id: { type: "string", description: "Id of the source image (from generate_image or list_images). Preferred." },
+          image_url: { type: "string", description: "Public http(s) image URL, if the user supplied one directly instead of an image_id." },
+          prompt: { type: "string", description: "Short description of the subject — used as the caption, the alt text and the memory title." },
+          quality: { type: "string", enum: ["fast", "standard", "high"], description: "fast = 65k gaussians (2.1 MB), standard = 131k (4.2 MB, default), high = 262k PLY (much larger file, may be refused by the size limit)." },
+          model: { type: "string", description: "Optional fal model id. Defaults to the user's chosen 3D model (tripo3d/triposplat)." },
+          confirm: { type: "boolean", description: "Set true ONLY after the user has approved the cost in the current turn." },
+        },
+        required: ["prompt"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "show_splat",
+      description:
+        "Re-display a previously generated 3D splat to the user inline (free, instant). Use list_splats first to find the splat_id.",
+      parameters: {
+        type: "object",
+        properties: { splat_id: { type: "string", description: "The id from list_splats." } },
+        required: ["splat_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_splats",
+      description:
+        "List the user's generated 3D splats (newest first), optionally filtered by a keyword matched against prompt/caption. Returns splat_id, prompt, model, status, file size and whether each is saved to memory.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Optional keyword filter." },
+          limit: { type: "number", description: "Default 10, max 25." },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_splat",
+      description:
+        "Permanently delete a generated 3D splat (its row AND the stored file). DESTRUCTIVE: only call after the user has explicitly approved deleting this specific model in the current turn — paraphrase it (prompt/date) back, get a clear 'yes', then call with confirm:true. Honors per-tool permissions in Settings.",
+      parameters: {
+        type: "object",
+        properties: {
+          splat_id: { type: "string", description: "The id returned by list_splats." },
+          confirm: { type: "boolean", description: "Must be true — proof the user just approved this exact deletion." },
+        },
+        required: ["splat_id", "confirm"],
       },
     },
   },
@@ -1803,6 +1886,202 @@ export async function executeChatTool(
         }
         try { window.dispatchEvent(new CustomEvent("video-generations-changed", { detail: { deleted: [row.id] } })); } catch {}
         return { result: { ok: true, deleted_id: row.id, prompt: (row.prompt || "").slice(0, 80) }, event: { name, summary: `Deleted video: "${(row.prompt || "").slice(0, 50)}"`, ok: true } };
+      }
+      case "generate_splat": {
+        if (deps.isPaid === false) {
+          return { result: { error: "3D generation is a Pro feature. Tell the user that upgrading to Pro or Lifetime unlocks it." }, event: { name, summary: "3D generation is a Pro feature", ok: false } };
+        }
+        const falKey = (deps.falApiKey || "").trim();
+        if (!falKey) {
+          return {
+            result: { error: "No fal.ai API key is set. 3D generation bills to a fal.ai key, which is separate from the OpenRouter key. Tell the user to add one in Settings → 3D models (they can create one at fal.ai/dashboard/keys)." },
+            event: { name, summary: "No fal.ai key set", ok: false },
+          };
+        }
+
+        // Pre-flight: never spend money on fal if the splat tables/bucket aren't
+        // migrated yet — the asset would be paid for and then unstorable.
+        try {
+          const { error: capErr } = await (supabase.from("splat_generations" as any) as any)
+            .select("id", { head: true, count: "exact" })
+            .limit(1);
+          if (capErr) {
+            return {
+              result: { error: "3D generation isn't set up yet — the database migration (the generated-splats bucket + splat_generations table) hasn't been applied. Tell the user to run the pending splat SQL migration in Supabase, then try again." },
+              event: { name, summary: "Splat tables not migrated yet", ok: false },
+            };
+          }
+        } catch {
+          return {
+            result: { error: "3D generation isn't set up yet — the database migration hasn't been applied. Tell the user to run the pending splat SQL migration in Supabase." },
+            event: { name, summary: "Splat tables not migrated yet", ok: false },
+          };
+        }
+
+        // fal keys have no spend ceiling, so cap concurrency at one paid job.
+        try {
+          if (await hasInFlightSplat()) {
+            return {
+              result: { error: "A 3D model is already being generated. Wait for it to finish before starting another." },
+              event: { name, summary: "A 3D generation is already in flight", ok: false },
+            };
+          }
+        } catch { /* if the check itself fails, fall through rather than block */ }
+
+        const quota = Number(deps.splatMonthlyQuota) || 0;
+        if (quota > 0) {
+          try {
+            const used = await countSplatsThisMonth();
+            if (used >= quota) {
+              return {
+                result: { error: `The user's monthly 3D limit of ${quota} is used up (${used} this month). Tell them they can raise or clear it in Settings → 3D models.` },
+                event: { name, summary: `Monthly 3D limit (${quota}) reached`, ok: false },
+              };
+            }
+          } catch { /* advisory only — the DB trigger is the real backstop */ }
+        }
+
+        const model = String(args.model || deps.splatModelPrimary || DEFAULT_SPLAT_MODEL).trim();
+        const quality = String(args.quality || deps.splatDefaultQuality || "standard").trim() as QualityTier;
+        const tier = getTier(quality);
+        const { numGaussians, format } = tierToSubmitParams(tier.id);
+
+        // Cost gate. Flat pricing means this normally passes silently, but it
+        // still catches a price change or an unknown model.
+        const estCost = estimateSplatCostUSD(model);
+        const threshold = typeof deps.splatConfirmThreshold === "number" ? deps.splatConfirmThreshold : 0.1;
+        if (args.confirm !== true) {
+          if (estCost != null && estCost > threshold) {
+            return {
+              result: { error: `This 3D model will cost about ${formatUSD(estCost)}, billed to the user's fal.ai key. Tell the user the cost and ask them to confirm; only then call generate_splat again with confirm:true.` },
+              event: { name, summary: `Needs confirmation (~${formatUSD(estCost)})`, ok: false },
+            };
+          }
+          if (estCost == null) {
+            return {
+              result: { error: `I don't have a verified price for the 3D model "${model}". Tell the user you can't confirm the cost and ask them to approve before proceeding; only then call generate_splat again with confirm:true.` },
+              event: { name, summary: "Unknown 3D model price — needs confirmation", ok: false },
+            };
+          }
+        }
+
+        let source: { url: string; imageId: string | null };
+        try {
+          source = await resolveSourceImageUrl({ imageId: args.image_id, imageUrl: args.image_url });
+        } catch (e: any) {
+          return {
+            result: { error: `${e?.message || "No source image."} 3D generation always starts from an image — call generate_image first if one doesn't exist yet, then pass its id as image_id.` },
+            event: { name, summary: "No usable source image", ok: false },
+          };
+        }
+
+        const prompt = String(args.prompt || "").trim() || "3D model";
+
+        let submitted: Awaited<ReturnType<typeof submitSplat>>;
+        let usedModel = model;
+        let usedFormat = format;
+        try {
+          submitted = await submitSplat({
+            apiKey: falKey, model, imageUrl: source.url,
+            numGaussians, outputFormat: format,
+          });
+        } catch (e: any) {
+          const msg = String(e?.message || "3D submit failed");
+          // A bad key or empty balance will fail identically on the fallback —
+          // only retry things that look model-specific.
+          const worthRetry = deps.splatAutoFallback !== false
+            && model !== FALLBACK_SPLAT_MODEL
+            && !/invalid .*key|insufficient/i.test(msg);
+          if (!worthRetry) {
+            return { result: { error: msg }, event: { name, summary: "3D submit failed", ok: false } };
+          }
+          try {
+            usedModel = FALLBACK_SPLAT_MODEL;
+            usedFormat = "splat";
+            submitted = await submitSplat({ apiKey: falKey, model: usedModel, imageUrl: source.url });
+          } catch (e2: any) {
+            return {
+              result: { error: `${msg} The backup model also failed: ${e2?.message || "unknown error"}.` },
+              event: { name, summary: "3D submit failed on both models", ok: false },
+            };
+          }
+        }
+
+        try {
+          await insertPendingSplat({
+            requestId: submitted.requestId, model: usedModel, prompt,
+            sourceImageId: source.imageId, format: usedFormat,
+            // Only record a count the model actually honours — otherwise the
+            // row (and the memory neuron built from it) would state a splat
+            // count that was requested but ignored.
+            splatCount: getSplatModel(usedModel)?.supportsGaussianCount ? numGaussians : null,
+            statusUrl: submitted.statusUrl, responseUrl: submitted.responseUrl,
+            estCost: estimateSplatCostUSD(usedModel),
+          });
+        } catch (e) {
+          // The job is already paid for; the bubble reconstructs the row on
+          // finalize, so a failed insert must not abort the turn.
+          console.warn("[generate_splat] insertPendingSplat failed", e);
+        }
+
+        const ref: ChatSplatRef = { request_id: submitted.requestId, prompt, model: usedModel };
+        return {
+          result: {
+            ok: true, request_id: submitted.requestId, model: usedModel,
+            ...(usedModel !== model ? { fell_back_from: model } : {}),
+            quality: tier.id, approx_file_size: tierSizeLabel(tier),
+            note: "A live 'building 3D model' card is now shown to the user inline; it becomes an interactive 3D preview they can orbit. Do NOT claim it's ready or output any link — just briefly say it's being built.",
+            __splats: [ref],
+          },
+          event: { name, summary: `Building a 3D model: "${prompt.slice(0, 50)}"`, ok: true },
+        };
+      }
+      case "show_splat": {
+        const splatId = String(args.splat_id || "").trim();
+        if (!splatId) return { result: { error: "splat_id required" }, event: { name, summary: "Missing splat_id", ok: false } };
+        const row = await fetchSplatById(splatId);
+        if (!row) return { result: { error: "3D model not found" }, event: { name, summary: "Splat not found", ok: false } };
+        const ref: ChatSplatRef = { request_id: row.request_id, prompt: row.prompt, model: row.model };
+        return {
+          result: {
+            ok: true, splat_id: row.id, status: row.status, prompt: row.prompt,
+            saved_to_memory: !!row.entry_id,
+            note: "The 3D model is now shown inline. Don't output a link.",
+            __splats: [ref],
+          },
+          event: { name, summary: `Showed 3D model: "${(row.prompt || "").slice(0, 50)}"`, ok: true },
+        };
+      }
+      case "list_splats": {
+        const limit = Math.min(25, Math.max(1, Number(args.limit) || 10));
+        const rows = await searchSplats(args.query ? String(args.query) : undefined, limit);
+        const out = rows.map((r) => ({
+          splat_id: r.id, prompt: (r.prompt || "").slice(0, 200), model: r.model,
+          status: r.status, format: r.format, splat_count: r.splat_count,
+          file_bytes: r.file_bytes, saved_to_memory: !!r.entry_id, created_at: r.created_at,
+        }));
+        return { result: out, event: { name, summary: `Listed ${out.length} 3D model(s)${args.query ? ` matching "${String(args.query).slice(0, 40)}"` : ""}`, ok: true } };
+      }
+      case "delete_splat": {
+        const { data: prefs } = await supabase.from("user_settings").select("chat_tool_permissions" as any).maybeSingle();
+        const perms = (((prefs as any)?.chat_tool_permissions) || {}) as Record<string, boolean>;
+        if (perms[name] === false) {
+          return { result: { error: `Tool '${name}' is disabled in the user's AI permissions. Ask the user to enable it in Settings.` }, event: { name, summary: `${name} blocked by user settings`, ok: false } };
+        }
+        if (args.confirm !== true) {
+          return { result: { error: "Deletion requires confirm:true. Paraphrase the exact 3D model back to the user, get explicit approval, then retry with confirm:true." }, event: { name, summary: "Refused: confirmation required", ok: false } };
+        }
+        const splatId = String(args.splat_id || "").trim();
+        if (!splatId) return { result: { error: "splat_id required" }, event: { name, summary: "Missing splat_id", ok: false } };
+        const row = await fetchSplatById(splatId);
+        if (!row) return { result: { error: "3D model not found or not owned by current user" }, event: { name, summary: "Splat not found", ok: false } };
+        try {
+          await deleteSplatGeneration({ id: row.id, storage_path: row.storage_path, poster_path: row.poster_path });
+        } catch (e: any) {
+          return { result: { error: e?.message || "Delete failed" }, event: { name, summary: "Splat delete failed", ok: false } };
+        }
+        try { window.dispatchEvent(new CustomEvent("splat-generations-changed", { detail: { deleted: [row.id] } })); } catch {}
+        return { result: { ok: true, deleted_id: row.id, prompt: (row.prompt || "").slice(0, 80) }, event: { name, summary: `Deleted 3D model: "${(row.prompt || "").slice(0, 50)}"`, ok: true } };
       }
       case "create_artifact": {
         const art = parseArtifact(args);

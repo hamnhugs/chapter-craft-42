@@ -17,6 +17,7 @@ import PromptLibrary from "@/components/PromptLibrary";
 import ApiKeyManager from "@/components/ApiKeyManager";
 import ImageModelsSettings from "@/components/ImageModelsSettings";
 import VideoModelsSettings from "@/components/VideoModelsSettings";
+import SplatModelsSettings from "@/components/SplatModelsSettings";
 import { useReflexEnabled, setReflexEnabled } from "@/lib/reflex";
 import AiPermissionsSettings from "@/components/AiPermissionsSettings";
 import { getMemoryMode, setMemoryMode, MemoryMode } from "@/lib/knowledgeApi";
@@ -620,6 +621,7 @@ const SettingsPanel: React.FC = () => {
               </div>
               <ImageModelsSettings />
               <VideoModelsSettings />
+              <SplatModelsSettings />
             </Section>
 
             {/* ── Neuron & Memory ── */}

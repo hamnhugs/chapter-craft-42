@@ -48,6 +48,15 @@ interface ChatSettings {
   videoDefaultAspect: string; // "" = auto
   videoGenerateAudio: boolean;
   videoConfirmThreshold: number; // USD estimate above which generate_video must be confirmed
+  /** 3D Gaussian splat generation (fal.ai). Billed to a SEPARATE fal key. */
+  falApiKey: string;
+  splatModelPrimary: string;
+  splatDefaultQuality: string; // fast | standard | high
+  splatMaxFileMb: number; // hard ceiling; an oversized asset is refused pre-upload
+  splatConfirmThreshold: number;
+  splatClickToActivate: boolean;
+  splatMonthlyQuota: number; // 0 = unlimited
+  splatAutoFallback: boolean;
 }
 
 const defaults: ChatSettings = {
@@ -84,6 +93,14 @@ const defaults: ChatSettings = {
   videoDefaultAspect: "",
   videoGenerateAudio: true,
   videoConfirmThreshold: 1.0,
+  falApiKey: "",
+  splatModelPrimary: "",
+  splatDefaultQuality: "standard",
+  splatMaxFileMb: 25,
+  splatConfirmThreshold: 0.1,
+  splatClickToActivate: true,
+  splatMonthlyQuota: 0,
+  splatAutoFallback: true,
 };
 
 
@@ -176,6 +193,14 @@ function rowToSettings(data: any): ChatSettings {
     videoDefaultAspect: data.video_default_aspect || "",
     videoGenerateAudio: data.video_generate_audio !== false,
     videoConfirmThreshold: typeof data.video_confirm_threshold === "number" ? data.video_confirm_threshold : 1.0,
+    falApiKey: data.fal_api_key || "",
+    splatModelPrimary: data.splat_model_primary || "",
+    splatDefaultQuality: data.splat_default_quality || "standard",
+    splatMaxFileMb: typeof data.splat_max_file_mb === "number" ? data.splat_max_file_mb : 25,
+    splatConfirmThreshold: typeof data.splat_confirm_threshold === "number" ? data.splat_confirm_threshold : 0.1,
+    splatClickToActivate: data.splat_click_to_activate !== false,
+    splatMonthlyQuota: typeof data.splat_monthly_quota === "number" ? data.splat_monthly_quota : 0,
+    splatAutoFallback: data.splat_auto_fallback !== false,
   };
 }
 
@@ -244,6 +269,14 @@ function persistSettings(userId: string, next: ChatSettings) {
       video_default_aspect: next.videoDefaultAspect || null,
       video_generate_audio: next.videoGenerateAudio,
       video_confirm_threshold: next.videoConfirmThreshold,
+      fal_api_key: next.falApiKey || "",
+      splat_model_primary: next.splatModelPrimary || null,
+      splat_default_quality: next.splatDefaultQuality || null,
+      splat_max_file_mb: next.splatMaxFileMb,
+      splat_confirm_threshold: next.splatConfirmThreshold,
+      splat_click_to_activate: next.splatClickToActivate,
+      splat_monthly_quota: next.splatMonthlyQuota || null,
+      splat_auto_fallback: next.splatAutoFallback,
     };
 
     let { error } = await supabase
@@ -255,7 +288,9 @@ function persistSettings(userId: string, next: ChatSettings) {
     // first), so keep retrying until no optional column is named.
     const optionalColumns = ["access_all_neurons", "image_extraction_model", "auto_extract_figures",
       "video_model_primary", "saved_video_models", "video_default_duration", "video_default_resolution",
-      "video_default_aspect", "video_generate_audio", "video_confirm_threshold"];
+      "video_default_aspect", "video_generate_audio", "video_confirm_threshold",
+      "fal_api_key", "splat_model_primary", "splat_default_quality", "splat_max_file_mb",
+      "splat_confirm_threshold", "splat_click_to_activate", "splat_monthly_quota", "splat_auto_fallback"];
     for (let pass = 0; error && pass < optionalColumns.length; pass++) {
       const offender = optionalColumns.find(
         (col) => col in payload && (error!.message || "").toLowerCase().includes(col),
@@ -379,6 +414,14 @@ export function useChatSettings() {
       const primary = cur.videoModelPrimary === m ? (next[0] || "") : cur.videoModelPrimary;
       update({ savedVideoModels: next, videoModelPrimary: primary });
     },
+    setFalApiKey: (k: string) => update({ falApiKey: k.trim() }),
+    setSplatModelPrimary: (m: string) => update({ splatModelPrimary: m }),
+    setSplatDefaultQuality: (q: string) => update({ splatDefaultQuality: q }),
+    setSplatMaxFileMb: (n: number) => update({ splatMaxFileMb: Math.max(1, Math.min(50, Number(n) || 25)) }),
+    setSplatConfirmThreshold: (n: number) => update({ splatConfirmThreshold: Math.max(0, Number(n) || 0) }),
+    setSplatClickToActivate: (v: boolean) => update({ splatClickToActivate: v }),
+    setSplatMonthlyQuota: (n: number) => update({ splatMonthlyQuota: Math.max(0, Math.floor(Number(n) || 0)) }),
+    setSplatAutoFallback: (v: boolean) => update({ splatAutoFallback: v }),
     setChatToolPermission: (tool: string, allowed: boolean) => {
       const cur = getSnapshot().settings;
       update({ chatToolPermissions: { ...cur.chatToolPermissions, [tool]: allowed } });

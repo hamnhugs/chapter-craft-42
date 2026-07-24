@@ -21,6 +21,7 @@ import VoiceNotesPanel, { appendVoiceNote } from "@/components/VoiceNotesPanel";
 import ResponseBlocks from "@/components/ResponseBlocks";
 import GeneratedImage from "@/components/GeneratedImage";
 import VideoBubble from "@/components/VideoBubble";
+import SplatBubble from "@/components/SplatBubble";
 import WorkingMemoryPanel from "@/components/WorkingMemoryPanel";
 import WorkspacePanel from "@/components/WorkspacePanel";
 import type { Artifact } from "@/lib/artifacts";
@@ -652,6 +653,13 @@ const ChatPanel: React.FC = () => {
             >
               {msg.role === "assistant" ? (
                 <>
+                  {msg.splats && msg.splats.length > 0 && (
+                    <div className={`grid gap-2 mb-2 ${msg.splats.length === 1 ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2"}`}>
+                      {msg.splats.map((s) => (
+                        <SplatBubble key={s.request_id} splat={s} />
+                      ))}
+                    </div>
+                  )}
                   {msg.videos && msg.videos.length > 0 && (
                     <div className={`grid gap-2 mb-2 ${msg.videos.length === 1 ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2"}`}>
                       {msg.videos.map((v) => (

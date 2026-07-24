@@ -11,6 +11,7 @@ import { isReflexEnabled } from "@/lib/reflex";
 import { CHAT_TOOL_DEFINITIONS, executeChatTool, ToolEvent } from "@/lib/chatTools";
 import type { ChatImageRef } from "@/lib/imageGen";
 import type { ChatVideoRef } from "@/lib/videoGen";
+import type { ChatSplatRef } from "@/lib/splatGen";
 import { parseBlocks, type ResponseBlock } from "@/lib/responseBlocks";
 import { parseArtifact, type Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle } from "@/lib/workspaceStore";
@@ -39,6 +40,9 @@ export interface ChatMessage {
   /** Generated video clips rendered inline in the bubble (from the
    *  generate_video / show_video tools). Each resolves live via its job_id. */
   videos?: ChatVideoRef[];
+  /** Generated 3D Gaussian splats rendered inline (from generate_splat /
+   *  show_splat). Each resolves live via its fal request_id. */
+  splats?: ChatSplatRef[];
 }
 
 interface SendOpts {
@@ -108,7 +112,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { books, activeBookId, activeWiki, activeWikiId, activeWikis, wikis, addChapter, updateChapter, removeChapter, setActiveBookSilent } = useApp();
 
   const { apiKey, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, visionModel, imageModelPrimary, imageModelFallback,
-    videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold } = useChatSettings();
+    videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold,
+    falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback } = useChatSettings();
   const { isPaid, loaded: planLoaded } = usePlan();
   const { getActiveBodyForScope, migrate } = usePromptPresets();
 
@@ -220,7 +225,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .eq("user_id", user.id)
         .order("created_at", { ascending: true })
         .limit(200) as any;
-      let { data, error } = await loadSel("id, role, content, created_at, images, videos");
+      let { data, error } = await loadSel("id, role, content, created_at, images, videos, splats");
+      if (error) ({ data, error } = await loadSel("id, role, content, created_at, images, videos"));
       if (error) ({ data, error } = await loadSel("id, role, content, created_at, images"));
       if (error) ({ data, error } = await loadSel("id, role, content, created_at"));
       if (cancelled) return;
@@ -235,6 +241,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           id: m.id, role: m.role, content: m.content,
           images: Array.isArray(m.images) && m.images.length > 0 ? m.images : undefined,
           videos: Array.isArray(m.videos) && m.videos.length > 0 ? m.videos : undefined,
+          splats: Array.isArray(m.splats) && m.splats.length > 0 ? m.splats : undefined,
         }));
       setMessages(loaded);
       loadedRef.current = true;
@@ -261,6 +268,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               id: m.id, role: m.role, content: m.content,
               images: Array.isArray(m.images) && m.images.length > 0 ? m.images : undefined,
               videos: Array.isArray(m.videos) && m.videos.length > 0 ? m.videos : undefined,
+              splats: Array.isArray(m.splats) && m.splats.length > 0 ? m.splats : undefined,
             }];
           });
         }
@@ -278,19 +286,27 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [user]);
 
   const persistMessage = useCallback(
-    async (role: "user" | "assistant", content: string, bookId?: string | null, images?: ChatImageRef[], videos?: ChatVideoRef[]): Promise<string | undefined> => {
+    async (role: "user" | "assistant", content: string, bookId?: string | null, images?: ChatImageRef[], videos?: ChatVideoRef[], splats?: ChatSplatRef[]): Promise<string | undefined> => {
       if (!user) return undefined;
       const base: any = { user_id: user.id, role, content, book_id: bookId || null };
-      // `images`/`videos` are newer columns — cascade to fewer extras if a
-      // migration hasn't been applied yet (media stays safe in its own table,
-      // and dropping the videos column must not also drop images).
+      // `images`/`videos`/`splats` are newer columns — cascade to fewer extras
+      // if a migration hasn't been applied yet (media stays safe in its own
+      // table, and dropping one column must not also drop the others).
       const ins = (row: any) => supabase.from("chat_messages").insert(row).select("id").single();
       const hasImages = !!images && images.length > 0;
       const hasVideos = !!videos && videos.length > 0;
+      const hasSplats = !!splats && splats.length > 0;
       const full: any = { ...base };
       if (hasImages) full.images = images;
       if (hasVideos) full.videos = videos;
+      if (hasSplats) full.splats = splats;
       let { data, error } = await ins(full);
+      if (error && hasSplats) {
+        const noSplats: any = { ...base };
+        if (hasImages) noSplats.images = images;
+        if (hasVideos) noSplats.videos = videos;
+        ({ data, error } = await ins(noSplats));
+      }
       if (error && hasVideos) {
         const noVideos: any = { ...base };
         if (hasImages) noVideos.images = images;
@@ -432,6 +448,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // inline in the assistant's bubble and persisted with the message.
       const turnImages: ChatImageRef[] = [];
       const turnVideos: ChatVideoRef[] = [];
+      const turnSplats: ChatSplatRef[] = [];
       let assistantText = "";
       setMessages((prev) => [...prev, { role: "assistant", content: "", toolEvents: [], usedMemories: usedMemories.length > 0 ? usedMemories : undefined }]);
 
@@ -446,6 +463,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 toolEvents: [...assistantEvents],
                 images: turnImages.length > 0 ? [...turnImages] : copy[i].images,
                 videos: turnVideos.length > 0 ? [...turnVideos] : copy[i].videos,
+                splats: turnSplats.length > 0 ? [...turnSplats] : copy[i].splats,
               };
               break;
             }
@@ -584,6 +602,13 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               videoDefaultAspect,
               videoGenerateAudio,
               videoConfirmThreshold,
+              falApiKey,
+              splatModelPrimary,
+              splatDefaultQuality,
+              splatMaxFileMb,
+              splatConfirmThreshold,
+              splatMonthlyQuota,
+              splatAutoFallback,
             });
 
             assistantEvents.push(event);
@@ -597,11 +622,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               if (Array.isArray(r.__videos) && r.__videos.length > 0) {
                 turnVideos.push(...r.__videos);
               }
+              if (Array.isArray(r.__splats) && r.__splats.length > 0) {
+                turnSplats.push(...r.__splats);
+              }
               if (typeof r.__vision === "string" && r.__vision.startsWith("data:")) {
                 visionPayloads.push(r.__vision);
               }
-              if ("__images" in r || "__videos" in r || "__vision" in r) {
-                const { __images, __videos, __vision, ...clean } = r;
+              if ("__images" in r || "__videos" in r || "__splats" in r || "__vision" in r) {
+                const { __images, __videos, __splats, __vision, ...clean } = r;
                 modelResult = clean;
               }
             }
@@ -641,8 +669,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           updateAssistant();
         }
 
-        if (assistantText || turnImages.length > 0 || turnVideos.length > 0) {
-          const id = await persistMessage("assistant", assistantText, activeBookId, turnImages.length > 0 ? turnImages : undefined, turnVideos.length > 0 ? turnVideos : undefined);
+        if (assistantText || turnImages.length > 0 || turnVideos.length > 0 || turnSplats.length > 0) {
+          const id = await persistMessage("assistant", assistantText, activeBookId, turnImages.length > 0 ? turnImages : undefined, turnVideos.length > 0 ? turnVideos : undefined, turnSplats.length > 0 ? turnSplats : undefined);
           if (id) {
             setMessages((prev) => {
               const copy = [...prev];
@@ -749,7 +777,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
       }
     },
-    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
+    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
   );
 
 

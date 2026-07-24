@@ -18,6 +18,10 @@ export default defineConfig(({ mode }) => ({
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+    // Spark and react-force-graph-3d both depend on three. Two copies would be
+    // two different WebGLRenderer classes, which fails silently at instanceof
+    // checks rather than erroring — force a single instance.
+    dedupe: ["three"],
   },
   build: {
     outDir: "dist",
@@ -28,6 +32,9 @@ export default defineConfig(({ mode }) => ({
           vendor: ["react", "react-dom", "react-router-dom"],
           supabase: ["@supabase/supabase-js"],
           pdf: ["pdfjs-dist", "react-pdf"],
+          // ~1.78 MB gzipped — isolated so it only loads when a user opens a
+          // 3D model, never as part of first paint.
+          spark: ["@sparkjsdev/spark"],
         },
       },
     },
