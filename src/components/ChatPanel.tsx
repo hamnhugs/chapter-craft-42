@@ -21,6 +21,7 @@ import VoiceNotesPanel, { appendVoiceNote } from "@/components/VoiceNotesPanel";
 import ResponseBlocks from "@/components/ResponseBlocks";
 import GeneratedImage from "@/components/GeneratedImage";
 import VideoBubble from "@/components/VideoBubble";
+import WorkingMemoryPanel from "@/components/WorkingMemoryPanel";
 import WorkspacePanel from "@/components/WorkspacePanel";
 import type { Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle, useWorkspaceItems } from "@/lib/workspaceStore";
@@ -604,6 +605,8 @@ const ChatPanel: React.FC = () => {
             )}
           </div>
         )}
+
+        {messages.length > 0 && <WorkingMemoryPanel />}
 
         {messages.map((msg, i) => (
           <div key={msg.id || i} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"} max-w-[85%] ${msg.role === "user" ? "self-end" : ""} group`}>
