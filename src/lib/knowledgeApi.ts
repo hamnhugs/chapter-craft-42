@@ -483,6 +483,34 @@ export async function triggerSleepCycle(wikiId?: string | null): Promise<SleepCy
   return callEdge("knowledge-consolidate", { wiki_id: wikiId ?? null });
 }
 
+// ── Spaced retrieval-practice (spacing + testing effects) ───────────────────
+// Backed by the entries_due_for_review / record_review RPCs (brain_memory
+// migration). Callers treat an RPC-missing error as "feature not deployed yet"
+// and hide the review surface, so the app degrades gracefully before migration.
+export interface DueReview {
+  id: string;
+  title: string;
+  content: string;
+  entry_type: string;
+  wiki_id: string | null;
+  vibrancy: number | null;
+  storage_strength: number | null;
+  next_review_at: string | null;
+}
+
+export async function fetchDueReviews(wikiId: string | null, limit = 12): Promise<DueReview[]> {
+  const { data, error } = await supabase.rpc("entries_due_for_review" as any, { _wiki_id: wikiId, _limit: limit });
+  if (error) throw error;
+  return (data as DueReview[]) || [];
+}
+
+/** Record an active-recall attempt. Strengthens storage (more when the memory
+ *  was nearly forgotten — desirable difficulty) and schedules the next review. */
+export async function recordReview(entryId: string, recalled: boolean): Promise<void> {
+  const { error } = await supabase.rpc("record_review" as any, { _entry_id: entryId, _recalled: recalled });
+  if (error) throw error;
+}
+
 
 // ─── Multi-wiki additions ────────────────────────────────────────────────────
 

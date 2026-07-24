@@ -32,7 +32,7 @@ import {
   deleteKnowledgeEntry, updateKnowledgeEntry,
   runLint,
   fetchConflicts, fetchConflictsForSet, updateConflictStatus, reindexEmbeddings,
-  fetchEpisodicLog, fetchEpisodicLogForSet, getMemoryMode, setMemoryMode, triggerSleepCycle,
+  fetchEpisodicLog, fetchEpisodicLogForSet, getMemoryMode, setMemoryMode, triggerSleepCycle, fetchDueReviews,
   fetchConsolidationQueue, fetchConsolidationQueueForSet, ConsolidationQueueItem,
 } from "@/lib/knowledgeApi";
 import { Loader2 } from "lucide-react";
@@ -41,6 +41,7 @@ import GeneratedImage from "@/components/GeneratedImage";
 import { fetchImagesForEntries, deleteImageAttachment, type ImageAttachmentRow } from "@/lib/imageGen";
 import { requestSettingsSection } from "@/lib/settingsNav";
 import { useReflexEnabled } from "@/lib/reflex";
+import MemoryReview from "@/components/MemoryReview";
 
 type WikiView = "entries" | "detail" | "lint" | "conflicts" | "episodic" | "queue";
 type EntriesView = "map" | "list";
@@ -646,6 +647,14 @@ const WikiPanel: React.FC = () => {
     return s;
   }, [conflicts]);
 
+  // Spaced retrieval-practice: how many memories are due for review right now.
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [dueCount, setDueCount] = useState(0);
+  const refreshDueCount = useCallback(() => {
+    fetchDueReviews(maintenanceTargetId, 50).then((r) => setDueCount(r.length)).catch(() => setDueCount(0));
+  }, [maintenanceTargetId]);
+  useEffect(() => { refreshDueCount(); }, [refreshDueCount, refreshNonce]);
+
   // `from` records where Back should return to; "preserve" keeps the current
   // origin across related-entry hops inside the detail view.
   const openDetail = useCallback((entry: KnowledgeEntry, from?: "conflicts" | "lint" | "preserve") => {
@@ -808,6 +817,13 @@ const WikiPanel: React.FC = () => {
                     <span className="flex flex-col">
                       <span>Consolidate knowledge</span>
                       <span className="text-xs text-on-surface-variant">Connect &amp; tidy entries (Sleep Cycle — auto-runs daily while you use the app)</span>
+                    </span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setReviewOpen(true)}>
+                    <span className="material-symbols-outlined text-base mr-1" aria-hidden>fitness_center</span>
+                    <span className="flex flex-col">
+                      <span>Review memories{dueCount > 0 ? ` (${dueCount})` : ""}</span>
+                      <span className="text-xs text-on-surface-variant">Active recall for memories starting to fade (spaced practice)</span>
                     </span>
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={handleReindex} disabled={reindexing || (scopeKind === "loaded" && !maintenanceTargetId)}>
@@ -1582,6 +1598,15 @@ const WikiPanel: React.FC = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {reviewOpen && (
+        <MemoryReview
+          wikiId={maintenanceTargetId}
+          open
+          onClose={() => { setReviewOpen(false); refreshDueCount(); void loadData(); }}
+          onReviewed={refreshDueCount}
+        />
+      )}
     </div>
   );
 };

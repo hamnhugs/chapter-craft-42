@@ -335,6 +335,15 @@ serve(async (req) => {
     // Phase 1
     const rerankResult     = await rerank(supabase, user.id);
 
+    // Phase 1b — SHY: gently renormalize vibrancy toward a target mean so it
+    // can't saturate over time (synaptic homeostasis). Best-effort — skipped if
+    // the renormalize_vibrancy RPC (brain_memory migration) isn't deployed yet.
+    let renormalized = 0;
+    try {
+      const { data: rn } = await supabase.rpc("renormalize_vibrancy", { _user_id: user.id, _wiki_id: wikiId });
+      if (typeof rn === "number") renormalized = rn;
+    } catch (_e) { /* RPC not deployed — skip */ }
+
     // Phase 2
     const consolidateResult = await reconsolidate(supabase, user.id, LOVABLE_API_KEY, llm, wikiId);
 
@@ -353,7 +362,7 @@ serve(async (req) => {
       ok: true,
       elapsed_ms,
       phases: {
-        rerank:       rerankResult,
+        rerank:       { ...rerankResult, renormalized },
         consolidate:  consolidateResult,
         prune:        pruneResult,
       },
