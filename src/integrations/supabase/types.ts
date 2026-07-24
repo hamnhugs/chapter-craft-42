@@ -337,6 +337,7 @@ export type Database = {
           id: string
           images: Json | null
           role: string
+          splats: Json | null
           user_id: string
           videos: Json | null
         }
@@ -347,6 +348,7 @@ export type Database = {
           id?: string
           images?: Json | null
           role: string
+          splats?: Json | null
           user_id: string
           videos?: Json | null
         }
@@ -357,6 +359,7 @@ export type Database = {
           id?: string
           images?: Json | null
           role?: string
+          splats?: Json | null
           user_id?: string
           videos?: Json | null
         }
@@ -1214,6 +1217,99 @@ export type Database = {
           },
         ]
       }
+      splat_generations: {
+        Row: {
+          caption: string
+          coord_system: string
+          cost: number | null
+          created_at: string
+          entry_id: string | null
+          error: string | null
+          file_bytes: number | null
+          format: string
+          id: string
+          mime: string
+          model: string
+          poster_path: string | null
+          prompt: string
+          provider: string
+          request_id: string
+          response_url: string | null
+          source_image_id: string | null
+          splat_count: number | null
+          status: string
+          status_url: string | null
+          storage_path: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          caption?: string
+          coord_system?: string
+          cost?: number | null
+          created_at?: string
+          entry_id?: string | null
+          error?: string | null
+          file_bytes?: number | null
+          format?: string
+          id?: string
+          mime?: string
+          model?: string
+          poster_path?: string | null
+          prompt?: string
+          provider?: string
+          request_id: string
+          response_url?: string | null
+          source_image_id?: string | null
+          splat_count?: number | null
+          status?: string
+          status_url?: string | null
+          storage_path?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          caption?: string
+          coord_system?: string
+          cost?: number | null
+          created_at?: string
+          entry_id?: string | null
+          error?: string | null
+          file_bytes?: number | null
+          format?: string
+          id?: string
+          mime?: string
+          model?: string
+          poster_path?: string | null
+          prompt?: string
+          provider?: string
+          request_id?: string
+          response_url?: string | null
+          source_image_id?: string | null
+          splat_count?: number | null
+          status?: string
+          status_url?: string | null
+          storage_path?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "splat_generations_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "splat_generations_source_image_id_fkey"
+            columns: ["source_image_id"]
+            isOneToOne: false
+            referencedRelation: "image_attachments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       subject_progress: {
         Row: {
           id: string
@@ -1322,6 +1418,7 @@ export type Database = {
           created_at: string
           custom_system_prompt: string | null
           deep_research_model: string | null
+          fal_api_key: string | null
           hands_free_tts_rate: number
           id: string
           image_extraction_model: string | null
@@ -1342,6 +1439,13 @@ export type Database = {
           saved_video_models: Json | null
           selected_model: string | null
           smart_filing_enabled: boolean
+          splat_auto_fallback: boolean | null
+          splat_click_to_activate: boolean | null
+          splat_confirm_threshold: number | null
+          splat_default_quality: string | null
+          splat_max_file_mb: number | null
+          splat_model_primary: string | null
+          splat_monthly_quota: number | null
           trust_image_text: boolean
           tts_rate: number
           updated_at: string
@@ -1367,6 +1471,7 @@ export type Database = {
           created_at?: string
           custom_system_prompt?: string | null
           deep_research_model?: string | null
+          fal_api_key?: string | null
           hands_free_tts_rate?: number
           id?: string
           image_extraction_model?: string | null
@@ -1387,6 +1492,13 @@ export type Database = {
           saved_video_models?: Json | null
           selected_model?: string | null
           smart_filing_enabled?: boolean
+          splat_auto_fallback?: boolean | null
+          splat_click_to_activate?: boolean | null
+          splat_confirm_threshold?: number | null
+          splat_default_quality?: string | null
+          splat_max_file_mb?: number | null
+          splat_model_primary?: string | null
+          splat_monthly_quota?: number | null
           trust_image_text?: boolean
           tts_rate?: number
           updated_at?: string
@@ -1412,6 +1524,7 @@ export type Database = {
           created_at?: string
           custom_system_prompt?: string | null
           deep_research_model?: string | null
+          fal_api_key?: string | null
           hands_free_tts_rate?: number
           id?: string
           image_extraction_model?: string | null
@@ -1432,6 +1545,13 @@ export type Database = {
           saved_video_models?: Json | null
           selected_model?: string | null
           smart_filing_enabled?: boolean
+          splat_auto_fallback?: boolean | null
+          splat_click_to_activate?: boolean | null
+          splat_confirm_threshold?: number | null
+          splat_default_quality?: string | null
+          splat_max_file_mb?: number | null
+          splat_model_primary?: string | null
+          splat_monthly_quota?: number | null
           trust_image_text?: boolean
           tts_rate?: number
           updated_at?: string
