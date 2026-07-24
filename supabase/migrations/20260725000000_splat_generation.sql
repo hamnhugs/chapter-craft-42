@@ -5,6 +5,13 @@
 --
 -- Splats are generated from an IMAGE (there is no text-to-splat endpoint), so
 -- source_image_id points back at the image_attachments row it grew from.
+--
+-- SAFE TO RE-RUN. Lovable applied an equivalent migration
+-- (20260724173752_2499be4d-...) that omitted the storage BUCKET while still
+-- creating that bucket's policies — so running this is what actually creates
+-- `generated-splats`. Every statement here is idempotent (IF NOT EXISTS, ON
+-- CONFLICT DO NOTHING, DROP POLICY IF EXISTS before CREATE POLICY), so it can
+-- be applied on a fresh database or on top of Lovable's version.
 
 -- 1. Private storage bucket for generated splats.
 --    Path: {user_id}/{request_id}.splat|.ply|.glb, poster at {user_id}/{request_id}.jpg
@@ -12,18 +19,22 @@ INSERT INTO storage.buckets (id, name, public)
 VALUES ('generated-splats', 'generated-splats', false)
 ON CONFLICT (id) DO NOTHING;
 
+DROP POLICY IF EXISTS "Users can upload own generated splats" ON storage.objects;
 CREATE POLICY "Users can upload own generated splats"
 ON storage.objects FOR INSERT
 WITH CHECK (bucket_id = 'generated-splats' AND auth.uid()::text = (storage.foldername(name))[1]);
 
+DROP POLICY IF EXISTS "Users can read own generated splats" ON storage.objects;
 CREATE POLICY "Users can read own generated splats"
 ON storage.objects FOR SELECT
 USING (bucket_id = 'generated-splats' AND auth.uid()::text = (storage.foldername(name))[1]);
 
+DROP POLICY IF EXISTS "Users can update own generated splats" ON storage.objects;
 CREATE POLICY "Users can update own generated splats"
 ON storage.objects FOR UPDATE
 USING (bucket_id = 'generated-splats' AND auth.uid()::text = (storage.foldername(name))[1]);
 
+DROP POLICY IF EXISTS "Users can delete own generated splats" ON storage.objects;
 CREATE POLICY "Users can delete own generated splats"
 ON storage.objects FOR DELETE
 USING (bucket_id = 'generated-splats' AND auth.uid()::text = (storage.foldername(name))[1]);
@@ -68,18 +79,25 @@ CREATE INDEX IF NOT EXISTS idx_splat_gen_created ON public.splat_generations(use
 
 ALTER TABLE public.splat_generations ENABLE ROW LEVEL SECURITY;
 
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.splat_generations TO authenticated;
+GRANT ALL ON public.splat_generations TO service_role;
+
+DROP POLICY IF EXISTS "Users can view own splat generations" ON public.splat_generations;
 CREATE POLICY "Users can view own splat generations"
 ON public.splat_generations FOR SELECT
 USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can insert own splat generations" ON public.splat_generations;
 CREATE POLICY "Users can insert own splat generations"
 ON public.splat_generations FOR INSERT
 WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update own splat generations" ON public.splat_generations;
 CREATE POLICY "Users can update own splat generations"
 ON public.splat_generations FOR UPDATE
 USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can delete own splat generations" ON public.splat_generations;
 CREATE POLICY "Users can delete own splat generations"
 ON public.splat_generations FOR DELETE
 USING (auth.uid() = user_id);
