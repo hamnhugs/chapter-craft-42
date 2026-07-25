@@ -70,15 +70,14 @@ export const FAL_VIDEO_MODELS: FalVideoModel[] = [
  *  BEFORE pricing, so the estimate always matches what is actually sent. */
 export const DRAFT_RESOLUTIONS = ["360p", "520p", "720p", "1080p"] as const;
 
-/** Vidu Q2's duration field is a string ENUM of exactly "4" | "8" — a 5s or
- *  6s request is a guaranteed 422 ValidationError, not a rounded clip. Snap
- *  BEFORE pricing (1080p bills per second) and report the snap to the user.
- *  Enum values taken from the fal schema at ship time; re-verify if Vidu
- *  adds tiers. */
-export const DRAFT_DURATIONS = [4, 8] as const;
-export function snapDraftDuration(durationS: number): 4 | 8 {
-  const d = Number(durationS) || 4;
-  return d <= 5 ? 4 : 8; // nearest tier; 5 is closer to 4
+/** Vidu Q2's duration is an INTEGER 1–8 — live-verified 2026-07-24: sending
+ *  the string "4" fails with literal_error "Input should be 1, 2, 3, 4, 5,
+ *  6, 7 or 8". fal validates the payload only when a worker picks the job
+ *  up, so a bad value enqueues fine, reports COMPLETED, and stores the
+ *  validation error as the job's RESULT — client-side correctness is the
+ *  only real guard. Clamp BEFORE pricing (1080p bills per second). */
+export function clampDraftDuration(durationS: number): number {
+  return Math.min(8, Math.max(1, Math.round(Number(durationS) || 4)));
 }
 
 /** Aspect ratios Vidu accepts; anything else is dropped (provider defaults to
@@ -222,13 +221,14 @@ export async function submitReferenceDraft(opts: {
   aspectRatio?: string;
 }): Promise<FalSubmitResult> {
   const model = opts.model || "fal-ai/vidu/q2/reference-to-video";
-  // Defensive re-snap: callers snap before pricing, but an unsnapped value
-  // reaching the wire is a guaranteed 422 (duration is a "4"|"8" string enum).
+  // duration goes out as a BARE INTEGER — the string form ("4") is exactly
+  // what the live API 422s on (see clampDraftDuration). Defensive re-clamp:
+  // callers clamp before pricing, but an out-of-range value must never fly.
   const ar = (opts.aspectRatio || "").trim();
   const body: Record<string, unknown> = {
     prompt: opts.prompt.slice(0, 3000),
     reference_image_urls: opts.referenceImageUrls.slice(0, 7),
-    duration: String(snapDraftDuration(opts.durationS || 4)),
+    duration: clampDraftDuration(opts.durationS || 4),
     resolution: opts.resolution || "720p",
     ...((DRAFT_ASPECT_RATIOS as readonly string[]).includes(ar) ? { aspect_ratio: ar } : {}),
   };
@@ -337,7 +337,17 @@ export async function finalizeFalVideoJob(opts: {
   const res = await fetch(resultUrl, { headers: { Authorization: `Key ${opts.apiKey}` } });
   if (!res.ok) {
     const t = await res.text().catch(() => "");
-    throw new Error(`Could not read the finished clip (HTTP ${res.status}) ${t.slice(0, 160)}`);
+    // A 422 here is the job's TERMINAL outcome, not a read hiccup: fal
+    // validates the payload at worker pickup, so a bad request "completes"
+    // and stores the validation error as its result. Persist the failure so
+    // the row is honest and the one-in-flight rail frees immediately instead
+    // of blocking new fal jobs for up to 30 minutes.
+    if (res.status === 422) {
+      const msg = `The provider rejected the job's inputs: ${extractApiError(t)}`;
+      await markVideoJobFailed(opts.jobId, msg);
+      throw new Error(msg);
+    }
+    throw new Error(`Could not read the finished clip (HTTP ${res.status}) ${extractApiError(t).slice(0, 160)}`);
   }
   const payload = await res.json().catch(() => ({}));
 

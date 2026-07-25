@@ -101,9 +101,17 @@ Every submit path pre-flights its conditioning media BEFORE spending:
 
 422 classes the client now prevents instead of surfacing:
 
-- Vidu Q2's draft `duration` is a hard `"4" | "8"` string enum — requests
-  are snapped BEFORE pricing and the snap is reported (`snapDraftDuration`).
-  Aspect ratios outside {16:9, 9:16, 1:1} are dropped with a note.
+- Vidu Q2's draft `duration` is an INTEGER 1–8 — LIVE-VERIFIED 2026-07-24:
+  the string `"4"` fails with `literal_error` "Input should be 1, 2, …, 8",
+  and it fails at RESULT-read time, because fal validates the payload only
+  when a worker picks the job up. A bad payload enqueues fine (202), the
+  status endpoint reports COMPLETED, and the stored result is the 422 —
+  which reads exactly like a stall followed by "Could not read the finished
+  clip". Client sends a bare clamped integer (`clampDraftDuration`), and
+  `finalizeFalVideoJob` treats a 422 result as TERMINAL: it persists the
+  failure (row → failed, provider message attached) so the one-in-flight
+  rail frees immediately. Aspect ratios outside {16:9, 9:16, 1:1} are
+  dropped with a note.
 - OpenRouter `aspect_ratio` / `generate_audio` are validated against the
   live catalog exactly like duration/resolution always were. Core request
   fields hard-fail upstream when unsupported — they are NOT silent no-ops

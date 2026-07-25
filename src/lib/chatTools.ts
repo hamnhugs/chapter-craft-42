@@ -22,7 +22,7 @@ import {
 import {
   submitMotionTransfer, submitReferenceDraft, estimateFalVideoCostUSD,
   getFalVideoModel, DEFAULT_MOTION_MODEL, DRAFT_RESOLUTIONS, hasInFlightFalVideo,
-  snapDraftDuration, DRAFT_ASPECT_RATIOS,
+  clampDraftDuration, DRAFT_ASPECT_RATIOS,
 } from "@/lib/falVideoGen";
 import {
   mastersMigrated, resolveMaster, listMasterAssets, createMasterAsset,
@@ -2114,12 +2114,13 @@ export async function executeChatTool(
           } catch { /* if the check itself fails, fall through rather than block */ }
           const draftModel = "fal-ai/vidu/q2/reference-to-video";
           const draftNotes: string[] = [];
-          // Vidu's duration is a hard "4"|"8" enum — snap BEFORE pricing
-          // (1080p bills per second) and report, never 422 or silently morph.
+          // Vidu's duration is an INTEGER 1–8 (live-verified; the string
+          // form 422s at result-read time) — clamp BEFORE pricing (1080p
+          // bills per second) and report any change, never silently morph.
           const requestedDur = Number(args.duration) || 0;
-          const durationS = snapDraftDuration(requestedDur || 4);
+          const durationS = clampDraftDuration(requestedDur || 4);
           if (requestedDur > 0 && requestedDur !== durationS) {
-            draftNotes.push(`Vidu drafts come only in 4s or 8s — the ${requestedDur}s request was rendered as ${durationS}s.`);
+            draftNotes.push(`Vidu drafts run 1–8s — the ${requestedDur}s request was clamped to ${durationS}s.`);
           }
           // Snap the resolution BEFORE pricing so the estimate always matches
           // what is actually submitted (an unknown string must never be
