@@ -102,11 +102,18 @@ export async function videoIdentityMigrated(): Promise<boolean> {
 // ── Source image resolution ─────────────────────────────────────────────────
 
 /** Resolve stored image ids into URLs OpenRouter's upstream providers can
- *  fetch. Images live in a private bucket, so this signs time-limited URLs
- *  (24h — far longer than a submit needs). Throws when any id is missing:
- *  silently dropping an identity reference is exactly the failure mode this
- *  feature exists to eliminate. */
-export async function resolveVideoSourceImages(imageIds: string[]): Promise<{
+ *  fetch. Images live in a private bucket, so this signs time-limited URLs.
+ *  Throws when any id is missing: silently dropping an identity reference is
+ *  exactly the failure mode this feature exists to eliminate.
+ *
+ *  freshSign: sign anew instead of reusing this tab's render cache, so the
+ *  URL is valid for the FULL 24h. Submit paths must pass it — a provider may
+ *  fetch the reference only when the job leaves its queue, and a cache-aged
+ *  URL that expires first strands the job in "pending" forever. */
+export async function resolveVideoSourceImages(
+  imageIds: string[],
+  opts: { freshSign?: boolean } = {},
+): Promise<{
   urls: string[];
   ids: string[];
 }> {
@@ -123,11 +130,126 @@ export async function resolveVideoSourceImages(imageIds: string[]): Promise<{
   for (const id of ids) {
     const path = byId.get(id);
     if (!path) throw new Error(`Image ${id} was not found (was it deleted?).`);
-    const signed = await getSignedImageUrl(path);
+    const signed = await getSignedImageUrl(path, { fresh: opts.freshSign === true });
     if (!signed) throw new Error(`Could not prepare image ${id} for generation.`);
     urls.push(signed);
   }
   return { urls, ids };
+}
+
+// ── Pre-flight: verify conditioning media is fetchable BEFORE spending ──────
+
+export interface PreflightIssue {
+  label: string;
+  kind: "unreachable" | "http_error" | "bad_content_type" | "empty" | "too_large";
+  detail: string;
+  /** Blocking issues must refuse the submit; the rest are warnings. */
+  blocking: boolean;
+}
+
+export interface PreflightResult {
+  ok: boolean; // no blocking issues
+  issues: PreflightIssue[];
+  checked: number;
+}
+
+/** Verify that each conditioning URL actually serves the expected media,
+ *  from the browser, before a job is queued — the #1 cause of a job that
+ *  submits fine and then stalls in "pending" is a reference the upstream
+ *  provider cannot fetch (deleted object, expired signature, wrong bucket).
+ *
+ *  strict targets (our own storage — the app provably fetches these URLs
+ *  elsewhere) treat any failure as blocking. Non-strict targets (arbitrary
+ *  user-supplied URLs) only block on a definitive HTTP error status; network/
+ *  CORS failures downgrade to warnings because the browser check can be
+ *  blocked where a server-side fetch would succeed.
+ *
+ *  HEAD first (no body, no CORS preflight), plain GET as a fallback for
+ *  servers that reject HEAD; bodies are cancelled after the headers arrive. */
+export async function preflightRemoteMedia(
+  targets: Array<{ url: string; label: string; expect: "image" | "video"; strict: boolean }>,
+  opts: { timeoutMs?: number } = {},
+): Promise<PreflightResult> {
+  const timeoutMs = opts.timeoutMs ?? 8000;
+  const WARN_IMAGE_BYTES = 10 * 1024 * 1024;  // common provider ref-image cap
+  const WARN_VIDEO_BYTES = 100 * 1024 * 1024;
+
+  const checkOne = async (t: { url: string; label: string; expect: "image" | "video"; strict: boolean }): Promise<PreflightIssue | null> => {
+    // Each attempt gets its OWN controller and deadline — with a shared one,
+    // a HEAD that hangs to the timeout hands the GET arbiter a pre-aborted
+    // signal and a valid job gets refused.
+    const probe = async (method: "HEAD" | "GET"): Promise<Response> => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      try {
+        const res = await fetch(t.url, { method, signal: ctrl.signal });
+        if (method === "GET") void res.body?.cancel().catch(() => {});
+        return res;
+      } finally { clearTimeout(timer); }
+    };
+    try {
+      let res: Response | null = null;
+      try { res = await probe("HEAD"); } catch { res = null; }
+      if (!res || !res.ok) {
+        // Any failed HEAD retries as the plain GET the app already uses on
+        // these URLs elsewhere — GET is the arbiter, so a server that
+        // mishandles HEAD can never false-positive a valid job into refusal.
+        res = await probe("GET");
+      }
+      if (!res.ok) {
+        // Blocking only for our own storage. A browser-observed 403/404 on an
+        // arbitrary URL is NOT proof the provider's server-side fetch fails
+        // (hotlink protection commonly 403s browsers and serves datacenters).
+        const why = res.status === 403 || res.status === 401
+          ? (t.strict
+            ? "access denied — the signed URL is invalid or expired"
+            : `HTTP ${res.status} to the browser — some hosts block browser fetches but allow server-side ones`)
+          : res.status === 404 ? "not found — the file no longer exists"
+          : `HTTP ${res.status}`;
+        return { label: t.label, kind: "http_error", detail: why, blocking: t.strict };
+      }
+      const ctype = (res.headers.get("content-type") || "").toLowerCase();
+      if (ctype && !ctype.startsWith(`${t.expect}/`) && !ctype.startsWith("application/octet-stream")) {
+        return {
+          label: t.label, kind: "bad_content_type",
+          detail: `serves "${ctype}", expected ${t.expect}/*`,
+          blocking: t.strict,
+        };
+      }
+      // An ABSENT Content-Length is unknown, not zero (chunked/compressed
+      // responses legally omit it) — only a declared 0 counts as empty.
+      const rawLen = res.headers.get("content-length");
+      const len = rawLen == null || rawLen === "" ? NaN : Number(rawLen);
+      if (Number.isFinite(len)) {
+        if (len === 0) return { label: t.label, kind: "empty", detail: "reports 0 bytes", blocking: t.strict };
+        const warnAt = t.expect === "image" ? WARN_IMAGE_BYTES : WARN_VIDEO_BYTES;
+        if (len > warnAt) {
+          return {
+            label: t.label, kind: "too_large",
+            detail: `${(len / (1024 * 1024)).toFixed(1)} MB — some providers cap ${t.expect}s around ${Math.round(warnAt / (1024 * 1024))} MB and fail silently`,
+            blocking: false,
+          };
+        }
+      }
+      return null;
+    } catch {
+      return {
+        label: t.label, kind: "unreachable",
+        detail: t.strict
+          ? "could not be fetched from the browser — the provider almost certainly can't fetch it either"
+          : "could not be verified from the browser (CORS may block the check); the provider may still fetch it fine",
+        blocking: t.strict,
+      };
+    }
+  };
+
+  const issues = (await Promise.all(targets.map(checkOne))).filter(Boolean) as PreflightIssue[];
+  return { ok: !issues.some((i) => i.blocking), issues, checked: targets.length };
+}
+
+/** One-line human summary of blocking preflight issues, for refusal messages. */
+export function describePreflightFailures(r: PreflightResult): string {
+  return r.issues.filter((i) => i.blocking).map((i) => `${i.label}: ${i.detail}`).join("; ");
 }
 
 // ── Provider passthrough (negatives + identity strength) ────────────────────
@@ -259,12 +381,25 @@ export async function submitVideo({
     const errText = await res.text().catch(() => "");
     if (res.status === 401) throw new Error("Invalid OpenRouter API key.");
     if (res.status === 402) throw new Error("Insufficient OpenRouter credits — video is billed to your own key.");
-    throw new Error(`Video submit failed (HTTP ${res.status}) ${errText.slice(0, 200)}`);
+    throw new Error(`Video submit failed (HTTP ${res.status}) ${extractApiError(errText)}`);
   }
   const data = await res.json().catch(() => ({}));
   const jobId: string | undefined = data?.id || data?.data?.id || data?.generation_id;
   if (!jobId) throw new Error("Video submit returned no job id.");
   return { jobId };
+}
+
+/** Pull the useful message out of a provider error body (OpenRouter wraps in
+ *  {error:{message}}, FastAPI-style validators in {detail:[...]}) so a 400/422
+ *  tells the user WHAT was invalid instead of just the status code. */
+export function extractApiError(errText: string): string {
+  try {
+    const j = JSON.parse(errText);
+    const msg = j?.error?.message || j?.message
+      || (j?.detail ? (typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail)) : "");
+    if (msg) return String(msg).slice(0, 500);
+  } catch { /* not JSON — fall through to the raw slice */ }
+  return errText.slice(0, 500);
 }
 
 export interface PollSnapshot {
@@ -296,15 +431,31 @@ export async function pollVideo(apiKey: string, jobId: string): Promise<PollSnap
     return { status: "processing", cost: null, error: null, ready: false };
   }
   const data = await res.json().catch(() => ({}));
-  const raw = String(data?.status || "").toLowerCase();
+  // The submit response is seen both bare and wrapped in {data:{...}} — read
+  // each field TOP-LEVEL FIRST with a nested fallback (same precedence as the
+  // submit path's id extraction), so a payload that carries status at the top
+  // plus an unrelated object under `data` is never misread as in-flight.
+  const nested = data?.data && typeof data.data === "object" && !Array.isArray(data.data) ? data.data : null;
+  const raw = String(data?.status ?? nested?.status ?? "").toLowerCase();
+  const errField = data?.error ?? nested?.error;
+  const upstreamErr = typeof errField === "string" ? errField : errField?.message;
   const status: VideoStatus =
-    raw === "completed" ? "completed"
-    : raw === "failed" ? "failed"
-    : raw === "in_progress" ? "processing"
-    : raw === "pending" ? "pending"
+    raw === "completed" || raw === "succeeded" || raw === "success" ? "completed"
+    // Terminal-failure synonyms must land on "failed" — an unrecognized
+    // terminal status that falls through to "processing" is a 15-minute wait.
+    : ["failed", "error", "errored", "cancelled", "canceled", "expired", "rejected"].includes(raw) ? "failed"
+    : raw === "pending" || raw === "queued" ? "pending"
+    // Anything else — recognized in-flight vocabulary or unknown — keeps
+    // polling. One ambiguous payload (e.g. a transient error envelope on a
+    // 200) must NEVER fail the row: the bubble persists "failed" and drops
+    // the retry affordance, destroying a possibly-still-rendering paid clip.
+    // A genuine unknown-terminal stall is bounded by the bubble's 15-min
+    // watchdog, which stops WATCHING but leaves the row recoverable.
     : "processing";
-  const cost = typeof data?.usage?.cost === "number" ? data.usage.cost : null;
-  const error = status === "failed" ? String(data?.error || "Generation failed") : null;
+  const cost = typeof data?.usage?.cost === "number" ? data.usage.cost
+    : typeof nested?.usage?.cost === "number" ? nested.usage.cost
+    : null;
+  const error = status === "failed" ? String(upstreamErr || "Generation failed") : null;
   return { status, cost, error, ready: status === "completed" };
 }
 
@@ -658,9 +809,15 @@ export async function deleteVideoGeneration(row: { id: string; storage_path?: st
 const SIGNED_TTL_S = 60 * 60 * 24; // 24h
 const urlCache = new Map<string, { url: string; expires: number }>();
 
-export async function getSignedVideoUrl(storagePath: string): Promise<string | null> {
+export async function getSignedVideoUrl(
+  storagePath: string,
+  opts: { fresh?: boolean } = {},
+): Promise<string | null> {
   if (!storagePath) return null;
-  const cached = urlCache.get(storagePath);
+  // fresh: full-TTL signature for URLs handed to third-party providers (e.g.
+  // a motion-transfer driving clip) — a cache-aged URL can expire before the
+  // provider dequeues the job and fetches it. Mirrors getSignedImageUrl.
+  const cached = opts.fresh ? undefined : urlCache.get(storagePath);
   if (cached && cached.expires > Date.now()) return cached.url;
   const { data, error } = await supabase.storage
     .from(BUCKET)

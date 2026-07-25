@@ -270,9 +270,18 @@ export async function deleteImageMemory(row: { id: string; storage_path?: string
 const SIGNED_TTL_S = 60 * 60 * 24; // 24h
 const urlCache = new Map<string, { url: string; expires: number }>();
 
-export async function getSignedImageUrl(storagePath: string): Promise<string | null> {
-  const cached = urlCache.get(storagePath);
-  if (cached && cached.expires > Date.now()) return cached.url;
+export async function getSignedImageUrl(
+  storagePath: string,
+  opts: { fresh?: boolean } = {},
+): Promise<string | null> {
+  // fresh: skip the cache and sign anew, guaranteeing the FULL 24h validity.
+  // A cached URL may have only minutes left — fine for rendering in this tab,
+  // fatal for a URL handed to a third-party provider that fetches it later
+  // (e.g. a video job that sits in an upstream queue past the expiry).
+  if (!opts.fresh) {
+    const cached = urlCache.get(storagePath);
+    if (cached && cached.expires > Date.now()) return cached.url;
+  }
   const { data, error } = await supabase.storage
     .from("generated-images")
     .createSignedUrl(storagePath, SIGNED_TTL_S);

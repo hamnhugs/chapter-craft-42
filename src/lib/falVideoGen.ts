@@ -1,7 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import {
   fetchVideoByJobId, saveVideoNeuron, markVideoJobFailed, posterFromVideoBlob,
-  type VideoGenerationRow,
+  extractApiError, type VideoGenerationRow,
 } from "@/lib/videoGen";
 
 // Motion transfer + reference-draft video via fal.ai's queue API, billed to the
@@ -69,6 +69,21 @@ export const FAL_VIDEO_MODELS: FalVideoModel[] = [
 /** Resolutions the draft submit path accepts; anything else must be snapped
  *  BEFORE pricing, so the estimate always matches what is actually sent. */
 export const DRAFT_RESOLUTIONS = ["360p", "520p", "720p", "1080p"] as const;
+
+/** Vidu Q2's duration field is a string ENUM of exactly "4" | "8" — a 5s or
+ *  6s request is a guaranteed 422 ValidationError, not a rounded clip. Snap
+ *  BEFORE pricing (1080p bills per second) and report the snap to the user.
+ *  Enum values taken from the fal schema at ship time; re-verify if Vidu
+ *  adds tiers. */
+export const DRAFT_DURATIONS = [4, 8] as const;
+export function snapDraftDuration(durationS: number): 4 | 8 {
+  const d = Number(durationS) || 4;
+  return d <= 5 ? 4 : 8; // nearest tier; 5 is closer to 4
+}
+
+/** Aspect ratios Vidu accepts; anything else is dropped (provider defaults to
+ *  16:9) rather than 422-ing the whole job. */
+export const DRAFT_ASPECT_RATIOS = ["16:9", "9:16", "1:1"] as const;
 
 export function getFalVideoModel(id: string): FalVideoModel | null {
   return FAL_VIDEO_MODELS.find((m) => m.id === id) || null;
@@ -152,8 +167,8 @@ async function submitToFal(apiKey: string, model: string, body: Record<string, u
     const errText = await res.text().catch(() => "");
     if (res.status === 401 || res.status === 403) throw new Error("Invalid fal.ai API key.");
     if (res.status === 402) throw new Error("Insufficient fal.ai credits — this bills to your own fal key.");
-    if (res.status === 422) throw new Error(`fal rejected the request: ${errText.slice(0, 200)}`);
-    throw new Error(`Video submit failed (HTTP ${res.status}) ${errText.slice(0, 200)}`);
+    if (res.status === 422) throw new Error(`fal rejected the request: ${extractApiError(errText)}`);
+    throw new Error(`Video submit failed (HTTP ${res.status}) ${extractApiError(errText)}`);
   }
   const data = await res.json().catch(() => ({}));
   const requestId: string | undefined = data?.request_id || data?.requestId;
@@ -207,12 +222,15 @@ export async function submitReferenceDraft(opts: {
   aspectRatio?: string;
 }): Promise<FalSubmitResult> {
   const model = opts.model || "fal-ai/vidu/q2/reference-to-video";
+  // Defensive re-snap: callers snap before pricing, but an unsnapped value
+  // reaching the wire is a guaranteed 422 (duration is a "4"|"8" string enum).
+  const ar = (opts.aspectRatio || "").trim();
   const body: Record<string, unknown> = {
     prompt: opts.prompt.slice(0, 3000),
     reference_image_urls: opts.referenceImageUrls.slice(0, 7),
-    duration: String(Math.min(8, Math.max(1, Math.round(opts.durationS || 4)))),
+    duration: String(snapDraftDuration(opts.durationS || 4)),
     resolution: opts.resolution || "720p",
-    ...(opts.aspectRatio ? { aspect_ratio: opts.aspectRatio } : {}),
+    ...((DRAFT_ASPECT_RATIOS as readonly string[]).includes(ar) ? { aspect_ratio: ar } : {}),
   };
   return await submitToFal(opts.apiKey, model, body);
 }

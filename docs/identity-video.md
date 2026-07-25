@@ -82,6 +82,49 @@ real accepted/rejected clips. Scores land in `video_generations.qc` and the
 chip UI; a red verdict warns and suggests a retry with higher
 `identity_scale` — it never deletes a paid clip.
 
+## Pre-flight & stall triage (hardened 2026-07-24 after the first live runs)
+
+Every submit path pre-flights its conditioning media BEFORE spending:
+
+- Signed URLs for anything a provider will fetch are minted FRESH (full 24h
+  TTL). The render cache can hand out a URL minutes from expiry, and
+  providers fetch references at **dequeue** time, not submit time — an
+  expired reference is the classic submits-fine-then-stalls-in-pending job.
+- Each URL is then HEAD-probed (GET fallback, each with its own deadline)
+  from the browser for status, content-type, and size
+  (`preflightRemoteMedia`, videoGen.ts). Only our OWN storage URLs can
+  block the call ("nothing was submitted or billed") — the app provably
+  fetches those same URLs elsewhere, so any failure is real. A user-supplied
+  `image_url` only ever warns: hotlink protection and CORS routinely fail a
+  browser probe while the provider's server-side fetch succeeds. An absent
+  Content-Length is treated as unknown, never as empty.
+
+422 classes the client now prevents instead of surfacing:
+
+- Vidu Q2's draft `duration` is a hard `"4" | "8"` string enum — requests
+  are snapped BEFORE pricing and the snap is reported (`snapDraftDuration`).
+  Aspect ratios outside {16:9, 9:16, 1:1} are dropped with a note.
+- OpenRouter `aspect_ratio` / `generate_audio` are validated against the
+  live catalog exactly like duration/resolution always were. Core request
+  fields hard-fail upstream when unsupported — they are NOT silent no-ops
+  like passthrough params — so unsupported values are dropped-and-reported.
+
+Stall triage, in order:
+
+1. The generating card labels the job **queued** vs **rendering**. Queued
+   forever = provider backlog or an unfetchable reference (pre-flight makes
+   the second nearly impossible now); rendering forever = provider-side
+   generation trouble.
+2. `pollVideo` reads each field top-level-first with a `{data:{...}}`
+   fallback (the submit response already came both ways) and maps terminal
+   synonyms: error/cancelled/expired/rejected → failed, succeeded →
+   completed. Anything ambiguous — unknown status, error envelope on a 200 —
+   keeps polling: one ambiguous payload must never persist "failed" on a
+   possibly-still-rendering paid clip. The bubble's 15-min watchdog bounds a
+   genuine unrecognized-terminal stall and stops WATCHING, never fails the row.
+3. Submit 4xx surfaces the provider's actual message (`extractApiError`)
+   plus model/conditioning context — never a bare "HTTP 422".
+
 ## P3 — documented only, deliberately not built
 
 1. **LoRA / adapter identity** (`adapter_id` on generate_video): export the

@@ -56,6 +56,10 @@ const VideoBubble: React.FC<{ video: ChatVideoRef }> = ({ video }) => {
   const [cost, setCost] = useState<number | null>(null);
   const [savedToMemory, setSavedToMemory] = useState(false);
   const [retryable, setRetryable] = useState(false);
+  // Upstream job state (queued vs rendering) — surfacing it turns an opaque
+  // "stall" into a diagnosable symptom: queued forever points at the provider
+  // (backlog, or it can't fetch the reference images); rendering means work.
+  const [jobStatus, setJobStatus] = useState<"pending" | "processing" | null>(null);
   const [identityMode, setIdentityMode] = useState<string | null>(null);
   const [qc, setQc] = useState<VideoQcResult | null>(null);
   const [qcRunning, setQcRunning] = useState(false);
@@ -63,6 +67,7 @@ const VideoBubble: React.FC<{ video: ChatVideoRef }> = ({ video }) => {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const busyRef = useRef(false);
+  const jobStatusRef = useRef<"pending" | "processing" | null>(null);
   const mountedRef = useRef(true);
   const startRef = useRef(0);
   const qcStartedRef = useRef(false);
@@ -158,6 +163,8 @@ const VideoBubble: React.FC<{ video: ChatVideoRef }> = ({ video }) => {
     setPhase("generating");
     startRef.current = Date.now();
     setElapsed(0);
+    jobStatusRef.current = null;
+    setJobStatus(null);
     tickRef.current = setInterval(() => {
       if (!mountedRef.current) return;
       const e = Math.floor((Date.now() - startRef.current) / 1000);
@@ -167,7 +174,9 @@ const VideoBubble: React.FC<{ video: ChatVideoRef }> = ({ video }) => {
         // failed) so "Try again" or a later reload can still recover a clip
         // that finishes late on the server.
         stopTimers();
-        setError("This is taking unusually long. Try again to keep waiting.");
+        setError(jobStatusRef.current === "pending"
+          ? "Still queued upstream after 15 minutes — the provider is backed up, or it can't fetch the conditioning images. Try again keeps waiting; the job stays recoverable."
+          : "This is taking unusually long. Try again to keep waiting.");
         setRetryable(true);
         setPhase("failed");
       }
@@ -181,6 +190,10 @@ const VideoBubble: React.FC<{ video: ChatVideoRef }> = ({ video }) => {
         if (!mountedRef.current) return;
         const snapCost = (snap as any).cost;
         if (typeof snapCost === "number") setCost(snapCost);
+        if (snap.status === "pending" || snap.status === "processing") {
+          jobStatusRef.current = snap.status;
+          setJobStatus(snap.status);
+        }
         if (snap.status === "completed") {
           await finalize(typeof snapCost === "number" ? snapCost : null);
         } else if (snap.status === "failed") {
@@ -319,7 +332,9 @@ const VideoBubble: React.FC<{ video: ChatVideoRef }> = ({ video }) => {
         </span>
         <span className="text-sm font-medium text-foreground">Generating video…</span>
         {phase === "generating" && (
-          <span className="ml-auto text-[11px] tabular-nums text-on-surface-variant">{mmss(elapsed)}</span>
+          <span className="ml-auto text-[11px] tabular-nums text-on-surface-variant">
+            {jobStatus === "pending" ? "queued · " : jobStatus === "processing" ? "rendering · " : ""}{mmss(elapsed)}
+          </span>
         )}
       </div>
       <p className="text-[11px] text-on-surface-variant truncate">{video.prompt}</p>

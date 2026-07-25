@@ -12,7 +12,7 @@ import {
   submitVideo, insertPendingVideo, fetchVideoById, searchVideos,
   deleteVideoGeneration, DEFAULT_VIDEO_MODEL, type ChatVideoRef,
   videoIdentityMigrated, resolveVideoSourceImages, buildPassthrough,
-  getSignedVideoUrl,
+  getSignedVideoUrl, preflightRemoteMedia, describePreflightFailures,
 } from "@/lib/videoGen";
 import {
   fetchVideoModels, estimateClipCostUSD, isTokenPriced, formatUSD,
@@ -22,6 +22,7 @@ import {
 import {
   submitMotionTransfer, submitReferenceDraft, estimateFalVideoCostUSD,
   getFalVideoModel, DEFAULT_MOTION_MODEL, DRAFT_RESOLUTIONS, hasInFlightFalVideo,
+  snapDraftDuration, DRAFT_ASPECT_RATIOS,
 } from "@/lib/falVideoGen";
 import {
   mastersMigrated, resolveMaster, listMasterAssets, createMasterAsset,
@@ -2004,7 +2005,9 @@ export async function executeChatTool(
             charUrl = heroImageUrlDirect;
           } else if (heroImageId) {
             try {
-              const r = await resolveVideoSourceImages([heroImageId]);
+              // freshSign: fal fetches this URL when the job dequeues — it
+              // must carry the full 24h TTL, not a cache-aged remainder.
+              const r = await resolveVideoSourceImages([heroImageId], { freshSign: true });
               charUrl = r.urls[0];
               sourceIds = [heroImageId];
             } catch (e: any) {
@@ -2034,10 +2037,25 @@ export async function executeChatTool(
               };
             }
           }
-          const driverUrl = await getSignedVideoUrl(driver.storage_path);
+          const driverUrl = await getSignedVideoUrl(driver.storage_path, { fresh: true });
           if (!driverUrl) {
             return { result: { error: "Could not prepare the driving clip." }, event: { name, summary: "Driving clip unavailable", ok: false } };
           }
+          // Pre-flight BEFORE spending: verify fal will actually be able to
+          // fetch both inputs. An unfetchable input submits fine and then
+          // strands the job in the queue — the worst failure mode, because
+          // the in-flight rail then blocks new jobs for 30 minutes too.
+          const mpf = await preflightRemoteMedia([
+            { url: charUrl, label: "identity image", expect: "image", strict: !heroImageUrlDirect },
+            { url: driverUrl, label: "driving clip", expect: "video", strict: true },
+          ]);
+          if (!mpf.ok) {
+            return {
+              result: { error: `Pre-flight failed — nothing was submitted or billed. ${describePreflightFailures(mpf)}. Fix the source (regenerate the image / pick another driving clip via list_videos) and try again.` },
+              event: { name, summary: "Motion transfer pre-flight failed", ok: false },
+            };
+          }
+          const mpfWarnings = mpf.issues.filter((i) => !i.blocking).map((i) => `${i.label}: ${i.detail}`);
           let jobId: string;
           try {
             ({ jobId } = await submitMotionTransfer({
@@ -2066,7 +2084,9 @@ export async function executeChatTool(
               ok: true, job_id: jobId, provider: "fal", model: motionModel, motion_mode: "motion_plate",
               duration_s: knownDuration, estimated_cost_usd: estCost != null ? Number(estCost.toFixed(2)) : null,
               source: { master: master?.name || null, image_ids: sourceIds, motion_video_id: motionVideoId },
-              ...(refsIgnoredNote ? { not_applicable: [refsIgnoredNote] } : {}),
+              ...(refsIgnoredNote || mpfWarnings.length > 0
+                ? { not_applicable: [...(refsIgnoredNote ? [refsIgnoredNote] : []), ...mpfWarnings] }
+                : {}),
               note: "A live 'generating video' card is shown inline. Identity comes from the image; kinematics from the driving clip (which must show a human performer — if it doesn't, the model will likely fail or produce garbage; warn the user if unsure). Report the source master/image and driving clip to the user. Do NOT claim the video is ready.",
               __videos: [ref],
             },
@@ -2093,7 +2113,14 @@ export async function executeChatTool(
             }
           } catch { /* if the check itself fails, fall through rather than block */ }
           const draftModel = "fal-ai/vidu/q2/reference-to-video";
-          const durationS = Math.min(8, Math.max(1, Number(args.duration) || 4));
+          const draftNotes: string[] = [];
+          // Vidu's duration is a hard "4"|"8" enum — snap BEFORE pricing
+          // (1080p bills per second) and report, never 422 or silently morph.
+          const requestedDur = Number(args.duration) || 0;
+          const durationS = snapDraftDuration(requestedDur || 4);
+          if (requestedDur > 0 && requestedDur !== durationS) {
+            draftNotes.push(`Vidu drafts come only in 4s or 8s — the ${requestedDur}s request was rendered as ${durationS}s.`);
+          }
           // Snap the resolution BEFORE pricing so the estimate always matches
           // what is actually submitted (an unknown string must never be
           // silently priced as another tier).
@@ -2152,17 +2179,41 @@ export async function executeChatTool(
           const droppedIds = packIds.slice(Math.max(0, idBudget));
           let urls: string[];
           try {
-            ({ urls } = await resolveVideoSourceImages(sentIds));
+            // freshSign: full-TTL URLs — fal fetches them at dequeue time.
+            ({ urls } = await resolveVideoSourceImages(sentIds, { freshSign: true }));
           } catch (e: any) {
             return { result: { error: e?.message || "Could not prepare the reference images." }, event: { name, summary: "Reference images unavailable", ok: false } };
           }
           if (heroImageUrlDirect) urls.unshift(heroImageUrlDirect);
+          // Pre-flight BEFORE spending: an unfetchable reference submits fine
+          // and then stalls the job in fal's queue (and trips the one-in-
+          // flight rail for 30 min). Strict for our own storage; a raw
+          // image_url only warns on CORS-opaque failures.
+          const dpf = await preflightRemoteMedia(
+            urls.map((url, i) => ({
+              url,
+              label: heroImageUrlDirect && i === 0 ? "image_url" : `reference ${sentIds[heroImageUrlDirect ? i - 1 : i] || i + 1}`,
+              expect: "image" as const,
+              strict: !(heroImageUrlDirect && i === 0),
+            })),
+          );
+          if (!dpf.ok) {
+            return {
+              result: { error: `Pre-flight failed — nothing was submitted or billed. ${describePreflightFailures(dpf)}. Regenerate or re-pick the reference images (list_images / list_master_assets) and try again.` },
+              event: { name, summary: "Draft pre-flight failed", ok: false },
+            };
+          }
+          for (const w of dpf.issues.filter((i) => !i.blocking)) draftNotes.push(`${w.label}: ${w.detail}`);
+          const arRaw = String(args.aspect_ratio || "").trim();
+          if (arRaw && !(DRAFT_ASPECT_RATIOS as readonly string[]).includes(arRaw)) {
+            draftNotes.push(`Vidu accepts aspect ratios ${DRAFT_ASPECT_RATIOS.join(", ")} — "${arRaw}" was not sent (provider default 16:9).`);
+          }
           const draftPrompt = `${assemblyTag ? assemblyTag + ". " : ""}${prompt} Keep the character exactly as shown in the reference images; change only what the motion describes.`;
           let jobId: string;
           try {
             ({ jobId } = await submitReferenceDraft({
               apiKey: falKey, prompt: draftPrompt, referenceImageUrls: urls,
-              durationS, resolution, aspectRatio: String(args.aspect_ratio || "").trim() || undefined,
+              durationS, resolution, aspectRatio: arRaw || undefined,
             }));
           } catch (e: any) {
             return { result: { error: e?.message || "Draft submit failed" }, event: { name, summary: "Draft submit failed", ok: false } };
@@ -2183,9 +2234,10 @@ export async function executeChatTool(
           return {
             result: {
               ok: true, job_id: jobId, provider: "fal", model: draftModel, tier: "draft",
-              condition_mode: "reference", reference_count: urls.length,
+              condition_mode: "reference", reference_count: urls.length, duration_s: durationS,
               estimated_cost_usd: estCost != null ? Number(estCost.toFixed(2)) : null,
               source: { master: master?.name || null, image_ids: sentIds, splat_id: sourceSplatId },
+              ...(draftNotes.length > 0 ? { adjustments: draftNotes } : {}),
               ...(droppedIds.length > 0 ? {
                 refs_truncated: `${droppedIds.length} reference image(s) exceeded Vidu's ${VIDU_MAX_REFS}-image cap and were NOT sent: ${droppedIds.join(", ")}. Mention this to the user; trim the master's view pack if it grew too large.`,
               } : {}),
@@ -2225,10 +2277,30 @@ export async function executeChatTool(
         if (supportedResolutions.length && (!resolution || !supportedResolutions.includes(resolution))) {
           resolution = supportedResolutions.includes("720p") ? "720p" : supportedResolutions[0];
         }
-        const aspectRatio = String(args.aspect_ratio || deps.videoDefaultAspect || "").trim() || undefined;
-        const generateAudio = typeof args.generate_audio === "boolean"
+        // Catalog-validated core fields. duration/resolution are snapped
+        // above; aspect_ratio and generate_audio must get the same treatment —
+        // core request fields hard-fail upstream (4xx) when unsupported, they
+        // are never silently ignored like passthrough params. Drop-and-report
+        // so the provider default applies instead of the whole job failing.
+        const adjustments: string[] = [];
+        let aspectRatio = String(args.aspect_ratio || deps.videoDefaultAspect || "").trim() || undefined;
+        if (aspectRatio && (catalogModel?.supported_aspect_ratios?.length || 0) > 0
+            && !catalogModel!.supported_aspect_ratios!.includes(aspectRatio)) {
+          adjustments.push(`"${model}" supports aspect ratios ${catalogModel!.supported_aspect_ratios!.join(", ")} — "${aspectRatio}" was not sent (provider default applies).`);
+          aspectRatio = undefined;
+        }
+        let generateAudio = typeof args.generate_audio === "boolean"
           ? args.generate_audio
           : (typeof deps.videoGenerateAudio === "boolean" ? deps.videoGenerateAudio : undefined);
+        if (typeof generateAudio === "boolean" && catalogModel && catalogModel.generate_audio !== true) {
+          // Report BOTH directions of the drop — an explicit "no audio" that
+          // can't be sent matters as much as an explicit "audio" (the model's
+          // default applies either way).
+          adjustments.push(generateAudio
+            ? `"${model}" doesn't expose an audio-generation switch in the catalog — generate_audio was not sent.`
+            : `"${model}" doesn't expose an audio-generation switch in the catalog — the no-audio preference couldn't be sent (the model's default applies).`);
+          generateAudio = undefined;
+        }
 
         // ── Resolve the conditioning mode. NEVER silently drop an identity
         //    input: unsupported combinations error with working alternatives,
@@ -2350,7 +2422,9 @@ export async function executeChatTool(
             if (mode === "first_frame") {
               let heroUrl = heroUrlDirect;
               if (effHeroId) {
-                const r = await resolveVideoSourceImages([effHeroId]);
+                // freshSign: the provider fetches this URL when the job
+                // leaves its queue — it must carry the full 24h TTL.
+                const r = await resolveVideoSourceImages([effHeroId], { freshSign: true });
                 heroUrl = r.urls[0];
                 sourceImageIds = [effHeroId];
               }
@@ -2365,7 +2439,7 @@ export async function executeChatTool(
               const idBudget = maxRefs - (heroUrlDirect ? 1 : 0);
               const sentIds = allIds.slice(0, Math.max(0, idBudget));
               const droppedIds = allIds.slice(Math.max(0, idBudget));
-              const r = await resolveVideoSourceImages(sentIds);
+              const r = await resolveVideoSourceImages(sentIds, { freshSign: true });
               const urls = heroUrlDirect ? [heroUrlDirect, ...r.urls] : [...r.urls];
               inputReferences = urls;
               sourceImageIds = sentIds;
@@ -2377,6 +2451,37 @@ export async function executeChatTool(
             return { result: { error: e?.message || "Could not prepare the identity images." }, event: { name, summary: "Identity images unavailable", ok: false } };
           }
           conditionMode = mode;
+
+          // Pre-flight BEFORE the cost gate: verify every conditioning URL
+          // actually serves an image. A reference the provider can't fetch is
+          // the classic submit-fine-then-stall-in-pending failure — refuse it
+          // here, before any confirm round-trip or spend. Our own storage is
+          // strict; a raw image_url only warns on CORS-opaque failures.
+          {
+            const targets = frameImages
+              ? frameImages.map((f) => ({
+                  url: f.url,
+                  label: "first-frame image",
+                  expect: "image" as const,
+                  strict: f.url !== heroUrlDirect,
+                }))
+              : (inputReferences || []).map((u, i) => ({
+                  url: u,
+                  label: heroUrlDirect && u === heroUrlDirect
+                    ? "image_url"
+                    : `reference ${(sourceImageIds[heroUrlDirect ? i - 1 : i] || String(i + 1)).slice(0, 8)}`,
+                  expect: "image" as const,
+                  strict: u !== heroUrlDirect,
+                }));
+            const pf = await preflightRemoteMedia(targets);
+            if (!pf.ok) {
+              return {
+                result: { error: `Pre-flight failed — nothing was submitted or billed. ${describePreflightFailures(pf)}. Fix the identity source (regenerate the image, or re-check the ids via list_images / list_master_assets) and try again.` },
+                event: { name, summary: "Identity pre-flight failed", ok: false },
+              };
+            }
+            for (const w of pf.issues.filter((i) => !i.blocking)) identityNotes.push(`${w.label}: ${w.detail}`);
+          }
         }
 
         // Prompt composition: identity lives in the images; the text carries
@@ -2437,7 +2542,12 @@ export async function executeChatTool(
             frameImages, inputReferences, providerOptions: passthrough.providerOptions,
           }));
         } catch (e: any) {
-          return { result: { error: e?.message || "Video submit failed" }, event: { name, summary: "Video submit failed", ok: false } };
+          // Include what was actually sent — a bare "HTTP 422" without the
+          // model/conditioning context is undiagnosable from the chat log.
+          const ctx = conditionMode
+            ? ` (model ${model}, ${conditionMode} conditioning, ${imageInputCount} image${imageInputCount === 1 ? "" : "s"})`
+            : ` (model ${model}, text-only)`;
+          return { result: { error: `${e?.message || "Video submit failed"}${ctx}` }, event: { name, summary: "Video submit failed", ok: false } };
         }
         try {
           await insertPendingVideo({
@@ -2459,6 +2569,7 @@ export async function executeChatTool(
           result: {
             ok: true, job_id: jobId, model, prompt: finalPrompt, duration_s: duration, resolution,
             estimated_cost_usd: estCost != null ? Number(estCost.toFixed(2)) : null,
+            ...(adjustments.length > 0 ? { adjustments } : {}),
             ...(conditionMode ? {
               condition_mode: conditionMode,
               identity_scale: identityScale,
