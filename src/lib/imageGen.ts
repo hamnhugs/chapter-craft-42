@@ -196,6 +196,80 @@ export async function saveImageNeuron(opts: {
   return (entry as any).id;
 }
 
+/** Save any library image (uploaded or generated) to memory: create a neuron
+ *  for it, or attach it to an existing entry. Idempotent — an image already
+ *  linked to an entry returns that entry unless a different entryId is given. */
+export async function saveImageToMemory(opts: {
+  imageId: string;
+  title?: string;
+  description?: string;
+  entryId?: string | null;
+}): Promise<{ entryId: string; created: boolean; prompt: string }> {
+  const { data: userData } = await supabase.auth.getUser();
+  const uid = userData.user?.id;
+  if (!uid) throw new Error("Not signed in");
+  const row = await fetchImageById(opts.imageId);
+  if (!row) throw new Error("Image not found");
+  if (opts.entryId) {
+    const { data: entry } = await supabase
+      .from("knowledge_entries")
+      .select("id")
+      .eq("id", opts.entryId)
+      .maybeSingle();
+    if (!entry) throw new Error("Target memory entry not found");
+    const { error } = await (supabase.from("image_attachments" as any) as any)
+      .update({ entry_id: opts.entryId })
+      .eq("id", row.id);
+    if (error) throw new Error(`Could not attach image: ${error.message}`);
+    return { entryId: opts.entryId, created: false, prompt: row.prompt };
+  }
+  if (row.entry_id) {
+    return { entryId: row.entry_id, created: false, prompt: row.prompt };
+  }
+  const isUpload = row.model === "upload";
+  const { data: settings } = await supabase
+    .from("user_settings")
+    .select("active_wiki_id" as any)
+    .maybeSingle();
+  const wikiId = (settings as any)?.active_wiki_id || null;
+  const titleSource = (opts.description || row.caption || row.prompt || "untitled").trim();
+  const title = (opts.title?.trim() || `Image: ${titleSource.length > 57 ? titleSource.slice(0, 57).trimEnd() + "…" : titleSource}`).slice(0, 120);
+  const content = [
+    isUpload ? "Image uploaded by the user." : "AI-generated image.",
+    opts.description ? `Description: ${opts.description}` : "",
+    row.prompt ? (isUpload ? `File: ${row.prompt}` : `Prompt: ${row.prompt}`) : "",
+    row.caption && row.caption !== row.prompt ? `Caption: ${row.caption}` : "",
+  ].filter(Boolean).join("\n");
+  const { data: entry, error } = await supabase
+    .from("knowledge_entries")
+    .insert({
+      user_id: uid,
+      title,
+      content: content.slice(0, 4000),
+      entry_type: "concept",
+      tags: ["image", isUpload ? "uploaded" : "generated"],
+      confidence: 0.9,
+      ...(wikiId ? { wiki_id: wikiId } : {}),
+    } as any)
+    .select("id")
+    .single();
+  if (error || !entry) throw new Error(`Could not create memory entry: ${error?.message || "unknown"}`);
+  const entryId = (entry as any).id as string;
+  const { error: linkErr } = await (supabase.from("image_attachments" as any) as any)
+    .update({ entry_id: entryId })
+    .eq("id", row.id);
+  if (linkErr) {
+    // Keep the operation atomic: a text entry without its image (and an
+    // image still "unsaved") would both break idempotency and duplicate
+    // neurons on retry — roll the entry back and fail loudly.
+    try { await supabase.from("knowledge_entries").delete().eq("id", entryId); } catch { /* best-effort */ }
+    throw new Error(`Could not link the image to the new memory entry: ${linkErr.message}`);
+  }
+  // Embed the new neuron in the background so retrieval can find it.
+  void reindexEmbeddings(true, wikiId).catch(() => {});
+  return { entryId, created: true, prompt: row.prompt };
+}
+
 export async function fetchImageById(id: string): Promise<ImageAttachmentRow | null> {
   const { data } = await (supabase.from("image_attachments" as any) as any)
     .select("*")
@@ -236,17 +310,32 @@ export async function deleteImageAttachment(row: { id: string; storage_path: str
   if (!deleted || (deleted as any[]).length === 0) {
     throw new Error("Image could not be deleted (not found or no permission). Please sign out and back in.");
   }
-  // 2. Best-effort storage cleanup. Failure here doesn't bring back the row.
-  try { await supabase.storage.from("generated-images").remove([row.storage_path]); }
-  catch (e) { console.warn("[deleteImageAttachment] storage remove failed", e); }
-  // 3. Purge any cached signed URL so stale references can't render.
+  // 2. Uploaded chat images share their storage file with an image_memories
+  //    row — deleting "the image" removes that record too, then the file once.
+  //    If the record delete ERRORS (supabase builders resolve {error}, they
+  //    don't throw), KEEP the file: a surviving memory row must never point
+  //    at a deleted object — delete_image_memory can finish the job later.
+  let sharedRecordsCleared = true;
+  try {
+    const { error: memErr } = await (supabase.from("image_memories" as any) as any)
+      .delete().eq("storage_path", row.storage_path);
+    sharedRecordsCleared = !memErr;
+  } catch { sharedRecordsCleared = false; }
+  // 3. Best-effort storage cleanup. Failure here doesn't bring back the row.
+  if (sharedRecordsCleared) {
+    try { await supabase.storage.from("generated-images").remove([row.storage_path]); }
+    catch (e) { console.warn("[deleteImageAttachment] storage remove failed", e); }
+  }
+  // 4. Purge any cached signed URL so stale references can't render.
   try { urlCache.delete(row.storage_path); } catch { /* noop */ }
 }
 
 /** Delete an uploaded image memory (the `image_memories` table + storage file).
  *  Mirrors the order in deleteImageAttachment: DB delete (source of truth) first,
- *  best-effort storage cleanup second, signed-URL cache purge last. */
-export async function deleteImageMemory(row: { id: string; storage_path?: string | null }): Promise<void> {
+ *  best-effort storage cleanup second, signed-URL cache purge last.
+ *  Returns whether the underlying PICTURE was removed too — false when a
+ *  library image (image_attachments row) still uses the same file. */
+export async function deleteImageMemory(row: { id: string; storage_path?: string | null }): Promise<{ pictureRemoved: boolean }> {
   const { data: deleted, error } = await (supabase.from("image_memories" as any) as any)
     .delete()
     .eq("id", row.id)
@@ -257,11 +346,24 @@ export async function deleteImageMemory(row: { id: string; storage_path?: string
     throw new Error("Image memory could not be deleted (not found or no permission).");
   }
   const path = rows[0]?.storage_path || row.storage_path;
-  if (path) {
-    try { await supabase.storage.from("generated-images").remove([path]); }
-    catch (e) { console.warn("[deleteImageMemory] storage remove failed", e); }
-    try { urlCache.delete(path); } catch { /* noop */ }
-  }
+  if (!path) return { pictureRemoved: false };
+  // An uploaded chat image may ALSO be registered in image_attachments,
+  // sharing this file. Deleting just the memory record must not break the
+  // library image — leave the file when an attachment still references it.
+  // On lookup ERROR (builders resolve {error}, they don't throw) fail SAFE
+  // and keep the file: an orphaned file is recoverable, a live library row
+  // pointing at a deleted object is not.
+  let stillReferenced = true;
+  try {
+    const { data: att, error: attErr } = await (supabase.from("image_attachments" as any) as any)
+      .select("id").eq("storage_path", path).limit(1);
+    stillReferenced = !!attErr || (!!att && (att as any[]).length > 0);
+  } catch { stillReferenced = true; }
+  if (stillReferenced) return { pictureRemoved: false };
+  try { await supabase.storage.from("generated-images").remove([path]); }
+  catch (e) { console.warn("[deleteImageMemory] storage remove failed", e); }
+  try { urlCache.delete(path); } catch { /* noop */ }
+  return { pictureRemoved: true };
 }
 
 // ── Signed URL cache ────────────────────────────────────────────────────────

@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import type { ChatImageRef } from "@/lib/imageGen";
 
 export interface PendingChatImage {
   /** Local-only id for keying & removal in the composer */
@@ -9,6 +10,9 @@ export interface PendingChatImage {
   mime: string;
   /** Optional filename for display */
   filename?: string;
+  /** Downscaled pixel dimensions (for the image_memories row) */
+  width?: number;
+  height?: number;
   /** Storage path after upload, if already uploaded */
   storagePath?: string;
   /** image_memories row id after persistence */
@@ -65,7 +69,11 @@ export function isAcceptedImage(file: File | Blob): boolean {
   return ACCEPTED.test(type);
 }
 
-/** Upload to private `generated-images` bucket under `chat-uploads/{uid}/...`. */
+/** Upload to the private `generated-images` bucket. The bucket's storage RLS
+ *  policies require the FIRST path folder to be the user's uid
+ *  (`(storage.foldername(name))[1]`), so the path is `{uid}/chat-uploads/…` —
+ *  the old `chat-uploads/{uid}/…` order violated INSERT RLS and every chat
+ *  upload failed silently. */
 export async function uploadChatImage(
   dataUrl: string,
   mime: string,
@@ -74,13 +82,19 @@ export async function uploadChatImage(
   const uid = userData.user?.id;
   if (!uid) throw new Error("Not signed in");
   const ext = mime === "image/png" ? "png" : mime === "image/webp" ? "webp" : "jpg";
-  const path = `chat-uploads/${uid}/${crypto.randomUUID()}.${ext}`;
+  const path = `${uid}/chat-uploads/${crypto.randomUUID()}.${ext}`;
   const blob = await (await fetch(dataUrl)).blob();
   const { error } = await supabase.storage
     .from("generated-images")
     .upload(path, blob, { contentType: mime, upsert: false });
   if (error) throw new Error(`Upload failed: ${error.message}`);
   return { storagePath: path };
+}
+
+/** Best-effort removal of an uploaded-but-unsent file (composer chip removed). */
+export async function removeUploadedChatImage(storagePath: string): Promise<void> {
+  try { await supabase.storage.from("generated-images").remove([storagePath]); }
+  catch { /* orphaned file — harmless */ }
 }
 
 /** Create the `image_memories` row and kick off the embed-image function (fire-and-forget). */
@@ -114,4 +128,47 @@ export async function persistImageMemory(opts: {
   // Background captioning + OCR + embedding — never blocks the chat send.
   void supabase.functions.invoke("embed-image", { body: { memory_id: memoryId } }).catch(() => {});
   return memoryId;
+}
+
+/** Register an uploaded chat image as a FIRST-CLASS image: an
+ *  `image_attachments` row (the id every image tool accepts — edit_image,
+ *  generate_video, generate_splat, lock_master_asset, show/view/delete) plus
+ *  the `image_memories` row for caption/OCR recall. Both rows share one
+ *  storage file; the delete paths in imageGen.ts know about the sharing. */
+export async function registerUploadedImage(opts: {
+  storagePath: string;
+  mime: string;
+  filename?: string;
+  width?: number;
+  height?: number;
+  wikiId?: string | null;
+}): Promise<{ ref: ChatImageRef; memoryId: string | null }> {
+  const { data: userData } = await supabase.auth.getUser();
+  const uid = userData.user?.id;
+  if (!uid) throw new Error("Not signed in");
+  const prompt = `User upload${opts.filename ? ` — ${opts.filename.slice(0, 120)}` : ""}`;
+  const { data: row, error } = await (supabase.from("image_attachments" as any) as any)
+    .insert({
+      user_id: uid,
+      prompt,
+      caption: "",
+      model: "upload",
+      storage_path: opts.storagePath,
+      mime: opts.mime,
+    })
+    .select("id")
+    .single();
+  if (error || !row) throw new Error(`Image record failed: ${error?.message || "unknown"}`);
+  const memoryId = await persistImageMemory({
+    storagePath: opts.storagePath,
+    mime: opts.mime,
+    width: opts.width,
+    height: opts.height,
+    wikiId: opts.wikiId ?? null,
+    source: "upload",
+  });
+  return {
+    ref: { id: (row as any).id as string, storage_path: opts.storagePath, prompt, entry_id: null },
+    memoryId,
+  };
 }

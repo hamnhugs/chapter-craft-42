@@ -30,7 +30,7 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations, isSearchRateLimited } from "@/lib/chatTools";
 import { useDownloadableTtsId, downloadTtsAudio } from "@/lib/ttsAudioCache";
-import { fileToDownscaledDataUrl, isAcceptedImage, uploadChatImage, persistImageMemory, type PendingChatImage } from "@/lib/imageUpload";
+import { fileToDownscaledDataUrl, isAcceptedImage, uploadChatImage, registerUploadedImage, removeUploadedChatImage, type PendingChatImage } from "@/lib/imageUpload";
 
 
 const VOICE_QUICK_SEARCH_KEY = "voice_quick_search";
@@ -68,7 +68,26 @@ const ChatPanel: React.FC = () => {
   // Pending image attachments for the next send (composer-local).
   const [pendingImages, setPendingImages] = useState<PendingChatImage[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Storage uploads start at ATTACH time (standard chat-app pattern) so the
+  // file is usually already durable by the time the user hits send. Keyed by
+  // the pending image's localId; send awaits any still in flight.
+  const uploadsRef = useRef(new Map<string, Promise<{ storagePath: string }>>());
+  // Guards the window between hitting send and sendMessage() flipping
+  // isLoading — awaiting upload registration opened a gap where a second
+  // Enter could start a concurrent stream and corrupt both bubbles.
+  const sendingRef = useRef(false);
   const [dragOver, setDragOver] = useState(false);
+
+  // Chips never sent die with the composer (pendingImages is component
+  // state, lost on tab switch) — remove their eagerly-uploaded files too.
+  // handleSend takes its images' promises OUT of the map first, so files
+  // belonging to an in-flight send are never touched here.
+  useEffect(() => () => {
+    for (const up of uploadsRef.current.values()) {
+      void up.then(({ storagePath }) => removeUploadedChatImage(storagePath)).catch(() => {});
+    }
+    uploadsRef.current.clear();
+  }, []);
 
   const addImagesFromFiles = useCallback(async (files: FileList | File[] | null) => {
     if (!files) return;
@@ -80,9 +99,12 @@ const ChatPanel: React.FC = () => {
     if (arr.length > room) toast.info(`Only the first ${room} image(s) were added (max 4)`);
     for (const file of slice) {
       try {
-        const { dataUrl, mime } = await fileToDownscaledDataUrl(file);
+        const { dataUrl, mime, width, height } = await fileToDownscaledDataUrl(file);
         const localId = crypto.randomUUID();
-        setPendingImages((prev) => [...prev, { localId, dataUrl, mime, filename: (file as File).name }]);
+        setPendingImages((prev) => [...prev, { localId, dataUrl, mime, width, height, filename: (file as File).name }]);
+        const up = uploadChatImage(dataUrl, mime);
+        up.catch(() => {}); // send retries — keep the rejection off the unhandled channel
+        uploadsRef.current.set(localId, up);
       } catch (e: any) {
         toast.error(e?.message || "Could not load image");
       }
@@ -91,6 +113,10 @@ const ChatPanel: React.FC = () => {
 
   const removePendingImage = useCallback((localId: string) => {
     setPendingImages((prev) => prev.filter((p) => p.localId !== localId));
+    // The chip was never sent — clean up the eagerly-uploaded file.
+    const up = uploadsRef.current.get(localId);
+    uploadsRef.current.delete(localId);
+    if (up) void up.then(({ storagePath }) => removeUploadedChatImage(storagePath)).catch(() => {});
   }, []);
   const [extracting, setExtracting] = useState(false);
   const [deepSearching, setDeepSearching] = useState(false);
@@ -444,39 +470,69 @@ const ChatPanel: React.FC = () => {
   };
 
   const handleSend = async () => {
-    if (isLoading) return; // a reply is streaming — use Stop first
+    if (isLoading || sendingRef.current) return; // a reply is streaming — use Stop first
     const text = input.trim();
     const imagesToSend = pendingImages;
     if (!text && imagesToSend.length === 0) return;
     if (!apiKey) { toast.error("Please set your OpenRouter API key first"); openSettings("models"); return; }
-    suppressDictationRef.current = true;
-    dictation.stop();
-    setInput("");
-    setPendingImages([]);
-    if (voiceQuickSearch && burplexityApiToken && SEARCH_INTENT_RE.test(text)) {
-      runBackgroundSearch(text); // intentionally not awaited
-    }
-    // Kick off uploads in the background so the model sees the data URLs
-    // immediately but the memory rows + storage are durable for recall.
-    const imagesForModel = imagesToSend.map((p) => ({ dataUrl: p.dataUrl, mime: p.mime }));
-    void Promise.all(
-      imagesToSend.map(async (p) => {
-        try {
-          const { storagePath } = await uploadChatImage(p.dataUrl, p.mime);
-          await persistImageMemory({
-            storagePath,
-            mime: p.mime,
-            wikiId: activeWikiId || null,
-            source: "upload",
-          });
-        } catch (e: any) {
-          console.warn("[image upload]", e?.message || e);
-        }
-      })
-    );
+    sendingRef.current = true;
     try {
-      await sendMessage(text || "(see attached image)", { images: imagesForModel });
-    } catch { /* surfaced via toast */ }
+      suppressDictationRef.current = true;
+      dictation.stop();
+      setInput("");
+      setPendingImages([]);
+      if (voiceQuickSearch && burplexityApiToken && SEARCH_INTENT_RE.test(text)) {
+        runBackgroundSearch(text); // intentionally not awaited
+      }
+      // Take ownership of the attach-time upload promises: the unmount
+      // cleanup must never remove a file this send is about to reference.
+      const ownedUploads = new Map<string, Promise<{ storagePath: string }> | undefined>();
+      for (const p of imagesToSend) {
+        ownedUploads.set(p.localId, uploadsRef.current.get(p.localId));
+        uploadsRef.current.delete(p.localId);
+      }
+      // Finish each image's upload (started at attach time), then register it as
+      // a FIRST-CLASS library image: an image_attachments row whose image_id the
+      // assistant can act on (edit_image / generate_video / generate_splat /
+      // lock_master_asset / save_image_to_memory / delete_image) plus an
+      // image_memories row for caption/OCR recall. Degrades to vision-only pixels
+      // if storage fails, so the send never blocks on infrastructure trouble.
+      const imagesForModel = await Promise.all(
+        imagesToSend.map(async (p) => {
+          let storagePath: string | null = null;
+          try {
+            try {
+              ({ storagePath } = await (ownedUploads.get(p.localId) ?? uploadChatImage(p.dataUrl, p.mime)));
+            } catch {
+              // Attach-time upload failed (e.g. transient network) — one fresh retry.
+              ({ storagePath } = await uploadChatImage(p.dataUrl, p.mime));
+            }
+            const { ref, memoryId } = await registerUploadedImage({
+              storagePath,
+              mime: p.mime,
+              filename: p.filename,
+              width: p.width,
+              height: p.height,
+              wikiId: activeWikiId || null,
+            });
+            return { dataUrl: p.dataUrl, mime: p.mime, ref, memoryId: memoryId || undefined };
+          } catch (e: any) {
+            console.warn("[image upload]", e?.message || e);
+            // Registration failed after the file landed — don't leave an orphan.
+            if (storagePath) void removeUploadedChatImage(storagePath);
+            return { dataUrl: p.dataUrl, mime: p.mime };
+          }
+        })
+      );
+      if (imagesForModel.some((i) => !("ref" in i) || !i.ref)) {
+        toast.warning("An image couldn't be saved to your library — the AI can see it this turn, but won't be able to edit or reuse it later.");
+      }
+      try {
+        await sendMessage(text || "(see attached image)", { images: imagesForModel });
+      } catch { /* surfaced via toast */ }
+    } finally {
+      sendingRef.current = false;
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -704,7 +760,20 @@ const ChatPanel: React.FC = () => {
                   )}
                 </>
               ) : (
-                <p className="whitespace-pre-wrap font-medium">{msg.content}</p>
+                <>
+                  {msg.images && msg.images.length > 0 && (
+                    <div className={`grid gap-2 mb-2 ${msg.images.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}>
+                      {msg.images.map((img) => (
+                        <GeneratedImage
+                          key={img.id}
+                          storagePath={img.storage_path}
+                          alt={img.prompt}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  <p className="whitespace-pre-wrap font-medium">{msg.content}</p>
+                </>
               )}
               {msg.content && (
                 <button

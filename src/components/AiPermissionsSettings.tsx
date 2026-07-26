@@ -40,8 +40,9 @@ const GROUPS: { group: string; items: PermItem[] }[] = [
     items: [
       { id: "generate_image", label: "Generate images", description: "Allow the AI to create new images." },
       { id: "edit_image", label: "Edit images", description: "Allow the AI to modify existing images." },
-      { id: "delete_image", label: "Delete generated images", description: "Allow the AI to permanently delete AI-generated images after you confirm.", danger: true },
-      { id: "delete_image_memory", label: "Delete uploaded image memories", description: "Allow the AI to permanently delete pictures you previously uploaded, after you confirm.", danger: true },
+      { id: "save_image_to_memory", label: "Save images to memory", description: "Let the AI file an uploaded or generated image into your neurons as a memory entry." },
+      { id: "delete_image", label: "Delete images", description: "Allow the AI to permanently delete generated or uploaded images after you confirm.", danger: true },
+      { id: "delete_image_memory", label: "Delete uploaded image memories", description: "Allow the AI to delete the memory record (caption/search data) of an uploaded picture after you confirm. Removing the picture itself is covered by Delete images.", danger: true },
     ],
   },
   {

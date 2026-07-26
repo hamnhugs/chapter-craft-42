@@ -5,7 +5,7 @@ import { parseArtifact } from "@/lib/artifacts";
 import {
   generateImage, storeGeneratedImage, saveImageNeuron,
   fetchImageById, searchImages, loadImageAsDataUrl,
-  deleteImageAttachment, deleteImageMemory,
+  deleteImageAttachment, deleteImageMemory, saveImageToMemory,
   IMAGE_ASPECT_RATIOS, type ChatImageRef,
 } from "@/lib/imageGen";
 import {
@@ -538,11 +538,11 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "edit_image",
       description:
-        "Edit or refine a previously generated image (by image_id) using a text instruction — Nano Banana keeps the subject consistent. The result is a NEW image shown to the user and linked to the same memory as the original. Use for 'make it blue', 'add a hat', 'same character but at night', etc.",
+        "Edit or refine an image from the user's library (by image_id) using a text instruction — Nano Banana keeps the subject consistent. Works on generated images AND images the user uploaded into chat (their id appears in an '[Attached image — image_id: …]' note on the message). The result is a NEW image shown to the user and linked to the same memory as the original; the source is never modified. Use for 'make it blue', 'add a hat', 'same character but at night', etc.",
       parameters: {
         type: "object",
         properties: {
-          image_id: { type: "string", description: "Id of the source image (from generate_image, list_images, or a memory's attached-image note)." },
+          image_id: { type: "string", description: "Id of the source image (from generate_image, list_images, an '[Attached image …]' note, or recall_image_memories)." },
           instruction: { type: "string", description: "What to change." },
           aspect_ratio: { type: "string", enum: [...IMAGE_ASPECT_RATIOS] },
         },
@@ -581,7 +581,7 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "list_images",
       description:
-        "List the user's generated images (newest first), optionally filtered by a keyword matched against prompt/caption. Returns image_id, prompt, caption, linked entry_id, and created date. Use to find an image the user refers to ('that fox logo from last week').",
+        "List the user's library images — generated AND chat-uploaded (uploads show as 'User upload — <filename>') — newest first, optionally filtered by a keyword matched against prompt/caption. Returns image_id, prompt, caption, linked entry_id, and created date. Use to find an image the user refers to ('that fox logo from last week', 'the photo I sent you').",
       parameters: {
         type: "object",
         properties: {
@@ -596,7 +596,7 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "recall_image_memories",
       description:
-        "Search the user's stored image memories (images they previously uploaded into chat). Returns up to N matches with memory_id, caption, OCR text, tags, and a short-lived URL that you can embed in your reply via standard markdown image syntax (![alt](url)) to show the image to the user. Use whenever the user references a picture they uploaded earlier ('that diagram I shared', 'the screenshot from yesterday').",
+        "Search the user's stored image memories (images they previously uploaded into chat). Returns up to N matches with memory_id, caption, OCR text, tags, a short-lived URL that you can embed in your reply via standard markdown image syntax (![alt](url)) to show the image to the user, and — when the picture is also registered in the image library — an image_id that works with every image tool (edit_image, view_image, show_image, generate_video, save_image_to_memory, delete_image). Use whenever the user references a picture they uploaded earlier ('that diagram I shared', 'the screenshot from yesterday').",
       parameters: {
         type: "object",
         properties: {
@@ -611,7 +611,7 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "delete_image",
       description:
-        "Permanently delete a generated image (the row in image_attachments AND the underlying file in storage). Use `list_images` first to find the image_id. DESTRUCTIVE: only call when the user has explicitly approved deleting this specific image in the current turn — paraphrase the image (prompt/date) back, get a clear 'yes', then call with confirm:true. Honors the user's per-tool permissions in Settings → AI permissions.",
+        "Permanently delete a library image — generated or chat-uploaded — (the image_attachments row, any image-memory record sharing the file, AND the underlying storage file). Use `list_images` first to find the image_id. DESTRUCTIVE: only call when the user has explicitly approved deleting this specific image in the current turn — paraphrase the image (prompt/filename/date) back, get a clear 'yes', then call with confirm:true. Honors the user's per-tool permissions in Settings → AI permissions.",
       parameters: {
         type: "object",
         properties: {
@@ -627,7 +627,7 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "delete_image_memory",
       description:
-        "Permanently delete an uploaded image memory (a picture the USER shared earlier). Removes both the image_memories row and the storage file. Use `recall_image_memories` first to find the memory_id. DESTRUCTIVE: only call after the user has explicitly approved this specific deletion in the current turn (paraphrase caption/date, get 'yes'). Honors per-tool permissions in Settings.",
+        "Permanently delete an uploaded image MEMORY RECORD (the caption/OCR/search entry for a picture the user shared earlier). If the picture is ALSO in the image library (it has an image_id), the picture itself is kept — to remove the picture use `delete_image` instead; the result tells you which happened. Use `recall_image_memories` first to find the memory_id. DESTRUCTIVE: only call after the user has explicitly approved this specific deletion in the current turn (paraphrase caption/date, get 'yes'). Honors per-tool permissions in Settings.",
       parameters: {
         type: "object",
         properties: {
@@ -635,6 +635,24 @@ export const CHAT_TOOL_DEFINITIONS = [
           confirm: { type: "boolean", description: "Must be true — proof the user just approved this exact deletion." },
         },
         required: ["memory_id", "confirm"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "save_image_to_memory",
+      description:
+        "Save a library image to the user's memory as a neuron (knowledge entry), or attach it to an existing entry via entry_id. Use for USER-UPLOADED images (which are NOT saved as neurons automatically) and for generated images that were created with remember:false — when the user says 'remember this image', 'save that to my neuron', 'add it to memory', 'file this with X'. Include a description of what the image shows whenever you can see it — that text is what memory search finds later. Idempotent: an image already linked to an entry returns that entry.",
+      parameters: {
+        type: "object",
+        properties: {
+          image_id: { type: "string", description: "The image to save (from an '[Attached image — image_id: …]' note, generate_image, list_images, or recall_image_memories)." },
+          title: { type: "string", description: "Optional neuron title. Defaults to a title derived from the description or filename." },
+          description: { type: "string", description: "1–3 sentences on what the image shows — becomes the searchable memory text. Strongly recommended for uploads." },
+          entry_id: { type: "string", description: "Optional: attach the image to this EXISTING knowledge entry instead of creating a new one." },
+        },
+        required: ["image_id"],
       },
     },
   },
@@ -649,7 +667,7 @@ export const CHAT_TOOL_DEFINITIONS = [
         properties: {
           prompt: { type: "string", description: "With identity inputs: MOTION + CAMERA only, one motion verb ('turns slowly to the right, camera orbits'). Without identity inputs: full scene description." },
           master_id: { type: "string", description: "PREFERRED. Master asset id or @name (from list_master_assets). Auto-loads its hero image, multi-view pack, assembly tag, negative constraints, and palette." },
-          image_id: { type: "string", description: "Identity/first-frame source image (from generate_image / list_images). Use when no master exists." },
+          image_id: { type: "string", description: "Identity/first-frame source image (from generate_image, list_images, or a user-uploaded image's '[Attached image …]' note). Use when no master exists." },
           image_url: { type: "string", description: "Public http(s) image URL as the identity source, if the user supplied one directly." },
           reference_image_ids: { type: "array", items: { type: "string" }, description: "Up to 4 image ids forming a multi-view identity pack (front, 3/4, side, back). Requires a reference-capable model." },
           splat_id: { type: "string", description: "A 3D splat as the identity source: consistent multi-view stills are rendered from it automatically and used as the reference pack (honest path — the splat itself is not animated)." },
@@ -725,7 +743,7 @@ export const CHAT_TOOL_DEFINITIONS = [
       parameters: {
         type: "object",
         properties: {
-          image_id: { type: "string", description: "Id of the source image (from generate_image or list_images). Preferred." },
+          image_id: { type: "string", description: "Id of the source image (from generate_image, list_images, or a user-uploaded image's '[Attached image …]' note). Preferred." },
           image_url: { type: "string", description: "Public http(s) image URL, if the user supplied one directly instead of an image_id." },
           prompt: { type: "string", description: "Short description of the subject — used as the caption, the alt text and the memory title." },
           quality: { type: "string", enum: ["fast", "standard", "high"], description: "fast = 65k gaussians (2.1 MB), standard = 131k (4.2 MB, default), high = 262k PLY (much larger file, may be refused by the size limit)." },
@@ -808,7 +826,7 @@ export const CHAT_TOOL_DEFINITIONS = [
         type: "object",
         properties: {
           name: { type: "string", description: "Handle for @name references (2-40 chars: letters, digits, - or _). E.g. 'robby'." },
-          hero_image_id: { type: "string", description: "The canonical hero image (from generate_image / list_images). Required unless splat_id is given." },
+          hero_image_id: { type: "string", description: "The canonical hero image (from generate_image, list_images, or a user-uploaded image's id). Required unless splat_id is given." },
           splat_id: { type: "string", description: "Optional 3D splat. A 4-view reference pack is auto-rendered from it unless view_image_ids are supplied." },
           view_image_ids: { type: "array", items: { type: "string" }, description: "Optional multi-view pack image ids (front, 3/4, side, back)." },
           assembly_tag: { type: "string", description: "ONE short discriminative identity tag used in prompts. Keep under ~15 words." },
@@ -1773,6 +1791,20 @@ export async function executeChatTool(
           return { result: { error: error.message }, event: { name, summary: "Image memory search failed", ok: false } };
         }
         const rows: any[] = data || [];
+        // Uploads registered in the image library share their storage file
+        // with an image_attachments row — surface that image_id so the model
+        // can act on the picture (edit / animate / save / delete), not just
+        // show it.
+        const byPath = new Map<string, string>();
+        const paths = rows.map((r) => r.storage_path).filter(Boolean);
+        if (paths.length > 0) {
+          try {
+            const { data: atts } = await (supabase.from("image_attachments" as any) as any)
+              .select("id, storage_path")
+              .in("storage_path", paths);
+            for (const a of (atts as any[]) || []) byPath.set(a.storage_path, a.id);
+          } catch { /* library lookup failed — results stay memory-only */ }
+        }
         const out = await Promise.all(rows.map(async (r) => {
           let url: string | null = null;
           try {
@@ -1781,6 +1813,7 @@ export async function executeChatTool(
           } catch { /* ignore */ }
           return {
             memory_id: r.id,
+            image_id: byPath.get(r.storage_path) || null,
             caption: (r.caption || "").slice(0, 240),
             ocr_excerpt: (r.ocr_text || "").slice(0, 240),
             tags: r.tags || [],
@@ -1843,16 +1876,69 @@ export async function executeChatTool(
           if (!mem || (mem as any).user_id !== uid) {
             return { result: { error: "Image memory not found or not owned by current user" }, event: { name, summary: "Memory not found", ok: false } };
           }
+          let pictureRemoved = false;
           try {
-            await deleteImageMemory({ id: (mem as any).id, storage_path: (mem as any).storage_path });
+            ({ pictureRemoved } = await deleteImageMemory({ id: (mem as any).id, storage_path: (mem as any).storage_path }));
           } catch (e: any) {
             return { result: { error: e?.message || "Delete failed" }, event: { name, summary: "Memory delete failed", ok: false } };
           }
           try { window.dispatchEvent(new CustomEvent("image-memories-changed", { detail: { deleted: [(mem as any).id] } })); } catch {}
           return {
-            result: { ok: true, deleted_id: (mem as any).id, caption: ((mem as any).caption || "").slice(0, 80) },
-            event: { name, summary: `Deleted image memory${(mem as any).caption ? `: "${(mem as any).caption.slice(0, 60)}"` : ""}`, ok: true },
+            result: {
+              ok: true,
+              deleted_id: (mem as any).id,
+              caption: ((mem as any).caption || "").slice(0, 80),
+              picture_removed: pictureRemoved,
+              note: pictureRemoved
+                ? "The memory record and the picture file were both removed."
+                : "The memory record was removed, but the PICTURE still exists in the image library — tell the user, and use list_images + delete_image (with fresh confirmation) if they want the picture gone too.",
+            },
+            event: { name, summary: `Deleted image memory${(mem as any).caption ? `: "${(mem as any).caption.slice(0, 60)}"` : ""}${pictureRemoved ? "" : " (picture kept in library)"}`, ok: true },
           };
+        }
+      }
+      case "save_image_to_memory": {
+        const imageId = String(args.image_id || "").trim();
+        if (!imageId) return { result: { error: "image_id required" }, event: { name, summary: "Missing image_id", ok: false } };
+        // Per-tool permission gate. Defaults to allowed.
+        const { data: prefs } = await supabase
+          .from("user_settings")
+          .select("chat_tool_permissions" as any)
+          .maybeSingle();
+        const perms = (((prefs as any)?.chat_tool_permissions) || {}) as Record<string, boolean>;
+        if (perms[name] === false) {
+          return {
+            result: { error: `Tool '${name}' is disabled in the user's AI permissions. Ask the user to enable it in Settings → AI permissions → Images.` },
+            event: { name, summary: `${name} blocked by user settings`, ok: false },
+          };
+        }
+        try {
+          const saved = await saveImageToMemory({
+            imageId,
+            title: args.title ? String(args.title) : undefined,
+            description: args.description ? String(args.description) : undefined,
+            entryId: args.entry_id ? String(args.entry_id) : undefined,
+          });
+          return {
+            result: {
+              ok: true,
+              image_id: imageId,
+              entry_id: saved.entryId,
+              created_new_entry: saved.created,
+              note: saved.created
+                ? "Saved as a new neuron; retrieval will find it once background embedding completes."
+                : "The image is linked to that existing memory entry.",
+            },
+            event: {
+              name,
+              summary: saved.created
+                ? `Saved image to memory: "${(saved.prompt || "").slice(0, 50)}"`
+                : "Attached image to an existing memory entry",
+              ok: true,
+            },
+          };
+        } catch (e: any) {
+          return { result: { error: e?.message || "Save failed" }, event: { name, summary: "Save image to memory failed", ok: false } };
         }
       }
       case "generate_video": {

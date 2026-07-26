@@ -52,8 +52,11 @@ interface SendOpts {
   modelOverride?: string;
   /** Called on every streamed delta with the cumulative assistant text. */
   onDelta?: (fullText: string) => void;
-  /** Image attachments to send with this turn (multimodal user content). */
-  images?: Array<{ dataUrl: string; storagePath?: string; memoryId?: string; mime?: string }>;
+  /** Image attachments to send with this turn (multimodal user content).
+   *  `ref` is the image_attachments row created at send time — it makes the
+   *  upload a first-class library image the assistant can act on, and is
+   *  persisted on the user message so the id survives reloads. */
+  images?: Array<{ dataUrl: string; mime?: string; ref?: ChatImageRef; memoryId?: string; storagePath?: string }>;
 }
 
 interface ChatContextValue {
@@ -351,9 +354,15 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       const selectedBook = books.find((b) => b.id === activeBookId);
-      const userMsg: ChatMessage = { role: "user", content: trimmed };
+      // Uploaded images that were registered in the library carry a ref —
+      // attach those to the user message so (a) the bubble renders them
+      // durably and (b) every future history rebuild can re-annotate the ids.
+      const uploadRefs: ChatImageRef[] = (opts?.images || [])
+        .map((i) => i.ref)
+        .filter((r): r is ChatImageRef => !!r);
+      const userMsg: ChatMessage = { role: "user", content: trimmed, images: uploadRefs.length > 0 ? uploadRefs : undefined };
       setMessages((prev) => [...prev, userMsg]);
-      persistMessage("user", trimmed, activeBookId).then((id) => {
+      persistMessage("user", trimmed, activeBookId, uploadRefs.length > 0 ? uploadRefs : undefined).then((id) => {
         if (id) {
           setMessages((prev) => {
             const copy = [...prev];
@@ -371,16 +380,28 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(true);
 
       const hasUploads = !!opts?.images && opts.images.length > 0;
+      // Durable image handles: any message carrying image refs (user uploads
+      // or assistant-generated) gets a text note with the image_id, so the
+      // model can act on the image in ANY later turn — the pixels themselves
+      // are only sent for the current upload turn (vision is per-turn; the
+      // model re-inspects older images via view_image). Same note format the
+      // memory system already uses; the system prompt says to use, never
+      // emit, these notes.
+      const imageIdNote = (imgs: ChatImageRef[] | undefined): string =>
+        imgs && imgs.length > 0
+          ? imgs.map((im) => `[Attached image — image_id: ${im.id}${im.prompt ? ` — "${im.prompt.slice(0, 80)}"` : ""}]`).join("\n")
+          : "";
       const baseHistory = [...messages, userMsg]
         .filter((m) => !m.displayOnly)
         .map((m, i, arr) => {
+          const note = imageIdNote(m.images);
           // Multimodal injection: turn the latest user message into a
           // [text, image_url[]] content array when this send has uploads.
           if (hasUploads && i === arr.length - 1 && m.role === "user") {
             return {
               role: "user",
               content: [
-                { type: "text", text: m.content || "(see attached image)" },
+                { type: "text", text: (m.content || "(see attached image)") + (note ? `\n\n${note}` : "") },
                 ...opts!.images!.map((img) => ({
                   type: "image_url",
                   image_url: { url: img.dataUrl },
@@ -388,7 +409,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               ],
             } as any;
           }
-          return { role: m.role, content: m.content };
+          return { role: m.role, content: note ? `${m.content}\n\n${note}` : m.content };
         });
 
       const isVoice = !!opts?.voiceMode;
