@@ -702,7 +702,11 @@ const ChatPanel: React.FC = () => {
               className={`relative group ${msg.role === "user" ? "message-bubble-user bg-primary-container text-on-primary-container" : "message-bubble-ai bg-surface-container-high text-foreground border-l-2 border-primary-container/20"} p-5 shadow-sm leading-relaxed select-text`}
               style={{ WebkitTouchCallout: "none" } as React.CSSProperties}
               onTouchStart={() => startLongPress(msg.content)}
-              onTouchEnd={(e) => { if (longPressFiredRef.current) { e.preventDefault(); } cancelLongPress(); }}
+              // The fired flag must be CONSUMED here, not just read: media frames
+              // stop touchstart propagation (so startLongPress never re-arms and
+              // resets it), and a stale true would preventDefault — i.e. kill —
+              // every later tap on their buttons.
+              onTouchEnd={(e) => { if (longPressFiredRef.current) { e.preventDefault(); longPressFiredRef.current = false; } cancelLongPress(); }}
               onTouchMove={cancelLongPress}
               onTouchCancel={cancelLongPress}
               onContextMenu={(e) => { if (longPressFiredRef.current) e.preventDefault(); }}
@@ -739,6 +743,7 @@ const ChatPanel: React.FC = () => {
                           storagePath={img.storage_path}
                           alt={img.prompt}
                           caption={img.entry_id ? `${img.prompt} · saved to memory` : img.prompt}
+                          resizable
                         />
                       ))}
                     </div>
@@ -768,6 +773,7 @@ const ChatPanel: React.FC = () => {
                           key={img.id}
                           storagePath={img.storage_path}
                           alt={img.prompt}
+                          resizable
                         />
                       ))}
                     </div>

@@ -53,6 +53,14 @@ const WikiQuickSwitcher: React.FC = () => {
     const handler = (e: KeyboardEvent) => {
       const isToggle = (e.key === "k" || e.key === "K") && (e.metaKey || e.ctrlKey);
       if (isToggle) {
+        // A chat-media fullscreen owns the whole screen (top layer, or the
+        // z-[100] overlay fallback) — the palette would open invisibly behind
+        // it and steal focus into a hidden input. Stand down until it closes.
+        if (
+          document.fullscreenElement ||
+          (document as any).webkitFullscreenElement ||
+          document.documentElement.classList.contains("cc-media-overlay-open")
+        ) return;
         // Allow Cmd+K to work even from inputs — it's a global command-palette convention.
         e.preventDefault();
         setOpen((prev) => !prev);

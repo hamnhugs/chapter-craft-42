@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useChatSettings } from "@/hooks/useChatSettings";
+import { useMediaHeightTier } from "@/components/MediaFrame";
 import {
   fetchVideoByJobId, pollVideo, finalizeVideoJob, markVideoJobFailed,
   getSignedVideoUrl, resolveVideoSourceImages,
@@ -48,6 +49,7 @@ const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, 
  *  row (keyed by job_id) is the source of truth, so a reload resumes correctly. */
 const VideoBubble: React.FC<{ video: ChatVideoRef }> = ({ video }) => {
   const { apiKey, falApiKey, videoQcEnabled, loaded } = useChatSettings();
+  const { maxHeight, tierLabel, cycle } = useMediaHeightTier("video");
   const [phase, setPhase] = useState<Phase>("loading");
   const [url, setUrl] = useState<string | null>(null);
   const [posterUrl, setPosterUrl] = useState<string | null>(null);
@@ -254,10 +256,24 @@ const VideoBubble: React.FC<{ video: ChatVideoRef }> = ({ video }) => {
           playsInline
           preload="metadata"
           autoPlay={!prefersReducedMotion()}
-          className="rounded-xl max-h-80 w-auto max-w-full border border-outline-variant/20 shadow-sm bg-black"
+          // Height is user-adjustable (S/M/L/XL button below); fullscreen is
+          // already covered by the player's native controls.
+          style={{ maxHeight }}
+          className="rounded-xl w-auto max-w-full border border-outline-variant/20 shadow-sm bg-black"
         />
-        <figcaption className="mt-1 text-[11px] text-on-surface-variant/70 max-w-sm truncate">
-          {video.prompt}{savedToMemory ? " · saved to memory" : ""}{cost != null ? ` · ${formatUSD(cost)}` : ""}
+        <figcaption className="mt-1 flex items-center gap-1.5 text-[11px] text-on-surface-variant/70 max-w-sm">
+          <span className="min-w-0 truncate">
+            {video.prompt}{savedToMemory ? " · saved to memory" : ""}{cost != null ? ` · ${formatUSD(cost)}` : ""}
+          </span>
+          <button
+            onClick={cycle}
+            title={`Display size: ${tierLabel} — click to cycle`}
+            aria-label={`Display size ${tierLabel}, click to change`}
+            className="shrink-0 inline-flex items-center gap-0.5 rounded-full border border-outline-variant/30 px-1.5 py-px text-[10px] font-medium text-on-surface-variant hover:text-primary hover:border-primary/40 transition-colors"
+          >
+            <span className="material-symbols-outlined text-[11px] leading-none">aspect_ratio</span>
+            {tierLabel}
+          </button>
         </figcaption>
         {(identityMode || qc || qcRunning) && (
           <div className="mt-0.5 flex items-center gap-2 max-w-sm text-[10px] text-on-surface-variant/70">

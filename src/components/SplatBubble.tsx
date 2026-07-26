@@ -5,6 +5,7 @@ import {
   getSignedSplatUrl, type ChatSplatRef, type SplatGenerationRow,
 } from "@/lib/splatGen";
 import { formatUSD, formatMB } from "@/lib/splatCatalog";
+import { getPersistedFrameSize, SPLAT_FRAME_DEFAULT, SPLAT_FRAME_MIN } from "@/components/MediaFrame";
 
 // The 1.78 MB WebGL renderer is a separate chunk that only downloads when a
 // user actually asks for 3D. A chat session where nobody clicks "View in 3D"
@@ -187,11 +188,17 @@ const SplatBubble: React.FC<{ splat: ChatSplatRef }> = ({ splat }) => {
 
   // ── Live 3D ────────────────────────────────────────────────────────────
   if (phase === "live" && assetUrl && row) {
+    // Match the placeholder to the size the frame will actually open at
+    // (the user's persisted resize) so nothing jumps when the chunk lands.
+    const frameSize = getPersistedFrameSize("splat", SPLAT_FRAME_DEFAULT, SPLAT_FRAME_MIN);
     return (
       <figure className="my-1">
         <Suspense
           fallback={
-            <div className="rounded-xl border border-outline-variant/20 bg-surface-container-high/60 h-64 max-w-sm grid place-items-center">
+            <div
+              className="rounded-xl border border-outline-variant/20 bg-surface-container-high/60 max-w-full grid place-items-center"
+              style={{ width: frameSize.w, height: frameSize.h }}
+            >
               <span className="text-[11px] text-on-surface-variant">Loading 3D viewer…</span>
             </div>
           }

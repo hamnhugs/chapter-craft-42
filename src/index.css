@@ -768,3 +768,20 @@
   ::view-transition-old(root),
   ::view-transition-new(root) { animation-duration: 1ms !important; }
 }
+
+/* While a chat-media overlay fullscreen is open (MediaFrame's CSS fallback,
+   used where the native Fullscreen API is unavailable), no ancestor of the
+   frame may create a containing block for fixed positioning — otherwise the
+   "fullscreen" box is confined to the message bubble. Aurora's glass bubbles
+   do exactly that via backdrop-filter, so neutralize every containing-block
+   trigger on the bubble while the overlay is up (it is hidden behind the
+   overlay anyway, so nothing visibly changes). */
+html.cc-media-overlay-open .message-bubble-ai,
+html.cc-media-overlay-open .message-bubble-user {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  filter: none !important;
+  transform: none !important;
+  will-change: auto !important;
+  contain: none !important;
+}

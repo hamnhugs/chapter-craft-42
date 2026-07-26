@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { claimViewer, releaseViewer } from "@/lib/splatViewerHost";
+import MediaFrame, { exitAnyFullscreen, SPLAT_FRAME_DEFAULT, SPLAT_FRAME_MIN } from "@/components/MediaFrame";
 import type { SplatFormat } from "@/lib/splatCatalog";
 
 // The live 3D viewer. This module is code-split (imported via React.lazy from
@@ -34,6 +35,11 @@ const prefersReducedMotion = () =>
   typeof window.matchMedia === "function" &&
   window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+const pinchDistance = (pts: Map<number, { x: number; y: number }>): number => {
+  const [a, b] = [...pts.values()];
+  return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+};
+
 const SplatViewer: React.FC<Props> = ({ id, url, format, posterUrl, label, onExit }) => {
   const hostRef = useRef<HTMLDivElement | null>(null);
   // Held in a ref so the scene effect does NOT depend on the callback's
@@ -45,6 +51,14 @@ const SplatViewer: React.FC<Props> = ({ id, url, format, posterUrl, label, onExi
   const [error, setError] = useState("");
   const [ready, setReady] = useState(false);
   const [hint, setHint] = useState("");
+  // Fullscreen changes who owns gestures (see arbitration below), so the
+  // pointer/wheel handlers read it from a ref while the UI reads state.
+  const [expanded, setExpanded] = useState(false);
+  const expandedRef = useRef(false);
+  const handleExpandedChange = useCallback((v: boolean) => {
+    expandedRef.current = v;
+    setExpanded(v);
+  }, []);
 
   // Orbit state lives in a ref so the render loop reads it without re-rendering.
   const orbit = useRef({ yaw: 0.6, pitch: 0.15, distance: 2.6, target: [0, 0, 0] as [number, number, number] });
@@ -251,38 +265,71 @@ const SplatViewer: React.FC<Props> = ({ id, url, format, posterUrl, label, onExi
   // A Set of live pointer ids rather than a counter: a pointerup that never
   // arrives (pointer released outside the window) would desync a counter and
   // leave the viewer permanently believing a gesture is in progress.
+  // Fullscreen flips the contract: there is no page left to scroll, so a
+  // single pointer always orbits (vertical included) and two pointers pinch
+  // the model's zoom instead of the browser's page zoom.
   const drag = useRef({
-    mode: "undecided" as "undecided" | "page" | "orbit",
+    mode: "undecided" as "undecided" | "page" | "orbit" | "pinch",
     x: 0,
     y: 0,
     ids: new Set<number>(),
+    pts: new Map<number, { x: number; y: number }>(),
+    pinchDist: 0,
   });
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.pointerType === "mouse" && e.button !== 0) return; // right/middle click
-    drag.current.ids.add(e.pointerId);
+    const d = drag.current;
+    d.ids.add(e.pointerId);
+    d.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (expandedRef.current) {
+      if (d.ids.size >= 2) {
+        d.mode = "pinch";
+        d.pinchDist = pinchDistance(d.pts);
+      } else {
+        d.mode = "orbit";
+        d.x = e.clientX;
+        d.y = e.clientY;
+      }
+      try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* noop */ }
+      return;
+    }
     // Multi-touch always belongs to the browser (pinch-zoom).
-    if (drag.current.ids.size > 1) { drag.current.mode = "page"; return; }
+    if (d.ids.size > 1) { d.mode = "page"; return; }
     // Touch has to wait and see which way the finger goes; mouse and pen are
     // unambiguous, so they orbit immediately AND capture immediately — without
     // capture, releasing outside the canvas never fires pointerup here and the
     // drag would never end.
     if (e.pointerType === "touch") {
-      drag.current.mode = "undecided";
+      d.mode = "undecided";
     } else {
-      drag.current.mode = "orbit";
+      d.mode = "orbit";
       try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* noop */ }
     }
-    drag.current.x = e.clientX;
-    drag.current.y = e.clientY;
+    d.x = e.clientX;
+    d.y = e.clientY;
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
     const d = drag.current;
-    if (!d.ids.has(e.pointerId) || d.ids.size > 1) return;
+    if (!d.ids.has(e.pointerId)) return;
+    d.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (d.mode === "pinch") {
+      if (d.ids.size < 2) return;
+      e.preventDefault();
+      const dist = pinchDistance(d.pts);
+      if (d.pinchDist > 0 && dist > 0) {
+        const o = orbit.current;
+        o.distance = Math.max(MIN_DISTANCE, Math.min(MAX_DISTANCE, o.distance * (d.pinchDist / dist)));
+      }
+      d.pinchDist = dist;
+      return;
+    }
+    if (d.ids.size > 1) return;
     // A mouse with no button held is a stale drag (button released off-window).
     if (e.pointerType === "mouse" && e.buttons === 0) {
       d.ids.delete(e.pointerId);
+      d.pts.delete(e.pointerId);
       d.mode = "undecided";
       return;
     }
@@ -311,7 +358,22 @@ const SplatViewer: React.FC<Props> = ({ id, url, format, posterUrl, label, onExi
   const endPointer = (e: React.PointerEvent) => {
     const d = drag.current;
     d.ids.delete(e.pointerId);
+    d.pts.delete(e.pointerId);
     try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* noop */ }
+    if (d.mode === "pinch") {
+      if (d.ids.size >= 2) { d.pinchDist = pinchDistance(d.pts); return; }
+      const [rest] = [...d.pts.values()];
+      if (d.ids.size === 1 && rest && expandedRef.current) {
+        // One finger lifted mid-pinch — hand the survivor to orbit smoothly.
+        d.mode = "orbit";
+        d.x = rest.x;
+        d.y = rest.y;
+        return;
+      }
+      d.mode = "undecided";
+      d.pinchDist = 0;
+      return;
+    }
     if (d.ids.size === 0) d.mode = "undecided";
   };
 
@@ -321,8 +383,10 @@ const SplatViewer: React.FC<Props> = ({ id, url, format, posterUrl, label, onExi
     const host = hostRef.current;
     if (!host) return;
     const onWheel = (e: WheelEvent) => {
-      if (e.ctrlKey || e.metaKey) {
-        // Trackpad pinch arrives with ctrlKey set, so this covers both.
+      // Fullscreen has no transcript to protect — plain scroll zooms. Inline,
+      // zoom needs Ctrl (trackpad pinch arrives with ctrlKey set, so this
+      // covers both) and a bare wheel keeps scrolling the chat.
+      if (expandedRef.current || e.ctrlKey || e.metaKey) {
         e.preventDefault();
         const o = orbit.current;
         o.distance = Math.max(MIN_DISTANCE, Math.min(MAX_DISTANCE, o.distance * (1 + e.deltaY * 0.0015)));
@@ -344,7 +408,9 @@ const SplatViewer: React.FC<Props> = ({ id, url, format, posterUrl, label, onExi
       case "ArrowDown":  o.pitch = Math.max(-1.4, o.pitch - KEY_STEP); break;
       case "+": case "=": o.distance = Math.max(MIN_DISTANCE, o.distance * 0.9); break;
       case "-": case "_": o.distance = Math.min(MAX_DISTANCE, o.distance * 1.1); break;
-      case "Escape": onExit(); return;
+      // While fullscreen, Escape only leaves fullscreen (the browser or
+      // MediaFrame's own listener handles it) — it must not also close 3D.
+      case "Escape": if (expandedRef.current) return; onExit(); return;
       default: return;
     }
     e.preventDefault();
@@ -378,11 +444,40 @@ const SplatViewer: React.FC<Props> = ({ id, url, format, posterUrl, label, onExi
   }
 
   return (
-    <div className="relative rounded-xl overflow-hidden border border-outline-variant/20 bg-black/40 max-w-sm">
+    <MediaFrame
+      kind="splat"
+      label={label}
+      defaultSize={SPLAT_FRAME_DEFAULT}
+      minSize={SPLAT_FRAME_MIN}
+      className="rounded-xl overflow-hidden border border-outline-variant/20 bg-black/40"
+      onExpandedChange={handleExpandedChange}
+      controlsTopRight={
+        <>
+          <button
+            onClick={resetView}
+            title="Reset view"
+            aria-label="Reset view"
+            className="grid h-7 w-7 place-items-center rounded-full bg-black/60 text-white/90 hover:bg-black/80 backdrop-blur-sm transition-colors"
+          >
+            <span className="material-symbols-outlined text-[15px]">restart_alt</span>
+          </button>
+          <button
+            // Closing 3D while fullscreen would rip the fullscreen element out
+            // of the DOM — leave fullscreen first, then exit to the poster.
+            onClick={() => { exitAnyFullscreen(); onExit(); }}
+            title="Close 3D view"
+            aria-label="Close 3D view"
+            className="grid h-7 w-7 place-items-center rounded-full bg-black/60 text-white/90 hover:bg-black/80 backdrop-blur-sm transition-colors"
+          >
+            <span className="material-symbols-outlined text-[15px]">close</span>
+          </button>
+        </>
+      }
+    >
       <div
         ref={hostRef}
         role="img"
-        aria-label={`Interactive 3D model: ${label}. Use arrow keys to rotate, plus and minus to zoom.`}
+        aria-label={`Interactive 3D model: ${label}. Drag or use arrow keys to rotate; pinch, Ctrl+scroll, or plus and minus to zoom.`}
         tabIndex={0}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -391,8 +486,9 @@ const SplatViewer: React.FC<Props> = ({ id, url, format, posterUrl, label, onExi
         onLostPointerCapture={endPointer}
         onKeyDown={onKeyDown}
         // A hint only — the JS arbitration above is what actually works on iOS.
-        style={{ touchAction: "pan-y" }}
-        className="h-64 w-full cursor-grab active:cursor-grabbing outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset"
+        // Fullscreen turns it off entirely: every gesture belongs to the model.
+        style={{ touchAction: expanded ? "none" : "pan-y" }}
+        className="h-full w-full cursor-grab active:cursor-grabbing outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset"
       />
 
       {!ready && (
@@ -411,31 +507,15 @@ const SplatViewer: React.FC<Props> = ({ id, url, format, posterUrl, label, onExi
         </div>
       )}
 
-      <div className="absolute top-2 right-2 flex items-center gap-1">
-        <button
-          onClick={resetView}
-          title="Reset view"
-          aria-label="Reset view"
-          className="grid h-7 w-7 place-items-center rounded-full bg-black/60 text-white/90 hover:bg-black/80 backdrop-blur-sm transition-colors"
-        >
-          <span className="material-symbols-outlined text-[15px]">restart_alt</span>
-        </button>
-        <button
-          onClick={onExit}
-          title="Close 3D view"
-          aria-label="Close 3D view"
-          className="grid h-7 w-7 place-items-center rounded-full bg-black/60 text-white/90 hover:bg-black/80 backdrop-blur-sm transition-colors"
-        >
-          <span className="material-symbols-outlined text-[15px]">close</span>
-        </button>
-      </div>
-
       {!prefersReducedMotion() && (
-        <span className="absolute bottom-2 left-2 text-[10px] text-white/50 pointer-events-none select-none">
-          drag to rotate
+        <span
+          className="absolute bottom-2 left-2 text-[10px] text-white/50 pointer-events-none select-none"
+          style={expanded ? { bottom: "calc(0.5rem + env(safe-area-inset-bottom))", left: "calc(0.5rem + env(safe-area-inset-left))" } : undefined}
+        >
+          {expanded ? "drag to rotate · pinch to zoom" : "drag to rotate"}
         </span>
       )}
-    </div>
+    </MediaFrame>
   );
 };
 
