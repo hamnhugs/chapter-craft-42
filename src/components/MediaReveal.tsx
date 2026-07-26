@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 
 // Collapsed presentation for media on RESTORED chat messages (history loaded
 // from the database). Reopening an old transcript must not eagerly re-sign
