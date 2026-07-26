@@ -43,6 +43,11 @@ export interface ChatMessage {
   /** Generated 3D Gaussian splats rendered inline (from generate_splat /
    *  show_splat). Each resolves live via its fal request_id. */
   splats?: ChatSplatRef[];
+  /** True for messages loaded from history (initial load / earlier pages)
+   *  rather than produced live this session. Restored media renders
+   *  collapsed — an expandable card instead of eagerly fetching every
+   *  signed URL / job row the moment an old transcript opens. */
+  restored?: boolean;
 }
 
 interface SendOpts {
@@ -74,6 +79,11 @@ interface ChatContextValue {
   injectDisplayMessage: (content: string) => void;
   clearChat: () => Promise<void>;
   abort: () => void;
+  /** Keyset-page older history above the loaded window. Resolves with the
+   *  number of messages prepended (0 = nothing older / call superseded). */
+  loadEarlier: () => Promise<number>;
+  hasEarlier: boolean;
+  loadingEarlier: boolean;
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null);
@@ -89,12 +99,40 @@ const MAX_TOOL_ITERATIONS = 5;
 // fallen out of the window.
 const HISTORY_WINDOW = 20;
 const SUMMARY_MIN_BATCH = 6;
+/** Absolute most messages ever serialized into one request — the sliding
+ *  window handles quality; this guards cost/context when no summary exists. */
+const HISTORY_HARD_CAP = 60;
 const SUMMARY_STORE_KEY = (uid: string) => `bw_chat_summary_${uid}`;
+
+// ── Cross-device history paging ──────────────────────────────────────────
+// The transcript loads the NEWEST window and pages older messages by keyset
+// cursor on (created_at, id) — the tuple the idx_chat_messages_user_created
+// index walks. Offset paging is both slower and unstable while new messages
+// arrive; keyset is the standard fix.
+const INITIAL_LOAD = 200;
+const EARLIER_PAGE = 100;
+
+/** Map a chat_messages row to the client shape. `restored` marks messages
+ *  loaded from history so their media renders collapsed. */
+const rowToMessage = (m: any, restored: boolean): ChatMessage => ({
+  id: m.id,
+  role: m.role,
+  content: m.content,
+  restored: restored || undefined,
+  images: Array.isArray(m.images) && m.images.length > 0 ? m.images : undefined,
+  videos: Array.isArray(m.videos) && m.videos.length > 0 ? m.videos : undefined,
+  splats: Array.isArray(m.splats) && m.splats.length > 0 ? m.splats : undefined,
+});
 
 interface RollingSummary {
   summary: string;
   /** How many leading messages of the conversation the summary covers. */
   covered: number;
+  /** Id of the FIRST message of the history the count was computed against.
+   *  `covered` is an index into a specific array — if the loaded window now
+   *  starts elsewhere ("Load earlier" prepended, or a different device's
+   *  window), the count is meaningless and must be re-anchored. */
+  anchorId?: string;
 }
 
 function loadRollingSummary(uid: string): RollingSummary {
@@ -103,7 +141,11 @@ function loadRollingSummary(uid: string): RollingSummary {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (typeof parsed?.summary === "string" && typeof parsed?.covered === "number") {
-        return { summary: parsed.summary, covered: parsed.covered };
+        return {
+          summary: parsed.summary,
+          covered: parsed.covered,
+          anchorId: typeof parsed?.anchorId === "string" ? parsed.anchorId : undefined,
+        };
       }
     }
   } catch { /* corrupted/missing — start fresh */ }
@@ -150,10 +192,18 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
    *  of a send. Merges messages that fell out of the window into the stored
    *  summary so the NEXT turn can drop them from the request. */
   const updateRollingSummary = useCallback(
-    async (allMsgs: { role: string; content: string }[]) => {
+    async (allMsgs: { role: string; content: string }[], anchorId: string | undefined) => {
       if (!user || !apiKey || summarizingRef.current) return;
       const target = allMsgs.length - HISTORY_WINDOW;
-      const cur = summaryRef.current;
+      let cur = summaryRef.current;
+      // Window start moved since `covered` was computed (prepend / other
+      // device): the count no longer indexes this array. Keep the summary
+      // text — the merge prompt absorbs re-summarized overlap — but restart
+      // the count from zero against the current window.
+      if (cur.covered > 0 && cur.anchorId !== anchorId) {
+        cur = { summary: cur.summary, covered: 0, anchorId: undefined };
+        summaryRef.current = cur;
+      }
       if (target <= 0 || target <= cur.covered) return;
       // Batch: don't pay an LLM call every turn for 2 messages.
       if (cur.covered > 0 && target - cur.covered < SUMMARY_MIN_BATCH) return;
@@ -196,7 +246,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const data = await res.json();
         const text = (data?.choices?.[0]?.message?.content || "").trim();
         if (!text) return;
-        const next: RollingSummary = { summary: text.slice(0, 4000), covered: target };
+        const next: RollingSummary = { summary: text.slice(0, 4000), covered: target, anchorId };
         summaryRef.current = next;
         try { localStorage.setItem(SUMMARY_STORE_KEY(user.id), JSON.stringify(next)); } catch { /* storage full */ }
       } catch { /* background — never surface */ } finally {
@@ -212,23 +262,35 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     workspaceStore.setUser(user?.id ?? null);
   }, [user]);
 
+  const [hasEarlier, setHasEarlier] = useState(false);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  // Keyset cursor = (created_at, id) of the OLDEST loaded message.
+  const cursorRef = useRef<{ createdAt: string; id: string } | null>(null);
+
   useEffect(() => {
     if (!user) {
       setMessages([]);
+      setHasEarlier(false);
+      cursorRef.current = null;
       loadedRef.current = false;
       return;
     }
     let cancelled = false;
     (async () => {
-      // `images`/`videos` are newer columns — cascade to older selects if a
-      // migration hasn't been applied yet so history never fails to load
-      // (dropping the videos column must not also drop images).
+      // DESCENDING + reverse: the window must anchor to the NEWEST messages.
+      // The old ascending+limit query returned the first 200 messages EVER —
+      // for anyone past 200 lifetime messages, recent conversation silently
+      // never loaded, which read as "my chat doesn't persist across devices".
+      // `images`/`videos`/`splats` are newer columns — cascade to older
+      // selects if a migration hasn't been applied yet so history never
+      // fails to load entirely.
       const loadSel = (cols: string) => supabase
         .from("chat_messages")
         .select(cols as any)
         .eq("user_id", user.id)
-        .order("created_at", { ascending: true })
-        .limit(200) as any;
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(INITIAL_LOAD) as any;
       let { data, error } = await loadSel("id, role, content, created_at, images, videos, splats");
       if (error) ({ data, error } = await loadSel("id, role, content, created_at, images, videos"));
       if (error) ({ data, error } = await loadSel("id, role, content, created_at, images"));
@@ -239,21 +301,75 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loadedRef.current = true;
         return;
       }
-      const loaded: ChatMessage[] = (data || [])
-        .filter((m: any) => m.role === "user" || m.role === "assistant")
-        .map((m: any) => ({
-          id: m.id, role: m.role, content: m.content,
-          images: Array.isArray(m.images) && m.images.length > 0 ? m.images : undefined,
-          videos: Array.isArray(m.videos) && m.videos.length > 0 ? m.videos : undefined,
-          splats: Array.isArray(m.splats) && m.splats.length > 0 ? m.splats : undefined,
-        }));
-      setMessages(loaded);
+      const rows: any[] = data || [];
+      if (rows.length > 0) {
+        const oldest = rows[rows.length - 1]; // descending order → last = oldest
+        cursorRef.current = { createdAt: oldest.created_at, id: oldest.id };
+      }
+      setHasEarlier(rows.length === INITIAL_LOAD);
+      setMessages(
+        rows
+          .filter((m: any) => m.role === "user" || m.role === "assistant")
+          .map((m: any) => rowToMessage(m, true))
+          .reverse() // back to chronological for rendering
+      );
       loadedRef.current = true;
     })();
     return () => {
       cancelled = true;
     };
-  }, [user]);
+    // Depend on the id, not the object: supabase-js emits a fresh user object
+    // on every TOKEN_REFRESHED (~hourly) — an object dep would silently
+    // refetch-and-replace the transcript mid-session, collapsing this
+    // session's media into restored cards and dropping tool chips.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  const loadEarlier = useCallback(async (): Promise<number> => {
+    if (!user || loadingEarlier || !cursorRef.current) return 0;
+    setLoadingEarlier(true);
+    // The cursor object doubles as a ticket: clearChat and sign-out null it,
+    // and a superseding page replaces it — a fetch that resolves after either
+    // must not prepend rows into a cleared (or someone else's) transcript.
+    const ticket = cursorRef.current;
+    try {
+      const { createdAt, id } = ticket;
+      // Strictly-older-than-cursor on the (created_at, id) tuple; values are
+      // quoted because timestamps contain PostgREST-reserved characters.
+      const sel = (cols: string) => supabase
+        .from("chat_messages")
+        .select(cols as any)
+        .eq("user_id", user.id)
+        .or(`created_at.lt."${createdAt}",and(created_at.eq."${createdAt}",id.lt."${id}")`)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(EARLIER_PAGE) as any;
+      let { data, error } = await sel("id, role, content, created_at, images, videos, splats");
+      if (error) ({ data, error } = await sel("id, role, content, created_at, images, videos"));
+      if (error) ({ data, error } = await sel("id, role, content, created_at, images"));
+      if (error) ({ data, error } = await sel("id, role, content, created_at"));
+      if (error) {
+        console.error("Failed to load earlier messages:", error);
+        return 0;
+      }
+      if (cursorRef.current !== ticket) return 0; // cleared/signed out mid-flight
+      const rows: any[] = data || [];
+      let older: ChatMessage[] = [];
+      if (rows.length > 0) {
+        const oldest = rows[rows.length - 1];
+        cursorRef.current = { createdAt: oldest.created_at, id: oldest.id };
+        older = rows
+          .filter((m: any) => m.role === "user" || m.role === "assistant")
+          .map((m: any) => rowToMessage(m, true))
+          .reverse();
+        setMessages((prev) => [...older, ...prev]);
+      }
+      setHasEarlier(rows.length === EARLIER_PAGE);
+      return older.length;
+    } finally {
+      setLoadingEarlier(false);
+    }
+  }, [user, loadingEarlier]);
 
   useEffect(() => {
     if (!user) return;
@@ -267,13 +383,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (!m) return;
           if (m.role !== "user" && m.role !== "assistant") return;
           setMessages((prev) => {
+            // Our own inserts echo back here too — messages carry their DB id
+            // from birth (client-generated), so the id check always catches
+            // them. What remains are turns from OTHER devices: live activity,
+            // rendered expanded (not `restored`).
             if (prev.some((x) => x.id === m.id)) return prev;
-            return [...prev, {
-              id: m.id, role: m.role, content: m.content,
-              images: Array.isArray(m.images) && m.images.length > 0 ? m.images : undefined,
-              videos: Array.isArray(m.videos) && m.videos.length > 0 ? m.videos : undefined,
-              splats: Array.isArray(m.splats) && m.splats.length > 0 ? m.splats : undefined,
-            }];
+            return [...prev, rowToMessage(m, false)];
           });
         }
       )
@@ -287,16 +402,24 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user]);
+    // Same as the load effect: id, not object — don't tear down and resubscribe
+    // the realtime channel on every token refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   const persistMessage = useCallback(
-    async (role: "user" | "assistant", content: string, bookId?: string | null, images?: ChatImageRef[], videos?: ChatVideoRef[], splats?: ChatSplatRef[]): Promise<string | undefined> => {
-      if (!user) return undefined;
-      const base: any = { user_id: user.id, role, content, book_id: bookId || null };
+    // The id is CLIENT-generated (crypto.randomUUID) and already stamped on
+    // the local message before this runs. That makes the realtime echo of our
+    // own insert exactly deduplicatable — the old flow attached the id only
+    // after the insert round-trip, and an echo racing that window would have
+    // duplicated the bubble.
+    async (id: string, role: "user" | "assistant", content: string, bookId?: string | null, images?: ChatImageRef[], videos?: ChatVideoRef[], splats?: ChatSplatRef[]): Promise<void> => {
+      if (!user) return;
+      const base: any = { id, user_id: user.id, role, content, book_id: bookId || null };
       // `images`/`videos`/`splats` are newer columns — cascade to fewer extras
       // if a migration hasn't been applied yet (media stays safe in its own
       // table, and dropping one column must not also drop the others).
-      const ins = (row: any) => supabase.from("chat_messages").insert(row).select("id").single();
+      const ins = (row: any) => supabase.from("chat_messages").insert(row);
       const hasImages = !!images && images.length > 0;
       const hasVideos = !!videos && videos.length > 0;
       const hasSplats = !!splats && splats.length > 0;
@@ -304,26 +427,32 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (hasImages) full.images = images;
       if (hasVideos) full.videos = videos;
       if (hasSplats) full.splats = splats;
-      let { data, error } = await ins(full);
-      if (error && hasSplats) {
+      // 23505 (duplicate key) means a previous attempt actually committed and
+      // only its response was lost — the row exists WITH full media: success.
+      // Only a missing column (42703) justifies retrying with fewer fields;
+      // any other error (offline, RLS) would fail every retry identically.
+      const done = (e: any) => !e || e.code === "23505";
+      const colMissing = (e: any) => e?.code === "42703";
+      let { error } = await ins(full);
+      if (done(error)) return;
+      if (colMissing(error) && hasSplats) {
         const noSplats: any = { ...base };
         if (hasImages) noSplats.images = images;
         if (hasVideos) noSplats.videos = videos;
-        ({ data, error } = await ins(noSplats));
+        ({ error } = await ins(noSplats));
+        if (done(error)) return;
       }
-      if (error && hasVideos) {
+      if (colMissing(error) && hasVideos) {
         const noVideos: any = { ...base };
         if (hasImages) noVideos.images = images;
-        ({ data, error } = await ins(noVideos));
+        ({ error } = await ins(noVideos));
+        if (done(error)) return;
       }
-      if (error && hasImages) {
-        ({ data, error } = await ins(base));
+      if (colMissing(error) && hasImages) {
+        ({ error } = await ins(base));
+        if (done(error)) return;
       }
-      if (error) {
-        console.error("Failed to persist chat message:", error);
-        return undefined;
-      }
-      return data?.id;
+      if (error) console.error("Failed to persist chat message:", error);
     },
     [user]
   );
@@ -331,6 +460,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const clearChat = useCallback(async () => {
     abortRef.current?.abort();
     setMessages([]);
+    setHasEarlier(false);
+    cursorRef.current = null;
     summaryRef.current = { summary: "", covered: 0 };
     if (user) {
       try { localStorage.removeItem(SUMMARY_STORE_KEY(user.id)); } catch { /* ignore */ }
@@ -360,22 +491,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const uploadRefs: ChatImageRef[] = (opts?.images || [])
         .map((i) => i.ref)
         .filter((r): r is ChatImageRef => !!r);
-      const userMsg: ChatMessage = { role: "user", content: trimmed, images: uploadRefs.length > 0 ? uploadRefs : undefined };
+      const userMsg: ChatMessage = { id: crypto.randomUUID(), role: "user", content: trimmed, images: uploadRefs.length > 0 ? uploadRefs : undefined };
       setMessages((prev) => [...prev, userMsg]);
-      persistMessage("user", trimmed, activeBookId, uploadRefs.length > 0 ? uploadRefs : undefined).then((id) => {
-        if (id) {
-          setMessages((prev) => {
-            const copy = [...prev];
-            for (let i = copy.length - 1; i >= 0; i--) {
-              if (copy[i].role === "user" && copy[i].content === trimmed && !copy[i].id) {
-                copy[i] = { ...copy[i], id };
-                break;
-              }
-            }
-            return copy;
-          });
-        }
-      });
+      void persistMessage(userMsg.id!, "user", trimmed, activeBookId, uploadRefs.length > 0 ? uploadRefs : undefined);
 
       setIsLoading(true);
 
@@ -391,8 +509,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         imgs && imgs.length > 0
           ? imgs.map((im) => `[Attached image — image_id: ${im.id}${im.prompt ? ` — "${im.prompt.slice(0, 80)}"` : ""}]`).join("\n")
           : "";
-      const baseHistory = [...messages, userMsg]
-        .filter((m) => !m.displayOnly)
+      const historySource = [...messages, userMsg].filter((m) => !m.displayOnly);
+      // Anchors the rolling summary's `covered` count to this exact window —
+      // see RollingSummary.anchorId.
+      const firstHistoryId = historySource[0]?.id;
+      const baseHistory = historySource
         .map((m, i, arr) => {
           const note = imageIdNote(m.images);
           // Multimodal injection: turn the latest user message into a
@@ -450,12 +571,24 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       let historyForModel = baseHistory;
       let summaryNote: string | null = null;
       const rolling = summaryRef.current;
-      if (baseHistory.length > HISTORY_WINDOW && rolling.summary && rolling.covered > 0) {
+      // The summary's `covered` count only means anything while the loaded
+      // window still starts at the same message it was computed against —
+      // "Load earlier" prepends and cross-device window shifts both move the
+      // start, and a misaligned cut would drop the wrong messages.
+      const anchored = !!rolling.anchorId && rolling.anchorId === firstHistoryId;
+      if (baseHistory.length > HISTORY_WINDOW && rolling.summary && rolling.covered > 0 && anchored) {
         const cut = Math.min(rolling.covered, baseHistory.length - HISTORY_WINDOW);
         if (cut > 0) {
           historyForModel = baseHistory.slice(cut);
           summaryNote = `## Earlier conversation summary\nThe first ${cut} messages of this conversation were replaced by this summary to save context:\n\n${rolling.summary}`;
         }
+      }
+      // Hard ceiling regardless of summary state: "Load earlier" can grow the
+      // local transcript into the hundreds, and a fresh device has no rolling
+      // summary yet — without a cap the whole array would be serialized into
+      // one request and blow the model's context.
+      if (historyForModel.length > HISTORY_HARD_CAP) {
+        historyForModel = historyForModel.slice(-HISTORY_HARD_CAP);
       }
 
       const assistantEvents: ToolEvent[] = [];
@@ -472,13 +605,18 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const turnVideos: ChatVideoRef[] = [];
       const turnSplats: ChatSplatRef[] = [];
       let assistantText = "";
-      setMessages((prev) => [...prev, { role: "assistant", content: "", toolEvents: [], usedMemories: usedMemories.length > 0 ? usedMemories : undefined }]);
+      // The streaming bubble carries its DB id from birth and every update
+      // targets it BY ID — never "the last assistant message". With realtime
+      // on, a turn finishing on another device appends a bubble at the end
+      // mid-stream, and last-assistant targeting would overwrite it.
+      const assistantId = crypto.randomUUID();
+      setMessages((prev) => [...prev, { id: assistantId, role: "assistant", content: "", toolEvents: [], usedMemories: usedMemories.length > 0 ? usedMemories : undefined }]);
 
       const updateAssistant = () => {
         setMessages((prev) => {
           const copy = [...prev];
           for (let i = copy.length - 1; i >= 0; i--) {
-            if (copy[i].role === "assistant") {
+            if (copy[i].id === assistantId) {
               copy[i] = {
                 ...copy[i],
                 content: assistantText,
@@ -695,19 +833,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         if (assistantText || turnImages.length > 0 || turnVideos.length > 0 || turnSplats.length > 0) {
-          const id = await persistMessage("assistant", assistantText, activeBookId, turnImages.length > 0 ? turnImages : undefined, turnVideos.length > 0 ? turnVideos : undefined, turnSplats.length > 0 ? turnSplats : undefined);
-          if (id) {
-            setMessages((prev) => {
-              const copy = [...prev];
-              for (let i = copy.length - 1; i >= 0; i--) {
-                if (copy[i].role === "assistant" && !copy[i].id) {
-                  copy[i] = { ...copy[i], id };
-                  break;
-                }
-              }
-              return copy;
-            });
-          }
+          // The bubble already carries assistantId — the realtime echo of this
+          // insert dedupes against it by id.
+          await persistMessage(assistantId, "assistant", assistantText, activeBookId, turnImages.length > 0 ? turnImages : undefined, turnVideos.length > 0 ? turnVideos : undefined, turnSplats.length > 0 ? turnSplats : undefined);
         }
 
         // Surface any artifacts the model created this turn. Persist each into
@@ -785,7 +913,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Refresh the rolling summary in the background so the NEXT turn can
         // drop old messages from the request. Fire-and-forget by design.
         if (assistantText) {
-          void updateRollingSummary([...baseHistory, { role: "assistant", content: assistantText }]);
+          void updateRollingSummary([...baseHistory, { role: "assistant", content: assistantText }], firstHistoryId);
         }
 
         return assistantText;
@@ -828,6 +956,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         injectDisplayMessage,
         clearChat,
         abort,
+        loadEarlier,
+        hasEarlier,
+        loadingEarlier,
       }}
     >
       {children}

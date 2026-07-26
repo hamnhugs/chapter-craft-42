@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { useApp } from "@/context/AppContext";
 import { useChat } from "@/context/ChatContext";
 import { useAuth } from "@/hooks/useAuth";
@@ -22,6 +22,7 @@ import ResponseBlocks from "@/components/ResponseBlocks";
 import GeneratedImage from "@/components/GeneratedImage";
 import VideoBubble from "@/components/VideoBubble";
 import SplatBubble from "@/components/SplatBubble";
+import MediaReveal from "@/components/MediaReveal";
 import WorkingMemoryPanel from "@/components/WorkingMemoryPanel";
 import WorkspacePanel from "@/components/WorkspacePanel";
 import type { Artifact } from "@/lib/artifacts";
@@ -46,7 +47,7 @@ const ChatPanel: React.FC = () => {
     apiKey, savedModels, selectedModel, voiceModel, autoReadReplies, burplexityApiToken, accessAllNeurons, loaded,
     setSelectedModel, setAutoReadReplies,
   } = useChatSettings();
-  const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort } = useChat();
+  const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort, loadEarlier, hasEarlier, loadingEarlier } = useChat();
   const { isPaid } = usePlan();
   const { speakingId, speak, stop: stopSpeaking } = useReadAloud();
   // Configured in the Settings tab; re-read here on mount (tab switches remount this panel).
@@ -161,7 +162,42 @@ const ChatPanel: React.FC = () => {
     dictation.start();
   };
 
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+  // Auto-scroll only when the TAIL of the conversation changes (a new message
+  // appended, or the streaming reply growing) — never when older history is
+  // prepended by "Load earlier", which must keep the view where it is.
+  const tailAnchorRef = useRef<{ key?: string; content?: string; role?: string }>({});
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    const prev = tailAnchorRef.current;
+    const changed = !!last && (last.id !== prev.key || last.role !== prev.role || last.content !== prev.content);
+    tailAnchorRef.current = { key: last?.id, content: last?.content, role: last?.role };
+    if (changed) messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  // Prepending shifts content down; compensate manually (and predictably —
+  // Safari has no native scroll anchoring, so the container opts out of it
+  // everywhere rather than double-adjusting only in Chrome). The adjustment
+  // runs in a LAYOUT effect on the commit whose first message changed: a
+  // requestAnimationFrame after the await could fire before React commits
+  // the prepend and measure a stale scrollHeight.
+  const scrollAdjustRef = useRef<{ top: number; height: number } | null>(null);
+  const prevFirstIdRef = useRef<string | undefined>(undefined);
+  const handleLoadEarlier = useCallback(async () => {
+    const el = messagesContainerRef.current;
+    scrollAdjustRef.current = el ? { top: el.scrollTop, height: el.scrollHeight } : null;
+    const prepended = await loadEarlier();
+    if (prepended === 0) scrollAdjustRef.current = null;
+  }, [loadEarlier]);
+  useLayoutEffect(() => {
+    const firstId = messages[0]?.id;
+    const firstChanged = firstId !== prevFirstIdRef.current;
+    prevFirstIdRef.current = firstId;
+    const saved = scrollAdjustRef.current;
+    if (!saved || !firstChanged) return;
+    scrollAdjustRef.current = null;
+    const el = messagesContainerRef.current;
+    if (el) el.scrollTop = saved.top + (el.scrollHeight - saved.height);
+  }, [messages]);
 
   // Autogrow the composer up to ~10 lines, then scroll internally.
   useEffect(() => {
@@ -644,7 +680,20 @@ const ChatPanel: React.FC = () => {
 
       {/* Messages */}
       <div className="flex-1 overflow-hidden">
-        <div ref={messagesContainerRef} role="log" aria-label="Conversation with The Librarian" aria-live="off" className="h-full overflow-auto px-4 py-6 space-y-6 hide-scrollbar">
+        <div ref={messagesContainerRef} role="log" aria-label="Conversation with The Librarian" aria-live="off" className="h-full overflow-auto px-4 py-6 space-y-6 hide-scrollbar [overflow-anchor:none]">
+
+        {messages.length > 0 && hasEarlier && (
+          <div className="flex justify-center">
+            <button
+              onClick={() => void handleLoadEarlier()}
+              disabled={loadingEarlier}
+              className="inline-flex items-center gap-1.5 text-[11px] font-medium px-3 py-1.5 rounded-full bg-surface-container-high border border-outline-variant/20 text-on-surface-variant hover:text-primary hover:border-primary-container/50 transition-colors disabled:opacity-60"
+            >
+              <span className="material-symbols-outlined text-sm">history</span>
+              {loadingEarlier ? "Loading…" : "Load earlier messages"}
+            </button>
+          </div>
+        )}
 
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-on-surface-variant gap-3">
@@ -714,39 +763,45 @@ const ChatPanel: React.FC = () => {
               {msg.role === "assistant" ? (
                 <>
                   {msg.splats && msg.splats.length > 0 && (
-                    <div className={`grid gap-2 mb-2 ${msg.splats.length === 1 ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2"}`}>
-                      {msg.splats.map((s) => (
-                        <SplatBubble key={s.request_id} splat={s} />
-                      ))}
-                    </div>
+                    <MediaReveal restored={msg.restored} kind="splat" count={msg.splats.length} label={msg.splats[0].prompt}>
+                      <div className={`grid gap-2 mb-2 ${msg.splats.length === 1 ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2"}`}>
+                        {msg.splats.map((s) => (
+                          <SplatBubble key={s.request_id} splat={s} />
+                        ))}
+                      </div>
+                    </MediaReveal>
                   )}
                   {msg.videos && msg.videos.length > 0 && (
-                    <div className={`grid gap-2 mb-2 ${msg.videos.length === 1 ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2"}`}>
-                      {msg.videos.map((v) => (
-                        <VideoBubble key={v.job_id} video={v} />
-                      ))}
-                    </div>
+                    <MediaReveal restored={msg.restored} kind="video" count={msg.videos.length} label={msg.videos[0].prompt}>
+                      <div className={`grid gap-2 mb-2 ${msg.videos.length === 1 ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2"}`}>
+                        {msg.videos.map((v) => (
+                          <VideoBubble key={v.job_id} video={v} />
+                        ))}
+                      </div>
+                    </MediaReveal>
                   )}
                   {msg.images && msg.images.length > 0 && (
-                    <div
-                      className={`grid gap-2 mb-2 ${
-                        msg.images.length === 1
-                          ? "grid-cols-1"
-                          : msg.images.length === 2
-                          ? "grid-cols-2"
-                          : "grid-cols-2 sm:grid-cols-2 md:grid-cols-3"
-                      }`}
-                    >
-                      {msg.images.map((img) => (
-                        <GeneratedImage
-                          key={img.id}
-                          storagePath={img.storage_path}
-                          alt={img.prompt}
-                          caption={img.entry_id ? `${img.prompt} · saved to memory` : img.prompt}
-                          resizable
-                        />
-                      ))}
-                    </div>
+                    <MediaReveal restored={msg.restored} kind="image" count={msg.images.length} label={msg.images[0].prompt}>
+                      <div
+                        className={`grid gap-2 mb-2 ${
+                          msg.images.length === 1
+                            ? "grid-cols-1"
+                            : msg.images.length === 2
+                            ? "grid-cols-2"
+                            : "grid-cols-2 sm:grid-cols-2 md:grid-cols-3"
+                        }`}
+                      >
+                        {msg.images.map((img) => (
+                          <GeneratedImage
+                            key={img.id}
+                            storagePath={img.storage_path}
+                            alt={img.prompt}
+                            caption={img.entry_id ? `${img.prompt} · saved to memory` : img.prompt}
+                            resizable
+                          />
+                        ))}
+                      </div>
+                    </MediaReveal>
                   )}
                   {msg.content && <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown>{msg.content}</ReactMarkdown></div>}
                   {msg.blocks && msg.blocks.length > 0 && <ResponseBlocks blocks={msg.blocks} />}
@@ -767,16 +822,18 @@ const ChatPanel: React.FC = () => {
               ) : (
                 <>
                   {msg.images && msg.images.length > 0 && (
-                    <div className={`grid gap-2 mb-2 ${msg.images.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}>
-                      {msg.images.map((img) => (
-                        <GeneratedImage
-                          key={img.id}
-                          storagePath={img.storage_path}
-                          alt={img.prompt}
-                          resizable
-                        />
-                      ))}
-                    </div>
+                    <MediaReveal restored={msg.restored} kind="image" count={msg.images.length} label={msg.images[0].prompt}>
+                      <div className={`grid gap-2 mb-2 ${msg.images.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}>
+                        {msg.images.map((img) => (
+                          <GeneratedImage
+                            key={img.id}
+                            storagePath={img.storage_path}
+                            alt={img.prompt}
+                            resizable
+                          />
+                        ))}
+                      </div>
+                    </MediaReveal>
                   )}
                   <p className="whitespace-pre-wrap font-medium">{msg.content}</p>
                 </>
