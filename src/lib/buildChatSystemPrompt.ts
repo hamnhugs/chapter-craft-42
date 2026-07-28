@@ -1,5 +1,5 @@
 import { BookDocument } from "@/types/library";
-import { fetchKnowledgeEntries, fetchConversationMemory, retrieveKnowledge } from "@/lib/knowledgeApi";
+import { fetchKnowledgeEntries, fetchConversationMemory, retrieveKnowledge, filterSupersededNodes } from "@/lib/knowledgeApi";
 import { fetchImagesForEntries } from "@/lib/imageGen";
 import { DEEP_RESEARCH_SYSTEM_PROMPT, DEEP_RESEARCH_ADVANCED_PROMPT } from "@/lib/deepResearchPrompt";
 
@@ -120,12 +120,13 @@ export async function buildChatSystemPrompt({
     "The user can also load SEVERAL neurons at once (up to 5), and save named neuron chains that load together. When they ask to study/load multiple neurons together, call `set_active_neurons` (first id = primary, where new knowledge is saved). For saved chains use `list_chains` and `activate_chain` (activating a chain REPLACES the loaded set). Never claim neurons or chains were loaded without the tool call succeeding. If the user asks to load more than 5, explain that 2–3 related neurons is the research-backed sweet spot and 5 is the ceiling.",
     ...(reflex ? [
       "## Contradiction reflex",
-      "When the user states something that directly CONTRADICTS a memory shown in the retrieved-memory context (e.g. they say a deadline is Tuesday but a saved memory says Monday), briefly and proactively point out the specific contradiction and ask which is correct. Only after they clearly indicate which is right may you reconcile it — use update_memory_entry to correct the memory, or resolve_conflict if the system already flagged it — and never silently overwrite or delete. If nothing in the retrieved memory contradicts what they said, do NOT mention this at all (no false alarms). It's a gentle safety check, not a challenge to everything the user says.",
+      "When the user states something that directly CONTRADICTS a memory shown in the retrieved-memory context (e.g. they say a deadline is Tuesday but a saved memory says Monday), briefly and proactively point out the specific contradiction and ask which is correct. Only after they clearly indicate which is right may you reconcile it — use supersede_memory_entry to correct the memory (it retires the old version into auditable history rather than overwriting), or resolve_conflict if the system already flagged it — and never silently overwrite or delete. If nothing in the retrieved memory contradicts what they said, do NOT mention this at all (no false alarms). It's a gentle safety check, not a challenge to everything the user says.",
     ] : []),
     "## Answering from memory (provenance)",
     "When you answer using retrieved memories, keep stored fact and your own inference distinct. State what is actually stored plainly; when you extrapolate, combine, or fill gaps BEYOND what the memories say, phrase it as inference ('based on X and Y, it looks like…') rather than asserting invented specifics as remembered fact. Never fabricate a detail — a date, name, or number — and present it as something the user told you or a memory recorded. If you are unsure whether something is stored or inferred, say so.",
     "## Curating memory",
-    "Beyond answering, you can actively tend the user's memory with your tools: update_memory_entry to correct a memory that is now wrong or outdated, link_memory_entries to connect strongly related ideas, and create_memory_entry for a genuinely important, durable fact the user clearly wants kept. The system already auto-captures knowledge from conversation, so do this sparingly — only when it adds real, lasting value, never bulk-saving chit-chat — and briefly say when you've saved, updated, or linked something.",
+    "Beyond answering, you can actively tend the user's memory with your tools: `supersede_memory_entry` when a FACT changed or was wrong — it writes the corrected entry and retires the old one with its history preserved (never rewrite a fact in place); update_memory_entry only for typo/phrasing fixes that don't change meaning; link_memory_entries to connect strongly related ideas; and create_memory_entry for a genuinely important, durable fact the user clearly wants kept. The system already auto-captures knowledge from conversation, so do this sparingly — only when it adds real, lasting value, never bulk-saving chit-chat — and briefly say when you've saved, corrected, or linked something.",
+    "Memory has a TIME AXIS: when the user asks what they used to believe, what changed, when something changed, or wants to audit a correction, call `get_memory_history` on the entry — it returns every version with the dates it was believed and why it was replaced. Superseded versions never appear in normal retrieval, only there.",
     "## Images",
     "You can create and remember images:",
     "- `generate_image` → create AI images (Nano Banana), shown inline and saved to memory as neurons by default. Supports multiple images per call: pass `count` (2–4) for variations of the same prompt, or `prompts: [...]` (2–4 entries) for a distinct set in one call. You may also issue several `generate_image` tool calls in parallel within a single turn (e.g. one batch of character variants + one batch of background concepts). Each image costs a few cents — match the count to what the user asked for, don't pad.",
@@ -179,7 +180,7 @@ export async function buildChatSystemPrompt({
     "## Memory edits",
     "When the user says something like 'this is junk', 'forget this', 'delete that note', 'that's wrong', or you spot a retrieved memory that's clearly a duplicate, contradicted, stale, or low-confidence, you may use the memory-edit tools the host exposes (create / update / delete / link memory entries) — subject to the per-tool permissions the user set in Settings. If a tool is disabled, explain that and ask the user to enable it or to act manually. Always confirm destructive deletes with the user before calling them unless the user just explicitly approved that specific deletion in this turn.",
     "## Wiki Conflict Resolution",
-    "If the user asks to review, go over, fix, or resolve contradictions/conflicts in their wiki, call `list_conflicts` first (default status='open'). Present them ONE AT A TIME in plain language: summarise both entries (A and B), the AI's rationale, and offer clear options — keep A, keep B, merge into one, edit one to fix it, acknowledge (keep both), or dismiss (false positive). Use `get_conflict` if you need full text. NEVER call `resolve_conflict` with a destructive action (keep_a_delete_b, keep_b_delete_a, merge, edit_a, edit_b) until the user has explicitly approved that exact action for that exact conflict in the current turn — paraphrasing back and getting a 'yes' is fine; assuming is not. After each resolution, briefly confirm what changed and ask whether to move to the next.",
+    "If the user asks to review, go over, fix, or resolve contradictions/conflicts in their wiki, call `list_conflicts` first (default status='open'). Present them ONE AT A TIME in plain language: summarise both entries (A and B), the AI's rationale, and offer clear options — keep A, keep B, merge into one, edit one to fix it, acknowledge (keep both), or dismiss (false positive). Use `get_conflict` if you need full text. NEVER call `resolve_conflict` with a destructive action (keep_a_delete_b, keep_b_delete_a, merge, edit_a, edit_b) until the user has explicitly approved that exact action for that exact conflict in the current turn — paraphrasing back and getting a 'yes' is fine; assuming is not. Resolutions preserve history where the supersession upgrade is applied: losing/merged entries are retired with lineage rather than destroyed, and `get_memory_history` can audit them later. After each resolution, briefly confirm what changed and ask whether to move to the next.",
     ...(voiceMode ? [
       "## Voice-mode conflict + wiki rules (CRITICAL)",
       "You are talking out loud, so the user's spoken reply IS their approval. When the user says 'yes', 'do it', 'keep A', 'keep B', 'merge', 'dismiss', 'acknowledge', or names the action you just offered, IMMEDIATELY call `resolve_conflict` (or `update_conflict_status`) — do not ask again, do not narrate that you did it without calling the tool.",
@@ -307,6 +308,19 @@ export async function buildChatSystemPrompt({
         }
         retrieval = { nodes: fusedNodes, edges: fusedEdges };
       }
+      // Bitemporal supersession: the deployed retrieval functions predate the
+      // upgrade and can still match retired (superseded) entries — drop them
+      // here so only current truth reaches the model. No-op pre-migration.
+      try {
+        const live = await filterSupersededNodes(retrieval.nodes);
+        if (live.length !== retrieval.nodes.length) {
+          const keep = new Set(live.map((n: any) => n.id));
+          retrieval = {
+            nodes: live,
+            edges: retrieval.edges.filter((e: any) => keep.has(e.source_entry_id) && keep.has(e.target_entry_id)),
+          };
+        }
+      } catch { /* filter is best-effort — never block the prompt build */ }
       if (retrieval && retrieval.nodes.length > 0) {
         // Attached images: a lightweight note (id + prompt) per the
         // "caption by default, pixels on demand" pattern — the model can

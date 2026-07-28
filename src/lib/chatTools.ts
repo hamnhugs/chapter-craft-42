@@ -64,6 +64,10 @@ import {
 } from "@/lib/splatCatalog";
 import { fetchChains, touchChainUsed, emitChainsChanged, isChainsMigrationMissing, CHAINS_MIGRATION_MESSAGE } from "@/lib/chainsApi";
 import { sessionActiveWikiIds } from "@/lib/wikisApi";
+import {
+  supersedeKnowledgeEntry, fetchEntryLineage, isMissingSupersessionSchema,
+  SUPERSESSION_MIGRATION_MESSAGE,
+} from "@/lib/knowledgeApi";
 import { MAX_ACTIVE_NEURONS, FREE_NEURON_LIMIT } from "@/lib/neuronAccess";
 import { OPEN_ACCESS } from "@/lib/openAccess";
 
@@ -982,6 +986,40 @@ export const CHAT_TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "supersede_memory_entry",
+      description:
+        "Replace an outdated or incorrect memory entry with a corrected one WITHOUT losing history: the corrected entry is created, and the old one is retired (its belief window closes and it links to its replacement — it stops appearing in retrieval but stays auditable). USE THIS instead of update_memory_entry whenever a FACT CHANGED or was wrong; update_memory_entry is only for typo/phrasing fixes that don't change meaning. Honors the update_memory_entry permission.",
+      parameters: {
+        type: "object",
+        properties: {
+          old_entry_id: { type: "string", description: "The entry being corrected/replaced." },
+          new_title: { type: "string", description: "Optional new title (defaults to the old title)." },
+          new_content: { type: "string", description: "The corrected content (required)." },
+          new_tags: { type: "array", items: { type: "string" }, description: "Optional replacement tags (defaults to the old tags)." },
+          reason: { type: "string", description: "One line on why it changed (e.g. 'user corrected the deadline'). Shown in history." },
+        },
+        required: ["old_entry_id", "new_content"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_memory_history",
+      description:
+        "Show the full version history of a memory entry: every prior version with the dates it was believed (valid_from → valid_to) and why each was replaced. Use when the user asks what they used to believe, what changed, when a fact changed, or wants to audit a correction.",
+      parameters: {
+        type: "object",
+        properties: {
+          entry_id: { type: "string", description: "Any entry in the chain — history is walked in both directions." },
+        },
+        required: ["entry_id"],
+      },
+    },
+  },
 ] as const;
 
 
@@ -1076,13 +1114,22 @@ export async function executeChatTool(
         if (!q) return { result: { error: "Empty query" }, event: { name, summary: "Empty query", ok: false } };
         const limit = Math.min(25, Math.max(1, Number(args.limit) || 10));
         const { activeWikiId, activeWikiIds, allNeurons } = await getNeuronScope();
-        let q1: any = supabase
-          .from("knowledge_entries")
-          .select("id, title, content, entry_type, confidence, source_book_id, tags, wiki_id")
-          .or(`title.ilike.%${q}%,content.ilike.%${q}%`)
-          .limit(limit);
-        if (!allNeurons && activeWikiIds.length > 0) q1 = q1.in("wiki_id", activeWikiIds);
-        const { data, error } = await q1;
+        const buildSearch = (withSupersedeFilter: boolean) => {
+          let qq: any = supabase
+            .from("knowledge_entries")
+            .select("id, title, content, entry_type, confidence, source_book_id, tags, wiki_id")
+            .or(`title.ilike.%${q}%,content.ilike.%${q}%`)
+            .limit(limit);
+          // Living entries only — superseded versions belong to get_memory_history.
+          if (withSupersedeFilter) qq = qq.is("superseded_by", null);
+          if (!allNeurons && activeWikiIds.length > 0) qq = qq.in("wiki_id", activeWikiIds);
+          return qq;
+        };
+        let { data, error } = await buildSearch(true);
+        if (error && (error as any)?.code === "42703") {
+          // Pre-supersession schema: retry without the filter.
+          ({ data, error } = await buildSearch(false));
+        }
         if (error) throw error;
         const entries = (data || []).map((e: any) => ({
           id: e.id,
@@ -1229,6 +1276,27 @@ export async function executeChatTool(
           const { error } = await supabase.from("knowledge_entries").update(patch).eq("id", eid);
           if (error) throw error;
         };
+        const fetchEntry = async (eid: string) => {
+          const { data, error } = await supabase
+            .from("knowledge_entries").select("id, title, content, tags, entry_type").eq("id", eid).maybeSingle();
+          if (error) throw error;
+          return data as any;
+        };
+        // History-preserving retirement (bitemporal supersession): the losing
+        // entry's belief window closes and it links to the kept entry instead
+        // of being destroyed. Falls back to the legacy hard delete only while
+        // the supersession migration isn't applied.
+        const retireEntry = async (loserId: string, keptId: string | null, reason: string): Promise<"retired" | "deleted"> => {
+          const { error } = await supabase.from("knowledge_entries").update({
+            valid_to: new Date().toISOString(),
+            superseded_by: keptId,
+            archived: true,
+            supersede_reason: reason,
+          } as any).eq("id", loserId);
+          if (!error) return "retired";
+          if (isMissingSupersessionSchema(error)) { await deleteEntry(loserId); return "deleted"; }
+          throw error;
+        };
 
         switch (action) {
           case "acknowledge":
@@ -1237,33 +1305,73 @@ export async function executeChatTool(
           case "dismiss":
             await setStatus("dismissed");
             return { result: { ok: true, status: "dismissed" }, event: { name, summary: "Conflict dismissed (false positive)", ok: true } };
-          case "keep_a_delete_b":
-            await deleteEntry(c.entry_b);
+          case "keep_a_delete_b": {
+            const mode = await retireEntry(c.entry_b, c.entry_a, "Conflict resolved: the other entry was kept as correct");
             await setStatus("resolved");
-            return { result: { ok: true }, event: { name, summary: "Resolved — kept entry A, deleted entry B", ok: true } };
-          case "keep_b_delete_a":
-            await deleteEntry(c.entry_a);
+            try { window.dispatchEvent(new Event("knowledge-entries-changed")); } catch {}
+            return { result: { ok: true, loser: mode }, event: { name, summary: `Resolved — kept entry A, entry B ${mode === "retired" ? "retired to history" : "deleted (legacy)"}`, ok: true } };
+          }
+          case "keep_b_delete_a": {
+            const mode = await retireEntry(c.entry_a, c.entry_b, "Conflict resolved: the other entry was kept as correct");
             await setStatus("resolved");
-            return { result: { ok: true }, event: { name, summary: "Resolved — kept entry B, deleted entry A", ok: true } };
+            try { window.dispatchEvent(new Event("knowledge-entries-changed")); } catch {}
+            return { result: { ok: true, loser: mode }, event: { name, summary: `Resolved — kept entry B, entry A ${mode === "retired" ? "retired to history" : "deleted (legacy)"}`, ok: true } };
+          }
           case "merge": {
             const title = String(args.merged_title || "").trim();
             const content = String(args.merged_content || "").trim();
             if (!title || !content) return { result: { error: "merged_title and merged_content required" }, event: { name, summary: "Merge missing fields", ok: false } };
-            const patch: any = { title, content };
-            if (Array.isArray(args.merged_tags)) patch.tags = args.merged_tags;
-            await updateEntry(c.entry_a, patch);
-            await deleteEntry(c.entry_b);
-            await setStatus("resolved");
-            return { result: { ok: true }, event: { name, summary: `Merged into "${title}"`, ok: true } };
+            const tags = Array.isArray(args.merged_tags) ? (args.merged_tags as string[]) : null;
+            try {
+              // One merged successor supersedes BOTH originals — full lineage kept.
+              const newId = await supersedeKnowledgeEntry(c.entry_a, {
+                title, content, tags: tags ?? undefined,
+                reason: "Merged with a conflicting entry",
+                alsoSupersede: c.entry_b,
+              });
+              await setStatus("resolved");
+              try { window.dispatchEvent(new Event("knowledge-entries-changed")); } catch {}
+              return { result: { ok: true, merged_entry_id: newId }, event: { name, summary: `Merged into "${title}" (both originals kept in history)`, ok: true } };
+            } catch (e) {
+              if (!isMissingSupersessionSchema(e)) throw e;
+              const patch: any = { title, content };
+              if (tags) patch.tags = tags;
+              await updateEntry(c.entry_a, patch);
+              await deleteEntry(c.entry_b);
+              await setStatus("resolved");
+              return { result: { ok: true }, event: { name, summary: `Merged into "${title}" (legacy — entry B deleted)`, ok: true } };
+            }
           }
           case "edit_a":
           case "edit_b": {
             const targetId = action === "edit_a" ? c.entry_a : c.entry_b;
+            const newTitle = typeof args.new_title === "string" && args.new_title.trim() ? args.new_title.trim() : null;
+            const newContent = typeof args.new_content === "string" && args.new_content.trim() ? args.new_content.trim() : null;
+            const newTags = Array.isArray(args.new_tags) ? (args.new_tags as string[]) : null;
+            if (!newTitle && !newContent && !newTags) return { result: { error: "Provide new_title and/or new_content" }, event: { name, summary: "Edit missing fields", ok: false } };
+            if (newContent) {
+              // A content change is a factual correction — supersede so the
+              // pre-correction version stays in history.
+              try {
+                const old = await fetchEntry(targetId);
+                const newId = await supersedeKnowledgeEntry(targetId, {
+                  title: newTitle ?? old?.title ?? null,
+                  content: newContent,
+                  tags: newTags ?? undefined,
+                  reason: "Corrected while resolving a conflict",
+                });
+                await setStatus("resolved");
+                try { window.dispatchEvent(new Event("knowledge-entries-changed")); } catch {}
+                return { result: { ok: true, new_entry_id: newId }, event: { name, summary: `Corrected entry ${action === "edit_a" ? "A" : "B"} (old version kept in history) and resolved`, ok: true } };
+              } catch (e) {
+                if (!isMissingSupersessionSchema(e)) throw e;
+                // fall through to the legacy in-place edit
+              }
+            }
             const patch: any = {};
-            if (typeof args.new_title === "string" && args.new_title.trim()) patch.title = args.new_title.trim();
-            if (typeof args.new_content === "string" && args.new_content.trim()) patch.content = args.new_content.trim();
-            if (Array.isArray(args.new_tags)) patch.tags = args.new_tags;
-            if (Object.keys(patch).length === 0) return { result: { error: "Provide new_title and/or new_content" }, event: { name, summary: "Edit missing fields", ok: false } };
+            if (newTitle) patch.title = newTitle;
+            if (newContent) patch.content = newContent;
+            if (newTags) patch.tags = newTags;
             await updateEntry(targetId, patch);
             await setStatus("resolved");
             return { result: { ok: true }, event: { name, summary: `Edited entry ${action === "edit_a" ? "A" : "B"} and resolved`, ok: true } };
@@ -3099,8 +3207,32 @@ export async function executeChatTool(
           event: { name, summary: `Rendered ${blocks.length} block(s)${issues.length ? `, dropped ${issues.length}` : ""}`, ok: true },
         };
       }
+      case "get_memory_history": {
+        const id = String(args.entry_id || "");
+        if (!id) return { result: { error: "entry_id required" }, event: { name, summary: "Missing entry_id", ok: false } };
+        try {
+          const chain = await fetchEntryLineage(id);
+          if (!chain.length) return { result: { error: "Entry not found (or not yours)" }, event: { name, summary: "No lineage found", ok: false } };
+          const out = chain.map((v) => ({
+            entry_id: v.id,
+            title: v.title,
+            current: v.is_current,
+            believed_from: v.valid_from,
+            believed_until: v.valid_to,
+            reason_replaced: v.supersede_reason,
+            content: (v.content || "").slice(0, 500),
+          }));
+          return { result: out, event: { name, summary: `Memory history: ${out.length} version(s)`, ok: true } };
+        } catch (e) {
+          if (isMissingSupersessionSchema(e)) {
+            return { result: { error: SUPERSESSION_MIGRATION_MESSAGE }, event: { name, summary: "History unavailable — migration not applied", ok: false } };
+          }
+          throw e;
+        }
+      }
       case "create_memory_entry":
       case "update_memory_entry":
+      case "supersede_memory_entry":
       case "delete_memory_entry":
       case "link_memory_entries": {
         // Per-tool permission gate. Defaults to allowed.
@@ -3113,6 +3245,14 @@ export async function executeChatTool(
           return {
             result: { error: `Tool '${name}' is disabled in the user's AI permissions. Ask the user to enable it in Settings.` },
             event: { name, summary: `${name} blocked by user settings`, ok: false },
+          };
+        }
+        // Supersede is an update-class edit: the existing "Edit memory entries"
+        // toggle governs it too, so disabling edits disables both paths.
+        if (name === "supersede_memory_entry" && perms["update_memory_entry"] === false) {
+          return {
+            result: { error: "Memory editing is disabled in the user's AI permissions (Edit memory entries). Ask the user to enable it in Settings." },
+            event: { name, summary: "supersede blocked by user settings", ok: false },
           };
         }
 
@@ -3146,6 +3286,26 @@ export async function executeChatTool(
           if (error) throw error;
           try { window.dispatchEvent(new Event("knowledge-entries-changed")); } catch {}
           return { result: { ok: true, entry_id: data }, event: { name, summary: `Updated memory`, ok: true } };
+        }
+        if (name === "supersede_memory_entry") {
+          const oldId = String(args.old_entry_id || "");
+          const newContent = String(args.new_content || "").trim();
+          if (!oldId || !newContent) return { result: { error: "old_entry_id and new_content required" }, event: { name, summary: "Missing args", ok: false } };
+          try {
+            const newId = await supersedeKnowledgeEntry(oldId, {
+              title: typeof args.new_title === "string" && args.new_title.trim() ? args.new_title.trim() : null,
+              content: newContent,
+              tags: Array.isArray(args.new_tags) ? (args.new_tags as string[]) : undefined,
+              reason: typeof args.reason === "string" && args.reason.trim() ? args.reason.trim() : null,
+            });
+            try { window.dispatchEvent(new Event("knowledge-entries-changed")); } catch {}
+            return { result: { ok: true, new_entry_id: newId, superseded_entry_id: oldId }, event: { name, summary: "Superseded memory with corrected version (history kept)", ok: true } };
+          } catch (e) {
+            if (isMissingSupersessionSchema(e)) {
+              return { result: { error: `${SUPERSESSION_MIGRATION_MESSAGE} Until then, use update_memory_entry and tell the user the old version won't be kept.` }, event: { name, summary: "Supersede unavailable — migration not applied", ok: false } };
+            }
+            throw e;
+          }
         }
         if (name === "delete_memory_entry") {
           if (!args.entry_id) return { result: { error: "entry_id required" }, event: { name, summary: "Missing entry_id", ok: false } };

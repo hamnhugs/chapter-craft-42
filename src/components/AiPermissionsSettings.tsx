@@ -13,7 +13,8 @@ const GROUPS: { group: string; items: PermItem[] }[] = [
     group: "Memory (Neurons)",
     items: [
       { id: "create_memory_entry", label: "Create memory entries", description: "Let the AI add new notes to your active neuron." },
-      { id: "update_memory_entry", label: "Edit memory entries", description: "Let the AI rewrite existing entries." },
+      { id: "update_memory_entry", label: "Edit memory entries", description: "Let the AI rewrite existing entries (typo/phrasing fixes)." },
+      { id: "supersede_memory_entry", label: "Supersede memory entries", description: "Let the AI retire an outdated entry and write its corrected replacement, keeping the old version in history. Also disabled when editing is off." },
       { id: "delete_memory_entry", label: "Delete memory entries", description: "Let the AI permanently remove entries.", danger: true },
       { id: "link_memory_entries", label: "Link / unlink entries", description: "Let the AI create or remove relationships between entries." },
     ],

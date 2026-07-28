@@ -15,6 +15,10 @@ export interface KnowledgeEntry {
   retrieval_count?: number;
   valid_from: string | null;
   valid_to: string | null;
+  /** Supersession lineage (bitemporal_supersession migration): id of the entry
+   *  that replaced this one. NULL = this is the living version. */
+  superseded_by?: string | null;
+  supersede_reason?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -96,6 +100,16 @@ export async function fetchKnowledgeEntries(wikiId?: string | null): Promise<Kno
     if (error) throw error;
     return (data || []) as unknown as KnowledgeEntry[];
   }
+  // Unscoped view shows only LIVING entries (superseded ones live in history).
+  // Feature-detected: before the supersession migration the column doesn't
+  // exist (42703), so retry without the filter.
+  const live = await supabase
+    .from("knowledge_entries")
+    .select("*")
+    .is("superseded_by" as any, null)
+    .order("updated_at", { ascending: false });
+  if (!live.error) return (live.data || []) as unknown as KnowledgeEntry[];
+  if ((live.error as any)?.code !== "42703") throw live.error;
   const { data, error } = await supabase
     .from("knowledge_entries")
     .select("*")
@@ -602,6 +616,96 @@ export async function unbridgeEntryFromWiki(entryId: string, wikiId: string): Pr
     .eq("entry_id", entryId)
     .eq("wiki_id", wikiId);
   if (error) throw error;
+}
+
+// ── Bi-temporal supersession (VGMS 4D axis) ──────────────────────────────────
+// Backed by the bitemporal_supersession migration. Corrections retire the old
+// entry (valid_to + superseded_by + archived) and create the fixed one, so
+// history survives and "what did I believe before?" is answerable. All callers
+// feature-detect via isMissingSupersessionSchema and fall back to legacy
+// behavior until the migration is applied.
+
+export const SUPERSESSION_MIGRATION_MESSAGE =
+  "The history-preserving memory upgrade (migration 20260728000000_bitemporal_supersession) isn't applied to the database yet. Apply it via a Lovable-chat prompt or the SQL editor; until then edits fall back to the legacy overwrite/delete behavior.";
+
+/** True when an error means the supersession migration isn't applied yet
+ *  (missing column or missing RPC), as opposed to a real failure. */
+export function isMissingSupersessionSchema(err: unknown): boolean {
+  const code = (err as any)?.code || "";
+  const msg = ((err as any)?.message || String(err || "")).toLowerCase();
+  return (
+    code === "42703" ||   // column does not exist
+    code === "PGRST204" ||// PostgREST: unknown column on write
+    code === "42883" ||   // function does not exist
+    code === "PGRST202" ||// PostgREST: unknown RPC
+    (/supersede|superseded_by|entry_lineage/.test(msg) && /not exist|not find|schema cache|unknown/.test(msg))
+  );
+}
+
+/** Replace an outdated entry with a corrected one, preserving history.
+ *  Returns the new entry's id. `alsoSupersede` retires a second entry into the
+ *  same successor (conflict merges). */
+export async function supersedeKnowledgeEntry(
+  oldId: string,
+  updates: { title?: string | null; content: string; entry_type?: string | null; tags?: string[] | null; reason?: string | null; alsoSupersede?: string | null },
+): Promise<string> {
+  const { data, error } = await supabase.rpc("supersede_knowledge_entry" as any, {
+    _old_id: oldId,
+    _new_title: updates.title ?? null,
+    _new_content: updates.content,
+    _new_entry_type: updates.entry_type ?? null,
+    _new_tags: updates.tags ?? null,
+    _reason: updates.reason ?? null,
+    _also_supersede: updates.alsoSupersede ?? null,
+  } as any);
+  if (error) throw error;
+  return data as unknown as string;
+}
+
+export interface EntryLineageItem {
+  id: string;
+  title: string;
+  content: string;
+  entry_type: string | null;
+  valid_from: string | null;
+  valid_to: string | null;
+  superseded_by: string | null;
+  supersede_reason: string | null;
+  is_current: boolean;
+  depth: number;
+}
+
+/** Full supersession chain through an entry: ancestors (depth < 0), the entry
+ *  itself (0), successors (> 0). Ordered oldest belief first. */
+export async function fetchEntryLineage(entryId: string): Promise<EntryLineageItem[]> {
+  const { data, error } = await supabase.rpc("entry_lineage" as any, { _entry_id: entryId } as any);
+  if (error) throw error;
+  return (data || []) as unknown as EntryLineageItem[];
+}
+
+/** Drop superseded/expired entries from a retrieval result. The deployed
+ *  knowledge edge functions predate supersession and may still match retired
+ *  rows — this client-side pass enforces "current truth only" in the prompt.
+ *  Pre-migration (or on any error) it returns the input unchanged. */
+export async function filterSupersededNodes<T extends { id: string }>(nodes: T[]): Promise<T[]> {
+  if (nodes.length === 0) return nodes;
+  try {
+    const { data, error } = await supabase
+      .from("knowledge_entries")
+      .select("id, superseded_by, valid_to" as any)
+      .in("id", nodes.map((n) => n.id));
+    if (error || !data) return nodes;
+    const nowMs = Date.now();
+    const dead = new Set(
+      (data as any[])
+        .filter((r) => r.superseded_by != null || (r.valid_to != null && new Date(r.valid_to).getTime() <= nowMs))
+        .map((r) => r.id as string),
+    );
+    if (dead.size === 0) return nodes;
+    return nodes.filter((n) => !dead.has(n.id));
+  } catch {
+    return nodes;
+  }
 }
 
 export async function createWikiPointerEntry(input: {
