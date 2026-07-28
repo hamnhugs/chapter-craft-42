@@ -863,6 +863,8 @@ export type Database = {
           source_book_id: string | null
           storage_strength: number
           subject: string | null
+          supersede_reason: string | null
+          superseded_by: string | null
           surprise: number | null
           tags: string[]
           title: string
@@ -899,6 +901,8 @@ export type Database = {
           source_book_id?: string | null
           storage_strength?: number
           subject?: string | null
+          supersede_reason?: string | null
+          superseded_by?: string | null
           surprise?: number | null
           tags?: string[]
           title: string
@@ -935,6 +939,8 @@ export type Database = {
           source_book_id?: string | null
           storage_strength?: number
           subject?: string | null
+          supersede_reason?: string | null
+          superseded_by?: string | null
           surprise?: number | null
           tags?: string[]
           title?: string
@@ -959,6 +965,13 @@ export type Database = {
             columns: ["source_book_id"]
             isOneToOne: false
             referencedRelation: "books"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "knowledge_entries_superseded_by_fkey"
+            columns: ["superseded_by"]
+            isOneToOne: false
+            referencedRelation: "knowledge_entries"
             referencedColumns: ["id"]
           },
           {
@@ -2362,6 +2375,8 @@ export type Database = {
           source_book_id: string | null
           storage_strength: number
           subject: string | null
+          supersede_reason: string | null
+          superseded_by: string | null
           surprise: number | null
           tags: string[]
           title: string
@@ -2379,6 +2394,21 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      entry_lineage: {
+        Args: { _entry_id: string }
+        Returns: {
+          content: string
+          depth: number
+          entry_type: string
+          id: string
+          is_current: boolean
+          supersede_reason: string
+          superseded_by: string
+          title: string
+          valid_from: string
+          valid_to: string
+        }[]
       }
       find_contradictions: {
         Args: { entry_id: string }
@@ -2554,6 +2584,18 @@ export type Database = {
           similarity: number
           wiki_id: string
         }[]
+      }
+      supersede_knowledge_entry: {
+        Args: {
+          _also_supersede?: string
+          _new_content?: string
+          _new_entry_type?: string
+          _new_tags?: string[]
+          _new_title?: string
+          _old_id: string
+          _reason?: string
+        }
+        Returns: string
       }
     }
     Enums: {
