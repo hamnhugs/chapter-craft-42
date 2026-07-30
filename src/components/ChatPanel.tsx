@@ -45,17 +45,22 @@ const ChatPanel: React.FC = () => {
   const isMobile = useIsMobile();
   const {
     apiKey, savedModels, selectedModel, voiceModel, autoReadReplies, burplexityApiToken, accessAllNeurons, loaded,
+    handsFreeTtsRate,
     setSelectedModel, setAutoReadReplies,
   } = useChatSettings();
   const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort, loadEarlier, hasEarlier, loadingEarlier } = useChat();
   const { isPaid } = usePlan();
-  const { speakingId, speak, stop: stopSpeaking } = useReadAloud();
+  const { speakingId, speak, stop: stopSpeaking, pause: pauseSpeaking, resume: resumeSpeaking, isAudioActive } = useReadAloud();
   // Configured in the Settings tab; re-read here on mount (tab switches remount this panel).
   const [bargeInEnabled] = useState(() => localStorage.getItem("hands_free_barge_in") === "true");
   const handsFree = useHandsFree({
     onUtterance: (text) => sendMessage(text, { voiceMode: true, modelOverride: voiceModel || undefined }),
-    speak: (text, opts) => speak(text, opts),
+    // Hands-free has its own speech speed (read-aloud buttons keep ttsRate).
+    speak: (text, opts) => speak(text, { ...opts, rate: handsFreeTtsRate || undefined }),
     stopSpeaking,
+    pauseSpeaking,
+    resumeSpeaking,
+    isAudioActive,
     bargeIn: bargeInEnabled,
   });
 
@@ -266,13 +271,18 @@ const ChatPanel: React.FC = () => {
 
   useEffect(() => {
     if (!autoReadReplies || isLoading) return;
-    if (handsFree.active) return; // hands-free speaks replies itself — don't double up
     const last = messages[messages.length - 1];
     if (!last || last.role !== "assistant") return;
     const id = last.id || `chat-${messages.length - 1}`;
     if (autoReadRef.current.lastId === id) return;
     if (!last.content || !last.content.trim()) return;
+    // Mark the reply consumed UNCONDITIONALLY — before the hands-free guard.
+    // Recording lastId only when this effect spoke meant a reply spoken BY
+    // hands-free was never marked, so toggling hands-free off re-ran this
+    // effect (handsFree.active is a dependency) and re-spoke the whole reply
+    // from sentence one.
     autoReadRef.current.lastId = id;
+    if (handsFree.active) return; // hands-free speaks replies itself — don't double up
     speak(last.content, { id: `chat-${last.id || messages.length - 1}` });
   }, [messages, isLoading, autoReadReplies, speak, handsFree.active]);
 
@@ -495,7 +505,7 @@ const ChatPanel: React.FC = () => {
     if (messages.length < 2) { toast.error("Nothing to digest yet"); return; }
     setDigesting(true);
     try {
-      const reply = await sendMessage(DIGEST_PROMPTS[format]);
+      const reply = await sendMessage(DIGEST_PROMPTS[format], { capExempt: true });
       // Speak it unless a reply is already being spoken (auto-read / hands-free).
       if (reply && reply.trim() && !autoReadReplies && !handsFree.active) {
         speak(reply, { id: `digest-${Date.now()}` });

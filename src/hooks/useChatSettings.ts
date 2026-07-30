@@ -26,6 +26,9 @@ interface ChatSettings {
   inworldVoiceId: string;
   /** When true (paid feature), chat retrieval draws on every neuron instead of only the active one. */
   accessAllNeurons: boolean;
+  /** Hard cap on sentences per assistant reply (0 = off). Enforced by prompt
+   *  steering + stream truncation in ChatContext; Digest/Deep Research exempt. */
+  maxReplySentences: number;
   /** Optional override model used for chat turns that include image attachments. Falls back to selectedModel if empty. */
   visionModel: string;
   /** Vision model that describes figures extracted from uploaded documents. "" = built-in default. */
@@ -78,6 +81,7 @@ const defaults: ChatSettings = {
   inworldEnabled: false,
   inworldVoiceId: "",
   accessAllNeurons: false,
+  maxReplySentences: 0,
   visionModel: "",
   imageExtractionModel: "",
   autoExtractFigures: true,
@@ -179,6 +183,9 @@ function rowToSettings(data: any): ChatSettings {
     inworldEnabled: !!data.inworld_enabled,
     inworldVoiceId: data.inworld_voice_id || "",
     accessAllNeurons: !!data.access_all_neurons,
+    maxReplySentences: typeof data.max_reply_sentences === "number" && data.max_reply_sentences > 0
+      ? Math.min(12, Math.floor(data.max_reply_sentences))
+      : 0,
     visionModel: data.vision_model || "",
     imageExtractionModel: data.image_extraction_model || "",
     autoExtractFigures: data.auto_extract_figures !== false,
@@ -260,6 +267,7 @@ function persistSettings(userId: string, next: ChatSettings) {
       inworld_enabled: next.inworldEnabled,
       inworld_voice_id: next.inworldVoiceId || "",
       access_all_neurons: next.accessAllNeurons,
+      max_reply_sentences: next.maxReplySentences || 0,
       vision_model: next.visionModel || null,
       image_extraction_model: next.imageExtractionModel || null,
       auto_extract_figures: next.autoExtractFigures,
@@ -298,7 +306,7 @@ function persistSettings(userId: string, next: ChatSettings) {
     // column and retry so one new column never breaks every settings save.
     // PostgREST reports ONE missing column per attempt (alphabetically
     // first), so keep retrying until no optional column is named.
-    const optionalColumns = ["access_all_neurons", "image_extraction_model", "auto_extract_figures",
+    const optionalColumns = ["access_all_neurons", "max_reply_sentences", "image_extraction_model", "auto_extract_figures",
       "video_model_primary", "saved_video_models", "video_default_duration", "video_default_resolution",
       "video_default_aspect", "video_generate_audio", "video_confirm_threshold",
       "video_identity_scale", "video_qc_enabled", "video_motion_model",
@@ -385,6 +393,7 @@ export function useChatSettings() {
     setInworldEnabled: (v: boolean) => update({ inworldEnabled: v }),
     setInworldVoiceId: (v: string) => update({ inworldVoiceId: v }),
     setAccessAllNeurons: (v: boolean) => update({ accessAllNeurons: v }),
+    setMaxReplySentences: (n: number) => update({ maxReplySentences: Math.max(0, Math.min(12, Math.floor(Number(n) || 0))) }),
     setVisionModel: (m: string) => update({ visionModel: m }),
     setImageExtractionModel: (m: string) => update({ imageExtractionModel: m }),
     setAutoExtractFigures: (v: boolean) => update({ autoExtractFigures: v }),

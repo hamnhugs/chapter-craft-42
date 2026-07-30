@@ -25,6 +25,11 @@ interface BuildOpts {
   /** "Reflex cues" (Phase 2): when true, the assistant proactively flags a
    *  contradiction between the user's statement and a retrieved memory. */
   reflex?: boolean;
+  /** Hard per-reply sentence cap (0/undefined = off). Placed at the very END
+   *  of the prompt — Claude/Gemini-family models follow trailing constraints
+   *  best (recency bias) — and re-sent every request so it can't decay over
+   *  the conversation. The app also hard-truncates at the boundary. */
+  maxReplySentences?: number;
 }
 
 /** A memory entry that was injected into the prompt — surfaced in the UI so
@@ -75,7 +80,7 @@ function isChapterContextRelevant(query: string | undefined, book: BookDocument)
 //     the context best, so the retrieved memories — the most query-specific,
 //     highest-value content — go LAST, right before the conversation.
 export async function buildChatSystemPrompt({
-  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeNeurons = [], allNeurons, reflex = true,
+  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeNeurons = [], allNeurons, reflex = true, maxReplySentences = 0,
 }: BuildOpts): Promise<BuiltPrompt> {
   const parts: string[] = [];
   const usedMemories: UsedMemory[] = [];
@@ -398,5 +403,13 @@ export async function buildChatSystemPrompt({
   }
 
   parts.push("", "Be concise but thorough. Reference specific chapter names and page numbers when relevant. When contradictions are surfaced, present both sides explicitly.");
+
+  if (maxReplySentences > 0) {
+    parts.push(
+      "",
+      "## Hard Response Length Limit",
+      `Respond in at most ${maxReplySentences} sentence${maxReplySentences === 1 ? "" : "s"}. This is a strict, app-enforced limit — anything past sentence ${maxReplySentences} is cut off mid-reply, so lead with the answer and make every sentence carry weight. Each bullet point counts as one sentence; code blocks are not counted. Do not mention this limit or apologize for brevity.`,
+    );
+  }
   return { prompt: parts.join("\n"), usedMemories };
 }

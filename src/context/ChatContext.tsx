@@ -7,6 +7,7 @@ import { usePlan } from "@/hooks/usePlan";
 import { computeLockedWikiIds } from "@/lib/neuronAccess";
 import { usePromptPresets } from "@/hooks/usePromptPresets";
 import { buildChatSystemPrompt, type UsedMemory } from "@/lib/buildChatSystemPrompt";
+import { findSentenceCapIndex, truncateAtSentenceCap } from "@/lib/sentenceCap";
 import { isReflexEnabled } from "@/lib/reflex";
 import { CHAT_TOOL_DEFINITIONS, executeChatTool, ToolEvent } from "@/lib/chatTools";
 import type { ChatImageRef } from "@/lib/imageGen";
@@ -57,6 +58,9 @@ interface SendOpts {
   modelOverride?: string;
   /** Called on every streamed delta with the cumulative assistant text. */
   onDelta?: (fullText: string) => void;
+  /** Skip the user's max-sentences cap for this send (Digest — explicitly
+   *  long-form). Deep Research turns are exempted automatically. */
+  capExempt?: boolean;
   /** Image attachments to send with this turn (multimodal user content).
    *  `ref` is the image_attachments row created at send time — it makes the
    *  upload a first-class library image the assistant can act on, and is
@@ -156,7 +160,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { user } = useAuth();
   const { books, activeBookId, activeWiki, activeWikiId, activeWikis, wikis, addChapter, updateChapter, removeChapter, setActiveBookSilent } = useApp();
 
-  const { apiKey, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, visionModel, imageModelPrimary, imageModelFallback,
+  const { apiKey, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, maxReplySentences, visionModel, imageModelPrimary, imageModelFallback,
     videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold,
     videoIdentityScale, videoQcEnabled, videoMotionModel,
     falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback } = useChatSettings();
@@ -539,6 +543,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const deepResearch = (isVoice ? voiceDeepResearch : chatDeepResearch) && isPaid;
       const scopedPromptBody = getActiveBodyForScope(isVoice ? "voice" : "chat");
       const promptToInject = scopedPromptBody || customSystemPrompt;
+      // Hard per-reply sentence cap (user setting; 0 = off). Digest passes
+      // capExempt and Deep Research turns are exempt — both are long-form by
+      // request. Enforced three ways: prompt steering (below), a streaming
+      // abort at the boundary, and a final truncation invariant pre-persist.
+      const sentenceCap = !opts?.capExempt && !deepResearch && maxReplySentences > 0 ? maxReplySentences : 0;
 
       // Neuron scope: by default the AI reads ONLY the active neuron. The
       // "Access all neurons" toggle widens that — paid plans only. The same
@@ -562,6 +571,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         activeNeurons,
         allNeurons,
         reflex: isReflexEnabled(),
+        maxReplySentences: sentenceCap,
       });
 
       // Sliding window: replace messages older than the window with the
@@ -605,6 +615,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const turnVideos: ChatVideoRef[] = [];
       const turnSplats: ChatSplatRef[] = [];
       let assistantText = "";
+      // Sentence-cap segment anchor: the cap applies to each tool-iteration's
+      // PROSE segment (text after the previous tool round), so capping the
+      // model's pre-tool narration can never swallow its post-tool answer.
+      let capSegStart = 0;
       // The streaming bubble carries its DB id from birth and every update
       // targets it BY ID — never "the last assistant message". With realtime
       // on, a turn finishing on another device appends a bubble at the end
@@ -652,6 +666,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       try {
         for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+          capSegStart = assistantText.length;
           const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
             headers: {
@@ -685,6 +700,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           let iterText = "";
           const toolCallAcc: Record<number, { id?: string; name?: string; args: string }> = {};
           let finishReason: string | null = null;
+          // Cap state for THIS iteration: once the cut lands the prose is
+          // frozen but the stream keeps draining — models narrate BEFORE
+          // emitting tool calls, and cancelling at the cut used to silently
+          // kill the very action the narration promised.
+          let iterCapped = false;
+          let capDrops = 0; // content deltas discarded since the cut
 
           while (true) {
             const { done, value } = await reader.read();
@@ -703,10 +724,27 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 const choice = parsed.choices?.[0];
                 const delta = choice?.delta;
                 if (delta?.content) {
-                  iterText += delta.content;
-                  assistantText += delta.content;
-                  updateAssistant();
-                  try { opts?.onDelta?.(assistantText); } catch {}
+                  if (iterCapped) {
+                    // Past the cut: discard beyond-cap prose but keep draining
+                    // so any tool calls behind the narration still arrive.
+                    capDrops++;
+                  } else {
+                    iterText += delta.content;
+                    assistantText += delta.content;
+                    // Sentence cap on this iteration's prose segment — check
+                    // only at possible boundaries, never once tool deltas
+                    // have started streaming.
+                    if (sentenceCap > 0 && Object.keys(toolCallAcc).length === 0 && /[.!?…。！？\n]/.test(delta.content)) {
+                      const cut = findSentenceCapIndex(iterText, sentenceCap, { streaming: true });
+                      if (cut !== null) {
+                        iterCapped = true;
+                        iterText = iterText.slice(0, cut).trimEnd();
+                        assistantText = assistantText.slice(0, capSegStart) + iterText;
+                      }
+                    }
+                    updateAssistant();
+                    try { opts?.onDelta?.(assistantText); } catch {}
+                  }
                 }
                 if (delta?.tool_calls && Array.isArray(delta.tool_calls)) {
                   for (const tc of delta.tool_calls) {
@@ -721,6 +759,17 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               } catch {
               }
             }
+            // Cost valve: ~40 dropped prose deltas after the cut with ZERO
+            // tool activity ⇒ provably a prose-only reply — stop paying for
+            // it. (Any tool delta present ⇒ drain to the natural end.)
+            if (iterCapped && capDrops >= 40 && Object.keys(toolCallAcc).length === 0) break;
+          }
+
+          if (iterCapped && capDrops >= 40 && Object.keys(toolCallAcc).length === 0) {
+            // Capped prose-only reply: cancel the stream, then fall through
+            // to the normal persistence/summary path with the frozen text.
+            try { void reader.cancel(); } catch { /* stream already closed */ }
+            break;
           }
 
           const toolCalls = Object.values(toolCallAcc).filter((t) => t.name);
@@ -832,6 +881,20 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           updateAssistant();
         }
 
+        // Cap invariant: the FINAL prose segment (text after the last tool
+        // round; the whole reply when no tools ran) is truncated at the cap
+        // boundary before persisting — even if it streamed too fast for the
+        // freeze to land. Earlier segments were already frozen as they
+        // streamed, so persisted === shown === summarized === spoken.
+        if (sentenceCap > 0 && assistantText.length > capSegStart) {
+          const seg = assistantText.slice(capSegStart);
+          const capped = truncateAtSentenceCap(seg, sentenceCap);
+          if (capped !== seg) {
+            assistantText = assistantText.slice(0, capSegStart) + capped;
+            updateAssistant();
+          }
+        }
+
         if (assistantText || turnImages.length > 0 || turnVideos.length > 0 || turnSplats.length > 0) {
           // The bubble already carries assistantId — the realtime echo of this
           // insert dedupes against it by id.
@@ -930,7 +993,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
       }
     },
-    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
+    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
   );
 
 

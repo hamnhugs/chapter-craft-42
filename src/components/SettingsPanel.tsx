@@ -145,11 +145,12 @@ const SettingsPanel: React.FC = () => {
   const { themeId, setThemeId, themes } = useTheme();
   const {
     apiKey, savedModels, selectedModel, deepResearchModel, voiceModel, visionModel, ttsRate,
+    handsFreeTtsRate, maxReplySentences,
     autoReadReplies, wikiModel, customSystemPrompt, burplexityApiToken,
     inworldApiKey, inworldEnabled, inworldVoiceId, accessAllNeurons, loaded,
     imageExtractionModel, autoExtractFigures,
     saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel,
-    setVoiceModel, setVisionModel, setTtsRate, setAutoReadReplies, setWikiModel,
+    setVoiceModel, setVisionModel, setTtsRate, setHandsFreeTtsRate, setMaxReplySentences, setAutoReadReplies, setWikiModel,
     setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey,
     setInworldEnabled, setInworldVoiceId, setAccessAllNeurons,
     setImageExtractionModel, setAutoExtractFigures,
@@ -439,6 +440,15 @@ const SettingsPanel: React.FC = () => {
                 </div>
               </div>
               <div>
+                <FieldLabel right={<span className="text-primary normal-case tracking-normal">{handsFreeTtsRate.toFixed(2)}×</span>}>
+                  Hands-Free Speech Speed
+                </FieldLabel>
+                <div className="bg-surface-container-high rounded-lg py-3 px-4 border border-outline-variant/10 mt-1.5">
+                  <Slider value={[handsFreeTtsRate]} min={0.5} max={2} step={0.05} onValueChange={(v) => setHandsFreeTtsRate(v[0])} />
+                </div>
+                <Hint>Speed for hands-free conversations only — read-aloud buttons use the speed above.</Hint>
+              </div>
+              <div>
                 <FieldLabel>Inworld Voice (TTS upgrade)</FieldLabel>
                 <div className="mt-1.5 space-y-2">
                   <ToggleRow
@@ -719,6 +729,47 @@ const SettingsPanel: React.FC = () => {
                     <Button size="sm" variant="destructive" onClick={() => { setCustomSystemPrompt(""); setPromptDraft(""); toast.success("Cleared"); }}>Clear</Button>
                   )}
                 </div>
+              </div>
+              <div>
+                <FieldLabel
+                  right={maxReplySentences > 0
+                    ? <span className="text-primary normal-case tracking-normal">≈{maxReplySentences * 7}s of speech</span>
+                    : undefined}
+                >
+                  Max Sentences Per Reply
+                </FieldLabel>
+                <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                  {[
+                    { label: "Off", v: 0 },
+                    { label: "Concise · 2", v: 2 },
+                    { label: "Normal · 4", v: 4 },
+                    { label: "Detailed · 8", v: 8 },
+                  ].map((p) => (
+                    <Button
+                      key={p.label}
+                      size="sm"
+                      variant={maxReplySentences === p.v ? "default" : "outline"}
+                      onClick={() => setMaxReplySentences(p.v)}
+                      aria-pressed={maxReplySentences === p.v}
+                    >
+                      {p.label}
+                    </Button>
+                  ))}
+                  <div className="flex items-center gap-1.5">
+                    <Input
+                      type="number"
+                      min={1}
+                      max={12}
+                      value={maxReplySentences || ""}
+                      placeholder="—"
+                      onChange={(e) => setMaxReplySentences(Number(e.target.value) || 0)}
+                      className="w-16 h-8 bg-surface-container-high border-none text-sm"
+                      aria-label="Custom max sentences per reply (1-12)"
+                    />
+                    <span className="text-[10px] text-on-surface-variant">custom 1–12</span>
+                  </div>
+                </div>
+                <Hint>A hard limit — the reply is cut at the last full sentence and generation stops there (shorter = cheaper). Bullets count as sentences; code blocks don't. Digest and Deep Research are exempt.</Hint>
               </div>
             </Section>
 
