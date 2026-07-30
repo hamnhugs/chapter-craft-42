@@ -65,6 +65,88 @@ export type Database = {
         }
         Relationships: []
       }
+      agent_tools: {
+        Row: {
+          code: string
+          created_at: string
+          description: string
+          disabled_by_user: boolean
+          entry_id: string | null
+          fail_count: number
+          id: string
+          last_run_at: string | null
+          manifest: Json
+          name: string
+          root_id: string | null
+          run_count: number
+          status: string
+          superseded_by: string | null
+          tests: Json
+          user_id: string
+          version: number
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          description?: string
+          disabled_by_user?: boolean
+          entry_id?: string | null
+          fail_count?: number
+          id?: string
+          last_run_at?: string | null
+          manifest?: Json
+          name: string
+          root_id?: string | null
+          run_count?: number
+          status?: string
+          superseded_by?: string | null
+          tests?: Json
+          user_id: string
+          version?: number
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          description?: string
+          disabled_by_user?: boolean
+          entry_id?: string | null
+          fail_count?: number
+          id?: string
+          last_run_at?: string | null
+          manifest?: Json
+          name?: string
+          root_id?: string | null
+          run_count?: number
+          status?: string
+          superseded_by?: string | null
+          tests?: Json
+          user_id?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_tools_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_tools_root_id_fkey"
+            columns: ["root_id"]
+            isOneToOne: false
+            referencedRelation: "agent_tools"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_tools_superseded_by_fkey"
+            columns: ["superseded_by"]
+            isOneToOne: false
+            referencedRelation: "agent_tools"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       announcement_receipts: {
         Row: {
           acknowledged_at: string | null
@@ -564,6 +646,11 @@ export type Database = {
           page: number | null
           phash: string | null
           prompt: string
+          recall_last_session: string | null
+          recall_last_shown_at: string | null
+          recall_requested_count: number
+          recall_shown_count: number
+          recall_suppressed: boolean
           source_image_id: string | null
           storage_path: string
           user_id: string
@@ -580,6 +667,11 @@ export type Database = {
           page?: number | null
           phash?: string | null
           prompt?: string
+          recall_last_session?: string | null
+          recall_last_shown_at?: string | null
+          recall_requested_count?: number
+          recall_shown_count?: number
+          recall_suppressed?: boolean
           source_image_id?: string | null
           storage_path: string
           user_id: string
@@ -596,6 +688,11 @@ export type Database = {
           page?: number | null
           phash?: string | null
           prompt?: string
+          recall_last_session?: string | null
+          recall_last_shown_at?: string | null
+          recall_requested_count?: number
+          recall_shown_count?: number
+          recall_suppressed?: boolean
           source_image_id?: string | null
           storage_path?: string
           user_id?: string
@@ -1480,6 +1577,82 @@ export type Database = {
         }
         Relationships: []
       }
+      tool_approvals: {
+        Row: {
+          approved_at: string
+          id: string
+          sha256: string
+          tool_id: string
+          user_id: string
+        }
+        Insert: {
+          approved_at?: string
+          id?: string
+          sha256: string
+          tool_id: string
+          user_id: string
+        }
+        Update: {
+          approved_at?: string
+          id?: string
+          sha256?: string
+          tool_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tool_approvals_tool_id_fkey"
+            columns: ["tool_id"]
+            isOneToOne: false
+            referencedRelation: "agent_tools"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tool_runs: {
+        Row: {
+          capability_calls: Json
+          created_at: string
+          error: string | null
+          id: string
+          ms: number | null
+          sha256: string | null
+          status: string
+          tool_id: string | null
+          user_id: string
+        }
+        Insert: {
+          capability_calls?: Json
+          created_at?: string
+          error?: string | null
+          id?: string
+          ms?: number | null
+          sha256?: string | null
+          status?: string
+          tool_id?: string | null
+          user_id: string
+        }
+        Update: {
+          capability_calls?: Json
+          created_at?: string
+          error?: string | null
+          id?: string
+          ms?: number | null
+          sha256?: string | null
+          status?: string
+          tool_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tool_runs_tool_id_fkey"
+            columns: ["tool_id"]
+            isOneToOne: false
+            referencedRelation: "agent_tools"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_roles: {
         Row: {
           created_at: string
@@ -1506,8 +1679,10 @@ export type Database = {
           access_all_neurons: boolean
           active_wiki_id: string | null
           active_wiki_ids: string[]
+          auto_approve_tool_updates: boolean
           auto_extract_figures: boolean
           auto_read_replies: boolean
+          auto_show_memory_images: boolean
           burplexity_api_token: string | null
           chat_tool_permissions: Json
           created_at: string
@@ -1563,8 +1738,10 @@ export type Database = {
           access_all_neurons?: boolean
           active_wiki_id?: string | null
           active_wiki_ids?: string[]
+          auto_approve_tool_updates?: boolean
           auto_extract_figures?: boolean
           auto_read_replies?: boolean
+          auto_show_memory_images?: boolean
           burplexity_api_token?: string | null
           chat_tool_permissions?: Json
           created_at?: string
@@ -1620,8 +1797,10 @@ export type Database = {
           access_all_neurons?: boolean
           active_wiki_id?: string | null
           active_wiki_ids?: string[]
+          auto_approve_tool_updates?: boolean
           auto_extract_figures?: boolean
           auto_read_replies?: boolean
+          auto_show_memory_images?: boolean
           burplexity_api_token?: string | null
           chat_tool_permissions?: Json
           created_at?: string
@@ -2272,6 +2451,10 @@ export type Database = {
           visits: number
         }[]
       }
+      approve_tool: {
+        Args: { p_expected_sha256: string; p_tool_id: string }
+        Returns: Json
+      }
       claim_next_ingest_job: {
         Args: { _user_id: string }
         Returns: {
@@ -2600,6 +2783,7 @@ export type Database = {
         }
         Returns: string
       }
+      tool_fingerprint: { Args: { p_tool_id: string }; Returns: string }
     }
     Enums: {
       app_role: "admin" | "user"
