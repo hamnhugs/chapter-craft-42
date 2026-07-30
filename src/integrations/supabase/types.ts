@@ -1528,6 +1528,7 @@ export type Database = {
           is_recording_mode: boolean
           library_ingest_auto_file: boolean
           library_ingest_model: string | null
+          max_reply_sentences: number | null
           openrouter_api_key: string | null
           saved_image_models: Json
           saved_models: Json | null
@@ -1584,6 +1585,7 @@ export type Database = {
           is_recording_mode?: boolean
           library_ingest_auto_file?: boolean
           library_ingest_model?: string | null
+          max_reply_sentences?: number | null
           openrouter_api_key?: string | null
           saved_image_models?: Json
           saved_models?: Json | null
@@ -1640,6 +1642,7 @@ export type Database = {
           is_recording_mode?: boolean
           library_ingest_auto_file?: boolean
           library_ingest_model?: string | null
+          max_reply_sentences?: number | null
           openrouter_api_key?: string | null
           saved_image_models?: Json
           saved_models?: Json | null
