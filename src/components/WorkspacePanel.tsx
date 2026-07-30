@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { safeUrlTransform, safeMarkdownComponents } from "@/lib/markdownSafety";
 import { toast } from "sonner";
 import { buildArtifactDoc, type Artifact } from "@/lib/artifacts";
 import {
@@ -185,7 +186,7 @@ const WorkspacePanel: React.FC<{
           {selected.kind === "research" ? (
             <div className="flex-1 min-h-0 overflow-auto px-4 py-3">
               <div className="prose prose-sm prose-invert max-w-none break-words">
-                <ReactMarkdown>{selected.content}</ReactMarkdown>
+                <ReactMarkdown urlTransform={safeUrlTransform} components={safeMarkdownComponents}>{selected.content}</ReactMarkdown>
               </div>
               {selected.meta?.citations && selected.meta.citations.length > 0 && (
                 <div className="mt-4 pt-3 border-t border-outline-variant/10">

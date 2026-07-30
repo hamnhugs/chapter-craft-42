@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { safeUrlTransform, safeMarkdownComponents } from "@/lib/markdownSafety";
 import {
   ResponsiveContainer, BarChart, Bar, LineChart, Line, AreaChart, Area,
   PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -12,7 +13,7 @@ import type { ResponseBlock } from "@/lib/responseBlocks";
 const PALETTE = ["#7C3AED", "#06B6D4", "#F59E0B", "#EF4444", "#10B981", "#6366F1"];
 
 const Md: React.FC<{ children: string }> = ({ children }) => (
-  <div className="prose prose-sm prose-invert max-w-none [&_p]:my-1"><ReactMarkdown>{children}</ReactMarkdown></div>
+  <div className="prose prose-sm prose-invert max-w-none [&_p]:my-1"><ReactMarkdown urlTransform={safeUrlTransform} components={safeMarkdownComponents}>{children}</ReactMarkdown></div>
 );
 
 const CALLOUT_STYLES: Record<string, { wrap: string; icon: string; symbol: string }> = {

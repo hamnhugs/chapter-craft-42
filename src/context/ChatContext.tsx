@@ -7,9 +7,11 @@ import { usePlan } from "@/hooks/usePlan";
 import { computeLockedWikiIds } from "@/lib/neuronAccess";
 import { usePromptPresets } from "@/hooks/usePromptPresets";
 import { buildChatSystemPrompt, type UsedMemory } from "@/lib/buildChatSystemPrompt";
+import { lensVerdict, type MemoryImageCandidate } from "@/lib/memoryLens";
 import { findSentenceCapIndex, truncateAtSentenceCap } from "@/lib/sentenceCap";
 import { isReflexEnabled } from "@/lib/reflex";
-import { CHAT_TOOL_DEFINITIONS, executeChatTool, ToolEvent } from "@/lib/chatTools";
+import { CHAT_TOOL_DEFINITIONS, executeChatTool, ToolEvent, type ToolProposal } from "@/lib/chatTools";
+import { foundryAvailable } from "@/lib/toolFoundry";
 import type { ChatImageRef } from "@/lib/imageGen";
 import type { ChatVideoRef } from "@/lib/videoGen";
 import type { ChatSplatRef } from "@/lib/splatGen";
@@ -38,6 +40,12 @@ export interface ChatMessage {
   /** Generated/recalled images rendered inline in the bubble (from the
    *  generate_image / edit_image / show_image tools). */
   images?: ChatImageRef[];
+  /** Memory Lens: repeat-recall images collapsed to tappable chips under the
+   *  bubble (ephemeral — chips are re-derived from recall state, not synced). */
+  memoryImageChips?: MemoryImageCandidate[];
+  /** Tool Foundry: drafted tools awaiting approval — rendered as approval
+   *  cards (ephemeral; Settings → Tool Foundry is the canonical surface). */
+  toolProposals?: ToolProposal[];
   /** Generated video clips rendered inline in the bubble (from the
    *  generate_video / show_video tools). Each resolves live via its job_id. */
   videos?: ChatVideoRef[];
@@ -160,7 +168,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { user } = useAuth();
   const { books, activeBookId, activeWiki, activeWikiId, activeWikis, wikis, addChapter, updateChapter, removeChapter, setActiveBookSilent } = useApp();
 
-  const { apiKey, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, maxReplySentences, visionModel, imageModelPrimary, imageModelFallback,
+  const { apiKey, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, maxReplySentences, autoShowMemoryImages, chatToolPermissions, visionModel, imageModelPrimary, imageModelFallback,
     videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold,
     videoIdentityScale, videoQcEnabled, videoMotionModel,
     falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback } = useChatSettings();
@@ -169,6 +177,20 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  // Tool Foundry gating: OPT-IN (perms === true, inverted from the app's
+  // default-allow convention) AND the migration must exist. When either is
+  // false the foundry tools are omitted from the model's roster entirely —
+  // the model can't attempt what it can't see, so pre-migration there is no
+  // mid-chat refusal nagging.
+  const foundryOptIn = chatToolPermissions?.forge_tool === true || chatToolPermissions?.run_tool === true;
+  const [foundryReady, setFoundryReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    if (!foundryOptIn) { setFoundryReady(false); return; }
+    foundryAvailable().then((ok) => { if (alive) setFoundryReady(ok); });
+    return () => { alive = false; };
+  }, [foundryOptIn]);
+  const foundryEnabled = foundryOptIn && foundryReady;
   const [chatDeepResearch, setChatDeepResearch] = useState<boolean>(() =>
     typeof window !== "undefined" && localStorage.getItem("chat_deep_research") === "1");
   const [voiceDeepResearch, setVoiceDeepResearch] = useState<boolean>(() =>
@@ -561,7 +583,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const activeNeurons = (activeWikis.length > 0 ? activeWikis : activeWiki ? [activeWiki] : [])
         .map((w) => ({ id: w.id, name: lockedIds.has(w.id) ? "" : w.name }));
 
-      const { prompt: systemPrompt, usedMemories } = await buildChatSystemPrompt({
+      const { prompt: systemPrompt, usedMemories, memoryImages } = await buildChatSystemPrompt({
         books,
         selectedBook,
         deepResearch,
@@ -572,6 +594,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         allNeurons,
         reflex: isReflexEnabled(),
         maxReplySentences: sentenceCap,
+        foundryTools: foundryEnabled,
       });
 
       // Sliding window: replace messages older than the window with the
@@ -614,6 +637,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const turnImages: ChatImageRef[] = [];
       const turnVideos: ChatVideoRef[] = [];
       const turnSplats: ChatSplatRef[] = [];
+      // Memory Lens chips for this reply (repeat-recall images, collapsed) —
+      // filled after the stream completes, read by updateAssistant.
+      let lensChipsHolder: MemoryImageCandidate[] | undefined;
+      // Tool Foundry proposals forged this turn (approval cards).
+      const turnToolProposals: ToolProposal[] = [];
       let assistantText = "";
       // Sentence-cap segment anchor: the cap applies to each tool-iteration's
       // PROSE segment (text after the previous tool round), so capping the
@@ -638,6 +666,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 images: turnImages.length > 0 ? [...turnImages] : copy[i].images,
                 videos: turnVideos.length > 0 ? [...turnVideos] : copy[i].videos,
                 splats: turnSplats.length > 0 ? [...turnSplats] : copy[i].splats,
+                memoryImageChips: lensChipsHolder ?? copy[i].memoryImageChips,
+                toolProposals: turnToolProposals.length > 0 ? [...turnToolProposals] : copy[i].toolProposals,
               };
               break;
             }
@@ -678,7 +708,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             body: JSON.stringify({
               model,
               messages: workingMessages,
-              tools: CHAT_TOOL_DEFINITIONS,
+              tools: foundryEnabled
+                ? CHAT_TOOL_DEFINITIONS
+                : CHAT_TOOL_DEFINITIONS.filter((t: any) => t.function.name !== "forge_tool" && t.function.name !== "run_tool"),
               tool_choice: "auto",
               stream: true,
             }),
@@ -840,8 +872,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               if (typeof r.__vision === "string" && r.__vision.startsWith("data:")) {
                 visionPayloads.push(r.__vision);
               }
-              if ("__images" in r || "__videos" in r || "__splats" in r || "__vision" in r) {
-                const { __images, __videos, __splats, __vision, ...clean } = r;
+              if (r.__toolProposal && typeof r.__toolProposal === "object") {
+                turnToolProposals.push(r.__toolProposal);
+              }
+              if ("__images" in r || "__videos" in r || "__splats" in r || "__vision" in r || "__toolProposal" in r) {
+                const { __images, __videos, __splats, __vision, __toolProposal, ...clean } = r;
                 modelResult = clean;
               }
             }
@@ -893,6 +928,35 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             assistantText = assistantText.slice(0, capSegStart) + capped;
             updateAssistant();
           }
+        }
+
+        // Memory Lens deterministic layer: retrieval surfaced images attached
+        // to recalled memories. If the model didn't show the never-seen one
+        // itself (show_image lands in turnImages via the side-channel — that's
+        // the dedupe), auto-attach the TOP never-seen candidate, max ONE per
+        // turn; the rest become collapsed chips. The display only COUNTS when
+        // the card is actually viewed (IntersectionObserver in the strip
+        // component records it — pocket hands-free sessions consume nothing).
+        if (memoryImages.length > 0 && !deepResearch) {
+          try {
+            const alreadyShown = new Set(turnImages.map((i) => i.id));
+            const remaining = memoryImages.filter((c) => !alreadyShown.has(c.imageId));
+            const verdicts = remaining.map((c) => ({ c, v: lensVerdict(c.state, autoShowMemoryImages !== false) }));
+            const expand = verdicts.find((x) => x.v === "expand");
+            if (expand) {
+              turnImages.push({
+                id: expand.c.imageId,
+                storage_path: expand.c.storagePath,
+                prompt: expand.c.prompt,
+                entry_id: expand.c.entryId,
+                memory_title: expand.c.entryTitle,
+                lens_auto: true,
+              });
+            }
+            const chips = verdicts.filter((x) => x.v === "chip" || (x.v === "expand" && x !== expand)).map((x) => x.c);
+            lensChipsHolder = chips.length > 0 ? chips : undefined;
+            if (expand || lensChipsHolder) updateAssistant();
+          } catch { /* lens is best-effort — never block the reply */ }
         }
 
         if (assistantText || turnImages.length > 0 || turnVideos.length > 0 || turnSplats.length > 0) {
@@ -993,7 +1057,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
       }
     },
-    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
+    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, autoShowMemoryImages, foundryEnabled, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
   );
 
 

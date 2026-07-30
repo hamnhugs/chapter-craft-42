@@ -61,6 +61,7 @@ const POST_TTS_COOLDOWN_MS = 700; // speaker-tail guard after REAL audio end (in
 const BARGE_GRACE_MS = 900;       // ignore the assistant's opening words so they don't self-trigger
 const LISTEN_RETRY_MS = 300;      // re-check interval while audio is still audible
 const LISTEN_DEFER_MAX_MS = 20000; // safety valve: never defer the mic forever
+const SILENCE_STOP_MS = 5 * 60_000; // hands-free ends itself after this much total quiet
 
 // Lazy-loaded VAD (only when barge-in is enabled) — kept off the main bundle.
 const VAD_BASE = "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.22/dist/";
@@ -141,6 +142,12 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeController {
   const cooldownRef = useRef<number | null>(null);
   const deferralStartRef = useRef(0);
   const verifyingRef = useRef(false);
+  // Silence watchdog: with the wake lock holding the screen on, a forgotten
+  // session in a pocket would burn battery for hours. After SILENCE_STOP_MS
+  // with no speech in either direction the session ends itself — with a
+  // spoken notice, since the user may not be looking.
+  const lastActivityRef = useRef(0);
+  const silenceTimerRef = useRef<number | null>(null);
 
   // Latest caller-provided functions — recognizer/VAD callbacks always call
   // the current ones without threading dependency arrays everywhere.
@@ -162,6 +169,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeController {
 
   const setFsm = useCallback((s: HandsFreeState) => {
     stateRef.current = s;
+    if (s !== "listening" && s !== "idle") lastActivityRef.current = Date.now();
     setState(s);
   }, []);
 
@@ -256,6 +264,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeController {
         else interimText += t;
       }
       if (finalText) finalRef.current = `${finalRef.current} ${finalText}`.trim();
+      if (finalText || interimText) lastActivityRef.current = Date.now();
       setInterim(interimText);
     };
     rec.onerror = (e: any) => {
@@ -448,6 +457,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeController {
     setInterim("");
     setFsm("idle");
     setActive(false);
+    if (silenceTimerRef.current) { window.clearInterval(silenceTimerRef.current); silenceTimerRef.current = null; }
     try { wakeLockRef.current?.release?.(); } catch { /* no-op */ }
     wakeLockRef.current = null;
   }, [teardownRecognition, destroyVad, setFsm]);
@@ -472,6 +482,21 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeController {
     if (activeRef.current) return;
     activeRef.current = true;
     setActive(true);
+    // Dismiss any open soft keyboard: entering voice mode is a modality
+    // switch — the composer must not keep focus (Gemini Live / ChatGPT voice
+    // convention; also stops pocket keyboard clicks cold).
+    try { (document.activeElement as HTMLElement | null)?.blur?.(); } catch { /* no-op */ }
+    lastActivityRef.current = Date.now();
+    if (silenceTimerRef.current) window.clearInterval(silenceTimerRef.current);
+    silenceTimerRef.current = window.setInterval(() => {
+      if (!activeRef.current) return;
+      if (busyRef.current) { lastActivityRef.current = Date.now(); return; } // thinking/speaking counts as activity
+      if (Date.now() - lastActivityRef.current >= SILENCE_STOP_MS) {
+        const speakFn = optsRef.current.speak;
+        stopAllRef.current();
+        try { speakFn?.("Hands-free is off after five minutes of quiet. Tap the mic when you need me."); } catch { /* no-op */ }
+      }
+    }, 30000);
     void probeLocalAsr();
     try { wakeLockRef.current = await (navigator as any).wakeLock?.request("screen"); } catch { /* optional */ }
     if (bargeInRef.current) void initVad();

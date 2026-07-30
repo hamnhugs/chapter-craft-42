@@ -20,6 +20,8 @@ import VideoModelsSettings from "@/components/VideoModelsSettings";
 import SplatModelsSettings from "@/components/SplatModelsSettings";
 import { useReflexEnabled, setReflexEnabled } from "@/lib/reflex";
 import AiPermissionsSettings from "@/components/AiPermissionsSettings";
+import MemoryLensSettings from "@/components/MemoryLensSettings";
+import ToolFoundrySettings from "@/components/ToolFoundrySettings";
 import { getMemoryMode, setMemoryMode, MemoryMode } from "@/lib/knowledgeApi";
 import { consumeSettingsSection } from "@/lib/settingsNav";
 import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
@@ -705,6 +707,16 @@ const SettingsPanel: React.FC = () => {
               <AiPermissionsSettings />
             </Section>
 
+            {/* ── Tool Foundry ── */}
+            <Section
+              id="foundry"
+              icon="construction"
+              title="Tool Foundry"
+              description="The AI's workshop: it forges reusable tools for itself, stored as neurons in its Toolshed — nothing runs without your approval."
+            >
+              <ToolFoundrySettings />
+            </Section>
+
             {/* ── Prompts ── */}
             <Section
               id="prompts"
@@ -770,6 +782,13 @@ const SettingsPanel: React.FC = () => {
                   </div>
                 </div>
                 <Hint>A hard limit — the reply is cut at the last full sentence and generation stops there (shorter = cheaper). Bullets count as sentences; code blocks don't. Digest and Deep Research are exempt.</Hint>
+              </div>
+
+              <div>
+                <FieldLabel>Memory Lens</FieldLabel>
+                <div className="mt-1.5">
+                  <MemoryLensSettings />
+                </div>
               </div>
             </Section>
 

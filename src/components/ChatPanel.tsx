@@ -7,6 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
+import { safeUrlTransform, safeMarkdownComponents } from "@/lib/markdownSafety";
+import { focusComposer, isTouchPrimary } from "@/lib/focusPolicy";
+import PocketScreen from "@/components/PocketScreen";
+import { LensImageFrame, MemoryChips } from "@/components/MemoryLensStrip";
+import ToolApprovalCard from "@/components/ToolApprovalCard";
 import { extractKnowledge } from "@/lib/knowledgeApi";
 import { Loader2, StickyNote, BookmarkPlus } from "lucide-react";
 import { useChatSettings } from "@/hooks/useChatSettings";
@@ -212,12 +217,30 @@ const ChatPanel: React.FC = () => {
     el.style.height = `${Math.min(el.scrollHeight, 220)}px`;
   }, [input]);
 
-  // Keep focus in the composer after a reply finishes streaming.
+  // Desktop-only composer refocus after a reply finishes — and only when it
+  // cannot steal: the user sent from the composer area, nothing else has been
+  // focused since, no text selection is active, and they haven't just been
+  // scrolling the transcript. On touch devices this NEVER fires: Android
+  // Chrome opens the soft keyboard on any programmatic focus() once the
+  // session has seen a gesture (the old line here popped the keyboard after
+  // every AI reply — the exact bug this replaces).
   const prevLoadingRef = useRef(false);
+  const wasFocusedAtSendRef = useRef(false);
+  const lastTranscriptInteractionRef = useRef(0);
   useEffect(() => {
-    if (prevLoadingRef.current && !isLoading) inputRef.current?.focus();
+    const wasStreaming = prevLoadingRef.current;
     prevLoadingRef.current = isLoading;
-  }, [isLoading]);
+    if (!wasStreaming || isLoading) return;
+    if (!wasFocusedAtSendRef.current) return;
+    wasFocusedAtSendRef.current = false;
+    if (isTouchPrimary() || handsFree.active || document.hidden) return;
+    const ae = document.activeElement;
+    if (ae !== document.body && ae !== inputRef.current) return;
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed) return;
+    if (Date.now() - lastTranscriptInteractionRef.current < 3000) return;
+    focusComposer(inputRef.current, { handsFreeActive: handsFree.active });
+  }, [isLoading, handsFree.active]);
 
   // Accessibility: announce streamed assistant text to screen readers, but
   // debounced (~2.5s) and only the NEW text since the last announcement, so it
@@ -522,6 +545,9 @@ const ChatPanel: React.FC = () => {
     if (!text && imagesToSend.length === 0) return;
     if (!apiKey) { toast.error("Please set your OpenRouter API key first"); openSettings("models"); return; }
     sendingRef.current = true;
+    // Desktop refocus eligibility: this send came from the composer area
+    // (Enter or the send button). Touch devices never refocus.
+    wasFocusedAtSendRef.current = !isTouchPrimary() && !handsFree.active;
     try {
       suppressDictationRef.current = true;
       dictation.stop();
@@ -690,7 +716,7 @@ const ChatPanel: React.FC = () => {
 
       {/* Messages */}
       <div className="flex-1 overflow-hidden">
-        <div ref={messagesContainerRef} role="log" aria-label="Conversation with The Librarian" aria-live="off" className="h-full overflow-auto px-4 py-6 space-y-6 hide-scrollbar [overflow-anchor:none]">
+        <div ref={messagesContainerRef} role="log" aria-label="Conversation with The Librarian" aria-live="off" onScroll={() => { lastTranscriptInteractionRef.current = Date.now(); }} onPointerDown={() => { lastTranscriptInteractionRef.current = Date.now(); }} className="h-full overflow-auto px-4 py-6 space-y-6 hide-scrollbar [overflow-anchor:none]">
 
         {messages.length > 0 && hasEarlier && (
           <div className="flex justify-center">
@@ -802,18 +828,25 @@ const ChatPanel: React.FC = () => {
                         }`}
                       >
                         {msg.images.map((img) => (
-                          <GeneratedImage
-                            key={img.id}
-                            storagePath={img.storage_path}
-                            alt={img.prompt}
-                            caption={img.entry_id ? `${img.prompt} · saved to memory` : img.prompt}
-                            resizable
-                          />
+                          <LensImageFrame key={img.id} imageId={img.id} memoryLinked={!!(img.memory_title || img.entry_id)} handsFreeActive={handsFree.active}>
+                            <GeneratedImage
+                              storagePath={img.storage_path}
+                              alt={img.prompt}
+                              caption={img.memory_title ? `From your memory: ${img.memory_title}` : img.entry_id ? `${img.prompt} · saved to memory` : img.prompt}
+                              resizable
+                            />
+                          </LensImageFrame>
                         ))}
                       </div>
                     </MediaReveal>
                   )}
-                  {msg.content && <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown>{msg.content}</ReactMarkdown></div>}
+                  {msg.memoryImageChips && msg.memoryImageChips.length > 0 && (
+                    <MemoryChips chips={msg.memoryImageChips} handsFreeActive={handsFree.active} />
+                  )}
+                  {msg.toolProposals && msg.toolProposals.map((p) => (
+                    <ToolApprovalCard key={p.tool_id} proposal={p} />
+                  ))}
+                  {msg.content && <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown urlTransform={safeUrlTransform} components={safeMarkdownComponents}>{msg.content}</ReactMarkdown></div>}
                   {msg.blocks && msg.blocks.length > 0 && <ResponseBlocks blocks={msg.blocks} />}
                   {msg.artifact && (
                     <button
@@ -902,6 +935,9 @@ const ChatPanel: React.FC = () => {
       </div>
 
 
+      {/* Pocket screen: hands-free touch guard on phones (arms after idle) */}
+      <PocketScreen active={handsFree.active} state={handsFree.state} />
+
       {/* Input Area */}
       <div className="px-4 pb-4 pt-2">
         <div className="bg-surface-container-low/90 backdrop-blur-xl p-3 rounded-2xl shadow-2xl border border-outline-variant/10 flex flex-col gap-3 max-w-4xl mx-auto">
@@ -966,6 +1002,7 @@ const ChatPanel: React.FC = () => {
             <div className="flex-grow relative">
               <Textarea
                 ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} onPaste={handlePaste}
+                inputMode={handsFree.active ? "none" : undefined}
                 aria-label="Message The Librarian"
                 placeholder={dictation.isListening ? "Listening… speak now" : apiKey ? "Ask about your books, or drop an image…" : "Set your OpenRouter API key to start chatting"}
                 rows={1} className="bg-surface-container-high border-none rounded-xl text-foreground py-3 pl-4 pr-20 focus:ring-1 focus:ring-primary/40 resize-none min-h-[50px] max-h-[220px] overflow-y-auto"

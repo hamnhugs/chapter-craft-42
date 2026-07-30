@@ -24,6 +24,7 @@ import {
 import { toast } from "sonner";
 import { useApp } from "@/context/AppContext";
 import ReactMarkdown from "react-markdown";
+import { safeUrlTransform, safeMarkdownComponents } from "@/lib/markdownSafety";
 import {
   KnowledgeEntry, MemoryGraphEdge, LintResult, KnowledgeConflict,
   EpisodicLogEntry, SleepCycleReport, MemoryMode,
@@ -1278,7 +1279,7 @@ const WikiPanel: React.FC = () => {
                     </button>
                   </div>
                 </div>
-                <div className="prose prose-lg prose-invert max-w-none"><ReactMarkdown>{selectedEntry.content}</ReactMarkdown></div>
+                <div className="prose prose-lg prose-invert max-w-none"><ReactMarkdown urlTransform={safeUrlTransform} components={safeMarkdownComponents}>{selectedEntry.content}</ReactMarkdown></div>
                 {entryImages.length > 0 && (
                   <div className="border-t border-outline-variant/10 pt-6">
                     <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant mb-4">Attached Images</h3>

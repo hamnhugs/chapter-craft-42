@@ -19,6 +19,12 @@ export interface ChatImageRef {
   storage_path: string;
   prompt: string;
   entry_id?: string | null;
+  /** Memory Lens: title of the memory entry this image was recalled from —
+   *  rendered as "From your memory: <title>" provenance. */
+  memory_title?: string;
+  /** Memory Lens: true when the deterministic layer auto-attached this image
+   *  (never-seen policy) rather than a tool call. */
+  lens_auto?: boolean;
 }
 
 export interface ImageAttachmentRow {

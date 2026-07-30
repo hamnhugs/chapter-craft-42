@@ -29,6 +29,13 @@ interface ChatSettings {
   /** Hard cap on sentences per assistant reply (0 = off). Enforced by prompt
    *  steering + stream truncation in ChatContext; Digest/Deep Research exempt. */
   maxReplySentences: number;
+  /** Memory Lens: auto-show a recalled memory's attached image the first time
+   *  it's ever seen (repeats collapse to chips). Off = chips only. */
+  autoShowMemoryImages: boolean;
+  /** Tool Foundry progressive trust: version updates with UNCHANGED
+   *  capabilities and green tests apply without a manual approval tap.
+   *  New tools and capability changes always ask. Default OFF. */
+  autoApproveToolUpdates: boolean;
   /** Optional override model used for chat turns that include image attachments. Falls back to selectedModel if empty. */
   visionModel: string;
   /** Vision model that describes figures extracted from uploaded documents. "" = built-in default. */
@@ -82,6 +89,8 @@ const defaults: ChatSettings = {
   inworldVoiceId: "",
   accessAllNeurons: false,
   maxReplySentences: 0,
+  autoShowMemoryImages: true,
+  autoApproveToolUpdates: false,
   visionModel: "",
   imageExtractionModel: "",
   autoExtractFigures: true,
@@ -186,6 +195,8 @@ function rowToSettings(data: any): ChatSettings {
     maxReplySentences: typeof data.max_reply_sentences === "number" && data.max_reply_sentences > 0
       ? Math.min(12, Math.floor(data.max_reply_sentences))
       : 0,
+    autoShowMemoryImages: data.auto_show_memory_images !== false,
+    autoApproveToolUpdates: data.auto_approve_tool_updates === true,
     visionModel: data.vision_model || "",
     imageExtractionModel: data.image_extraction_model || "",
     autoExtractFigures: data.auto_extract_figures !== false,
@@ -268,6 +279,8 @@ function persistSettings(userId: string, next: ChatSettings) {
       inworld_voice_id: next.inworldVoiceId || "",
       access_all_neurons: next.accessAllNeurons,
       max_reply_sentences: next.maxReplySentences || 0,
+      auto_show_memory_images: next.autoShowMemoryImages,
+      auto_approve_tool_updates: next.autoApproveToolUpdates,
       vision_model: next.visionModel || null,
       image_extraction_model: next.imageExtractionModel || null,
       auto_extract_figures: next.autoExtractFigures,
@@ -306,7 +319,7 @@ function persistSettings(userId: string, next: ChatSettings) {
     // column and retry so one new column never breaks every settings save.
     // PostgREST reports ONE missing column per attempt (alphabetically
     // first), so keep retrying until no optional column is named.
-    const optionalColumns = ["access_all_neurons", "max_reply_sentences", "image_extraction_model", "auto_extract_figures",
+    const optionalColumns = ["access_all_neurons", "max_reply_sentences", "auto_show_memory_images", "auto_approve_tool_updates", "image_extraction_model", "auto_extract_figures",
       "video_model_primary", "saved_video_models", "video_default_duration", "video_default_resolution",
       "video_default_aspect", "video_generate_audio", "video_confirm_threshold",
       "video_identity_scale", "video_qc_enabled", "video_motion_model",
@@ -394,6 +407,8 @@ export function useChatSettings() {
     setInworldVoiceId: (v: string) => update({ inworldVoiceId: v }),
     setAccessAllNeurons: (v: boolean) => update({ accessAllNeurons: v }),
     setMaxReplySentences: (n: number) => update({ maxReplySentences: Math.max(0, Math.min(12, Math.floor(Number(n) || 0))) }),
+    setAutoShowMemoryImages: (v: boolean) => update({ autoShowMemoryImages: v }),
+    setAutoApproveToolUpdates: (v: boolean) => update({ autoApproveToolUpdates: v }),
     setVisionModel: (m: string) => update({ visionModel: m }),
     setImageExtractionModel: (m: string) => update({ imageExtractionModel: m }),
     setAutoExtractFigures: (v: boolean) => update({ autoExtractFigures: v }),
