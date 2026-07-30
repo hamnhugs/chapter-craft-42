@@ -38,47 +38,25 @@ export interface SandboxRunResult {
 
 const CAP_RESULT_BYTES = 16 * 1024;   // per capability call
 const CAP_TOTAL_BYTES = 64 * 1024;    // per run, across calls
+// Byte budgets alone don't bound a tool that LOOPS on a failing capability:
+// failures return no bytes, so a `for(;;) try { await caps.memory_get(...) }
+// catch {}` would issue authenticated queries for the whole timeout. Count
+// calls too, and make exhaustion terminal rather than another catchable error.
+const CAP_MAX_CALLS = 64;
+const CAP_FAILED_CALL_COST = 256;     // failures still charge against the budget
 const DEFAULT_RESULT_CAP = 32 * 1024; // tool return value
 const DEFAULT_TIMEOUT_MS = 10_000;
 
-// The iframe bootstrap. STATIC — never build this string from run data.
-// It accepts exactly one window message (the boot: a MessagePort + the built
-// worker source text), creates the blob worker, then relays port<->worker.
-export const SANDBOX_SRCDOC = `<!DOCTYPE html><html><head>
-<meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; connect-src 'none'; img-src 'none'; media-src 'none'; font-src 'none'; style-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'">
-<meta http-equiv="x-dns-prefetch-control" content="off">
-</head><body><script>
-(function () {
-  "use strict";
-  var booted = false;
-  var worker = null;
-  var port = null;
-  window.addEventListener("message", function (e) {
-    if (booted) return;
-    var d = e.data;
-    if (!d || d.type !== "boot" || !e.ports || !e.ports[0] || typeof d.workerSource !== "string") return;
-    booted = true;
-    port = e.ports[0];
-    try {
-      var blob = new Blob([d.workerSource], { type: "text/javascript" });
-      worker = new Worker(URL.createObjectURL(blob), { type: "module" });
-    } catch (err) {
-      port.postMessage({ type: "bootError", error: String(err && err.message || err) });
-      return;
-    }
-    worker.onmessage = function (we) { port.postMessage(we.data); };
-    worker.onerror = function (we) { port.postMessage({ type: "workerError", error: String(we.message || "worker error") }); };
-    port.onmessage = function (pe) {
-      var m = pe.data;
-      if (!m || typeof m !== "object") return;
-      if (m.type === "kill") { try { worker.terminate(); } catch (x) {} port.postMessage({ type: "killed" }); return; }
-      worker.postMessage(m);
-    };
-    port.postMessage({ type: "ready" });
-  });
-})();
-</script></body></html>`;
+/**
+ * The sandbox document is a STATIC same-origin asset (public/tool-sandbox.html),
+ * deliberately not an iframe srcdoc: srcdoc is a local scheme and inherits the
+ * embedder's CSP, and the app's policy has no 'unsafe-inline', so a srcdoc
+ * bootstrap silently never executes in a production build (dev has no CSP, so
+ * the failure is invisible there). A real-URL document carries only its own
+ * policy. `sandbox="allow-scripts"` without allow-same-origin still makes it
+ * opaque-origin, and `frame-src 'self'` already admits it.
+ */
+export const SANDBOX_DOC_PATH = "tool-sandbox.html";
 
 let workerSourcePromise: Promise<string> | null = null;
 async function getWorkerSource(): Promise<string> {
@@ -119,37 +97,47 @@ async function openProdChannel(): Promise<Channel> {
   iframe.setAttribute("sandbox", "allow-scripts");
   iframe.style.display = "none";
   iframe.setAttribute("aria-hidden", "true");
-  iframe.srcdoc = SANDBOX_SRCDOC;
-  const loaded = new Promise<void>((resolve, reject) => {
-    const t = window.setTimeout(() => reject(new Error("sandbox frame load timeout")), 8000);
-    iframe.onload = () => { window.clearTimeout(t); resolve(); };
-  });
+  iframe.src = new URL(SANDBOX_DOC_PATH, document.baseURI).href;
+  let channel: MessageChannel | null = null;
   document.body.appendChild(iframe);
-  await loaded;
-  const channel = new MessageChannel();
-  let handler: (data: any) => void = () => undefined;
-  channel.port1.onmessage = (e) => handler(e.data);
-  // Opaque-origin frame: targetOrigin must be "*", which is fine — the only
-  // payload crossing here is our own worker source; secrets never do.
-  iframe.contentWindow?.postMessage({ type: "boot", workerSource }, "*", [channel.port2]);
-  const ready = new Promise<void>((resolve, reject) => {
-    const t = window.setTimeout(() => reject(new Error("sandbox boot timeout")), 8000);
-    const prev = handler;
-    handler = (d) => {
-      if (d?.type === "ready") { window.clearTimeout(t); handler = prev; resolve(); }
-      else if (d?.type === "bootError") { window.clearTimeout(t); reject(new Error(String(d.error))); }
+  // Everything past the append must tear the frame down on failure, or every
+  // boot error leaks a hidden frame (potentially still running a worker with
+  // no kill timer attached, since runToolSandboxed returns before arming one).
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const t = window.setTimeout(() => reject(new Error("sandbox frame load timeout")), 8000);
+      iframe.onload = () => { window.clearTimeout(t); resolve(); };
+      iframe.onerror = () => { window.clearTimeout(t); reject(new Error("sandbox frame failed to load")); };
+    });
+    channel = new MessageChannel();
+    let handler: (data: any) => void = () => undefined;
+    channel.port1.onmessage = (e) => handler(e.data);
+    // Opaque-origin frame: targetOrigin must be "*", which is fine — the only
+    // payload crossing here is our own worker source; secrets never do. The
+    // frame checks e.source === window.parent before accepting this.
+    iframe.contentWindow?.postMessage({ type: "boot", workerSource }, "*", [channel.port2]);
+    await new Promise<void>((resolve, reject) => {
+      const t = window.setTimeout(() => reject(new Error("sandbox boot timeout")), 8000);
+      handler = (d) => {
+        if (d?.type === "ready") { window.clearTimeout(t); resolve(); }
+        else if (d?.type === "bootError") { window.clearTimeout(t); reject(new Error(String(d.error))); }
+      };
+    });
+    const port = channel.port1;
+    return {
+      post: (m) => port.postMessage(m),
+      onMessage: (fn) => { handler = fn; },
+      kill: () => port.postMessage({ type: "kill" }),
+      dispose: () => {
+        try { port.close(); } catch { /* closed */ }
+        try { iframe.remove(); } catch { /* removed */ }
+      },
     };
-  });
-  await ready;
-  return {
-    post: (m) => channel.port1.postMessage(m),
-    onMessage: (fn) => { handler = fn; },
-    kill: () => channel.port1.postMessage({ type: "kill" }),
-    dispose: () => {
-      try { channel.port1.close(); } catch { /* closed */ }
-      try { iframe.remove(); } catch { /* removed */ }
-    },
-  };
+  } catch (e) {
+    try { channel?.port1.close(); } catch { /* closed */ }
+    try { iframe.remove(); } catch { /* removed */ }
+    throw e;
+  }
 }
 
 export async function runToolSandboxed(req: SandboxRunRequest): Promise<SandboxRunResult> {
@@ -158,6 +146,7 @@ export async function runToolSandboxed(req: SandboxRunRequest): Promise<SandboxR
   const resultCap = req.resultCapBytes ?? DEFAULT_RESULT_CAP;
   const capabilityCalls: SandboxRunResult["capabilityCalls"] = [];
   let capBytesTotal = 0;
+  let capCalls = 0;
   const started = Date.now();
 
   let channel: Channel;
@@ -198,6 +187,14 @@ export async function runToolSandboxed(req: SandboxRunRequest): Promise<SandboxR
         const cap = String(d.cap);
         let args: unknown = {};
         try { args = JSON.parse(String(d.argsJson || "{}")); } catch { /* keep {} */ }
+        capCalls++;
+        if (capCalls > CAP_MAX_CALLS) {
+          // Terminal, like a capability violation: returning an error here
+          // would just feed the loop that caused it.
+          channel.kill();
+          finish({ ok: false, error: `capability call limit reached (${CAP_MAX_CALLS} per run)`, killed: true, ms: Date.now() - started, capabilityCalls });
+          return;
+        }
         void (async () => {
           try {
             if (!req.capabilities.includes(cap)) throw new Error(`capability '${cap}' not approved`);
@@ -209,6 +206,7 @@ export async function runToolSandboxed(req: SandboxRunRequest): Promise<SandboxR
             capabilityCalls.push({ cap, args, ok: true, bytes: json.length });
             channel.post({ type: "capResult", runId, callId: d.callId, ok: true, valueJson: json });
           } catch (err) {
+            capBytesTotal += CAP_FAILED_CALL_COST;
             capabilityCalls.push({ cap, args, ok: false, bytes: 0 });
             channel.post({ type: "capResult", runId, callId: d.callId, ok: false, error: String((err as Error)?.message || err).slice(0, 300) });
           }

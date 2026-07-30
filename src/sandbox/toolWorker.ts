@@ -92,7 +92,10 @@ async function handleRun(msg: RunMsg): Promise<void> {
         const argsJson = ctx.getString(argsH);
         const deferred = ctx.newPromise();
         if (!allowed.has(cap)) {
-          deferred.reject(ctx.newError(`capability '${cap}' is not in this tool's approved manifest`));
+          // .consume: reject() does NOT take ownership of the handle, so a
+          // bare newError() leaks a JSValue per rejected call — a tool looping
+          // on a failing capability would OOM against the 64MB runtime limit.
+          ctx.newError(`capability '${cap}' is not in this tool's approved manifest`).consume((h) => deferred.reject(h));
           deferred.settled.then(() => ctx.runtime.executePendingJobs()).catch(() => { /* pumped */ });
           // Out-of-manifest calls are also reported so the host can audit and
           // kill the run — approval was granted for a different program.
@@ -108,8 +111,7 @@ async function handleRun(msg: RunMsg): Promise<void> {
             ctx.runtime.executePendingJobs();
           },
           reject: (err) => {
-            const h = ctx.newError(String(err).slice(0, 300));
-            deferred.reject(h);
+            ctx.newError(String(err).slice(0, 300)).consume((h) => deferred.reject(h));
             ctx.runtime.executePendingJobs();
           },
         });

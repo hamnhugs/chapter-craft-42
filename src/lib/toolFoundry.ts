@@ -160,6 +160,9 @@ export interface AgentToolRow {
   manifest: { capabilities?: string[] };
   tests: Array<{ args: unknown; expect?: string }>;
   status: "draft" | "approved" | "disabled";
+  /** True only when the USER disabled it (distinct from the 'disabled' status
+   *  approve_tool assigns to superseded versions). */
+  disabled_by_user?: boolean;
   version: number;
   superseded_by: string | null;
   entry_id: string | null;
@@ -191,7 +194,7 @@ export async function foundryAvailable(): Promise<boolean> {
 
 export async function listTools(opts: { status?: string } = {}): Promise<AgentToolRow[]> {
   let q: any = (supabase.from("agent_tools" as any) as any)
-    .select("id, root_id, name, description, code, manifest, tests, status, version, superseded_by, entry_id, run_count, fail_count, last_run_at, created_at")
+    .select("id, root_id, name, description, code, manifest, tests, status, disabled_by_user, version, superseded_by, entry_id, run_count, fail_count, last_run_at, created_at")
     .order("created_at", { ascending: false })
     .limit(100);
   if (opts.status) q = q.eq("status", opts.status);
@@ -203,7 +206,7 @@ export async function listTools(opts: { status?: string } = {}): Promise<AgentTo
 /** The single approved, non-superseded row for a name — or a precise error. */
 export async function resolveApprovedTool(name: string): Promise<AgentToolRow> {
   const { data, error } = await (supabase.from("agent_tools" as any) as any)
-    .select("id, root_id, name, description, code, manifest, tests, status, version, superseded_by, entry_id, run_count, fail_count, last_run_at, created_at")
+    .select("id, root_id, name, description, code, manifest, tests, status, disabled_by_user, version, superseded_by, entry_id, run_count, fail_count, last_run_at, created_at")
     .eq("name", name)
     .eq("status", "approved")
     .is("superseded_by", null);

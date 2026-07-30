@@ -15,6 +15,7 @@ import { isTouchPrimary } from "@/lib/focusPolicy";
 
 const IDLE_ARM_MS = 12000;
 const DOUBLE_TAP_MS = 350;
+const MIN_TAP_GAP_MS = 60; // below this, two "taps" are simultaneous fingers
 
 interface Props {
   active: boolean; // hands-free on
@@ -28,39 +29,45 @@ const PocketScreen: React.FC<Props> = ({ active, state }) => {
   const touch = isTouchPrimary();
 
   // Idle timer: any pointer activity while disarmed postpones arming.
+  // `armed` MUST be in the deps — after a double-tap disarm, React's delegated
+  // listeners never see the overlay's own stopPropagation'd pointerdown, so
+  // without re-running this effect nothing would ever schedule the next arm
+  // and the guard would silently stay off for the rest of the session.
   useEffect(() => {
     if (!active || !touch) {
       setArmed(false);
       return;
     }
+    if (armed) return; // already guarding; nothing to schedule
     const rearm = () => {
       if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
       idleTimerRef.current = window.setTimeout(() => setArmed(true), IDLE_ARM_MS);
     };
-    const onActivity = () => {
-      // Taps on the armed overlay are handled there — this listener only runs
-      // meaningfully while disarmed (the overlay swallows events when armed).
-      rearm();
-    };
     rearm();
-    window.addEventListener("pointerdown", onActivity, { passive: true });
-    window.addEventListener("scroll", onActivity, { passive: true, capture: true });
+    window.addEventListener("pointerdown", rearm, { passive: true });
+    window.addEventListener("scroll", rearm, { passive: true, capture: true });
     return () => {
-      window.removeEventListener("pointerdown", onActivity);
-      window.removeEventListener("scroll", onActivity, { capture: true } as EventListenerOptions);
+      window.removeEventListener("pointerdown", rearm);
+      window.removeEventListener("scroll", rearm, { capture: true } as EventListenerOptions);
       if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
     };
-  }, [active, touch]);
+  }, [active, touch, armed]);
 
   if (!active || !touch || !armed) return null;
 
   const onOverlayPointerDown = (e: React.PointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    // Ignore secondary contacts: a pocket press or a hand closing over the
+    // phone lands 2+ pointers within milliseconds, which would otherwise read
+    // as a double tap and disarm the guard on exactly the input it exists to
+    // swallow. A real double tap is one primary pointer, twice, with a gap.
+    if (!e.isPrimary) return;
     const now = Date.now();
-    if (now - lastTapRef.current <= DOUBLE_TAP_MS) {
+    const gap = now - lastTapRef.current;
+    if (gap > MIN_TAP_GAP_MS && gap <= DOUBLE_TAP_MS) {
       lastTapRef.current = 0;
-      setArmed(false); // the idle effect re-arms after IDLE_ARM_MS of quiet
+      setArmed(false); // the idle effect (deps include `armed`) re-arms after quiet
     } else {
       lastTapRef.current = now;
     }

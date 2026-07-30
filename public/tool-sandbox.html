@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<!--
+  Tool Foundry sandbox frame — the OUTER boundary.
+
+  This is a STATIC same-origin document loaded by URL, deliberately NOT an
+  iframe srcdoc: srcdoc/blob:/data: documents are local schemes that INHERIT
+  the embedder's CSP (that inheritance exists so srcdoc can't be used as a CSP
+  bypass), and the app's own policy has no 'unsafe-inline', so the bootstrap
+  below would never execute in a production build. A real-URL document carries
+  only its own policy — the one in this file.
+
+  It is still opaque-origin: the embedder sets sandbox="allow-scripts" WITHOUT
+  allow-same-origin, so this frame has no cookies, no storage, and no access to
+  the parent. connect-src 'none' means nothing it (or the worker it spawns) can
+  reach the network.
+
+  NEVER build this file's contents from untrusted data — it is static by
+  contract, asserted in src/test/toolFoundry.test.ts.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; connect-src 'none'; img-src 'none'; media-src 'none'; font-src 'none'; style-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="x-dns-prefetch-control" content="off">
+</head>
+<body><script>
+(function () {
+  "use strict";
+  var booted = false;
+  var worker = null;
+  var port = null;
+  window.addEventListener("message", function (e) {
+    if (booted) return;
+    // Only our embedder may boot this frame. Without this check any other
+    // scripted frame in the page (e.g. a model-authored artifact) could reach
+    // us via parent.frames[i] and win the boot race with its own worker.
+    if (e.source !== window.parent) return;
+    var d = e.data;
+    if (!d || d.type !== "boot" || !e.ports || !e.ports[0] || typeof d.workerSource !== "string") return;
+    booted = true;
+    port = e.ports[0];
+    try {
+      var blob = new Blob([d.workerSource], { type: "text/javascript" });
+      worker = new Worker(URL.createObjectURL(blob), { type: "module" });
+    } catch (err) {
+      port.postMessage({ type: "bootError", error: String((err && err.message) || err) });
+      return;
+    }
+    worker.onmessage = function (we) { port.postMessage(we.data); };
+    worker.onerror = function (we) { port.postMessage({ type: "workerError", error: String(we.message || "worker error") }); };
+    port.onmessage = function (pe) {
+      var m = pe.data;
+      if (!m || typeof m !== "object") return;
+      if (m.type === "kill") { try { worker.terminate(); } catch (x) {} port.postMessage({ type: "killed" }); return; }
+      worker.postMessage(m);
+    };
+    port.postMessage({ type: "ready" });
+  });
+})();
+</script></body>
+</html>

@@ -2,7 +2,8 @@ import React, { useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { safeUrlTransform, safeMarkdownComponents } from "@/lib/markdownSafety";
 import { toast } from "sonner";
-import { buildArtifactDoc, type Artifact } from "@/lib/artifacts";
+import { type Artifact } from "@/lib/artifacts";
+import ArtifactFrame from "@/components/ArtifactFrame";
 import {
   useWorkspaceItems,
   workspaceStore,
@@ -212,17 +213,14 @@ const WorkspacePanel: React.FC<{
             </div>
           ) : (
             <div className="flex-1 min-h-0 bg-white">
-              <iframe
-                key={`${selected.id}-${selected.content.length}`}
+              <ArtifactFrame
+                key={selected.id}
                 title={selected.title}
-                srcDoc={buildArtifactDoc({
+                artifact={{
                   title: selected.title,
                   kind: selected.kind === "svg" ? "svg" : "html",
                   content: selected.content,
-                } as Artifact)}
-                sandbox="allow-scripts"
-                referrerPolicy="no-referrer"
-                className="w-full h-full border-0"
+                } as Artifact}
               />
             </div>
           )}

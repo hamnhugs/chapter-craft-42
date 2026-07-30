@@ -17,6 +17,9 @@ const ToolFoundrySettings: React.FC = () => {
   const [migrated, setMigrated] = useState<boolean | null>(null);
   const [tools, setTools] = useState<AgentToolRow[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
+  /** Fingerprint of each tool as it was when this list rendered — the thing
+   *  the user is actually reviewing. Compared again at approval time. */
+  const [fingerprints, setFingerprints] = useState<Record<string, string>>({});
 
   const forgeOn = chatToolPermissions["forge_tool"] === true;
   const runOn = chatToolPermissions["run_tool"] === true;
@@ -25,18 +28,38 @@ const ToolFoundrySettings: React.FC = () => {
     const ok = await foundryAvailable();
     setMigrated(ok);
     if (!ok) return;
-    try { setTools(await listTools()); } catch { /* transient */ }
+    try {
+      const rows = await listTools();
+      setTools(rows);
+      const fps: Record<string, string> = {};
+      await Promise.all(rows.filter((r) => r.status === "draft").map(async (r) => {
+        try { fps[r.id] = await toolFingerprint(r.id); } catch { /* leaves it unpinned */ }
+      }));
+      setFingerprints(fps);
+    } catch { /* transient */ }
   }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
   const drafts = tools.filter((t) => t.status === "draft");
   const active = tools.filter((t) => t.status === "approved" && !t.superseded_by);
-  const disabled = tools.filter((t) => t.status === "disabled" && !t.superseded_by);
+  // Only USER-disabled tools belong here; approve_tool marks superseded
+  // versions 'disabled' too, and those are history, not a management surface.
+  const disabled = tools.filter((t) => t.disabled_by_user === true);
 
   const approve = async (t: AgentToolRow) => {
     try {
+      // Compare the fingerprint captured when this list rendered (i.e. what
+      // the user actually reviewed) against the current one. Fetching it and
+      // passing it straight back would make the RPC's mismatch check a
+      // tautology — it can only reject content that changed since review.
       const fp = await toolFingerprint(t.id);
+      const reviewed = fingerprints[t.id];
+      if (reviewed && reviewed !== fp) {
+        toast.error("This tool changed since the list loaded — reloading so you can review the new version.");
+        void refresh();
+        return;
+      }
       await approveTool(t.id, fp);
       toast.success(`"${t.name}" approved`);
       void refresh();
@@ -47,7 +70,10 @@ const ToolFoundrySettings: React.FC = () => {
 
   const setStatus = async (t: AgentToolRow, status: "disabled" | "draft") => {
     try {
-      const { error } = await (supabase.from("agent_tools" as any) as any).update({ status }).eq("id", t.id);
+      // disabled_by_user records the INTENT, distinct from the 'disabled'
+      // status approve_tool() uses for superseded versions.
+      const patch: Record<string, unknown> = { status, disabled_by_user: status === "disabled" };
+      const { error } = await (supabase.from("agent_tools" as any) as any).update(patch).eq("id", t.id);
       if (error) throw error;
       toast.success(status === "disabled" ? `"${t.name}" disabled` : `"${t.name}" re-enabled (needs approval to run)`);
       void refresh();

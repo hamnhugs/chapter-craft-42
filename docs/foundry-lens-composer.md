@@ -18,7 +18,22 @@ nagging; Settings → Tool Foundry shows the setup note).
 
 - **App CSP** — injected at build time (`vite.config.ts`, `cspPlugin`) so dev/HMR
   stays unrestricted. Every origin is documented in the config; `img-src` is the
-  exfiltration backstop — never widen it to `https:`.
+  exfiltration backstop — never widen it to `https:`. `connect-src` MUST keep
+  `data:` and `blob:`: both are self-contained (no request leaves the browser,
+  so neither is an exfil channel) and without them `fetch(dataUrl)` in image
+  generation/upload and pdf.js's internal fetch of the book object URL fail in
+  production only — dev has no CSP, so the breakage is invisible there.
+
+  **srcdoc inherits the embedder's CSP.** `about:srcdoc`, `blob:` and `data:`
+  documents are local schemes: they take the parent's policy, and a frame's own
+  meta CSP can only intersect with it, never re-grant. Since the app's policy
+  has no `'unsafe-inline'`, any inline `<script>` in a srcdoc frame is dead in
+  production. That is why both frames below are STATIC same-origin documents
+  loaded by URL (`public/tool-sandbox.html`, `public/artifact-frame.html`) —
+  a real-URL document carries only its own policy. `sandbox="allow-scripts"`
+  without `allow-same-origin` still gives each an opaque origin. Verified
+  empirically against the built policy (bootstrap runs, artifact scripts run,
+  `fetch(data:)`/`fetch(blob:)` succeed).
 - **Markdown URL guard** (`src/lib/markdownSafety.tsx`) — all four ReactMarkdown
   sites (ChatPanel, ResponseBlocks, WikiPanel, WorkspacePanel) now allowlist
   image hosts (self + Supabase + data/blob) and harden links. A prompt-injected
@@ -100,28 +115,43 @@ the existing embedding retrieval. Versions supersede-with-lineage.
    never touches an unapproved tool; failure notes are truncated.
 4. **Human ratification**: approval card in chat + Settings; the Approve button
    calls the `approve_tool` SECURITY DEFINER RPC from UI code (the model cannot
-   press it). The RPC recomputes the fingerprint server-side, refuses
-   user-disabled lineages, supersedes the previous version transactionally, and
-   writes the pin to insert-only `tool_approvals`. A DB trigger makes approved
-   rows immutable; client INSERTs can only ever be drafts (RLS WITH CHECK).
+   press it). Both call sites compare the fingerprint captured at REVIEW time
+   against the current one — fetching it and passing it straight back would
+   make the RPC's mismatch check a tautology. The RPC recomputes the
+   fingerprint server-side, refuses user-disabled tools (keyed on an explicit
+   `disabled_by_user` flag and on the tool NAME — inferring the ban from
+   `superseded_by IS NULL` was evadable by inserting a fresh lineage, and
+   `ON DELETE SET NULL` could forge that shape by accident), supersedes the
+   previous version transactionally, and writes the pin to insert-only
+   `tool_approvals`. Triggers make approved rows immutable (for good — the
+   check also fires once any approval exists, so downgrading to draft can't
+   unlock an edit), reject client-supplied lineage columns on INSERT, and make
+   `tool_runs` settle-once so the audit can't be rewritten after the fact.
    Progressive trust: optional "auto-approve safe updates" toggle (default OFF)
    auto-applies version updates with UNCHANGED capabilities + green tests.
 5. **Runtime integrity**: `run_tool` resolves exactly one approved,
    non-superseded row, and runs only if the server fingerprint equals the
    approvals pin (rug-pulled rows never execute).
 6. **Sandbox** (`toolSandbox.ts` + `src/sandbox/toolWorker.ts`): fresh
-   opaque-origin iframe per run (`sandbox="allow-scripts"`, static srcdoc —
-   unit-test enforced zero interpolation — meta CSP `connect-src 'none'`,
+   opaque-origin iframe per run pointing at the static `public/tool-sandbox.html`
+   (see the srcdoc note above; its CSP is `connect-src 'none'`,
    `worker-src blob:`, dns-prefetch off) → blob module Worker (hard kill) →
    QuickJS-WASM VM (memory/stack/interrupt limits). Code and args cross only as
-   MessageChannel data with per-run ids. Dev mode runs the worker directly
-   (Vite module-serving constraint) — the QuickJS boundary still holds; prod
-   exercises the full double boundary.
+   MessageChannel data with per-run ids. The host document accepts a boot
+   message ONLY from `window.parent` — otherwise any other scripted frame
+   (e.g. an artifact) could reach it via `parent.frames[i]` and win the boot
+   race. Boot failures tear the frame down rather than leaking it. Dev mode
+   runs the worker directly (Vite module-serving constraint) — the QuickJS
+   boundary still holds; prod exercises the full double boundary.
 7. **Capabilities**: v1 is read-only — `memory_search`, `memory_get`,
    `books_list`, `books_get_chapter_text`, `images_list` — each a hand-rolled
-   narrow query under the user's own RLS (never a generic table read;
-   `user_settings` holds plaintext API keys in the same scope). Per-call 16KB /
-   per-run 64KB caps; out-of-manifest calls kill the run; results cap at 32KB.
+   narrow query under the user's own RLS, scoped to the loaded neurons (never a
+   generic table read; `user_settings` holds plaintext API keys in the same
+   scope). Per-call 16KB / per-run 64KB / 64-calls caps — a byte budget alone
+   doesn't stop a tool looping on a *failing* capability, since failures return
+   no bytes; exhausting either budget kills the run rather than returning
+   another catchable error. Out-of-manifest calls kill the run; results cap at
+   32KB. Capability results are nonce-fenced on the way back into context.
 8. **Audit**: `tool_runs` rows are inserted at run START (kills stay visible)
    and settled after; no DELETE policy. Run/fail counters feed a
    3-strikes "needs repair" nudge and future trim suggestions.
@@ -133,6 +163,22 @@ where chunk imports could never resolve.
 Phase 2 (not in this ship): write/network capabilities with per-call consent,
 tools calling tools, automatic "package what we just did" proposals,
 sleep-cycle trimming.
+
+## Adversarial review
+
+A four-lens hunter/skeptic pass (sandbox escape, database authorization,
+prompt injection, runtime correctness) ran over the diff before it shipped and
+found two production-only regressions plus ~20 smaller defects, all fixed
+above. The two that mattered:
+
+- **srcdoc CSP inheritance** silently killed the tool sandbox AND every
+  scripted artifact in production builds — dev was unaffected, so no test or
+  local run would have caught it. Both frames moved to static host documents.
+- **`connect-src` without `data:`/`blob:`** broke image generation, image
+  upload, and PDF reading in production for the same reason.
+
+Both were reproduced in a browser under the built policy, and the fixes were
+verified the same way rather than by reasoning about the spec.
 
 ## Known limitations
 

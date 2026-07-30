@@ -24,21 +24,24 @@ interface FrameProps {
   /** memory-linked → offers the suppress control */
   memoryLinked: boolean;
   handsFreeActive: boolean;
+  /** The user asked for this image (chip tap): show it, but don't let it
+   *  consume the auto-show state — a requested view must not push the
+   *  novelty window out or hide the image for the rest of the session. */
+  userRequested?: boolean;
   children: React.ReactNode;
 }
 
-export const LensImageFrame: React.FC<FrameProps> = ({ imageId, memoryLinked, handsFreeActive, children }) => {
+export const LensImageFrame: React.FC<FrameProps> = ({ imageId, memoryLinked, handsFreeActive, userRequested, children }) => {
   const ref = useRef<HTMLDivElement | null>(null);
-  const handsFreeRef = useRef(handsFreeActive);
-  handsFreeRef.current = handsFreeActive;
   const [confirming, setConfirming] = useState(false);
   const [suppressed, setSuppressedLocal] = useState(false);
 
   useEffect(() => {
     const el = ref.current;
-    if (!el || recordedThisTab.has(imageId)) return;
+    if (!el || userRequested || recordedThisTab.has(imageId)) return;
     let dwellTimer: number | null = null;
     let done = false;
+    let lastEntry: IntersectionObserverEntry | null = null;
     const record = async () => {
       if (done || recordedThisTab.has(imageId)) return;
       done = true;
@@ -49,25 +52,29 @@ export const LensImageFrame: React.FC<FrameProps> = ({ imageId, memoryLinked, ha
       } catch { /* best effort */ }
       obs.disconnect();
     };
-    const obs = new IntersectionObserver(
-      (entries) => {
-        const e = entries[0];
-        const eligible = e.isIntersecting && e.intersectionRatio >= 0.5 && !document.hidden && !handsFreeRef.current;
-        if (eligible && dwellTimer === null) {
-          dwellTimer = window.setTimeout(() => { void record(); }, 1000);
-        } else if (!eligible && dwellTimer !== null) {
-          window.clearTimeout(dwellTimer);
-          dwellTimer = null;
-        }
-      },
-      { threshold: [0, 0.5, 1] },
-    );
+    // Eligibility depends on three inputs, only ONE of which the observer
+    // reports. Without re-checking on the other two, an image that was on
+    // screen while hands-free was on (or the tab hidden) never records — and
+    // then auto-expands full-size again on every later turn that recalls it.
+    const evaluate = () => {
+      const e = lastEntry;
+      const eligible = !!e && e.isIntersecting && e.intersectionRatio >= 0.5 && !document.hidden && !handsFreeActive;
+      if (eligible && dwellTimer === null) {
+        dwellTimer = window.setTimeout(() => { void record(); }, 1000);
+      } else if (!eligible && dwellTimer !== null) {
+        window.clearTimeout(dwellTimer);
+        dwellTimer = null;
+      }
+    };
+    const obs = new IntersectionObserver((entries) => { lastEntry = entries[entries.length - 1]; evaluate(); }, { threshold: [0, 0.5, 1] });
     obs.observe(el);
+    document.addEventListener("visibilitychange", evaluate);
     return () => {
+      document.removeEventListener("visibilitychange", evaluate);
       if (dwellTimer !== null) window.clearTimeout(dwellTimer);
       obs.disconnect();
     };
-  }, [imageId]);
+  }, [imageId, handsFreeActive, userRequested]);
 
   if (suppressed) {
     return (
@@ -129,7 +136,7 @@ const Chip: React.FC<{ c: MemoryImageCandidate; handsFreeActive: boolean }> = ({
   if (expanded) {
     return (
       <div className="w-full">
-        <LensImageFrame imageId={c.imageId} memoryLinked handsFreeActive={handsFreeActive}>
+        <LensImageFrame imageId={c.imageId} memoryLinked handsFreeActive={handsFreeActive} userRequested>
           <GeneratedImage key={c.imageId} storagePath={c.storagePath} alt={c.prompt} caption={`From your memory: ${c.entryTitle}`} resizable />
         </LensImageFrame>
       </div>

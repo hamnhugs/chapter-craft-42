@@ -182,7 +182,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // false the foundry tools are omitted from the model's roster entirely —
   // the model can't attempt what it can't see, so pre-migration there is no
   // mid-chat refusal nagging.
-  const foundryOptIn = chatToolPermissions?.forge_tool === true || chatToolPermissions?.run_tool === true;
+  const forgeOptIn = chatToolPermissions?.forge_tool === true;
+  const runOptIn = chatToolPermissions?.run_tool === true;
+  const foundryOptIn = forgeOptIn || runOptIn;
   const [foundryReady, setFoundryReady] = useState(false);
   useEffect(() => {
     let alive = true;
@@ -190,7 +192,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     foundryAvailable().then((ok) => { if (alive) setFoundryReady(ok); });
     return () => { alive = false; };
   }, [foundryOptIn]);
-  const foundryEnabled = foundryOptIn && foundryReady;
+  // Gate PER TOOL: with a single combined flag, enabling only "forge" would
+  // still advertise run_tool to the model, which then calls it and gets a
+  // "not enabled" refusal — exactly the mid-chat nagging this design avoids.
+  const forgeEnabled = forgeOptIn && foundryReady;
+  const runEnabled = runOptIn && foundryReady;
+  const foundryEnabled = forgeEnabled || runEnabled;
   const [chatDeepResearch, setChatDeepResearch] = useState<boolean>(() =>
     typeof window !== "undefined" && localStorage.getItem("chat_deep_research") === "1");
   const [voiceDeepResearch, setVoiceDeepResearch] = useState<boolean>(() =>
@@ -708,9 +715,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             body: JSON.stringify({
               model,
               messages: workingMessages,
-              tools: foundryEnabled
-                ? CHAT_TOOL_DEFINITIONS
-                : CHAT_TOOL_DEFINITIONS.filter((t: any) => t.function.name !== "forge_tool" && t.function.name !== "run_tool"),
+              tools: CHAT_TOOL_DEFINITIONS.filter((t: any) =>
+                (t.function.name !== "forge_tool" || forgeEnabled) &&
+                (t.function.name !== "run_tool" || runEnabled)),
               tool_choice: "auto",
               stream: true,
             }),
@@ -1057,7 +1064,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
       }
     },
-    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, autoShowMemoryImages, foundryEnabled, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
+    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, autoShowMemoryImages, foundryEnabled, forgeEnabled, runEnabled, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
   );
 
 

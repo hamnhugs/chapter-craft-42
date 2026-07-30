@@ -1,12 +1,13 @@
 import React from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { buildArtifactDoc, type Artifact } from "@/lib/artifacts";
+import ArtifactFrame from "@/components/ArtifactFrame";
+import { type Artifact } from "@/lib/artifacts";
 
-// Renders a model-authored HTML/SVG artifact inside a sandboxed iframe.
-// Isolation: sandbox="allow-scripts" WITHOUT allow-same-origin → the frame gets
-// a null origin (can't read the parent DOM, cookies, or storage), and the
-// in-document CSP blocks all network (connect-src 'none'). Scripts may run but
-// have nowhere to send data.
+// Renders a model-authored HTML/SVG artifact in an isolated frame (see
+// ArtifactFrame for the delivery mechanism). Isolation: sandbox="allow-scripts"
+// WITHOUT allow-same-origin → the frame gets an opaque origin (can't read the
+// parent DOM, cookies, or storage), and its CSP blocks all network
+// (connect-src 'none'). Scripts may run but have nowhere to send data.
 const ArtifactPanel: React.FC<{ artifact: Artifact | null; onClose: () => void }> = ({ artifact, onClose }) => {
   return (
     <Sheet open={!!artifact} onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -20,14 +21,7 @@ const ArtifactPanel: React.FC<{ artifact: Artifact | null; onClose: () => void }
         </SheetHeader>
         <div className="flex-1 min-h-0 bg-white">
           {artifact && (
-            <iframe
-              key={`${artifact.title}-${artifact.content.length}`}
-              title={artifact.title}
-              srcDoc={buildArtifactDoc(artifact)}
-              sandbox="allow-scripts"
-              referrerPolicy="no-referrer"
-              className="w-full h-full border-0"
-            />
+            <ArtifactFrame artifact={artifact} />
           )}
         </div>
         <div className="px-4 py-2 border-t border-outline-variant/10 shrink-0 text-[10px] text-on-surface-variant">

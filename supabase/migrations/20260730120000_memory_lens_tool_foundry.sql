@@ -37,6 +37,11 @@ CREATE TABLE IF NOT EXISTS public.agent_tools (
   manifest JSONB NOT NULL DEFAULT '{}'::jsonb,
   tests JSONB NOT NULL DEFAULT '[]'::jsonb,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'approved', 'disabled')),
+  -- Explicit user intent. Never infer "the user banned this" from the shape
+  -- of (status, superseded_by): ON DELETE SET NULL rewrites superseded rows
+  -- into exactly that shape, so deleting a version would silently ban the
+  -- tool name forever.
+  disabled_by_user BOOLEAN NOT NULL DEFAULT FALSE,
   version INTEGER NOT NULL DEFAULT 1,
   superseded_by UUID REFERENCES public.agent_tools(id) ON DELETE SET NULL,
   entry_id UUID REFERENCES public.knowledge_entries(id) ON DELETE SET NULL,
@@ -80,9 +85,25 @@ USING (auth.uid() = user_id);
 CREATE OR REPLACE FUNCTION public.agent_tools_guard()
 RETURNS TRIGGER
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_catalog
 AS $$
 BEGIN
-  IF OLD.status = 'approved' THEN
+  IF TG_OP = 'INSERT' THEN
+    -- Lineage plumbing is server-managed: a client-chosen root_id/superseded_by
+    -- is how a banned tool would launder itself back in as a fresh lineage.
+    IF NEW.superseded_by IS NOT NULL THEN
+      RAISE EXCEPTION 'superseded_by is set by approve_tool(), not by clients';
+    END IF;
+    IF NEW.disabled_by_user THEN
+      RAISE EXCEPTION 'disabled_by_user is set by the Settings disable action, not at insert';
+    END IF;
+    RETURN NEW;
+  END IF;
+  -- Once a version has ever been approved, its reviewed fields are frozen for
+  -- good: without the tool_approvals clause a client could flip an approved
+  -- row back to 'draft' and then rewrite the code the pin still vouches for.
+  IF OLD.status = 'approved' OR EXISTS (SELECT 1 FROM tool_approvals WHERE tool_id = OLD.id) THEN
     IF NEW.code IS DISTINCT FROM OLD.code
        OR NEW.manifest::text IS DISTINCT FROM OLD.manifest::text
        OR NEW.tests::text IS DISTINCT FROM OLD.tests::text
@@ -92,8 +113,17 @@ BEGIN
     END IF;
   END IF;
   IF NEW.status = 'approved' AND OLD.status IS DISTINCT FROM 'approved'
-     AND current_setting('app.tool_approval', true) IS DISTINCT FROM '1' THEN
+     AND pg_catalog.current_setting('app.tool_approval', true) IS DISTINCT FROM '1' THEN
     RAISE EXCEPTION 'tools can only be approved via approve_tool()';
+  END IF;
+  -- superseded_by is approve_tool()'s bookkeeping; a client rewriting it is
+  -- how the disabled-lineage guard would be slipped.
+  IF NEW.superseded_by IS DISTINCT FROM OLD.superseded_by
+     AND pg_catalog.current_setting('app.tool_approval', true) IS DISTINCT FROM '1' THEN
+    RAISE EXCEPTION 'superseded_by is maintained by approve_tool()';
+  END IF;
+  IF NEW.root_id IS DISTINCT FROM OLD.root_id THEN
+    RAISE EXCEPTION 'root_id is immutable';
   END IF;
   RETURN NEW;
 END;
@@ -101,7 +131,7 @@ $$;
 
 DROP TRIGGER IF EXISTS agent_tools_guard_trigger ON public.agent_tools;
 CREATE TRIGGER agent_tools_guard_trigger
-BEFORE UPDATE ON public.agent_tools
+BEFORE INSERT OR UPDATE ON public.agent_tools
 FOR EACH ROW EXECUTE FUNCTION public.agent_tools_guard();
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -161,6 +191,35 @@ ON public.tool_runs FOR UPDATE
 USING (auth.uid() = user_id)
 WITH CHECK (auth.uid() = user_id);
 
+-- The UPDATE policy exists only so a pending row can be SETTLED once. Without
+-- this trigger, "append-only audit" is a fiction: a run killed for a
+-- capability violation could simply be relabelled 'ok' with its recorded
+-- capability calls erased — deleting exactly the evidence the audit exists for.
+CREATE OR REPLACE FUNCTION public.tool_runs_guard()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_catalog
+AS $$
+BEGIN
+  IF OLD.status <> 'pending' THEN
+    RAISE EXCEPTION 'tool_runs rows are settled once and then immutable';
+  END IF;
+  IF NEW.tool_id IS DISTINCT FROM OLD.tool_id
+     OR NEW.sha256 IS DISTINCT FROM OLD.sha256
+     OR NEW.created_at IS DISTINCT FROM OLD.created_at
+     OR NEW.user_id IS DISTINCT FROM OLD.user_id THEN
+    RAISE EXCEPTION 'tool run identity is immutable';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS tool_runs_guard_trigger ON public.tool_runs;
+CREATE TRIGGER tool_runs_guard_trigger
+BEFORE UPDATE ON public.tool_runs
+FOR EACH ROW EXECUTE FUNCTION public.tool_runs_guard();
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 6. RPCs. pgcrypto digest() lives in the extensions schema on Supabase.
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -206,22 +265,24 @@ BEGIN
     RAISE EXCEPTION 'fingerprint mismatch — the tool changed since it was reviewed; review it again';
   END IF;
   lineage := COALESCE(t.root_id, t.id);
-  -- A USER-disabled version (disabled without being superseded) blocks the
-  -- whole lineage: re-forging a banned tool under the same name must not
-  -- launder it back. Re-enable in Settings first.
+  -- A user-disabled version blocks the tool NAME, not just its lineage row:
+  -- keying this on root_id/superseded_by alone let a fresh draft (root_id
+  -- NULL) sidestep the ban entirely. Re-enable in Settings first.
   IF EXISTS (
     SELECT 1 FROM agent_tools
     WHERE user_id = auth.uid()
-      AND COALESCE(root_id, id) = lineage
-      AND status = 'disabled' AND superseded_by IS NULL
+      AND disabled_by_user
+      AND (name = t.name OR COALESCE(root_id, id) = lineage)
       AND id <> t.id
   ) THEN
     RAISE EXCEPTION 'this tool was previously disabled by the user — re-enable it in Settings before approving a new version';
   END IF;
   PERFORM set_config('app.tool_approval', '1', true);
+  -- Supersede by NAME as well: the previous approved version of a tool is the
+  -- one sharing its name, whether or not lineage bookkeeping agrees.
   UPDATE agent_tools SET status = 'disabled', superseded_by = t.id
     WHERE user_id = auth.uid()
-      AND COALESCE(root_id, id) = lineage
+      AND (name = t.name OR COALESCE(root_id, id) = lineage)
       AND status = 'approved'
       AND id <> t.id;
   UPDATE agent_tools SET status = 'approved' WHERE id = t.id;

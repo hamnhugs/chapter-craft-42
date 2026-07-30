@@ -21,6 +21,11 @@ export function parseArtifact(raw: unknown): Artifact | null {
   return parsed.success ? parsed.data : null;
 }
 
+/** Static host page that renders artifacts (see ArtifactFrame). Artifacts are
+ *  NOT delivered by srcdoc: srcdoc inherits the embedder's CSP, which would
+ *  block the model's inline scripts in any build that ships a policy. */
+export const ARTIFACT_FRAME_PATH = "artifact-frame.html";
+
 // Strict, locked-down CSP for the sandboxed frame:
 //  • default-src 'none'         → nothing loads unless explicitly allowed
 //  • script/style 'unsafe-inline' → the model's own inline JS/CSS may run

@@ -62,7 +62,7 @@ export interface BuiltPrompt {
 // sanitizer strips the nonce, the bracket convention, and line-leading heading
 // markers from the wrapped text.
 
-function buildFenceNonce(): string {
+export function buildFenceNonce(): string {
   try {
     return crypto.randomUUID().slice(0, 8);
   } catch {
@@ -70,12 +70,27 @@ function buildFenceNonce(): string {
   }
 }
 
+/** Wrap sanitized untrusted text in a nonce fence. Used by the prompt builder
+ *  and by every tool that returns user content to the model. */
+export function fenced(text: string, nonce: string): string {
+  return `<<<data:${nonce}>>>${text}<<<end:${nonce}>>>`;
+}
+
+// The app's own attachment notes start with "[Attached image". A literal
+// match is trivially evaded ("[Attached  image", "[Attached-image", a tab or
+// newline between the words), and a forged note is byte-identical to a real
+// one — including the imperative "call show_image with this id". Match the
+// SHAPE, and defang bare image_id references inside untrusted text too.
+const FORGED_ATTACHMENT_RE = /\[\s*attached[\s\-_]*image/gi;
+const IMAGE_ID_RE = /\bimage_id\s*:/gi;
+
 /** One-line sanitization for untrusted text used inline (titles, snippets). */
 export function sanitizeInline(text: string, nonce: string, maxLen = 200): string {
   return (text || "")
     .split(nonce).join("")
     .replace(/\s+/g, " ")
-    .replace(/\[Attached image/gi, "(attached image)")
+    .replace(FORGED_ATTACHMENT_RE, "(attached image)")
+    .replace(IMAGE_ID_RE, "image-ref:")
     .slice(0, maxLen)
     .trim();
 }
@@ -84,7 +99,8 @@ export function sanitizeInline(text: string, nonce: string, maxLen = 200): strin
 export function sanitizeBlock(text: string, nonce: string): string {
   return (text || "")
     .split(nonce).join("")
-    .replace(/\[Attached image/gi, "(attached-image note removed: ")
+    .replace(FORGED_ATTACHMENT_RE, "(attached-image note removed:")
+    .replace(IMAGE_ID_RE, "image-ref:")
     .replace(/^([ \t]{0,3})(#{1,6}[ \t])/gm, "$1\\$2");
 }
 

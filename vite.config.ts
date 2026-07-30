@@ -18,7 +18,12 @@ const PROD_CSP = [
   "img-src 'self' data: blob: https://ktzaysdkdkocqhewwtnn.supabase.co https://media.giphy.com",
   "media-src 'self' blob: data: https://ktzaysdkdkocqhewwtnn.supabase.co",
   "font-src 'self' data: https://fonts.gstatic.com",
-  "connect-src 'self' https://ktzaysdkdkocqhewwtnn.supabase.co wss://ktzaysdkdkocqhewwtnn.supabase.co https://tmagmbmitnvcwubxcwoc.supabase.co https://openrouter.ai https://queue.fal.run https://fal.media https://*.fal.media https://cdn.jsdelivr.net",
+  // data:/blob: are REQUIRED and safe: fetch() of either is self-contained —
+  // no request leaves the browser, so neither is an exfiltration channel.
+  // Without them, storeGeneratedImage/imageUpload (fetch(dataUrl) → Blob) and
+  // pdf.js (fetches the book's object URL internally) break in production
+  // while working fine in dev, where no CSP applies.
+  "connect-src 'self' data: blob: https://ktzaysdkdkocqhewwtnn.supabase.co wss://ktzaysdkdkocqhewwtnn.supabase.co https://tmagmbmitnvcwubxcwoc.supabase.co https://openrouter.ai https://queue.fal.run https://fal.media https://*.fal.media https://cdn.jsdelivr.net",
   "worker-src 'self' blob:",
   "frame-src 'self' blob:",
   "object-src 'none'",

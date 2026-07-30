@@ -181,7 +181,14 @@ const ChatPanel: React.FC = () => {
     const prev = tailAnchorRef.current;
     const changed = !!last && (last.id !== prev.key || last.role !== prev.role || last.content !== prev.content);
     tailAnchorRef.current = { key: last?.id, content: last?.content, role: last?.role };
-    if (changed) messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (changed) {
+      // Mark this scroll as ours: the transcript's onScroll can't distinguish
+      // user scrolling from smooth auto-scroll, and a streaming reply fires it
+      // continuously — which would otherwise keep the "user was scrolling"
+      // guard permanently hot and suppress the desktop refocus entirely.
+      programmaticScrollUntilRef.current = Date.now() + 1200;
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }, [messages]);
 
   // Prepending shifts content down; compensate manually (and predictably —
@@ -227,6 +234,7 @@ const ChatPanel: React.FC = () => {
   const prevLoadingRef = useRef(false);
   const wasFocusedAtSendRef = useRef(false);
   const lastTranscriptInteractionRef = useRef(0);
+  const programmaticScrollUntilRef = useRef(0);
   useEffect(() => {
     const wasStreaming = prevLoadingRef.current;
     prevLoadingRef.current = isLoading;
@@ -716,7 +724,7 @@ const ChatPanel: React.FC = () => {
 
       {/* Messages */}
       <div className="flex-1 overflow-hidden">
-        <div ref={messagesContainerRef} role="log" aria-label="Conversation with The Librarian" aria-live="off" onScroll={() => { lastTranscriptInteractionRef.current = Date.now(); }} onPointerDown={() => { lastTranscriptInteractionRef.current = Date.now(); }} className="h-full overflow-auto px-4 py-6 space-y-6 hide-scrollbar [overflow-anchor:none]">
+        <div ref={messagesContainerRef} role="log" aria-label="Conversation with The Librarian" aria-live="off" onScroll={() => { if (Date.now() >= programmaticScrollUntilRef.current) lastTranscriptInteractionRef.current = Date.now(); }} onPointerDown={() => { lastTranscriptInteractionRef.current = Date.now(); }} onWheel={() => { lastTranscriptInteractionRef.current = Date.now(); }} onTouchMove={() => { lastTranscriptInteractionRef.current = Date.now(); }} className="h-full overflow-auto px-4 py-6 space-y-6 hide-scrollbar [overflow-anchor:none]">
 
         {messages.length > 0 && hasEarlier && (
           <div className="flex justify-center">

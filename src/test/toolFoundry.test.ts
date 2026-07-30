@@ -1,17 +1,44 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { analyzeToolCode, sanitizeToolDescription, TOOL_NAME_RE } from "@/lib/toolFoundry";
-import { SANDBOX_SRCDOC } from "@/lib/toolSandbox";
+import { SANDBOX_DOC_PATH } from "@/lib/toolSandbox";
+import { ARTIFACT_FRAME_PATH } from "@/lib/artifacts";
 import { sanitizeBlock, sanitizeInline } from "@/lib/buildChatSystemPrompt";
 
-describe("sandbox srcdoc", () => {
-  it("is a compile-time constant with no interpolation seams", () => {
-    // Template-literal interpolation in the bootstrap would let tool text
-    // escape QuickJS into iframe-privileged JS. The srcdoc must be static.
-    expect(SANDBOX_SRCDOC).not.toContain("${");
-    expect(SANDBOX_SRCDOC).toContain("connect-src 'none'");
-    expect(SANDBOX_SRCDOC).toContain("worker-src blob:");
-    expect(SANDBOX_SRCDOC).toContain("'wasm-unsafe-eval'");
-    expect(SANDBOX_SRCDOC).toContain('x-dns-prefetch-control" content="off"');
+const readPublic = (name: string) => readFileSync(resolve(process.cwd(), "public", name), "utf8");
+
+describe("sandbox host document", () => {
+  const doc = readPublic(SANDBOX_DOC_PATH);
+
+  it("keeps the network shut and the worker path open", () => {
+    expect(doc).toContain("connect-src 'none'");
+    expect(doc).toContain("worker-src blob:");
+    expect(doc).toContain("'wasm-unsafe-eval'");
+    expect(doc).toContain('x-dns-prefetch-control" content="off"');
+  });
+
+  it("only accepts a boot message from its embedder", () => {
+    // Without this, any other scripted frame (e.g. a model-authored artifact)
+    // can reach the sandbox via parent.frames[i] and win the boot race.
+    expect(doc).toContain("e.source !== window.parent");
+  });
+
+  it("is static — no interpolation seam for tool text to escape through", () => {
+    expect(doc).not.toContain("${");
+  });
+});
+
+describe("artifact host document", () => {
+  const doc = readPublic(ARTIFACT_FRAME_PATH);
+
+  it("lets artifact scripts run but gives them nowhere to send data", () => {
+    // Served as a real URL, NOT srcdoc: srcdoc inherits the app's CSP, which
+    // would block these inline scripts in any build that ships a policy.
+    expect(doc).toContain("script-src 'unsafe-inline'");
+    expect(doc).toContain("connect-src 'none'");
+    expect(doc).toContain("img-src data: blob:");
+    expect(doc).toContain("e.source !== window.parent");
   });
 });
 
