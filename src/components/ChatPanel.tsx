@@ -49,7 +49,7 @@ const ChatPanel: React.FC = () => {
   const { user } = useAuth();
   const isMobile = useIsMobile();
   const {
-    apiKey, savedModels, selectedModel, voiceModel, autoReadReplies, burplexityApiToken, accessAllNeurons, loaded,
+    apiKey, nvidiaKeyLast4, savedModels, selectedModel, voiceModel, autoReadReplies, burplexityApiToken, accessAllNeurons, loaded,
     handsFreeTtsRate,
     setSelectedModel, setAutoReadReplies,
   } = useChatSettings();
@@ -551,7 +551,7 @@ const ChatPanel: React.FC = () => {
     const text = input.trim();
     const imagesToSend = pendingImages;
     if (!text && imagesToSend.length === 0) return;
-    if (!apiKey) { toast.error("Please set your OpenRouter API key first"); openSettings("models"); return; }
+    if (!apiKey && !nvidiaKeyLast4) { toast.error("Add an API key in Settings first — OpenRouter or NVIDIA"); openSettings("models"); return; }
     sendingRef.current = true;
     // Desktop refocus eligibility: this send came from the composer area
     // (Enter or the send button). Touch devices never refocus.
@@ -854,6 +854,15 @@ const ChatPanel: React.FC = () => {
                   {msg.toolProposals && msg.toolProposals.map((p) => (
                     <ToolApprovalCard key={p.tool_id} proposal={p} />
                   ))}
+                  {msg.reasoning && (
+                    <details className="mb-2 rounded-lg bg-surface-container-highest/40 px-3 py-1.5">
+                      <summary className="cursor-pointer list-none inline-flex items-center gap-1 text-[11px] font-semibold text-on-surface-variant/80 select-none">
+                        <span className="material-symbols-outlined text-xs" aria-hidden>psychology</span>
+                        Thinking
+                      </summary>
+                      <div className="mt-1 text-xs text-on-surface-variant/80 whitespace-pre-wrap max-h-56 overflow-y-auto">{msg.reasoning}</div>
+                    </details>
+                  )}
                   {msg.content && <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown urlTransform={safeUrlTransform} components={safeMarkdownComponents}>{msg.content}</ReactMarkdown></div>}
                   {msg.blocks && msg.blocks.length > 0 && <ResponseBlocks blocks={msg.blocks} />}
                   {msg.artifact && (
@@ -1012,7 +1021,7 @@ const ChatPanel: React.FC = () => {
                 ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} onPaste={handlePaste}
                 inputMode={handsFree.active ? "none" : undefined}
                 aria-label="Message The Librarian"
-                placeholder={dictation.isListening ? "Listening… speak now" : apiKey ? "Ask about your books, or drop an image…" : "Set your OpenRouter API key to start chatting"}
+                placeholder={dictation.isListening ? "Listening… speak now" : (apiKey || nvidiaKeyLast4) ? "Ask about your books, or drop an image…" : "Add an API key in Settings to start chatting"}
                 rows={1} className="bg-surface-container-high border-none rounded-xl text-foreground py-3 pl-4 pr-20 focus:ring-1 focus:ring-primary/40 resize-none min-h-[50px] max-h-[220px] overflow-y-auto"
               />
 

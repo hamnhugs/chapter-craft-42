@@ -14,6 +14,7 @@ import {
 } from "@/lib/openrouterAuth";
 import { useConsentResolved } from "@/components/WelcomeGate";
 import { fetchCatalog, isFreeModel, type ORModel } from "@/lib/openrouterCatalog";
+import { namespacedNvidiaId, NVIDIA_FEATURED, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
 
 // First-run setup helper. Research-backed shape: 4 steps max (completion
 // roughly halves per extra step), skippable everywhere, teaches the
@@ -51,9 +52,13 @@ const SetupWizard: React.FC = () => {
   const { open, step } = useSyncExternalStore(subscribeWiz, getWizState, getWizState);
   const { user } = useAuth();
   const consentResolved = useConsentResolved();
-  const { apiKey, savedModels, selectedModel, addModel, saveApiKey, loaded: settingsLoaded } = useChatSettings();
+  const { apiKey, nvidiaKeyLast4, savedModels, selectedModel, addModel, saveApiKey, saveNvidiaKey, loaded: settingsLoaded } = useChatSettings();
 
   const [keyDraft, setKeyDraft] = useState("");
+  const [nvidiaDraft, setNvidiaDraft] = useState("");
+  const [showNvidia, setShowNvidia] = useState(false);
+  useEffect(() => { if (nvidiaKeyLast4) setNvidiaDraft(""); }, [nvidiaKeyLast4]);
+  const nvidiaOnly = !!nvidiaKeyLast4 && !apiKey;
   const [testing, setTesting] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [popupMode, setPopupMode] = useState(false);
@@ -87,14 +92,15 @@ const SetupWizard: React.FC = () => {
     if (autoOpenedRef.current || open) return;
     if (!user || !settingsLoaded || !consentResolved) return;
     if (localStorage.getItem(DONE_KEY)) return;
-    if (apiKey) {
-      // Existing user who set up before the wizard existed — never nag them.
+    if (apiKey || nvidiaKeyLast4) {
+      // Existing user who set up before the wizard existed (either provider
+      // counts as configured) — never nag them.
       localStorage.setItem(DONE_KEY, "1");
       return;
     }
     autoOpenedRef.current = true;
     openSetupWizard(0);
-  }, [user, settingsLoaded, apiKey, open, consentResolved]);
+  }, [user, settingsLoaded, apiKey, nvidiaKeyLast4, open, consentResolved]);
 
   // Lazy-load quick picks for the models step: top free models by real usage.
   useEffect(() => {
@@ -169,6 +175,19 @@ const SetupWizard: React.FC = () => {
     }
     saveApiKey(key);
     setKeyDraft("");
+  };
+
+  // Saving an NVIDIA key during setup must leave the user with a model they
+  // can actually run: the default Active model is an OpenRouter id, so an
+  // NVIDIA-only user would otherwise finish the wizard and hit a provider
+  // mismatch on their very first message.
+  const handleSaveNvidia = async () => {
+    const ok = await saveNvidiaKey(nvidiaDraft);
+    if (!ok || apiKey) return;
+    // addModel auto-selects (the key now exists in the snapshot), so the
+    // Active model becomes one this user can actually run.
+    const pick = namespacedNvidiaId(NVIDIA_STARTER_MODEL);
+    if (!savedModels.includes(pick)) addModel(pick);
   };
 
   const next = () => setWizState({ open: true, step: Math.min(step + 1, STEP_COUNT - 1) });
@@ -276,6 +295,58 @@ const SetupWizard: React.FC = () => {
                 )}
               </>
             )}
+
+            <div className="pt-1 border-t border-outline-variant/20">
+              <button
+                onClick={() => setShowNvidia((v) => !v)}
+                className="text-xs font-semibold text-primary hover:underline"
+              >
+                {showNvidia ? "Hide NVIDIA setup" : "Or use NVIDIA's free models instead"}
+              </button>
+              {showNvidia && (
+                <div className="mt-2 space-y-2 p-3 rounded-xl bg-surface-container-high text-xs text-on-surface-variant">
+                  {nvidiaKeyLast4 ? (
+                    <div className="flex items-center gap-2.5">
+                      <Check className="w-4 h-4 text-primary shrink-0" />
+                      <span>NVIDIA connected (key ending {nvidiaKeyLast4}). Add NVIDIA models from the model browser.</span>
+                    </div>
+                  ) : (
+                    <>
+                      <ol className="list-decimal list-inside space-y-1">
+                        <li>
+                          Sign in free at{" "}
+                          <a href="https://build.nvidia.com" target="_blank" rel="noreferrer" className="text-primary underline">build.nvidia.com</a>{" "}
+                          (~1,000 trial requests, no card)
+                        </li>
+                        <li>
+                          Open{" "}
+                          <a href="https://build.nvidia.com/settings/api-keys" target="_blank" rel="noreferrer" className="text-primary underline">Settings → API Keys</a>{" "}
+                          and press <strong>Generate API Key</strong>
+                        </li>
+                        <li>Paste it here (it starts with nvapi-):</li>
+                      </ol>
+                      <div className="flex gap-2">
+                        <input
+                          type="password"
+                          value={nvidiaDraft}
+                          onChange={(e) => setNvidiaDraft(e.target.value)}
+                          placeholder="nvapi-…"
+                          className="flex-1 bg-surface-container-highest border-none rounded-lg text-sm py-2 px-3 focus:ring-1 focus:ring-primary/40"
+                        />
+                        <Button size="sm" onClick={() => { void handleSaveNvidia(); }} disabled={!nvidiaDraft.trim()}>
+                          Save
+                        </Button>
+                      </div>
+                      <p>
+                        Unlocks DeepSeek V4, Nemotron 3, Kimi K2.6, DiffusionGemma and more. Image and video
+                        generation still need an OpenRouter key.
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
             <p className="text-[11px] text-on-surface-variant">
               You can skip this — your Vault works without it — but Counsel and Neurons need a key to think.
             </p>
@@ -287,12 +358,38 @@ const SetupWizard: React.FC = () => {
             <div className="space-y-1">
               <h2 className="font-headline font-bold text-3xl text-foreground">Pick your thinkers</h2>
               <p className="text-sm text-on-surface-variant">
-                A "model" is the AI brain Counsel uses. You already have a great all-rounder
+                A "model" is the AI brain Counsel uses. You're set up with
                 (<span className="font-mono text-xs">{selectedModel}</span>) — add more if you like.
                 Switching later is one tap in Settings.
               </p>
             </div>
-            {picks === null ? (
+            {/* NVIDIA-only setup: the OpenRouter rankings below are unusable
+                without an OpenRouter key, so offer curated NVIDIA picks
+                instead — adding one here keeps the first chat working. */}
+            {nvidiaOnly ? (
+              <div className="space-y-2">
+                {NVIDIA_FEATURED.filter((m) => m.featured).slice(0, 4).map((m) => {
+                  const nsId = namespacedNvidiaId(m.localId);
+                  const saved = savedModels.includes(nsId);
+                  return (
+                    <div key={m.localId} className="flex items-center gap-3 p-3 rounded-xl bg-surface-container-high">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-foreground truncate">{m.label}</span>
+                          <span className="px-1.5 py-0.5 rounded bg-primary-container/25 text-primary text-[9px] font-bold uppercase tracking-widest shrink-0">
+                            NVIDIA
+                          </span>
+                        </div>
+                        <div className="font-mono text-[10px] text-on-surface-variant truncate">{m.localId}</div>
+                      </div>
+                      <Button size="sm" variant={saved ? "outline" : "default"} disabled={saved} onClick={() => addModel(nsId)}>
+                        {saved ? <Check className="w-3.5 h-3.5" /> : "Add"}
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : picks === null ? (
               <div className="flex items-center justify-center py-6">
                 <Loader2 className="w-5 h-5 animate-spin text-on-surface-variant" />
               </div>

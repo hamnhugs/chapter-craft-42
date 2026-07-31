@@ -11,6 +11,7 @@ import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { fetchWikis, type Wiki } from "@/lib/wikisApi";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { isNvidiaModel } from "@/lib/providers/registry";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -40,6 +41,11 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
   const [renameDraft, setRenameDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const { libraryIngestModel, libraryIngestAutoFile, selectedModel, setLibraryIngestModel, setLibraryIngestAutoFile, savedModels, autoExtractFigures, imageExtractionModel, apiKey } = useChatSettings();
+  // Digestion runs SERVER-SIDE against OpenRouter (or the Lovable gateway) —
+  // an "nvidia:" id would be forwarded verbatim and 400 on every retry. Send
+  // null instead so the server falls back to its own default model.
+  const ingestModelRaw = libraryIngestModel || selectedModel || "";
+  const ingestModel = ingestModelRaw && !isNvidiaModel(ingestModelRaw) ? ingestModelRaw : null;
   const { loadBookFile, books: allBooks } = useApp();
   const { isPaid, loaded: planLoaded } = usePlan();
   const { isAdmin, loaded: adminLoaded } = useIsAdmin();
@@ -220,7 +226,7 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
         book_id: book.id,
         wiki_id: wikiId,
         folder_id: folder.id,
-        model: libraryIngestModel || selectedModel || null,
+        model: ingestModel,
       }]);
       // Remember the chosen neuron for next time on this folder.
       if (folder.default_wiki_id !== wikiId) {
@@ -250,7 +256,7 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
           book_id: b.id,
           wiki_id: activeWikiId,
           folder_id: openFolderId,
-          model: libraryIngestModel || selectedModel || null,
+          model: ingestModel,
         })),
       );
       // Remember this neuron on the folder for future single-doc prompts.
@@ -327,8 +333,12 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
               onChange={(e) => setLibraryIngestModel(e.target.value)}
               className="w-full bg-surface-container-high border-none rounded-lg text-sm py-2 px-3"
             >
-              <option value="">Use active chat model ({selectedModel})</option>
-              {savedModels.map((m) => <option key={m} value={m}>{m}</option>)}
+              <option value="">
+                {isNvidiaModel(selectedModel) ? "Server default (NVIDIA models can't digest)" : `Use active chat model (${selectedModel})`}
+              </option>
+              {/* Digestion is OpenRouter/gateway-only server-side — NVIDIA ids
+                  are never offered here. */}
+              {savedModels.filter((m) => !isNvidiaModel(m)).map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
           </div>
           <label className="flex items-start gap-2 text-sm">

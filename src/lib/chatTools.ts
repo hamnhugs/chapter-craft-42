@@ -2684,6 +2684,9 @@ export async function executeChatTool(
         }
 
         const model = String(args.model || deps.videoModelPrimary || DEFAULT_VIDEO_MODEL).trim();
+        if (model.startsWith("nvidia:")) {
+          return { result: { error: "NVIDIA models can't generate video — video runs on OpenRouter. Omit the model argument to use the user's configured video model." }, event: { name, summary: "Not a video model", ok: false } };
+        }
 
         // Load the (cached) video catalog to validate params + estimate cost.
         let catalogModel: VideoModel | null = null;

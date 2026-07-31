@@ -26,6 +26,7 @@ import { getMemoryMode, setMemoryMode, MemoryMode } from "@/lib/knowledgeApi";
 import { consumeSettingsSection } from "@/lib/settingsNav";
 import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
 import { isEmbeddingModel } from "@/lib/utils";
+import { isNvidiaModel, localModelId } from "@/lib/providers/registry";
 import { FIGURE_MODELS_PAID, FIGURE_MODELS_FREE, DEFAULT_FIGURE_MODEL } from "@/lib/figureModels";
 
 // The Settings tab — every user preference in one place.
@@ -141,17 +142,40 @@ const SecretField: React.FC<{
 const selectCls =
   "w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40";
 
+/** Saved-model options grouped by provider. NVIDIA ids are stored with the
+ *  "nvidia:" prefix (the value keeps it — routing depends on it); the label
+ *  drops it since the optgroup already says NVIDIA. With no NVIDIA models
+ *  saved this renders the flat list users see today. `excludeNvidia` is for
+ *  features that run server-side on the OpenRouter key only (wiki ops). */
+const ModelOptions: React.FC<{ models: string[]; excludeNvidia?: boolean }> = ({ models, excludeNvidia }) => {
+  const or = models.filter((m) => !isNvidiaModel(m));
+  const nv = excludeNvidia ? [] : models.filter((m) => isNvidiaModel(m));
+  if (nv.length === 0) {
+    return <>{or.map((m) => (<option key={m} value={m}>{m}</option>))}</>;
+  }
+  return (
+    <>
+      <optgroup label="OpenRouter">
+        {or.map((m) => (<option key={m} value={m}>{m}</option>))}
+      </optgroup>
+      <optgroup label="NVIDIA">
+        {nv.map((m) => (<option key={m} value={m}>{localModelId(m)}</option>))}
+      </optgroup>
+    </>
+  );
+};
+
 const SettingsPanel: React.FC = () => {
   const { user } = useAuth();
   const { isPaid, plan } = usePlan();
   const { themeId, setThemeId, themes } = useTheme();
   const {
-    apiKey, savedModels, selectedModel, deepResearchModel, voiceModel, visionModel, ttsRate,
+    apiKey, nvidiaKeyLast4, savedModels, selectedModel, deepResearchModel, voiceModel, visionModel, ttsRate,
     handsFreeTtsRate, maxReplySentences,
     autoReadReplies, wikiModel, customSystemPrompt, burplexityApiToken,
     inworldApiKey, inworldEnabled, inworldVoiceId, accessAllNeurons, loaded,
     imageExtractionModel, autoExtractFigures,
-    saveApiKey, addModel, removeModel, setSelectedModel, setDeepResearchModel,
+    saveApiKey, saveNvidiaKey, addModel, removeModel, setSelectedModel, setDeepResearchModel,
     setVoiceModel, setVisionModel, setTtsRate, setHandsFreeTtsRate, setMaxReplySentences, setAutoReadReplies, setWikiModel,
     setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey,
     setInworldEnabled, setInworldVoiceId, setAccessAllNeurons,
@@ -159,6 +183,10 @@ const SettingsPanel: React.FC = () => {
   } = useChatSettings();
 
   const [newModelInput, setNewModelInput] = useState("");
+  const [nvidiaKeyDraft, setNvidiaKeyDraft] = useState("");
+  // Write-only key UX: once the save lands (last4 appears), drop the
+  // plaintext from component state.
+  useEffect(() => { if (nvidiaKeyLast4) setNvidiaKeyDraft(""); }, [nvidiaKeyLast4]);
   const reflexCues = useReflexEnabled();
   const [promptDraft, setPromptDraft] = useState(customSystemPrompt || "");
   useEffect(() => { setPromptDraft(customSystemPrompt || ""); }, [customSystemPrompt]);
@@ -355,11 +383,38 @@ const SettingsPanel: React.FC = () => {
                 </div>
               </div>
               <div>
+                <FieldLabel>NVIDIA API Key</FieldLabel>
+                <div className="mt-1.5">
+                  {nvidiaKeyLast4 ? (
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm font-mono text-on-surface-variant">nvapi-••••••{nvidiaKeyLast4}</span>
+                      <Button size="sm" variant="destructive" onClick={() => { void saveNvidiaKey(""); }}>Remove</Button>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2">
+                      <Input
+                        type="password"
+                        placeholder="nvapi-..."
+                        value={nvidiaKeyDraft}
+                        onChange={(e) => setNvidiaKeyDraft(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") void saveNvidiaKey(nvidiaKeyDraft); }}
+                        className="text-sm font-mono bg-surface-container-high border-none"
+                      />
+                      <Button size="sm" onClick={() => { void saveNvidiaKey(nvidiaKeyDraft); }}>Save</Button>
+                    </div>
+                  )}
+                </div>
+                <Hint>
+                  Unlocks NVIDIA's free catalog (DeepSeek V4, Nemotron 3, Kimi K2.6, DiffusionGemma…) — generate one free at{" "}
+                  <a className="text-primary underline" href="https://build.nvidia.com/settings/api-keys" target="_blank" rel="noreferrer">build.nvidia.com</a>{" "}
+                  (~1,000 trial requests, no card). Stored for the relay only — the app never loads it back, and only these last 4 characters are ever shown again.
+                  Chat, voice and vision can run on NVIDIA models; image/video generation and book tools still use your OpenRouter key.
+                </Hint>
+              </div>
+              <div>
                 <FieldLabel>Active Chat Model</FieldLabel>
                 <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} className={`${selectCls} mt-1.5`}>
-                  {savedModels.filter((m) => !isEmbeddingModel(m) || m === selectedModel).map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
+                  <ModelOptions models={savedModels.filter((m) => !isEmbeddingModel(m) || m === selectedModel)} />
                 </select>
               </div>
               <div>
@@ -367,7 +422,7 @@ const SettingsPanel: React.FC = () => {
                 <div className="flex gap-2 mt-1.5">
                   <Input
                     type="text"
-                    placeholder="provider/model-name"
+                    placeholder="vendor/model — or nvidia:vendor/model"
                     value={newModelInput}
                     onChange={(e) => setNewModelInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter") handleAddModel(); }}
@@ -492,7 +547,7 @@ const SettingsPanel: React.FC = () => {
                 <FieldLabel>Voice Model (spoken replies / hands-free)</FieldLabel>
                 <select value={voiceModel || ""} onChange={(e) => setVoiceModel(e.target.value)} className={`${selectCls} mt-1.5`}>
                   <option value="">Same as Active model</option>
-                  {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
+                  <ModelOptions models={savedModels} />
                 </select>
                 <Hint>Pick a fast model (e.g. <code>google/gemini-2.5-flash-lite</code>) for snappier spoken replies.</Hint>
               </div>
@@ -551,7 +606,7 @@ const SettingsPanel: React.FC = () => {
               <div>
                 <FieldLabel>Deep Research Model</FieldLabel>
                 <select value={deepResearchModel} onChange={(e) => setDeepResearchModel(e.target.value)} className={`${selectCls} mt-1.5`}>
-                  {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
+                  <ModelOptions models={savedModels} />
                 </select>
                 <Hint>Used when Deep Research is ON. Pick a strong reasoning model for best results.</Hint>
               </div>
@@ -575,7 +630,7 @@ const SettingsPanel: React.FC = () => {
               <div>
                 <FieldLabel>Quick Search Model (lightweight preferred)</FieldLabel>
                 <select value={voiceQuickSearchModel || selectedModel} onChange={(e) => setVoiceQuickSearchModel(e.target.value)} className={`${selectCls} mt-1.5`}>
-                  {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
+                  <ModelOptions models={savedModels} />
                 </select>
               </div>
             </Section>
@@ -591,7 +646,7 @@ const SettingsPanel: React.FC = () => {
                 <FieldLabel>Vision Model (used when you attach an image)</FieldLabel>
                 <select value={visionModel || ""} onChange={(e) => setVisionModel(e.target.value)} className={`${selectCls} mt-1.5`}>
                   <option value="">Same as Active model</option>
-                  {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
+                  <ModelOptions models={savedModels} />
                 </select>
                 <Hint>For best image understanding pick a vision-strong model like <code>google/gemini-2.5-flash</code> (cheap, great at docs/OCR) or <code>google/gemini-2.5-pro</code> (best reasoning). Falls back to your Active model if blank.</Hint>
               </div>
@@ -611,7 +666,9 @@ const SettingsPanel: React.FC = () => {
                   </optgroup>
                   {(() => {
                     const known = new Set([...FIGURE_MODELS_PAID, ...FIGURE_MODELS_FREE].map((m) => m.id));
-                    const extra = savedModels.filter((m) => !known.has(m) && !isEmbeddingModel(m));
+                    // Figure extraction runs server-side on OpenRouter/gateway
+                    // — NVIDIA ids would be forwarded verbatim and 400.
+                    const extra = savedModels.filter((m) => !known.has(m) && !isEmbeddingModel(m) && !isNvidiaModel(m));
                     return extra.length > 0 ? (
                       <optgroup label="Your saved models">
                         {extra.map((m) => (<option key={m} value={m}>{m}</option>))}
@@ -671,14 +728,20 @@ const SettingsPanel: React.FC = () => {
               <div>
                 <FieldLabel>Wiki Model</FieldLabel>
                 <select
-                  value={wikiModel || "__default__"}
+                  // An NVIDIA id can only get here via the Admin panel's
+                  // free-text field; wiki ops can't run it, so show (and on
+                  // any change, save) the default rather than an empty control.
+                  value={!wikiModel || isNvidiaModel(wikiModel) ? "__default__" : wikiModel}
                   onChange={(e) => setWikiModel(e.target.value === "__default__" ? "" : e.target.value)}
                   className={`${selectCls} mt-1.5`}
                 >
                   <option value="__default__">Default (Gemini Flash)</option>
-                  {savedModels.map((m) => (<option key={m} value={m}>{m}</option>))}
+                  {/* Wiki ops run server-side against OpenRouter only — NVIDIA
+                      models are excluded here so a pick can't silently break
+                      reindexing. */}
+                  <ModelOptions models={savedModels} excludeNvidia />
                 </select>
-                <Hint>Powers wiki extract and health checks. Custom models use OpenRouter and need your API key above.</Hint>
+                <Hint>Powers wiki extract and health checks. Custom models use OpenRouter and need your API key above (NVIDIA models aren't available for wiki ops).</Hint>
                 {wikiModel && !apiKey && (
                   <p className="text-xs text-destructive px-1 mt-1">
                     No OpenRouter API key found — wiki ops will fall back to the default model.

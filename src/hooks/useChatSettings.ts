@@ -11,6 +11,12 @@ const DEFAULT_HANDS_FREE_TTS_RATE = 1.0;
 
 interface ChatSettings {
   apiKey: string;
+  /** Last 4 chars of the saved NVIDIA key — the ONLY part the client ever
+   *  holds. The full key is write-only: saved via saveNvidiaKey, read back
+   *  exclusively by the nvidia-chat edge function under RLS, and excluded
+   *  from the debounced full-row upsert so unrelated saves can't clobber it.
+   *  Non-empty ⇒ "an NVIDIA key is configured". */
+  nvidiaKeyLast4: string;
   savedModels: string[];
   selectedModel: string;
   deepResearchModel: string;
@@ -74,6 +80,7 @@ interface ChatSettings {
 
 const defaults: ChatSettings = {
   apiKey: "",
+  nvidiaKeyLast4: "",
   savedModels: [DEFAULT_MODEL],
   selectedModel: DEFAULT_MODEL,
   deepResearchModel: DEFAULT_DEEP_RESEARCH_MODEL,
@@ -174,6 +181,9 @@ settingsChannel?.addEventListener("message", (e) => {
 function rowToSettings(data: any): ChatSettings {
   return {
     apiKey: data.openrouter_api_key || "",
+    // Deliberately NOT data.nvidia_api_key — the full key never enters
+    // client state (write-only convention; see the interface comment).
+    nvidiaKeyLast4: data.nvidia_key_last4 || "",
     savedModels: (data.saved_models as string[]) || [DEFAULT_MODEL],
     selectedModel: data.selected_model || DEFAULT_MODEL,
     deepResearchModel: data.deep_research_model || DEFAULT_DEEP_RESEARCH_MODEL,
@@ -241,11 +251,36 @@ function ensureLoaded(userId: string | null) {
     return;
   }
   void (async () => {
-    const { data, error } = await supabase
+    // Explicit column list, NOT select("*"): the NVIDIA key must never
+    // transit to the browser at all (only the relay reads it, server-side).
+    // With "*" the plaintext key would sit in every settings response's JSON
+    // — visible in devtools and to any XSS — even though rowToSettings drops
+    // it. Falls back to "*" if a column here hasn't been migrated yet, so a
+    // lagging migration still loads settings (same resilience convention as
+    // the chat_messages select cascade).
+    const READ_COLUMNS = [
+      "user_id", "openrouter_api_key", "nvidia_key_last4", "saved_models", "selected_model",
+      "deep_research_model", "voice_model", "tts_rate", "hands_free_tts_rate", "auto_read_replies",
+      "wiki_model", "custom_system_prompt", "burplexity_api_token", "inworld_api_key",
+      "inworld_enabled", "inworld_voice_id", "access_all_neurons", "max_reply_sentences",
+      "auto_show_memory_images", "auto_approve_tool_updates", "vision_model",
+      "image_extraction_model", "auto_extract_figures", "library_ingest_model",
+      "library_ingest_auto_file", "image_model_primary", "image_model_fallback", "image_quality",
+      "image_size", "saved_image_models", "chat_tool_permissions", "video_model_primary",
+      "saved_video_models", "video_default_duration", "video_default_resolution",
+      "video_default_aspect", "video_generate_audio", "video_confirm_threshold",
+      "video_identity_scale", "video_qc_enabled", "video_motion_model", "fal_api_key",
+      "splat_model_primary", "splat_default_quality", "splat_max_file_mb",
+      "splat_confirm_threshold", "splat_click_to_activate", "splat_monthly_quota",
+      "splat_auto_fallback",
+    ].join(", ");
+    const sel = (cols: string) => supabase
       .from("user_settings")
-      .select("*")
+      .select(cols as any)
       .eq("user_id", userId)
-      .maybeSingle();
+      .maybeSingle() as any;
+    let { data, error } = await sel(READ_COLUMNS);
+    if (error) ({ data, error } = await sel("*"));
     if (loadedForUser !== userId) return; // user changed mid-flight
     if (error) {
       console.error("Failed to load settings:", error);
@@ -261,6 +296,9 @@ function ensureLoaded(userId: string | null) {
 function persistSettings(userId: string, next: ChatSettings) {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
+    // NOTE: nvidia_api_key / nvidia_key_last4 are intentionally absent —
+    // they save ONLY through saveNvidiaKey's targeted upsert, so this
+    // full-row write can never blank a key the client doesn't hold.
     const payload: any = {
       user_id: userId,
       openrouter_api_key: next.apiKey,
@@ -363,19 +401,55 @@ export function useChatSettings() {
     else toast.success("API key removed");
   }, [update]);
 
+  /** Write-only NVIDIA key save: a targeted upsert of just the key columns,
+   *  never part of the debounced full-row write. Only the last-4 sibling
+   *  enters client state; the full key is read back exclusively by the
+   *  nvidia-chat edge function. */
+  const saveNvidiaKey = useCallback(async (key: string): Promise<boolean> => {
+    const uid = user?.id;
+    if (!uid) { toast.error("Sign in first"); return false; }
+    const trimmed = key.trim();
+    if (trimmed && !trimmed.startsWith("nvapi-")) {
+      toast.error("NVIDIA keys start with nvapi- — generate one at build.nvidia.com → Settings → API Keys");
+      return false;
+    }
+    const last4 = trimmed ? trimmed.slice(-4) : "";
+    const { error } = await supabase
+      .from("user_settings")
+      .upsert({ user_id: uid, nvidia_api_key: trimmed, nvidia_key_last4: last4 } as any, { onConflict: "user_id" });
+    if (error) {
+      const m = (error.message || "").toLowerCase();
+      if (m.includes("nvidia_api_key") || m.includes("nvidia_key_last4")) {
+        toast.error("NVIDIA columns missing — ask Lovable to run migration 20260731093000_nvidia_provider.sql first");
+      } else {
+        toast.error(`Failed to save NVIDIA key: ${error.message}`);
+      }
+      return false;
+    }
+    publish({ settings: { ...snapshot.settings, nvidiaKeyLast4: last4 } });
+    settingsChannel?.postMessage("settings-updated");
+    toast.success(trimmed ? "NVIDIA key saved" : "NVIDIA key removed");
+    return true;
+  }, [user]);
+
   const addModel = useCallback((model: string) => {
     const id = model.trim();
     if (!id) return;
     const cur = getSnapshot().settings;
     if (cur.savedModels.includes(id)) { toast.error("Model already saved"); return; }
     const embed = isEmbeddingModel(id);
+    // An NVIDIA model with no NVIDIA key can't run — adding one to try later
+    // must not silently replace a working Active Chat Model.
+    const unusableNvidia = id.startsWith("nvidia:") && !cur.nvidiaKeyLast4;
     update({
       savedModels: [...cur.savedModels, id],
       // Don't make embedding models the active Chat model — they only work for Wiki reindex.
-      selectedModel: embed ? cur.selectedModel : id,
+      selectedModel: embed || unusableNvidia ? cur.selectedModel : id,
     });
     if (embed) {
       toast.success(`Embedding model "${id}" added — select it in Neuron Settings.`);
+    } else if (unusableNvidia) {
+      toast.success(`Model "${id}" added — add your NVIDIA key in Settings to chat with it.`);
     } else {
       toast.success(`Model "${id}" added`);
     }
@@ -393,6 +467,7 @@ export function useChatSettings() {
     ...settings,
     loaded: snap.loaded,
     saveApiKey,
+    saveNvidiaKey,
     setSelectedModel: (m: string) => update({ selectedModel: m }),
     setDeepResearchModel: (m: string) => update({ deepResearchModel: m }),
     setVoiceModel: (m: string) => update({ voiceModel: m }),

@@ -51,6 +51,9 @@ verify_jwt = true
 [functions.describe-figures]
 verify_jwt = true
 
+[functions.nvidia-chat]
+verify_jwt = true
+
 [functions.enqueue-ingest]
 verify_jwt = false
 

@@ -13,6 +13,11 @@ import {
   OR_CATEGORIES,
   type ORModel,
 } from "@/lib/openrouterCatalog";
+import {
+  fetchNvidiaCatalog,
+  namespacedNvidiaId,
+  type NvidiaModelInfo,
+} from "@/lib/nvidiaCatalog";
 
 // Ranked live from OpenRouter's public API — the same usage data behind
 // openrouter.ai/rankings. "Top overall" / categories return the weekly-usage
@@ -28,13 +33,34 @@ const labelFor = (key: string) =>
   CATEGORY_LABELS[key] || key.charAt(0).toUpperCase() + key.slice(1);
 
 const ModelExplorer: React.FC = () => {
-  const { savedModels, addModel, loaded } = useChatSettings();
+  const { savedModels, nvidiaKeyLast4, addModel, loaded } = useChatSettings();
+  const [provider, setProvider] = useState<"openrouter" | "nvidia">("openrouter");
   const [view, setView] = useState<ViewKey>("top");
   const [models, setModels] = useState<ORModel[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [nvModels, setNvModels] = useState<NvidiaModelInfo[] | null>(null);
+  const [nvError, setNvError] = useState<string | null>(null);
   const [freeOnly, setFreeOnly] = useState(false);
   const [query, setQuery] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
+  // Separate counter: a failed NVIDIA retry must not also blow away a
+  // perfectly good OpenRouter list (their fetches share nothing else).
+  const [nvReloadKey, setNvReloadKey] = useState(0);
+
+  useEffect(() => {
+    if (provider !== "nvidia" || nvModels !== null) return;
+    let cancelled = false;
+    setNvError(null);
+    (async () => {
+      try {
+        const list = await fetchNvidiaCatalog();
+        if (!cancelled) setNvModels(list);
+      } catch (err: any) {
+        if (!cancelled) setNvError(err.message || "Failed to load NVIDIA models");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [provider, nvModels, nvReloadKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -83,18 +109,40 @@ const ModelExplorer: React.FC = () => {
 
         <div className="space-y-2 mb-8">
           <span className="px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded text-[10px] font-bold tracking-widest uppercase">
-            Live from OpenRouter
+            {provider === "nvidia" ? "Live from NVIDIA" : "Live from OpenRouter"}
           </span>
           <h1 className="font-headline font-bold text-4xl sm:text-5xl text-primary tracking-tight">
             Top Models
           </h1>
           <p className="text-on-surface-variant max-w-2xl">
-            Ranked by real weekly usage across OpenRouter. Pick a category to see what people actually use
-            for that kind of work, then add any model to your list — it appears in Counsel's model picker instantly.
+            {provider === "nvidia"
+              ? "NVIDIA's free catalog — frontier models on trial credits (~1,000 requests with a free key). Featured picks are curated for chat + tools; add any to your list and it appears in Counsel's model picker instantly."
+              : "Ranked by real weekly usage across OpenRouter. Pick a category to see what people actually use for that kind of work, then add any model to your list — it appears in Counsel's model picker instantly."}
           </p>
         </div>
 
-        {/* View chips */}
+        {/* Provider tabs */}
+        <div className="flex items-center gap-2 mb-4">
+          {([
+            { key: "openrouter" as const, label: "OpenRouter" },
+            { key: "nvidia" as const, label: "NVIDIA" },
+          ]).map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setProvider(key)}
+              className={`px-4 py-2 rounded-xl text-sm font-bold transition-colors ${
+                provider === key
+                  ? "bg-primary-container text-on-primary-container ring-1 ring-primary/20"
+                  : "bg-surface-container-high text-on-surface-variant hover:text-foreground"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* View chips (OpenRouter rankings only — NVIDIA has no usage data) */}
+        {provider === "openrouter" && (
         <div className="flex items-center gap-2 overflow-x-auto pb-2 hide-scrollbar mb-3">
           {([
             { key: "top" as ViewKey, label: "Top overall" },
@@ -114,6 +162,7 @@ const ModelExplorer: React.FC = () => {
             </button>
           ))}
         </div>
+        )}
 
         {/* Filters */}
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-6">
@@ -126,14 +175,85 @@ const ModelExplorer: React.FC = () => {
               className="w-full bg-surface-container-high border-none rounded-xl py-2.5 pl-10 pr-4 text-sm focus:ring-1 focus:ring-primary/40 placeholder:text-on-surface-variant/50"
             />
           </div>
+          {provider === "openrouter" && (
           <label className="flex items-center gap-2.5 shrink-0 px-3 py-2 rounded-xl bg-surface-container-high cursor-pointer">
             <span className="text-xs font-bold text-on-surface-variant">Free models only</span>
             <Switch checked={freeOnly} onCheckedChange={setFreeOnly} aria-label="Show free models only" />
           </label>
+          )}
         </div>
 
-        {/* List */}
-        {error ? (
+        {/* NVIDIA list */}
+        {provider === "nvidia" ? (
+          nvError ? (
+            <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant gap-3">
+              <span className="material-symbols-outlined text-5xl opacity-40">cloud_off</span>
+              <p className="text-sm text-center max-w-md">{nvError}</p>
+              <Button variant="outline" onClick={() => { setNvModels(null); setNvReloadKey((k) => k + 1); }}>Retry</Button>
+            </div>
+          ) : nvModels === null ? (
+            <div className="flex items-center justify-center py-20">
+              <Loader2 className="w-8 h-8 animate-spin text-on-surface-variant" />
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {!nvidiaKeyLast4 && (
+                <div className="p-3.5 rounded-xl bg-primary-container/10 border border-primary/20 text-sm text-on-surface-variant">
+                  Browsing works without a key, but chatting needs one — free at{" "}
+                  <a href="https://build.nvidia.com/settings/api-keys" target="_blank" rel="noreferrer" className="text-primary underline">build.nvidia.com</a>,
+                  then paste it in Settings → AI Models &amp; Keys.
+                </div>
+              )}
+              {nvModels
+                .filter((m) => {
+                  const q = query.trim().toLowerCase();
+                  return !q || `${m.localId} ${m.label}`.toLowerCase().includes(q);
+                })
+                .map((m) => {
+                  const nsId = namespacedNvidiaId(m.localId);
+                  const saved = savedModels.includes(nsId);
+                  return (
+                    <div
+                      key={m.localId}
+                      className="flex items-start gap-3 sm:gap-4 p-4 rounded-xl bg-surface-container-high border border-outline-variant/10"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="font-bold text-foreground leading-tight">{m.label}</h3>
+                          {m.featured && (
+                            <span className="px-1.5 py-0.5 rounded bg-primary-container/25 text-primary text-[9px] font-bold uppercase tracking-widest">
+                              Featured
+                            </span>
+                          )}
+                        </div>
+                        <div className="font-mono text-[11px] text-on-surface-variant truncate">{m.localId}</div>
+                        {m.note && (
+                          <p className="text-xs text-on-surface-variant mt-1.5 line-clamp-2">{m.note}</p>
+                        )}
+                        <div className="flex items-center gap-3 mt-2 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">
+                          {m.contextLength ? <span title="Context window">{formatContext(m.contextLength)} ctx</span> : <span title="Context window unknown">— ctx</span>}
+                          {m.caps.tools && (<><span className="text-outline-variant">•</span><span title="Supports the app's tools (memory, books, images)">tools</span></>)}
+                          {m.caps.vision && (<><span className="text-outline-variant">•</span><span title="Understands attached images">vision</span></>)}
+                          {m.caps.reasoning && (<><span className="text-outline-variant">•</span><span title="Shows its thinking">reasoning</span></>)}
+                          <span className="text-outline-variant">•</span>
+                          <span title="Uses NVIDIA trial credits">trial credits</span>
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant={saved ? "outline" : "default"}
+                        disabled={saved || !loaded}
+                        onClick={() => addModel(nsId)}
+                        className="shrink-0 gap-1.5 mt-1"
+                      >
+                        {saved ? (<><Check className="w-3.5 h-3.5" /> Added</>) : (<><Plus className="w-3.5 h-3.5" /> Add to my list</>)}
+                      </Button>
+                    </div>
+                  );
+                })}
+            </div>
+          )
+        ) : error ? (
           <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant gap-3">
             <span className="material-symbols-outlined text-5xl opacity-40">cloud_off</span>
             <p className="text-sm">{error}</p>
@@ -205,8 +325,9 @@ const ModelExplorer: React.FC = () => {
         )}
 
         <p className="text-[11px] text-on-surface-variant text-center mt-8">
-          Rankings come straight from OpenRouter's public usage data and refresh hourly. Prices are set by
-          OpenRouter and billed to your own account — Bookworm never marks them up.
+          {provider === "nvidia"
+            ? "NVIDIA models run on your free build.nvidia.com trial credits (roughly 1 request = 1 credit; ~40 requests/min). Chat, voice and vision work on NVIDIA; image/video generation stays on OpenRouter."
+            : "Rankings come straight from OpenRouter's public usage data and refresh hourly. Prices are set by OpenRouter and billed to your own account — Bookworm never marks them up."}
         </p>
       </main>
     </div>

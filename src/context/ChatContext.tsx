@@ -20,6 +20,8 @@ import { parseArtifact, type Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle } from "@/lib/workspaceStore";
 import { toast } from "sonner";
 import { isEmbeddingModel } from "@/lib/utils";
+import { modelProvider, resolveModel } from "@/lib/providers/registry";
+import { nvidiaModelInfo, nvidiaNoThinkingBody } from "@/lib/nvidiaCatalog";
 
 export interface ChatMessage {
   id?: string;
@@ -57,6 +59,10 @@ export interface ChatMessage {
    *  collapsed — an expandable card instead of eagerly fetching every
    *  signed URL / job row the moment an old transcript opens. */
   restored?: boolean;
+  /** Model reasoning ("thinking") streamed alongside the reply — rendered as
+   *  a collapsed strip, excluded from the sentence cap and from read-aloud.
+   *  Transient: never persisted, never sent back in history. */
+  reasoning?: string;
 }
 
 interface SendOpts {
@@ -168,7 +174,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { user } = useAuth();
   const { books, activeBookId, activeWiki, activeWikiId, activeWikis, wikis, addChapter, updateChapter, removeChapter, setActiveBookSilent } = useApp();
 
-  const { apiKey, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, maxReplySentences, autoShowMemoryImages, chatToolPermissions, visionModel, imageModelPrimary, imageModelFallback,
+  const { apiKey, nvidiaKeyLast4, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, maxReplySentences, autoShowMemoryImages, chatToolPermissions, visionModel, imageModelPrimary, imageModelFallback,
     videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold,
     videoIdentityScale, videoQcEnabled, videoMotionModel,
     falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback } = useChatSettings();
@@ -226,7 +232,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
    *  summary so the NEXT turn can drop them from the request. */
   const updateRollingSummary = useCallback(
     async (allMsgs: { role: string; content: string }[], anchorId: string | undefined) => {
-      if (!user || !apiKey || summarizingRef.current) return;
+      if (!user || summarizingRef.current) return;
       const target = allMsgs.length - HISTORY_WINDOW;
       let cur = summaryRef.current;
       // Window start moved since `covered` was computed (prepend / other
@@ -242,6 +248,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (cur.covered > 0 && target - cur.covered < SUMMARY_MIN_BATCH) return;
       const model = selectedModel;
       if (!model || isEmbeddingModel(model)) return;
+      // Summaries follow the selected model through the same provider seam
+      // as chat — with only the OTHER provider's key saved, they'd silently
+      // 404 forever otherwise. No key for this provider → skip quietly.
+      const { adapter, provider, localId } = resolveModel(model);
+      if (provider === "openrouter" && !apiKey) return;
+      if (provider === "nvidia" && !nvidiaKeyLast4) return;
       const batch = allMsgs.slice(cur.covered, target);
       if (batch.length === 0) return;
       let transcript = batch
@@ -250,34 +262,23 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (transcript.length > 30000) transcript = transcript.slice(-30000);
       summarizingRef.current = true;
       try {
-        const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-            "HTTP-Referer": window.location.origin,
-            "X-Title": "Chapter Craft",
-          },
-          body: JSON.stringify({
-            model,
-            stream: false,
-            max_tokens: 500,
-            messages: [
-              {
-                role: "system",
-                content:
-                  "You maintain a running summary of a conversation between a user and a reading assistant. Merge the existing summary (if any) with the new messages into ONE concise summary of at most ~250 words. Preserve concrete facts, names, numbers, decisions, books/chapters discussed, and open questions. Output ONLY the summary text.",
-              },
-              {
-                role: "user",
-                content: `${cur.summary ? `EXISTING SUMMARY:\n${cur.summary}\n\n` : ""}NEW MESSAGES:\n${transcript}`,
-              },
-            ],
-          }),
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        const text = (data?.choices?.[0]?.message?.content || "").trim();
+        const text = (await adapter.completeChat({
+          model: localId,
+          maxTokens: 500,
+          apiKey,
+          extraBody: provider === "nvidia" ? nvidiaNoThinkingBody(localId) : undefined,
+          messages: [
+            {
+              role: "system",
+              content:
+                "You maintain a running summary of a conversation between a user and a reading assistant. Merge the existing summary (if any) with the new messages into ONE concise summary of at most ~250 words. Preserve concrete facts, names, numbers, decisions, books/chapters discussed, and open questions. Output ONLY the summary text.",
+            },
+            {
+              role: "user",
+              content: `${cur.summary ? `EXISTING SUMMARY:\n${cur.summary}\n\n` : ""}NEW MESSAGES:\n${transcript}`,
+            },
+          ],
+        })).trim();
         if (!text) return;
         const next: RollingSummary = { summary: text.slice(0, 4000), covered: target, anchorId };
         summaryRef.current = next;
@@ -286,7 +287,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         summarizingRef.current = false;
       }
     },
-    [user, apiKey, selectedModel]
+    [user, apiKey, nvidiaKeyLast4, selectedModel]
   );
 
   // Bind the durable Workspace store to the signed-in user so its files sync
@@ -512,8 +513,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     async (text: string, opts?: SendOpts): Promise<string> => {
       const trimmed = text.trim();
       if (!trimmed) return "";
-      if (!apiKey) {
-        toast.error("Set your OpenRouter API key first");
+      // Chat needs SOME provider configured; which key the chosen model
+      // actually requires is checked after model resolution below.
+      if (!apiKey && !nvidiaKeyLast4) {
+        toast.error("Add an API key in Settings first — OpenRouter or NVIDIA");
         throw new Error("Missing API key");
       }
 
@@ -650,6 +653,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Tool Foundry proposals forged this turn (approval cards).
       const turnToolProposals: ToolProposal[] = [];
       let assistantText = "";
+      // Model "thinking" streamed alongside the reply (reasoning_content /
+      // think-tag content, normalized by the adapter). Rendered as a
+      // collapsed strip; never persisted, never counted by the sentence cap.
+      let turnReasoning = "";
       // Sentence-cap segment anchor: the cap applies to each tool-iteration's
       // PROSE segment (text after the previous tool round), so capping the
       // model's pre-tool narration can never swallow its post-tool answer.
@@ -669,6 +676,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               copy[i] = {
                 ...copy[i],
                 content: assistantText,
+                reasoning: turnReasoning || undefined,
                 toolEvents: [...assistantEvents],
                 images: turnImages.length > 0 ? [...turnImages] : copy[i].images,
                 videos: turnVideos.length > 0 ? [...turnVideos] : copy[i].videos,
@@ -693,6 +701,24 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
         return;
       }
+      // Provider-aware key gate: the model decides which key this turn needs.
+      const turnProvider = modelProvider(model);
+      if (turnProvider === "nvidia" && !nvidiaKeyLast4) {
+        const msg = `"${model}" runs on NVIDIA — add your NVIDIA API key in Settings first (free at build.nvidia.com).`;
+        toast.error(msg);
+        assistantText = `❌ ${msg}`;
+        updateAssistant();
+        setIsLoading(false);
+        return;
+      }
+      if (turnProvider === "openrouter" && !apiKey) {
+        const msg = `"${model}" runs on OpenRouter — set your OpenRouter API key in Settings (or pick an NVIDIA model).`;
+        toast.error(msg);
+        assistantText = `❌ ${msg}`;
+        updateAssistant();
+        setIsLoading(false);
+        return;
+      }
       const workingMessages: any[] = [
         { role: "system", content: systemPrompt },
         ...(summaryNote ? [{ role: "system", content: summaryNote }] : []),
@@ -704,115 +730,113 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
           capSegStart = assistantText.length;
-          const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${apiKey}`,
-              "HTTP-Referer": window.location.origin,
-              "X-Title": "Chapter Craft",
-            },
-            body: JSON.stringify({
-              model,
-              messages: workingMessages,
-              tools: CHAT_TOOL_DEFINITIONS.filter((t: any) =>
+          const { provider, adapter, localId } = resolveModel(model);
+          const nvInfo = provider === "nvidia" ? nvidiaModelInfo(localId) : null;
+          // Caps-gated tool roster: NVIDIA 400s when tools reach a model
+          // without function calling, and its VL playground marks image turns
+          // as disabling tools — omit the roster entirely in both cases
+          // (OpenRouter keeps today's always-send behavior).
+          const turnHasImages = workingMessages.some((m: any) =>
+            Array.isArray(m?.content) && m.content.some((p: any) => p?.type === "image_url"));
+          const sendTools = !nvInfo || (nvInfo.caps.tools && !(nvInfo.imagesDisableTools && turnHasImages));
+          const toolDefs = sendTools
+            ? CHAT_TOOL_DEFINITIONS.filter((t: any) =>
                 (t.function.name !== "forge_tool" || forgeEnabled) &&
-                (t.function.name !== "run_tool" || runEnabled)),
-              tool_choice: "auto",
-              stream: true,
-            }),
-            signal: abortRef.current.signal,
-          });
+                (t.function.name !== "run_tool" || runEnabled))
+            : undefined;
 
-          if (!response.ok) {
-            const errText = await response.text();
-            if (response.status === 401) throw new Error("Invalid API key.");
-            if (response.status === 402) throw new Error("Insufficient credits.");
-            if (response.status === 429) throw new Error("Rate limited. Try again.");
-            throw new Error(`OpenRouter error (${response.status}): ${errText}`);
-          }
-
-          const reader = response.body?.getReader();
-          if (!reader) throw new Error("No response stream");
-          const decoder = new TextDecoder();
-          let buffer = "";
           let iterText = "";
           const toolCallAcc: Record<number, { id?: string; name?: string; args: string }> = {};
-          let finishReason: string | null = null;
           // Cap state for THIS iteration: once the cut lands the prose is
           // frozen but the stream keeps draining — models narrate BEFORE
           // emitting tool calls, and cancelling at the cut used to silently
           // kill the very action the narration promised.
           let iterCapped = false;
           let capDrops = 0; // content deltas discarded since the cut
+          let cappedProseOnly = false;
+          // The valve arms on the 40th drop but only FIRES at the next text
+          // event, so a tool call already in flight behind the narration
+          // still lands and cancels it — models narrate before acting, and
+          // killing the stream on the drop itself would silently discard the
+          // very action the narration promised.
+          let valveArmed = false;
+          // Native finish reason of the last finish event this iteration.
+          let finishNative: string | undefined;
 
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            let nl: number;
-            while ((nl = buffer.indexOf("\n")) !== -1) {
-              let line = buffer.slice(0, nl);
-              buffer = buffer.slice(nl + 1);
-              if (line.endsWith("\r")) line = line.slice(0, -1);
-              if (!line.startsWith("data: ")) continue;
-              const jsonStr = line.slice(6).trim();
-              if (jsonStr === "[DONE]") break;
-              try {
-                const parsed = JSON.parse(jsonStr);
-                const choice = parsed.choices?.[0];
-                const delta = choice?.delta;
-                if (delta?.content) {
-                  if (iterCapped) {
-                    // Past the cut: discard beyond-cap prose but keep draining
-                    // so any tool calls behind the narration still arrive.
-                    capDrops++;
-                  } else {
-                    iterText += delta.content;
-                    assistantText += delta.content;
-                    // Sentence cap on this iteration's prose segment — check
-                    // only at possible boundaries, never once tool deltas
-                    // have started streaming.
-                    if (sentenceCap > 0 && Object.keys(toolCallAcc).length === 0 && /[.!?…。！？\n]/.test(delta.content)) {
-                      const cut = findSentenceCapIndex(iterText, sentenceCap, { streaming: true });
-                      if (cut !== null) {
-                        iterCapped = true;
-                        iterText = iterText.slice(0, cut).trimEnd();
-                        assistantText = assistantText.slice(0, capSegStart) + iterText;
-                      }
-                    }
-                    updateAssistant();
-                    try { opts?.onDelta?.(assistantText); } catch {}
+          const stream = adapter.streamChat({
+            model: localId,
+            messages: workingMessages,
+            tools: toolDefs,
+            signal: abortRef.current.signal,
+            apiKey,
+            extraBody: nvInfo?.extraBody,
+          });
+
+          for await (const ev of stream) {
+            if (ev.type === "reasoning") {
+              turnReasoning += ev.delta;
+              updateAssistant();
+            } else if (ev.type === "text") {
+              if (iterCapped) {
+                // Past the cut: discard beyond-cap prose but keep draining
+                // so any tool calls behind the narration still arrive.
+                if (valveArmed && Object.keys(toolCallAcc).length === 0) {
+                  cappedProseOnly = true;
+                  break;
+                }
+                capDrops++;
+                // Cost valve: ~40 dropped prose deltas after the cut with
+                // ZERO tool activity ⇒ provably a prose-only reply — stop
+                // paying for it. (Any tool delta ⇒ drain to the natural end.)
+                if (capDrops >= 40 && Object.keys(toolCallAcc).length === 0) {
+                  valveArmed = true;
+                }
+              } else {
+                iterText += ev.delta;
+                assistantText += ev.delta;
+                // Sentence cap on this iteration's prose segment — check
+                // only at possible boundaries, never once tool deltas
+                // have started streaming.
+                if (sentenceCap > 0 && Object.keys(toolCallAcc).length === 0 && /[.!?…。！？\n]/.test(ev.delta)) {
+                  const cut = findSentenceCapIndex(iterText, sentenceCap, { streaming: true });
+                  if (cut !== null) {
+                    iterCapped = true;
+                    iterText = iterText.slice(0, cut).trimEnd();
+                    assistantText = assistantText.slice(0, capSegStart) + iterText;
                   }
                 }
-                if (delta?.tool_calls && Array.isArray(delta.tool_calls)) {
-                  for (const tc of delta.tool_calls) {
-                    const idx = tc.index ?? 0;
-                    if (!toolCallAcc[idx]) toolCallAcc[idx] = { args: "" };
-                    if (tc.id) toolCallAcc[idx].id = tc.id;
-                    if (tc.function?.name) toolCallAcc[idx].name = tc.function.name;
-                    if (tc.function?.arguments) toolCallAcc[idx].args += tc.function.arguments;
-                  }
-                }
-                if (choice?.finish_reason) finishReason = choice.finish_reason;
-              } catch {
+                updateAssistant();
+                try { opts?.onDelta?.(assistantText); } catch {}
               }
+            } else if (ev.type === "tool_call_delta") {
+              const idx = ev.index;
+              if (!toolCallAcc[idx]) toolCallAcc[idx] = { args: "" };
+              if (ev.id) toolCallAcc[idx].id = ev.id;
+              if (ev.name) toolCallAcc[idx].name = ev.name;
+              if (ev.argsDelta) toolCallAcc[idx].args += ev.argsDelta;
+            } else if (ev.type === "finish") {
+              finishNative = ev.native ?? ev.reason;
             }
-            // Cost valve: ~40 dropped prose deltas after the cut with ZERO
-            // tool activity ⇒ provably a prose-only reply — stop paying for
-            // it. (Any tool delta present ⇒ drain to the natural end.)
-            if (iterCapped && capDrops >= 40 && Object.keys(toolCallAcc).length === 0) break;
           }
 
-          if (iterCapped && capDrops >= 40 && Object.keys(toolCallAcc).length === 0) {
-            // Capped prose-only reply: cancel the stream, then fall through
-            // to the normal persistence/summary path with the frozen text.
-            try { void reader.cancel(); } catch { /* stream already closed */ }
+          if (cappedProseOnly) {
+            // Capped prose-only reply: cancel the stream (generator return
+            // cascades into a reader cancel), then fall through to the
+            // normal persistence/summary path with the frozen text.
+            try { void stream.return(undefined); } catch { /* already closed */ }
             break;
           }
 
           const toolCalls = Object.values(toolCallAcc).filter((t) => t.name);
-          if (toolCalls.length === 0 || finishReason !== "tool_calls") {
+          // Run accumulated tool calls even when finish_reason isn't the
+          // OpenAI-canonical "tool_calls" — some NVIDIA backends finish with
+          // "stop" after emitting calls, and discarding them silently kills
+          // the very action the model narrated. But a stream cut by the token
+          // limit or a filter leaves the LAST call's arguments half-written:
+          // executing that would either fail JSON.parse and burn another
+          // iteration against an already-overflowing context, or (worse) run
+          // a destructive tool on a truncated-but-parseable prefix.
+          if (toolCalls.length === 0 || finishNative === "length" || finishNative === "content_filter") {
             break;
           }
 
@@ -918,8 +942,17 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
 
+        // A reasoning model can spend its whole budget inside a thought block
+        // (unclosed <think>, finish_reason "length"): everything routed to
+        // reasoning, nothing to prose. Saying "(No response received)" under
+        // a full Thinking strip is both wrong and would persist that literal
+        // string into history and the rolling summary.
+        let placeholderReply = false;
         if (!assistantText && assistantEvents.length === 0) {
-          assistantText = "(No response received)";
+          placeholderReply = true;
+          assistantText = turnReasoning
+            ? "(The model spent its whole reply thinking — ask again, or pick a model with reasoning off.)"
+            : "(No response received)";
           updateAssistant();
         }
 
@@ -1046,7 +1079,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         // Refresh the rolling summary in the background so the NEXT turn can
         // drop old messages from the request. Fire-and-forget by design.
-        if (assistantText) {
+        if (assistantText && !placeholderReply) {
           void updateRollingSummary([...baseHistory, { role: "assistant", content: assistantText }], firstHistoryId);
         }
 
@@ -1064,7 +1097,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
       }
     },
-    [apiKey, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, autoShowMemoryImages, foundryEnabled, forgeEnabled, runEnabled, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
+    [apiKey, nvidiaKeyLast4, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, autoShowMemoryImages, foundryEnabled, forgeEnabled, runEnabled, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
   );
 
 

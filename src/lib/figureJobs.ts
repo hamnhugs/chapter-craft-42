@@ -300,7 +300,14 @@ async function runNext() {
 }
 
 export const figureJobs = {
-  enqueue(input: JobInput) {
+  enqueue(rawInput: JobInput) {
+    // describe-figures runs server-side against OpenRouter / the Lovable
+    // gateway — an "nvidia:" id would be forwarded verbatim and fail every
+    // batch. Drop it so the server picks its own default. (Single choke
+    // point: every caller passes through here.)
+    const input: JobInput = rawInput.model?.startsWith("nvidia:")
+      ? { ...rawInput, model: undefined }
+      : rawInput;
     const existing = jobs[input.bookId];
     if (existing && (existing.status === "queued" || existing.status === "running")) return;
     if (queue.some((q) => q.bookId === input.bookId)) return;
