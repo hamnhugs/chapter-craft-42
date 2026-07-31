@@ -16,6 +16,7 @@ import {
 import {
   fetchNvidiaCatalog,
   namespacedNvidiaId,
+  SHARED_WITH_OPENROUTER,
   type NvidiaModelInfo,
 } from "@/lib/nvidiaCatalog";
 
@@ -109,14 +110,14 @@ const ModelExplorer: React.FC = () => {
 
         <div className="space-y-2 mb-8">
           <span className="px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded text-[10px] font-bold tracking-widest uppercase">
-            {provider === "nvidia" ? "Live from NVIDIA" : "Live from OpenRouter"}
+            {provider === "nvidia" ? "Served by NVIDIA" : "Served by OpenRouter"}
           </span>
           <h1 className="font-headline font-bold text-4xl sm:text-5xl text-primary tracking-tight">
             Top Models
           </h1>
           <p className="text-on-surface-variant max-w-2xl">
             {provider === "nvidia"
-              ? "NVIDIA's free catalog — frontier models on trial credits (~1,000 requests with a free key). Featured picks are curated for chat + tools; add any to your list and it appears in Counsel's model picker instantly."
+              ? "Models NVIDIA hosts — mostly other companies' open models (Llama, DeepSeek, GPT-OSS, Gemma), free with an NVIDIA key and no balance required. Adding from this tab tags them as NVIDIA so they route correctly."
               : "Ranked by real weekly usage across OpenRouter. Pick a category to see what people actually use for that kind of work, then add any model to your list — it appears in Counsel's model picker instantly."}
           </p>
         </div>
@@ -220,9 +221,20 @@ const ModelExplorer: React.FC = () => {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <h3 className="font-bold text-foreground leading-tight">{m.label}</h3>
+                          <span className="px-1.5 py-0.5 rounded bg-primary-container/25 text-primary text-[9px] font-bold uppercase tracking-widest">
+                            NVIDIA
+                          </span>
                           {m.featured && (
-                            <span className="px-1.5 py-0.5 rounded bg-primary-container/25 text-primary text-[9px] font-bold uppercase tracking-widest">
+                            <span className="px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant text-[9px] font-bold uppercase tracking-widest">
                               Featured
+                            </span>
+                          )}
+                          {SHARED_WITH_OPENROUTER.has(m.localId) && (
+                            <span
+                              title="OpenRouter lists a model with this exact name too — adding it here binds it to NVIDIA."
+                              className="px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant text-[9px] font-bold uppercase tracking-widest"
+                            >
+                              Also on OpenRouter
                             </span>
                           )}
                         </div>
@@ -236,7 +248,7 @@ const ModelExplorer: React.FC = () => {
                           {m.caps.vision && (<><span className="text-outline-variant">•</span><span title="Understands attached images">vision</span></>)}
                           {m.caps.reasoning && (<><span className="text-outline-variant">•</span><span title="Shows its thinking">reasoning</span></>)}
                           <span className="text-outline-variant">•</span>
-                          <span title="Uses NVIDIA trial credits">trial credits</span>
+                          <span title="Free with an NVIDIA key; usage is rate-limited rather than billed">free · rate-limited</span>
                         </div>
                       </div>
                       <Button
@@ -326,8 +338,8 @@ const ModelExplorer: React.FC = () => {
 
         <p className="text-[11px] text-on-surface-variant text-center mt-8">
           {provider === "nvidia"
-            ? "NVIDIA models run on your free build.nvidia.com trial credits (roughly 1 request = 1 credit; ~40 requests/min). Chat, voice and vision work on NVIDIA; image/video generation stays on OpenRouter."
-            : "Rankings come straight from OpenRouter's public usage data and refresh hourly. Prices are set by OpenRouter and billed to your own account — Bookworm never marks them up."}
+            ? "NVIDIA models are free with a build.nvidia.com key — no balance, no card. Usage is governed by rate limits that vary by model and traffic. Chat, voice and vision work on NVIDIA; image/video generation stays on OpenRouter."
+            : "Rankings come straight from OpenRouter's public usage data and refresh hourly. Prices are set by OpenRouter and billed to your own account — Bookworm never marks them up. OpenRouter also requires a lifetime top-up (about $10) before its :free models will run."}
         </p>
       </main>
     </div>

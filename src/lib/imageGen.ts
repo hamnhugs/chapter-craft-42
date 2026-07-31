@@ -99,7 +99,7 @@ export async function generateImage({ apiKey, prompt, aspectRatio, inputImageDat
       });
       if (!res.ok) {
         const errText = await res.text().catch(() => "");
-        if (res.status === 402) throw new Error("Insufficient OpenRouter credits — image generation is billed to the user's own key (~$0.04–0.07 per image).");
+        if (res.status === 402) throw new Error("Insufficient OpenRouter credits — image generation is billed to the user's own OpenRouter key (~$0.04–0.07 per image) and cannot run on NVIDIA.");
         lastError = `${model}: HTTP ${res.status} ${errText.slice(0, 200)}`;
         continue;
       }

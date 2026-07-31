@@ -13,7 +13,7 @@
 // Error envelope: every non-2xx response body is normalized to
 // { error: { message, code } } with the UPSTREAM status passed through, so
 // the client can map provider-specific statuses (NVIDIA uses 403 for bad
-// keys, 402 for exhausted trial credits, 404 for per-account entitlement
+// keys, 402 for quota refusals, 404 for per-account entitlement
 // gaps). "No key saved" uses 428 — a status NVIDIA never sends, so the
 // client can't confuse it with a billing error.
 
@@ -85,7 +85,8 @@ serve(async (req) => {
       });
     }
 
-    if (typeof body?.model !== "string" || !Array.isArray(body?.messages)) {
+    const validating = body?.action === "validate";
+    if (!validating && (typeof body?.model !== "string" || !Array.isArray(body?.messages))) {
       return err("model and messages are required", "bad_request", 400);
     }
 
@@ -101,6 +102,32 @@ serve(async (req) => {
     }
     const key = (row?.nvidia_api_key || "").trim();
     if (!key) return err("No NVIDIA API key saved — add one in Settings.", "no_key", 428);
+
+    // Key validation: NVIDIA publishes no auth-check or balance endpoint
+    // (/v1/models is unauthenticated), so the ONLY way to know a key works is
+    // a real completion. One token against a small model is the cheapest
+    // possible proof.
+    if (validating) {
+      const probe = await fetch(UPSTREAM_CHAT, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: typeof body?.model === "string" && body.model ? body.model : "meta/llama-3.3-70b-instruct",
+          messages: [{ role: "user", content: "hi" }],
+          max_tokens: 1,
+          stream: false,
+        }),
+        signal: req.signal,
+      });
+      const text = await probe.text().catch(() => "");
+      if (!probe.ok) {
+        const message = upstreamMessage(text);
+        return err(message, classify(probe.status, message), probe.status);
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const upstream = await fetch(UPSTREAM_CHAT, {
       method: "POST",

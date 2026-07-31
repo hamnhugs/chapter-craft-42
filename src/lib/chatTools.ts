@@ -1955,7 +1955,7 @@ export async function executeChatTool(
         const apiKey = (deps.openRouterApiKey || "").trim();
         if (!apiKey) {
           return {
-            result: { error: "OpenRouter API key not configured — ask the user to add one in Settings." },
+            result: { error: "Image generation needs an OPENROUTER key specifically (it is billed to OpenRouter, not NVIDIA). Ask the user to add one in Settings → AI Models & Keys. Do not suggest switching to an NVIDIA model — NVIDIA cannot generate images here." },
             event: { name, summary: "OpenRouter key missing", ok: false },
           };
         }
@@ -2037,7 +2037,7 @@ export async function executeChatTool(
         const instruction = String(args.instruction || "").trim();
         if (!imageId || !instruction) return { result: { error: "image_id and instruction required" }, event: { name, summary: "Missing args", ok: false } };
         const apiKey = (deps.openRouterApiKey || "").trim();
-        if (!apiKey) return { result: { error: "OpenRouter API key not configured." }, event: { name, summary: "OpenRouter key missing", ok: false } };
+        if (!apiKey) return { result: { error: "Image editing needs an OPENROUTER key specifically (billed to OpenRouter, not NVIDIA). Ask the user to add one in Settings." }, event: { name, summary: "OpenRouter key missing", ok: false } };
         if (deps.isPaid === false) {
           return {
             result: { error: "Image editing is a Pro feature. Tell the user that upgrading to Pro or Lifetime unlocks it." },

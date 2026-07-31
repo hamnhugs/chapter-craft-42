@@ -20,7 +20,7 @@ import { parseArtifact, type Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle } from "@/lib/workspaceStore";
 import { toast } from "sonner";
 import { isEmbeddingModel } from "@/lib/utils";
-import { modelProvider, resolveModel } from "@/lib/providers/registry";
+import { describeModel, modelProvider, providerLabel, resolveModel } from "@/lib/providers/registry";
 import { nvidiaModelInfo, nvidiaNoThinkingBody } from "@/lib/nvidiaCatalog";
 
 export interface ChatMessage {
@@ -63,6 +63,10 @@ export interface ChatMessage {
    *  a collapsed strip, excluded from the sentence cap and from read-aloud.
    *  Transient: never persisted, never sent back in history. */
   reasoning?: string;
+  /** Which model answered this turn, namespaced ("nvidia:vendor/model" or a
+   *  bare OpenRouter id). Rendered as a small "via NVIDIA · model" line so
+   *  provider is continuously visible, not only on failure. Transient. */
+  viaModel?: string;
 }
 
 interface SendOpts {
@@ -657,6 +661,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // think-tag content, normalized by the adapter). Rendered as a
       // collapsed strip; never persisted, never counted by the sentence cap.
       let turnReasoning = "";
+      // Set once the turn's model is resolved (below) so every bubble can
+      // show which provider actually answered.
+      let viaModelRef: string | undefined;
       // Sentence-cap segment anchor: the cap applies to each tool-iteration's
       // PROSE segment (text after the previous tool round), so capping the
       // model's pre-tool narration can never swallow its post-tool answer.
@@ -677,6 +684,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 ...copy[i],
                 content: assistantText,
                 reasoning: turnReasoning || undefined,
+                viaModel: viaModelRef,
                 toolEvents: [...assistantEvents],
                 images: turnImages.length > 0 ? [...turnImages] : copy[i].images,
                 videos: turnVideos.length > 0 ? [...turnVideos] : copy[i].videos,
@@ -703,6 +711,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       // Provider-aware key gate: the model decides which key this turn needs.
       const turnProvider = modelProvider(model);
+      viaModelRef = model;
       if (turnProvider === "nvidia" && !nvidiaKeyLast4) {
         const msg = `"${model}" runs on NVIDIA — add your NVIDIA API key in Settings first (free at build.nvidia.com).`;
         toast.error(msg);
@@ -1088,9 +1097,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (err?.name === "AbortError") {
           return assistantText;
         }
-        const msg = err?.message || "Failed to get response";
+        // ALWAYS name the provider and model. With two providers serving
+        // models under identical names, "which service refused me" is the
+        // first question — and the app used to make the user guess.
+        const raw = err?.message || "Failed to get response";
+        const who = describeModel(model);
+        const msg = raw.startsWith(providerLabel(modelProvider(model))) ? raw : `${who} — ${raw}`;
         toast.error(msg);
-        assistantText = `❌ Error: ${msg}`;
+        assistantText = `❌ ${msg}`;
         updateAssistant();
         throw err;
       } finally {

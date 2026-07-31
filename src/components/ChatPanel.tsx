@@ -20,6 +20,7 @@ import { openPricing } from "@/components/PricingDialog";
 import { useReadAloud } from "@/hooks/useReadAloud";
 import { useHandsFree } from "@/hooks/useHandsFree";
 import { isEmbeddingModel } from "@/lib/utils";
+import { describeModel } from "@/lib/providers/registry";
 import { useDictation } from "@/hooks/useDictation";
 import { requestSettingsSection } from "@/lib/settingsNav";
 import VoiceNotesPanel, { appendVoiceNote } from "@/components/VoiceNotesPanel";
@@ -854,6 +855,11 @@ const ChatPanel: React.FC = () => {
                   {msg.toolProposals && msg.toolProposals.map((p) => (
                     <ToolApprovalCard key={p.tool_id} proposal={p} />
                   ))}
+                  {msg.viaModel && (
+                    <div className="text-[10px] text-on-surface-variant/60 mb-1.5 font-medium tracking-wide">
+                      via {describeModel(msg.viaModel)}
+                    </div>
+                  )}
                   {msg.reasoning && (
                     <details className="mb-2 rounded-lg bg-surface-container-highest/40 px-3 py-1.5">
                       <summary className="cursor-pointer list-none inline-flex items-center gap-1 text-[11px] font-semibold text-on-surface-variant/80 select-none">

@@ -18,6 +18,19 @@ export function modelProvider(id: string): ProviderId {
   return isNvidiaModel(id) ? "nvidia" : "openrouter";
 }
 
+/** Human label for a provider — used in badges, error copy and the
+ *  per-reply attribution line. With two providers serving 13 byte-identical
+ *  model names, this is the only thing that tells them apart on screen. */
+export function providerLabel(p: ProviderId): string {
+  return p === "nvidia" ? "NVIDIA" : "OpenRouter";
+}
+
+/** "NVIDIA · deepseek-ai/deepseek-v4-flash" — for <option> labels and any
+ *  other place that can hold text but not markup. */
+export function describeModel(id: string): string {
+  return `${providerLabel(modelProvider(id))} · ${localModelId(id)}`;
+}
+
 /** Provider-local id — what actually goes in the request body. */
 export function localModelId(id: string): string {
   return isNvidiaModel(id) ? id.slice(NVIDIA_PREFIX.length) : id;

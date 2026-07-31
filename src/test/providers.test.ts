@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { isNvidiaModel, localModelId, modelProvider, resolveModel, NVIDIA_PREFIX } from "@/lib/providers/registry";
+import { describeModel, isNvidiaModel, localModelId, modelProvider, providerLabel, resolveModel, NVIDIA_PREFIX } from "@/lib/providers/registry";
 import { ThoughtRouter, ToolCallIndexer, mapFinishReason } from "@/lib/providers/sse";
-import { isChatworthyNvidiaModel, namespacedNvidiaId, nvidiaModelInfo, nvidiaNoThinkingBody, NVIDIA_FEATURED, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
+import { isChatworthyNvidiaModel, namespacedNvidiaId, nvidiaModelInfo, nvidiaNoThinkingBody, NVIDIA_FEATURED, NVIDIA_STARTER_MODEL, SHARED_WITH_OPENROUTER } from "@/lib/nvidiaCatalog";
 import { isEmbeddingModel } from "@/lib/utils";
 
 describe("provider registry", () => {
@@ -22,6 +22,68 @@ describe("provider registry", () => {
     // the explicit "nvidia:" namespace may route to the relay.
     expect(modelProvider("nvidia/nemotron-nano-12b-v2-vl:free")).toBe("openrouter");
     expect(isNvidiaModel("nvidia/llama-3.1-nemotron-70b-instruct")).toBe(false);
+  });
+});
+
+describe("provider is always named (the bug that made this unreadable)", () => {
+  it("describeModel puts the provider in front of every model label", () => {
+    // <option> can't hold a badge, so the provider has to live in the TEXT.
+    expect(describeModel("nvidia:openai/gpt-oss-120b")).toBe("NVIDIA · openai/gpt-oss-120b");
+    expect(describeModel("openai/gpt-oss-120b")).toBe("OpenRouter · openai/gpt-oss-120b");
+    expect(providerLabel("nvidia")).toBe("NVIDIA");
+  });
+
+  it("the same model name on both providers renders differently", () => {
+    // The whole failure mode: 13 names exist byte-identically on both.
+    for (const id of SHARED_WITH_OPENROUTER) {
+      expect(describeModel(id)).not.toBe(describeModel(`nvidia:${id}`));
+    }
+  });
+
+  it("every shared name is a real NVIDIA catalog shape (vendor/slug, no routing suffix)", () => {
+    for (const id of SHARED_WITH_OPENROUTER) {
+      expect(id).toMatch(/^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/i);
+      expect(id).not.toMatch(/:(free|nitro|floor|exacto)$/);
+    }
+  });
+});
+
+describe("OpenRouter adapter request shape", () => {
+  const src = readFileSync(resolve(process.cwd(), "src", "lib", "providers", "openrouterAdapter.ts"), "utf8");
+
+  it("sends an explicit max_tokens on the streaming path", () => {
+    // OpenRouter reserves the MAX possible reply against the balance before
+    // running; omitting this 402s users who have real credit.
+    expect(src).toContain("max_tokens: OR_MAX_TOKENS");
+  });
+
+  it("keeps upstream's explanation instead of discarding it", () => {
+    expect(src).toContain("upstreamText");
+    // The old code fetched the body then threw it away for 401/402/429.
+    expect(src).not.toContain('402, "Insufficient credits."');
+  });
+
+  it("distinguishes the reservation 402 from an empty balance", () => {
+    expect(src).toMatch(/max_tokens\|can only afford/);
+  });
+
+  it("catches an error delivered inside a 200 stream", () => {
+    expect(src).toContain("parsed?.error");
+  });
+});
+
+describe("relay key validation", () => {
+  const doc = readFileSync(resolve(process.cwd(), "supabase", "functions", "nvidia-chat", "index.ts"), "utf8");
+
+  it("supports a validate action — the only NVIDIA key oracle that exists", () => {
+    // NVIDIA publishes no auth-check or balance endpoint, and /v1/models is
+    // unauthenticated, so only a real completion proves a key works.
+    expect(doc).toContain('body?.action === "validate"');
+    expect(doc).toContain("max_tokens: 1");
+  });
+
+  it("still requires model+messages for ordinary chat requests", () => {
+    expect(doc).toContain("!validating && (typeof body?.model");
   });
 });
 

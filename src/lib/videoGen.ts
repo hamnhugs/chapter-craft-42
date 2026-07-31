@@ -380,7 +380,7 @@ export async function submitVideo({
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
     if (res.status === 401) throw new Error("Invalid OpenRouter API key.");
-    if (res.status === 402) throw new Error("Insufficient OpenRouter credits — video is billed to your own key.");
+    if (res.status === 402) throw new Error("Insufficient OpenRouter credits — video is billed to your own OpenRouter key and cannot run on NVIDIA.");
     throw new Error(`Video submit failed (HTTP ${res.status}) ${extractApiError(errText)}`);
   }
   const data = await res.json().catch(() => ({}));

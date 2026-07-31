@@ -14,6 +14,10 @@ import {
 import { mapFinishReason, sseJson, ToolCallIndexer } from "./sse";
 
 const OR_CHAT = "https://openrouter.ai/api/v1/chat/completions";
+/** Generous enough that no real reply is truncated (the app's own sentence
+ *  cap bounds replies long before this), small enough that OpenRouter's
+ *  pre-flight reservation doesn't refuse a funded key. */
+const OR_MAX_TOKENS = 8000;
 
 function orHeaders(apiKey: string): Record<string, string> {
   return {
@@ -24,12 +28,41 @@ function orHeaders(apiKey: string): Record<string, string> {
   };
 }
 
+/** OpenRouter's own explanation, which is far more specific than any summary
+ *  we could write — a 402 can mean "balance empty" OR "this request reserves
+ *  more than your balance covers", and only the body says which. */
+function upstreamText(raw: string): string {
+  try {
+    const b = JSON.parse(raw);
+    return String(b?.error?.message ?? b?.message ?? raw).trim().slice(0, 400);
+  } catch {
+    return raw.trim().slice(0, 400);
+  }
+}
+
 async function throwOrError(res: Response): Promise<never> {
-  const errText = await res.text().catch(() => "");
-  if (res.status === 401) throw new ProviderError("openrouter", "auth", 401, "Invalid API key.");
-  if (res.status === 402) throw new ProviderError("openrouter", "credits", 402, "Insufficient credits.");
-  if (res.status === 429) throw new ProviderError("openrouter", "rate_limit", 429, "Rate limited. Try again.");
-  throw new ProviderError("openrouter", "upstream", res.status, `OpenRouter error (${res.status}): ${errText}`);
+  const raw = await res.text().catch(() => "");
+  const detail = upstreamText(raw);
+  if (res.status === 401) {
+    throw new ProviderError("openrouter", "auth", 401,
+      `OpenRouter rejected your API key${detail ? ` — ${detail}` : "."}`);
+  }
+  if (res.status === 402) {
+    // Two very different situations, one status code. The reservation case
+    // hits users who HAVE credit; the advice for it is not "add money".
+    if (/max_tokens|can only afford|requires more credits/i.test(detail)) {
+      throw new ProviderError("openrouter", "credits", 402,
+        `OpenRouter reserved more credit than your balance covers for this reply. ${detail}`);
+    }
+    throw new ProviderError("openrouter", "credits", 402,
+      `OpenRouter has no credit available on your key${detail ? ` — ${detail}` : "."} ` +
+      "Note that OpenRouter also requires a lifetime top-up before its free models work. NVIDIA models need no balance.");
+  }
+  if (res.status === 429) {
+    throw new ProviderError("openrouter", "rate_limit", 429,
+      `OpenRouter rate limit reached${detail ? ` — ${detail}` : "."} Wait a moment, or switch to an NVIDIA model.`);
+  }
+  throw new ProviderError("openrouter", "upstream", res.status, `OpenRouter error (${res.status}): ${detail}`);
 }
 
 export const openrouterAdapter: ChatProviderAdapter = {
@@ -45,6 +78,11 @@ export const openrouterAdapter: ChatProviderAdapter = {
         messages: req.messages,
         ...(req.tools ? { tools: req.tools, tool_choice: "auto" } : {}),
         stream: true,
+        // OpenRouter reserves the MAXIMUM possible reply against the balance
+        // before running. Omitting this made it reserve its ~65k default, so
+        // a user with real (but modest) credit got 402 on every single turn
+        // for replies that cost a fraction of a cent.
+        max_tokens: OR_MAX_TOKENS,
         ...(req.extraBody || {}),
       }),
       signal: req.signal,
@@ -53,6 +91,13 @@ export const openrouterAdapter: ChatProviderAdapter = {
 
     const indexer = new ToolCallIndexer();
     for await (const parsed of sseJson(res)) {
+      // An error can arrive INSIDE a 200 stream (it fires after headers are
+      // sent, e.g. a mid-stream rate limit) — without this the reply just
+      // stops and the user sees an empty bubble.
+      if (parsed?.error) {
+        const m = upstreamText(JSON.stringify(parsed));
+        throw new ProviderError("openrouter", /rate/i.test(m) ? "rate_limit" : "upstream", 200, m);
+      }
       const choice = parsed.choices?.[0];
       const delta = choice?.delta;
       if (typeof delta?.reasoning === "string" && delta.reasoning) {

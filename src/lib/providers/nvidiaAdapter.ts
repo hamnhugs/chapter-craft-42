@@ -37,15 +37,20 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "eyJh
 export const NVIDIA_RELAY_URL = `${SUPABASE_URL}/functions/v1/nvidia-chat`;
 
 const FRIENDLY: Partial<Record<ProviderErrorCode, string>> = {
-  no_key: "Add your NVIDIA API key in Settings → AI Models & Keys (free at build.nvidia.com).",
+  no_key: "Add your NVIDIA API key in Settings → AI Models & Keys (free at build.nvidia.com — no balance required).",
   auth: "NVIDIA rejected your API key — check it in Settings (keys start with nvapi-).",
   not_provisioned:
     "NVIDIA hasn't enabled this model for your account yet — a known provisioning issue on their side. " +
     "Try another NVIDIA model (google/gemma-4-31b-it is a good fallback), or email help@build.nvidia.com with the error.",
-  rate_limit: "NVIDIA rate limit reached (~40 requests/min on the free tier) — wait a moment and try again.",
+  // NVIDIA retired its credit system in 2025; free usage is governed by rate
+  // limits that vary by model and current traffic, with no self-serve
+  // increase. This is now the PRIMARY exhaustion signal, not a secondary one.
+  rate_limit:
+    "NVIDIA's free-tier rate limit kicked in — it varies by model and how busy they are. " +
+    "Wait a minute and retry, or pick a different NVIDIA model.",
   credits:
-    "Your NVIDIA trial credits are used up, and NVIDIA has no self-serve top-up. " +
-    "Switch chat to an OpenRouter model, or request more credits at build.nvidia.com.",
+    "NVIDIA refused this request for quota reasons. Their free tier is rate-limited rather than credit-based, " +
+    "so waiting usually clears it; if it persists, try another NVIDIA model.",
 };
 
 export async function relayFetch(body: unknown, signal?: AbortSignal, accept?: string): Promise<Response> {
@@ -113,6 +118,24 @@ function* completionEvents(data: any): Generator<ChatStreamEvent> {
   }
   const native = data?.choices?.[0]?.finish_reason;
   yield { type: "finish", reason: mapFinishReason(native), native: native ? String(native) : undefined };
+}
+
+/** Prove a saved NVIDIA key actually works. NVIDIA publishes no auth-check
+ *  or balance endpoint, so the relay does a 1-token completion — the only
+ *  oracle that exists. Resolves with a human-readable result. */
+export async function validateNvidiaKey(model?: string): Promise<string | null> {
+  try {
+    const res = await relayFetch({ action: "validate", ...(model ? { model } : {}) });
+    if (res.ok) return null;
+    try {
+      await throwRelayError(res);
+    } catch (e) {
+      return (e as Error).message;
+    }
+    return "NVIDIA request failed.";
+  } catch (e) {
+    return (e as Error)?.message || "Could not reach the NVIDIA relay.";
+  }
 }
 
 export const nvidiaAdapter: ChatProviderAdapter = {

@@ -183,11 +183,23 @@ const SetupWizard: React.FC = () => {
   // mismatch on their very first message.
   const handleSaveNvidia = async () => {
     const ok = await saveNvidiaKey(nvidiaDraft);
-    if (!ok || apiKey) return;
-    // addModel auto-selects (the key now exists in the snapshot), so the
-    // Active model becomes one this user can actually run.
+    if (!ok) return;
+    // A user who ALSO has an OpenRouter key used to fall through here with
+    // no NVIDIA model selected — key saved, nothing runs on it, no signal.
+    // Now: pick automatically when NVIDIA is their only option, and offer it
+    // explicitly when they have both (never silently reroute paid setups).
     const pick = namespacedNvidiaId(NVIDIA_STARTER_MODEL);
-    if (!savedModels.includes(pick)) addModel(pick);
+    const alreadyNvidia = savedModels.some((m) => m.startsWith("nvidia:"));
+    if (!apiKey) {
+      if (!savedModels.includes(pick)) addModel(pick);
+      return;
+    }
+    if (alreadyNvidia) return;
+    toast.success("NVIDIA key saved", {
+      description: "Add an NVIDIA model so your chat can use it?",
+      duration: 12000,
+      action: { label: "Add", onClick: () => addModel(pick) },
+    });
   };
 
   const next = () => setWizState({ open: true, step: Math.min(step + 1, STEP_COUNT - 1) });
@@ -316,7 +328,7 @@ const SetupWizard: React.FC = () => {
                         <li>
                           Sign in free at{" "}
                           <a href="https://build.nvidia.com" target="_blank" rel="noreferrer" className="text-primary underline">build.nvidia.com</a>{" "}
-                          (~1,000 trial requests, no card)
+                          (free, no balance or card needed)
                         </li>
                         <li>
                           Open{" "}

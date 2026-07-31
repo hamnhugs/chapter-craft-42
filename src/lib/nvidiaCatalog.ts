@@ -193,6 +193,27 @@ export function nvidiaModelInfo(id: string): NvidiaModelInfo {
   };
 }
 
+/** Model names that exist BYTE-IDENTICALLY on both NVIDIA and OpenRouter
+ *  (measured against both live catalogs, 2026-07-31). These are the rows
+ *  where "which provider is this?" is genuinely undecidable from the name,
+ *  so the UI must say it explicitly and we must never guess on the user's
+ *  behalf — the two are billed to different accounts. */
+export const SHARED_WITH_OPENROUTER = new Set<string>([
+  "openai/gpt-oss-120b",
+  "openai/gpt-oss-20b",
+  "google/gemma-4-31b-it",
+  "google/gemma-3-12b-it",
+  "google/gemma-3-4b-it",
+  "moonshotai/kimi-k2.6",
+  "z-ai/glm-5.2",
+  "nvidia/nemotron-3-super-120b-a12b",
+  "nvidia/nemotron-3-nano-30b-a3b",
+  "nvidia/nemotron-3-ultra-550b-a55b",
+  "mistralai/mistral-large",
+  "thinkingmachines/inkling",
+  "poolside/laguna-xs-2.1",
+]);
+
 /** The namespaced id the rest of the app stores and displays. */
 export function namespacedNvidiaId(localId: string): string {
   return `${NVIDIA_PREFIX}${localId}`;

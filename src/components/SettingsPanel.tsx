@@ -26,7 +26,9 @@ import { getMemoryMode, setMemoryMode, MemoryMode } from "@/lib/knowledgeApi";
 import { consumeSettingsSection } from "@/lib/settingsNav";
 import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
 import { isEmbeddingModel } from "@/lib/utils";
-import { isNvidiaModel, localModelId } from "@/lib/providers/registry";
+import { describeModel, isNvidiaModel, localModelId, modelProvider, providerLabel, NVIDIA_PREFIX } from "@/lib/providers/registry";
+import { namespacedNvidiaId, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
+import { validateNvidiaKey } from "@/lib/providers/nvidiaAdapter";
 import { FIGURE_MODELS_PAID, FIGURE_MODELS_FREE, DEFAULT_FIGURE_MODEL } from "@/lib/figureModels";
 
 // The Settings tab — every user preference in one place.
@@ -142,26 +144,40 @@ const SecretField: React.FC<{
 const selectCls =
   "w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40";
 
-/** Saved-model options grouped by provider. NVIDIA ids are stored with the
- *  "nvidia:" prefix (the value keeps it — routing depends on it); the label
- *  drops it since the optgroup already says NVIDIA. With no NVIDIA models
- *  saved this renders the flat list users see today. `excludeNvidia` is for
- *  features that run server-side on the OpenRouter key only (wiki ops). */
+/** Saved-model options, provider-labelled. Two providers serve 13 models
+ *  under BYTE-IDENTICAL names, so every option carries its provider in the
+ *  text — grouping alone is not enough, and an <option> cannot hold a badge.
+ *  Labels are never stripped of provenance. `excludeNvidia` is for features
+ *  that run server-side on the OpenRouter key only (wiki ops). */
 const ModelOptions: React.FC<{ models: string[]; excludeNvidia?: boolean }> = ({ models, excludeNvidia }) => {
   const or = models.filter((m) => !isNvidiaModel(m));
   const nv = excludeNvidia ? [] : models.filter((m) => isNvidiaModel(m));
   if (nv.length === 0) {
-    return <>{or.map((m) => (<option key={m} value={m}>{m}</option>))}</>;
+    return <>{or.map((m) => (<option key={m} value={m}>{describeModel(m)}</option>))}</>;
   }
   return (
     <>
-      <optgroup label="OpenRouter">
-        {or.map((m) => (<option key={m} value={m}>{m}</option>))}
+      <optgroup label="NVIDIA — free, no balance needed">
+        {nv.map((m) => (<option key={m} value={m}>{describeModel(m)}</option>))}
       </optgroup>
-      <optgroup label="NVIDIA">
-        {nv.map((m) => (<option key={m} value={m}>{localModelId(m)}</option>))}
+      <optgroup label="OpenRouter — billed to your OpenRouter balance">
+        {or.map((m) => (<option key={m} value={m}>{describeModel(m)}</option>))}
       </optgroup>
     </>
+  );
+};
+
+/** Provider badge for surfaces that CAN hold markup (chips, rows). */
+const ProviderBadge: React.FC<{ id: string }> = ({ id }) => {
+  const nv = isNvidiaModel(id);
+  return (
+    <span
+      className={`text-[9px] font-bold uppercase tracking-widest px-1 py-0.5 rounded shrink-0 ${
+        nv ? "bg-primary-container/30 text-primary" : "bg-surface-container-highest text-on-surface-variant"
+      }`}
+    >
+      {nv ? "NVIDIA" : "OpenRouter"}
+    </span>
   );
 };
 
@@ -183,10 +199,111 @@ const SettingsPanel: React.FC = () => {
   } = useChatSettings();
 
   const [newModelInput, setNewModelInput] = useState("");
+  const [newModelProvider, setNewModelProvider] = useState<"openrouter" | "nvidia">("openrouter");
   const [nvidiaKeyDraft, setNvidiaKeyDraft] = useState("");
+  const [testingNvidia, setTestingNvidia] = useState(false);
+  const [nvidiaStatus, setNvidiaStatus] = useState<string | null>(null);
+  const [orStatus, setOrStatus] = useState<string | null>(null);
   // Write-only key UX: once the save lands (last4 appears), drop the
   // plaintext from component state.
   useEffect(() => { if (nvidiaKeyLast4) setNvidiaKeyDraft(""); }, [nvidiaKeyLast4]);
+
+  const activeProviderUsable =
+    modelProvider(selectedModel) === "nvidia" ? !!nvidiaKeyLast4 : !!apiKey;
+
+  /** Paste repair: a pasted "nvidia:vendor/model" sets the provider select
+   *  and strips the tag, so the routing token is never typed OR retyped. */
+  const handleModelInputChange = (raw: string) => {
+    if (raw.startsWith(NVIDIA_PREFIX)) {
+      setNewModelProvider("nvidia");
+      setNewModelInput(raw.slice(NVIDIA_PREFIX.length));
+      return;
+    }
+    setNewModelInput(raw);
+  };
+
+  /** Saving an NVIDIA key used to change nothing about which model runs —
+   *  the dead end that made a working key look broken. Now it offers the
+   *  switch explicitly (never silently), naming the model. */
+  const handleSaveNvidiaKey = async () => {
+    const ok = await saveNvidiaKey(nvidiaKeyDraft);
+    if (!ok) return;
+    setNvidiaStatus(null);
+    if (modelProvider(selectedModel) === "nvidia") return;
+    const starter = namespacedNvidiaId(NVIDIA_STARTER_MODEL);
+    const existing = savedModels.find((m) => isNvidiaModel(m)) || starter;
+    toast.success("NVIDIA key saved", {
+      description: `Chat is still set to ${describeModel(selectedModel)}. Switch it to NVIDIA?`,
+      duration: 12000,
+      action: {
+        label: "Switch",
+        onClick: () => {
+          if (!savedModels.includes(existing)) addModel(existing);
+          else setSelectedModel(existing);
+          toast.success(`Chat now runs on ${describeModel(existing)}`);
+        },
+      },
+    });
+  };
+
+  const handleTestNvidia = async () => {
+    setTestingNvidia(true);
+    setNvidiaStatus("Sending a one-token test request to NVIDIA…");
+    const nvModel = savedModels.find((m) => isNvidiaModel(m));
+    const failure = await validateNvidiaKey(nvModel ? localModelId(nvModel) : undefined);
+    setTestingNvidia(false);
+    if (failure === null) {
+      setNvidiaStatus("✅ NVIDIA answered — your key works.");
+      toast.success("NVIDIA key works");
+    } else {
+      setNvidiaStatus(`❌ ${failure}`);
+      toast.error(failure);
+    }
+  };
+
+  // Every role that can pick its own model, with whether its provider is
+  // actually usable right now.
+  const roleUsable = (id: string) => (modelProvider(id) === "nvidia" ? !!nvidiaKeyLast4 : !!apiKey);
+  const roleRows = [
+    { label: "Chat", id: selectedModel },
+    { label: "Deep Research", id: deepResearchModel },
+    { label: "Voice", id: voiceModel || selectedModel },
+    { label: "Vision (image attached)", id: visionModel || selectedModel },
+  ].map((r) => ({ ...r, usable: roleUsable(r.id) }));
+
+  const diagnosticsText = [
+    `build: ${(import.meta as any).env?.VITE_BUILD_SHA || "dev"}`,
+    `openrouter key: ${apiKey ? "saved" : "none"}`,
+    `nvidia key: ${nvidiaKeyLast4 ? `saved (…${nvidiaKeyLast4})` : "none"}`,
+    ...roleRows.map((r) => `${r.label.toLowerCase()}: ${r.id}${r.usable ? "" : "  ← no key for this provider"}`),
+    `wiki: ${wikiModel || "(default)"}`,
+    `saved models (${savedModels.length}):`,
+    ...savedModels.map((m) => `  ${m}`),
+  ].join("\n");
+
+  /** OpenRouter exposes key status to the browser (CORS allows it), so the
+   *  "am I out of credit?" question can be answered BEFORE a failed send. */
+  const checkOpenRouterCredit = async () => {
+    if (!apiKey) return;
+    setOrStatus("Checking…");
+    try {
+      const res = await fetch("https://openrouter.ai/api/v1/key", {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (!res.ok) { setOrStatus(`Key check failed (${res.status}).`); return; }
+      const d = (await res.json())?.data || {};
+      const limit = d.limit;
+      const usage = typeof d.usage === "number" ? d.usage : 0;
+      const free = d.is_free_tier === true;
+      const remaining = typeof limit === "number" ? ` · $${Math.max(0, limit - usage).toFixed(2)} left` : " · no spend cap set";
+      setOrStatus(
+        `Key valid${remaining}.` +
+        (free ? " Free tier: OpenRouter needs a lifetime top-up (~$10) before its free models run — NVIDIA doesn't." : "")
+      );
+    } catch {
+      setOrStatus("Couldn't reach OpenRouter to check the key.");
+    }
+  };
   const reflexCues = useReflexEnabled();
   const [promptDraft, setPromptDraft] = useState(customSystemPrompt || "");
   useEffect(() => { setPromptDraft(customSystemPrompt || ""); }, [customSystemPrompt]);
@@ -268,9 +385,13 @@ const SettingsPanel: React.FC = () => {
   };
 
   const handleAddModel = () => {
-    const m = newModelInput.trim();
-    if (!m) return;
-    addModel(m);
+    const raw = newModelInput.trim().replace(/^nvidia:/, "");
+    if (!raw) return;
+    if (newModelProvider === "nvidia" && /:(free|nitro|floor|exacto)$/.test(raw)) {
+      toast.error("Suffixes like :free are OpenRouter routing variants — NVIDIA models don't have them.");
+      return;
+    }
+    addModel(newModelProvider === "nvidia" ? namespacedNvidiaId(raw) : raw);
     setNewModelInput("");
   };
 
@@ -376,18 +497,52 @@ const SettingsPanel: React.FC = () => {
               title="AI Models & Keys"
               description="The models and API key that power Counsel and everything else."
             >
+              {/* Which provider is answering right now — the single most
+                  important fact, and the one that used to be invisible. */}
+              <div className="flex items-center gap-2.5 p-3 rounded-xl bg-surface-container-high">
+                <span className="material-symbols-outlined text-primary text-lg" aria-hidden>
+                  {activeProviderUsable ? "check_circle" : "error"}
+                </span>
+                <div className="text-sm">
+                  <div className="font-semibold text-foreground">
+                    Chat runs on {providerLabel(modelProvider(selectedModel))}
+                  </div>
+                  <div className="text-xs text-on-surface-variant font-mono">{localModelId(selectedModel)}</div>
+                  {!activeProviderUsable && (
+                    <div className="text-xs text-destructive mt-1">
+                      No {providerLabel(modelProvider(selectedModel))} key saved — pick a model from the other provider, or add the key below.
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <div>
                 <FieldLabel>OpenRouter API Key</FieldLabel>
                 <div className="mt-1.5">
                   <SecretField value={apiKey} placeholder="sk-or-v1-..." icon="key" onSave={saveApiKey} />
                 </div>
+                {apiKey && (
+                  <p className="text-xs text-on-surface-variant px-1 mt-1">
+                    {orStatus === null
+                      ? <button onClick={() => void checkOpenRouterCredit()} className="text-primary hover:underline">Check balance</button>
+                      : orStatus}
+                  </p>
+                )}
+                <Hint>
+                  Pays per token, billed to your OpenRouter account. Note OpenRouter requires a lifetime top-up
+                  (about $10) before even its <code>:free</code> models will run — NVIDIA below has no such requirement.
+                </Hint>
               </div>
+
               <div>
                 <FieldLabel>NVIDIA API Key</FieldLabel>
                 <div className="mt-1.5">
                   {nvidiaKeyLast4 ? (
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-mono text-on-surface-variant">nvapi-••••••{nvidiaKeyLast4}</span>
+                      <Button size="sm" variant="outline" disabled={testingNvidia} onClick={() => void handleTestNvidia()}>
+                        {testingNvidia ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Test key"}
+                      </Button>
                       <Button size="sm" variant="destructive" onClick={() => { void saveNvidiaKey(""); }}>Remove</Button>
                     </div>
                   ) : (
@@ -397,68 +552,99 @@ const SettingsPanel: React.FC = () => {
                         placeholder="nvapi-..."
                         value={nvidiaKeyDraft}
                         onChange={(e) => setNvidiaKeyDraft(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter") void saveNvidiaKey(nvidiaKeyDraft); }}
+                        onKeyDown={(e) => { if (e.key === "Enter") void handleSaveNvidiaKey(); }}
                         className="text-sm font-mono bg-surface-container-high border-none"
                       />
-                      <Button size="sm" onClick={() => { void saveNvidiaKey(nvidiaKeyDraft); }}>Save</Button>
+                      <Button size="sm" onClick={() => void handleSaveNvidiaKey()}>Save</Button>
                     </div>
                   )}
                 </div>
+                {nvidiaStatus && <p className="text-xs text-on-surface-variant px-1 mt-1">{nvidiaStatus}</p>}
                 <Hint>
-                  Unlocks NVIDIA's free catalog (DeepSeek V4, Nemotron 3, Kimi K2.6, DiffusionGemma…) — generate one free at{" "}
-                  <a className="text-primary underline" href="https://build.nvidia.com/settings/api-keys" target="_blank" rel="noreferrer">build.nvidia.com</a>{" "}
-                  (~1,000 trial requests, no card). Stored for the relay only — the app never loads it back, and only these last 4 characters are ever shown again.
-                  Chat, voice and vision can run on NVIDIA models; image/video generation and book tools still use your OpenRouter key.
+                  Free — no balance, no card. Generate one at{" "}
+                  <a className="text-primary underline" href="https://build.nvidia.com/settings/api-keys" target="_blank" rel="noreferrer">build.nvidia.com</a>.
+                  Usage is governed by rate limits that vary by model and traffic (NVIDIA retired its credit system), so
+                  there's no balance to read — "Test key" sends one real request to check. Stored for the relay only; the app never loads it back.
+                  Chat, voice and vision can run on NVIDIA; image/video generation and book tools still use your OpenRouter key.
                 </Hint>
               </div>
+
               <div>
                 <FieldLabel>Active Chat Model</FieldLabel>
                 <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} className={`${selectCls} mt-1.5`}>
                   <ModelOptions models={savedModels.filter((m) => !isEmbeddingModel(m) || m === selectedModel)} />
                 </select>
               </div>
+
               <div>
                 <FieldLabel>Saved Models</FieldLabel>
+                {/* Provider is a CHOICE, never something typed: the routing
+                    tag can't be forgotten if it can't be typed. */}
                 <div className="flex gap-2 mt-1.5">
+                  <select
+                    value={newModelProvider}
+                    onChange={(e) => setNewModelProvider(e.target.value as "openrouter" | "nvidia")}
+                    className="bg-surface-container-high border-none rounded-lg text-sm text-primary py-2 px-3 shrink-0"
+                    aria-label="Provider for the model being added"
+                  >
+                    <option value="openrouter">OpenRouter</option>
+                    <option value="nvidia">NVIDIA</option>
+                  </select>
                   <Input
                     type="text"
-                    placeholder="vendor/model — or nvidia:vendor/model"
+                    placeholder="vendor/model"
                     value={newModelInput}
-                    onChange={(e) => setNewModelInput(e.target.value)}
+                    onChange={(e) => handleModelInputChange(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter") handleAddModel(); }}
                     className="text-sm font-mono bg-surface-container-high border-none"
                   />
                   <Button size="sm" onClick={handleAddModel}>Add</Button>
                 </div>
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  {savedModels.map((m) => {
-                    const embed = isEmbeddingModel(m);
-                    return (
-                      <span
-                        key={m}
-                        title={embed ? "Embedding model — used by Wiki reindex, not Chat" : undefined}
-                        className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md ${
-                          m === selectedModel
-                            ? "bg-primary-container/20 text-primary border border-primary-container/30"
-                            : embed
-                              ? "bg-surface-container-highest/50 text-on-surface-variant/60 italic"
-                              : "bg-surface-container-highest text-on-surface-variant"
-                        }`}
-                      >
-                        <button
-                          onClick={() => {
-                            if (embed) { toast.error("Embedding model — pick it under Neuron & Memory, not Chat."); return; }
-                            setSelectedModel(m);
-                          }}
-                          className="hover:underline"
-                        >
-                          {m}{embed ? " (embed)" : ""}
-                        </button>
-                        <button onClick={() => removeModel(m)} aria-label={`Remove ${m}`} className="hover:text-destructive ml-0.5 material-symbols-outlined text-xs">close</button>
-                      </span>
-                    );
-                  })}
-                </div>
+                <Hint>
+                  The same model name can exist on both services — pick which one should serve it.
+                  Browsing the model list below fills this in for you.
+                </Hint>
+                {(["nvidia", "openrouter"] as const).map((p) => {
+                  const group = savedModels.filter((m) => modelProvider(m) === p);
+                  if (group.length === 0) return null;
+                  return (
+                    <div key={p} className="mt-2.5">
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant/70 mb-1">
+                        {providerLabel(p)}{p === "nvidia" ? " — free" : ""}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {group.map((m) => {
+                          const embed = isEmbeddingModel(m);
+                          return (
+                            <span
+                              key={m}
+                              title={embed ? "Embedding model — used by Wiki reindex, not Chat" : describeModel(m)}
+                              className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md ${
+                                m === selectedModel
+                                  ? "bg-primary-container/20 text-primary border border-primary-container/30"
+                                  : embed
+                                    ? "bg-surface-container-highest/50 text-on-surface-variant/60 italic"
+                                    : "bg-surface-container-highest text-on-surface-variant"
+                              }`}
+                            >
+                              <ProviderBadge id={m} />
+                              <button
+                                onClick={() => {
+                                  if (embed) { toast.error("Embedding model — pick it under Neuron & Memory, not Chat."); return; }
+                                  setSelectedModel(m);
+                                }}
+                                className="hover:underline"
+                              >
+                                {localModelId(m)}{embed ? " (embed)" : ""}
+                              </button>
+                              <button onClick={() => removeModel(m)} aria-label={`Remove ${m}`} className="hover:text-destructive ml-0.5 material-symbols-outlined text-xs">close</button>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
                 <button
                   onClick={() => window.open("#/models", "_blank")}
                   className="inline-flex items-center gap-1 mt-2 px-1 text-[11px] font-semibold text-primary hover:underline"
@@ -466,6 +652,48 @@ const SettingsPanel: React.FC = () => {
                   <span className="material-symbols-outlined text-sm" aria-hidden>leaderboard</span>
                   Browse top models by category
                 </button>
+              </div>
+
+              {/* Every model role, in one place. Chat doesn't use ONE model —
+                  Deep Research, voice and image turns each swap in their own,
+                  and a role still pointing at a provider you can't use fails
+                  only on those turns, which reads as random breakage. */}
+              <div>
+                <FieldLabel>All model roles</FieldLabel>
+                <div className="mt-1.5 rounded-xl bg-surface-container-high divide-y divide-outline-variant/10">
+                  {roleRows.map((r) => (
+                    <div key={r.label} className="flex items-center justify-between gap-3 px-3 py-2">
+                      <span className="text-xs text-on-surface-variant shrink-0">{r.label}</span>
+                      <span className="flex items-center gap-1.5 min-w-0">
+                        <ProviderBadge id={r.id} />
+                        <span className="text-xs font-mono truncate">{localModelId(r.id)}</span>
+                        {!r.usable && (
+                          <span className="material-symbols-outlined text-destructive text-sm shrink-0" title={`No ${providerLabel(modelProvider(r.id))} key saved — these turns will fail`}>error</span>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                {roleRows.some((r) => !r.usable) && (
+                  <p className="text-xs text-destructive px-1 mt-1">
+                    A role above points at a provider with no key. Those turns will fail even if normal chat works.
+                  </p>
+                )}
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-[11px] font-semibold text-primary hover:underline list-none inline-flex items-center gap-1">
+                    <span className="material-symbols-outlined text-sm" aria-hidden>bug_report</span>
+                    Diagnostics
+                  </summary>
+                  <pre className="mt-1.5 text-[10px] bg-surface-container-highest rounded-lg p-2.5 overflow-x-auto whitespace-pre-wrap">{diagnosticsText}</pre>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-1.5"
+                    onClick={() => { void navigator.clipboard?.writeText(diagnosticsText).then(() => toast.success("Diagnostics copied")); }}
+                  >
+                    Copy
+                  </Button>
+                </details>
               </div>
             </Section>
 
