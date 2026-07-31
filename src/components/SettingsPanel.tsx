@@ -204,6 +204,7 @@ const SettingsPanel: React.FC = () => {
   const [testingNvidia, setTestingNvidia] = useState(false);
   const [nvidiaStatus, setNvidiaStatus] = useState<string | null>(null);
   const [orStatus, setOrStatus] = useState<string | null>(null);
+  const [orFreeTier, setOrFreeTier] = useState(false);
   // Write-only key UX: once the save lands (last4 appears), drop the
   // plaintext from component state.
   useEffect(() => { if (nvidiaKeyLast4) setNvidiaKeyDraft(""); }, [nvidiaKeyLast4]);
@@ -282,28 +283,41 @@ const SettingsPanel: React.FC = () => {
   ].join("\n");
 
   /** OpenRouter exposes key status to the browser (CORS allows it), so the
-   *  "am I out of credit?" question can be answered BEFORE a failed send. */
-  const checkOpenRouterCredit = async () => {
+   *  "am I out of credit?" question can be answered BEFORE a failed send —
+   *  including the trap that costs people the most time: an account under
+   *  the ~$10 lifetime threshold can't run even OpenRouter's `:free` models. */
+  const checkOpenRouterCredit = useCallback(async () => {
     if (!apiKey) return;
     setOrStatus("Checking…");
     try {
       const res = await fetch("https://openrouter.ai/api/v1/key", {
         headers: { Authorization: `Bearer ${apiKey}` },
       });
-      if (!res.ok) { setOrStatus(`Key check failed (${res.status}).`); return; }
+      if (!res.ok) {
+        setOrStatus(res.status === 401 ? "❌ OpenRouter rejected this key." : `Key check failed (${res.status}).`);
+        setOrFreeTier(false);
+        return;
+      }
       const d = (await res.json())?.data || {};
       const limit = d.limit;
       const usage = typeof d.usage === "number" ? d.usage : 0;
       const free = d.is_free_tier === true;
+      setOrFreeTier(free);
       const remaining = typeof limit === "number" ? ` · $${Math.max(0, limit - usage).toFixed(2)} left` : " · no spend cap set";
-      setOrStatus(
-        `Key valid${remaining}.` +
-        (free ? " Free tier: OpenRouter needs a lifetime top-up (~$10) before its free models run — NVIDIA doesn't." : "")
-      );
+      setOrStatus(free
+        ? `⚠️ Free tier${remaining}. OpenRouter needs a lifetime top-up of about $10 before ANY of its models run — including the ones marked ":free". NVIDIA has no such requirement.`
+        : `✅ Key valid${remaining}.`);
     } catch {
       setOrStatus("Couldn't reach OpenRouter to check the key.");
     }
-  };
+  }, [apiKey]);
+
+  // Check on arrival, not on demand: the whole point is to surface a dead
+  // OpenRouter account BEFORE the user spends a message discovering it.
+  useEffect(() => {
+    if (!apiKey || !loaded) { setOrStatus(null); setOrFreeTier(false); return; }
+    void checkOpenRouterCredit();
+  }, [apiKey, loaded, checkOpenRouterCredit]);
   const reflexCues = useReflexEnabled();
   const [promptDraft, setPromptDraft] = useState(customSystemPrompt || "");
   useEffect(() => { setPromptDraft(customSystemPrompt || ""); }, [customSystemPrompt]);
@@ -521,16 +535,30 @@ const SettingsPanel: React.FC = () => {
                 <div className="mt-1.5">
                   <SecretField value={apiKey} placeholder="sk-or-v1-..." icon="key" onSave={saveApiKey} />
                 </div>
-                {apiKey && (
-                  <p className="text-xs text-on-surface-variant px-1 mt-1">
-                    {orStatus === null
-                      ? <button onClick={() => void checkOpenRouterCredit()} className="text-primary hover:underline">Check balance</button>
-                      : orStatus}
+                {apiKey && orStatus && (
+                  <p className={`text-xs px-1 mt-1 ${orFreeTier ? "text-destructive" : "text-on-surface-variant"}`}>
+                    {orStatus}
+                    {orFreeTier && !nvidiaKeyLast4 && " Add a free NVIDIA key below to keep chatting."}
                   </p>
                 )}
+                {orFreeTier && nvidiaKeyLast4 && modelProvider(selectedModel) === "openrouter" && (
+                  <Button
+                    size="sm"
+                    className="mt-1.5"
+                    onClick={() => {
+                      const target = savedModels.find((m) => isNvidiaModel(m)) || namespacedNvidiaId(NVIDIA_STARTER_MODEL);
+                      if (!savedModels.includes(target)) addModel(target);
+                      else setSelectedModel(target);
+                      toast.success(`Chat now runs on ${describeModel(target)}`);
+                    }}
+                  >
+                    Switch chat to NVIDIA
+                  </Button>
+                )}
                 <Hint>
-                  Pays per token, billed to your OpenRouter account. Note OpenRouter requires a lifetime top-up
-                  (about $10) before even its <code>:free</code> models will run — NVIDIA below has no such requirement.
+                  Pays per token, billed to your OpenRouter account. OpenRouter requires a lifetime top-up
+                  of about $10 before its models will run — <strong>including the ones labelled <code>:free</code></strong>.
+                  NVIDIA below has no such requirement.
                 </Hint>
               </div>
 

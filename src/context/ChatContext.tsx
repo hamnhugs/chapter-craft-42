@@ -20,8 +20,8 @@ import { parseArtifact, type Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle } from "@/lib/workspaceStore";
 import { toast } from "sonner";
 import { isEmbeddingModel } from "@/lib/utils";
-import { describeModel, modelProvider, providerLabel, resolveModel } from "@/lib/providers/registry";
-import { nvidiaModelInfo, nvidiaNoThinkingBody } from "@/lib/nvidiaCatalog";
+import { describeModel, localModelId, modelProvider, providerLabel, resolveModel } from "@/lib/providers/registry";
+import { namespacedNvidiaId, nvidiaModelInfo, nvidiaNoThinkingBody, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
 
 export interface ChatMessage {
   id?: string;
@@ -178,7 +178,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { user } = useAuth();
   const { books, activeBookId, activeWiki, activeWikiId, activeWikis, wikis, addChapter, updateChapter, removeChapter, setActiveBookSilent } = useApp();
 
-  const { apiKey, nvidiaKeyLast4, selectedModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, maxReplySentences, autoShowMemoryImages, chatToolPermissions, visionModel, imageModelPrimary, imageModelFallback,
+  const { apiKey, nvidiaKeyLast4, selectedModel, setSelectedModel, savedModels, addModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, maxReplySentences, autoShowMemoryImages, chatToolPermissions, visionModel, imageModelPrimary, imageModelFallback,
     videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold,
     videoIdentityScale, videoQcEnabled, videoMotionModel,
     falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback } = useChatSettings();
@@ -1103,7 +1103,32 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const raw = err?.message || "Failed to get response";
         const who = describeModel(model);
         const msg = raw.startsWith(providerLabel(modelProvider(model))) ? raw : `${who} — ${raw}`;
-        toast.error(msg);
+        // Actionable recovery: when OpenRouter refuses for money reasons and
+        // an NVIDIA key exists, the fix is one tap away — offer it here
+        // rather than making the user find Settings mid-conversation.
+        const code = err?.code;
+        const escapable =
+          modelProvider(model) === "openrouter" &&
+          !!nvidiaKeyLast4 &&
+          (code === "credits" || code === "rate_limit" || code === "auth");
+        if (escapable) {
+          const target = savedModels.find((m) => modelProvider(m) === "nvidia")
+            || namespacedNvidiaId(NVIDIA_STARTER_MODEL);
+          toast.error(msg, {
+            duration: 15000,
+            description: `NVIDIA needs no balance — switch chat to ${localModelId(target)}?`,
+            action: {
+              label: "Switch to NVIDIA",
+              onClick: () => {
+                if (!savedModels.includes(target)) addModel(target);
+                else setSelectedModel(target);
+                toast.success(`Chat now runs on ${describeModel(target)} — resend your message.`);
+              },
+            },
+          });
+        } else {
+          toast.error(msg);
+        }
         assistantText = `❌ ${msg}`;
         updateAssistant();
         throw err;

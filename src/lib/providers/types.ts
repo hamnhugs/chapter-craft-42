@@ -41,6 +41,8 @@ export type ProviderErrorCode =
 export class ProviderError extends Error {
   constructor(
     public provider: ProviderId,
+    /** Machine-readable failure class. Read by the UI to decide whether a
+     *  one-tap escape to the other provider is worth offering. */
     public code: ProviderErrorCode,
     public status: number | null,
     message: string,
