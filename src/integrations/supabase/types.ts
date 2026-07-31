@@ -1689,6 +1689,7 @@ export type Database = {
           custom_system_prompt: string | null
           deep_research_model: string | null
           fal_api_key: string | null
+          gemini_api_key: string | null
           hands_free_tts_rate: number
           id: string
           image_extraction_model: string | null
@@ -1701,6 +1702,7 @@ export type Database = {
           inworld_enabled: boolean
           inworld_voice_id: string
           is_recording_mode: boolean
+          lean_mode: string
           library_ingest_auto_file: boolean
           library_ingest_model: string | null
           max_reply_sentences: number | null
@@ -1719,6 +1721,7 @@ export type Database = {
           splat_max_file_mb: number | null
           splat_model_primary: string | null
           splat_monthly_quota: number | null
+          tavily_api_key: string | null
           trust_image_text: boolean
           tts_rate: number
           updated_at: string
@@ -1750,6 +1753,7 @@ export type Database = {
           custom_system_prompt?: string | null
           deep_research_model?: string | null
           fal_api_key?: string | null
+          gemini_api_key?: string | null
           hands_free_tts_rate?: number
           id?: string
           image_extraction_model?: string | null
@@ -1762,6 +1766,7 @@ export type Database = {
           inworld_enabled?: boolean
           inworld_voice_id?: string
           is_recording_mode?: boolean
+          lean_mode?: string
           library_ingest_auto_file?: boolean
           library_ingest_model?: string | null
           max_reply_sentences?: number | null
@@ -1780,6 +1785,7 @@ export type Database = {
           splat_max_file_mb?: number | null
           splat_model_primary?: string | null
           splat_monthly_quota?: number | null
+          tavily_api_key?: string | null
           trust_image_text?: boolean
           tts_rate?: number
           updated_at?: string
@@ -1811,6 +1817,7 @@ export type Database = {
           custom_system_prompt?: string | null
           deep_research_model?: string | null
           fal_api_key?: string | null
+          gemini_api_key?: string | null
           hands_free_tts_rate?: number
           id?: string
           image_extraction_model?: string | null
@@ -1823,6 +1830,7 @@ export type Database = {
           inworld_enabled?: boolean
           inworld_voice_id?: string
           is_recording_mode?: boolean
+          lean_mode?: string
           library_ingest_auto_file?: boolean
           library_ingest_model?: string | null
           max_reply_sentences?: number | null
@@ -1841,6 +1849,7 @@ export type Database = {
           splat_max_file_mb?: number | null
           splat_model_primary?: string | null
           splat_monthly_quota?: number | null
+          tavily_api_key?: string | null
           trust_image_text?: boolean
           tts_rate?: number
           updated_at?: string
