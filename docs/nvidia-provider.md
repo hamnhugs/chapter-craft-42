@@ -1,22 +1,26 @@
 # NVIDIA provider (second chat provider)
 
-Shipped 2026-07-31 on `new1` (commit `47c24fe`). NVIDIA's hosted catalog —
-Nemotron 3, DeepSeek V4, Kimi K2.6, GPT-OSS, GLM, **DiffusionGemma** — usable
-anywhere OpenRouter models are, on the user's own free trial credits.
+Shipped 2026-07-31 on `new1` (`47c24fe`, clarity follow-up `fa42ac2`).
+NVIDIA's hosted catalog — Nemotron 3, DeepSeek V4, Kimi K2.6, GPT-OSS, GLM,
+**DiffusionGemma** — usable anywhere OpenRouter models are, free with the
+user's own NVIDIA key.
 
-## Deploying (the two user actions)
+## Deploying — DONE, kept for the record
 
-1. **Lovable prompt** (migration + function together):
+Applied 2026-07-31: the columns landed via Lovable's own migration
+`20260731091309_…` (identical to `20260731093000_nvidia_provider.sql`) and
+the relay was deployed in `89e6c38`. The prompt used:
 
    > Please run the repo migration `supabase/migrations/20260731093000_nvidia_provider.sql`
    > exactly as written, and deploy the edge function `supabase/functions/nvidia-chat`
    > (its config.toml entry is already in the repo). The migration is idempotent.
 
-2. **A free NVIDIA key**: build.nvidia.com → Settings → API Keys → Generate
-   (starts `nvapi-`), pasted into Settings → AI Models & Keys.
+**`nvidia-chat` must be re-deployed after `fa42ac2`** — it gained the
+`action: "validate"` branch behind the Test key button. Until then that
+button reports a bad-request error; nothing else regresses.
 
-Before both: the NVIDIA key field reports the missing columns, and any NVIDIA
-model errors in-bubble with the deploy hint. Nothing else changes.
+A free NVIDIA key comes from build.nvidia.com → Settings → API Keys →
+Generate (starts `nvapi-`), pasted into Settings → AI Models & Keys.
 
 ## Why a relay exists
 
@@ -118,12 +122,52 @@ every retry after a minutes-long client-side scan.
 
 ## Free-tier reality
 
-~1,000 trial requests (≈1 credit each), ~40 requests/min, **no self-serve
-top-up**. One chat turn costs up to 5 tool rounds + 1 summary, so ~170–500
-turns. Settings copy says so. NVIDIA's per-account "Function not found for
-account" provisioning failures (a June–July wave affecting many models) are
-detected and explained with NVIDIA's own remedy (email help@build.nvidia.com);
-`google/gemma-4-31b-it` is featured as the fallback.
+**NVIDIA retired its credit system in 2025** (staff-confirmed; the "Request
+More" button is gone). Free usage is governed by **rate limits that vary by
+model and current traffic**, with no time limit and no self-serve increase.
+There is no balance to display and no usage endpoint — the only way to know a
+key works is a real request, which is what the **Test key** button and the
+relay's `action: "validate"` branch do.
+
+By contrast **OpenRouter requires a lifetime top-up (~$10) before even its
+`:free` models will run**, which is what sent the first user here. Its key
+status *is* readable from the browser (`GET /api/v1/key`, CORS-open), so
+Settings can answer "am I out of credit?" before a failed send.
+
+NVIDIA's per-account "Function not found for account" provisioning failures
+(a June–July wave affecting many models) are detected and explained with
+NVIDIA's own remedy (email help@build.nvidia.com); `google/gemma-4-31b-it` is
+featured as the fallback.
+
+## Provider must be visible, not inferred (the follow-up ship, `fa42ac2`)
+
+The first ship routed on an invisible `nvidia:` prefix and left every error
+anonymous. A real user with both keys saved an NVIDIA key, kept getting
+OpenRouter's "Insufficient credits", and could not tell why. Three causes:
+
+1. **Saving a key changed no model.** The wizard's auto-add was disabled for
+   anyone who already had an OpenRouter key, and the Settings field had no
+   model side effect at all — so chat stayed on OpenRouter.
+2. **Errors named no provider.** `ProviderError.provider` was populated and
+   then dropped at the display layer.
+3. **The catalogs genuinely look alike.** 67% of NVIDIA's chat-worthy rows
+   are other vendors' models, and **13 ids are byte-identical across both
+   services** (`SHARED_WITH_OPENROUTER` in `nvidiaCatalog.ts`, measured).
+   Stripping the prefix from dropdown labels made them indistinguishable.
+
+Fixes: provider leads every error and every reply (`describeModel`); the
+add-model box has a provider selector with paste repair; chips are grouped
+and badged; option labels always carry the provider; all four model roles
+(chat / deep research / voice / vision) are listed together with a warning
+when one points at a keyless provider — each swaps in on its own kind of turn
+and fails alone; saving a key offers the switch; Diagnostics block for the
+next report.
+
+**Also fixed a self-inflicted 402:** OpenRouter reserves the *maximum*
+possible reply against the balance before running, and the streaming path
+sent no `max_tokens`, so it reserved OpenRouter's ~65k default. A funded key
+could be refused on every turn. Now sends an explicit cap, keeps upstream's
+real message, and tells the two 402 meanings apart.
 
 ## Verification status
 
