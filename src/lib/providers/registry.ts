@@ -24,6 +24,12 @@ interface ProviderRecord {
   prefix: string;
   label: string;
   adapter: ChatProviderAdapter;
+  /** Which useChatSettings field holds the key the BROWSER must send.
+   *  null = the browser never holds one (NVIDIA's key is write-only and read
+   *  server-side by the relay). This lives here so key selection is one more
+   *  table lookup rather than a branch someone forgets to extend — the exact
+   *  omission that shipped Gemini chat authenticating with OpenRouter's key. */
+  keyField: "apiKey" | "geminiApiKey" | null;
   /** Where to get a key. Shown in Settings and in "no key" error copy. */
   keyUrl: string;
   /** True when the provider has a genuinely free tier for chat — used to
@@ -42,6 +48,7 @@ const PROVIDERS: ProviderRecord[] = [
     prefix: NVIDIA_PREFIX,
     label: "NVIDIA",
     adapter: nvidiaAdapter,
+    keyField: null, // write-only; the relay reads it under RLS
     keyUrl: "https://build.nvidia.com/settings/api-keys",
     freeChatTier: true,
   },
@@ -50,6 +57,7 @@ const PROVIDERS: ProviderRecord[] = [
     prefix: GEMINI_PREFIX,
     label: "Gemini",
     adapter: geminiAdapter,
+    keyField: "geminiApiKey",
     keyUrl: "https://aistudio.google.com/apikey",
     freeChatTier: true,
   },
@@ -58,6 +66,7 @@ const PROVIDERS: ProviderRecord[] = [
     prefix: "", // bare ids — the default
     label: "OpenRouter",
     adapter: openrouterAdapter,
+    keyField: "apiKey",
     keyUrl: "https://openrouter.ai/keys",
     freeChatTier: false, // needs a ~$10 lifetime top-up before ANY model runs
   },
@@ -94,6 +103,32 @@ export function providerLabel(p: ProviderId): string {
 
 export function providerKeyUrl(p: ProviderId): string {
   return recordById(p).keyUrl;
+}
+
+/** The settings field holding this provider's browser-side key, or null when
+ *  the browser never holds one. */
+export function providerKeyField(p: ProviderId): "apiKey" | "geminiApiKey" | null {
+  return recordById(p).keyField;
+}
+
+/** Does the user have what this provider needs to run a turn? `keys` carries
+ *  every client-visible credential; NVIDIA is presence-only (last4). */
+export function providerConfigured(
+  p: ProviderId,
+  keys: { apiKey?: string; geminiApiKey?: string; nvidiaKeyLast4?: string },
+): boolean {
+  const field = recordById(p).keyField;
+  if (field === null) return !!keys.nvidiaKeyLast4;
+  return !!keys[field];
+}
+
+/** The key string to send for this provider ("" when the browser holds none). */
+export function providerKey(
+  p: ProviderId,
+  keys: { apiKey?: string; geminiApiKey?: string },
+): string {
+  const field = recordById(p).keyField;
+  return field ? (keys[field] || "") : "";
 }
 
 /** Providers with a real free chat tier, for "you could switch to…" copy. */

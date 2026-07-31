@@ -5,10 +5,11 @@
 -- Same posture as inworld_api_key, which is already both client-read and
 -- server-read. (nvidia_api_key stays write-only — its relay reads it.)
 --
--- lean_mode must be SERVER-READABLE, not a client flag: durable background
--- jobs (book digestion, figure extraction, wiki ops) run in edge functions
--- long after the tab is closed, and would otherwise keep spending after the
--- user has said they can't afford it.
+-- lean_mode lives on the row rather than in localStorage so it is readable
+-- BY SERVER CODE. Nothing server-side consults it yet: durable background
+-- jobs (book digestion, figure extraction, wiki ops) still spend when
+-- queued, and the Settings copy says so. Wiring those functions to this
+-- column is the follow-up this column exists to make possible.
 --   'full'      — nothing blocked (default; today's behaviour)
 --   'lean'      — video + 3D generation off (dollars per artifact)
 --   'chat_only' — also image generation/editing and paid web search off

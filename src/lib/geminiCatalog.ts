@@ -64,10 +64,6 @@ const FEATURED_BY_ID = new Map(GEMINI_FEATURED.map((m) => [m.localId, m]));
 /** Auto-selected when someone onboards with only a Gemini key. */
 export const GEMINI_STARTER_MODEL = "gemini-2.5-flash";
 
-/** Model used for Google Search grounding when Gemini is the search backend.
- *  Flash is both the cheapest and the one with the largest free allowance. */
-export const GEMINI_SEARCH_MODEL = "gemini-2.5-flash";
-
 const HIDE = [
   /embedding|aqa|text-bison|chat-bison|gemini-1\.0|gemini-pro-vision/i,
   /-tts$|-native-audio|-live-/i, // realtime/audio surfaces this app doesn't use
@@ -102,7 +98,17 @@ export function namespacedGeminiId(localId: string): string {
   return `${GEMINI_PREFIX}${localId}`;
 }
 
-const CACHE_KEY = "gemini_catalog_v1";
+const CACHE_PREFIX = "gemini_catalog_v1";
+/** Non-reversible 32-bit FNV-1a: identifies WHICH key cached the list without
+ *  storing any part of it, so switching keys or users can't serve stale rows. */
+function cacheKeyFor(apiKey: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < apiKey.length; i++) {
+    h ^= apiKey.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `${CACHE_PREFIX}_${h.toString(36)}`;
+}
 const TTL_MS = 60 * 60 * 1000;
 
 /** Live model list, browser-direct (no relay). Requires the user's key
@@ -111,7 +117,7 @@ export async function fetchGeminiCatalog(apiKey: string): Promise<GeminiModelInf
   if (!apiKey) throw new Error("Add your Gemini API key in Settings to browse Google's models.");
   let rows: Array<{ name?: string; displayName?: string; description?: string; inputTokenLimit?: number; supportedGenerationMethods?: string[] }> | null = null;
   try {
-    const cached = localStorage.getItem(CACHE_KEY);
+    const cached = localStorage.getItem(cacheKeyFor(apiKey));
     if (cached) {
       const { t, data } = JSON.parse(cached);
       if (Date.now() - t < TTL_MS && Array.isArray(data)) rows = data;
@@ -129,7 +135,7 @@ export async function fetchGeminiCatalog(apiKey: string): Promise<GeminiModelInf
       throw new Error(msg);
     }
     rows = ((await res.json())?.models || []) as typeof rows;
-    try { localStorage.setItem(CACHE_KEY, JSON.stringify({ t: Date.now(), data: rows })); } catch { /* full */ }
+    try { localStorage.setItem(cacheKeyFor(apiKey), JSON.stringify({ t: Date.now(), data: rows })); } catch { /* full */ }
   }
 
   const live = (rows || [])

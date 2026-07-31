@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { extractFiguresFromPdf, blobToScaledJpegDataUrl, ExtractedFigure } from "./figureExtraction";
+import { modelProvider } from "@/lib/providers/registry";
 
 // Per-book figure-extraction jobs. Same module-level observable store +
 // sequential queue pattern as structureJobs.ts: Library cards get live
@@ -305,7 +306,9 @@ export const figureJobs = {
     // gateway — an "nvidia:" id would be forwarded verbatim and fail every
     // batch. Drop it so the server picks its own default. (Single choke
     // point: every caller passes through here.)
-    const input: JobInput = rawInput.model?.startsWith("nvidia:")
+    // Positive check, not a per-provider denylist: only OpenRouter ids can
+    // survive here, so a new provider can never leak through by omission.
+    const input: JobInput = rawInput.model && modelProvider(rawInput.model) !== "openrouter"
       ? { ...rawInput, model: undefined }
       : rawInput;
     const existing = jobs[input.bookId];

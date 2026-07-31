@@ -8,7 +8,7 @@ import {
   LEAN_MODES,
   LEAN_MODE_INFO,
 } from "@/lib/leanMode";
-import { modelProvider, localModelId, namespacedId, providerLabel, allProviders, resolveModel } from "@/lib/providers/registry";
+import { modelProvider, localModelId, namespacedId, providerLabel, allProviders, resolveModel, providerKey, providerConfigured, providerKeyField } from "@/lib/providers/registry";
 import { geminiModelInfo, namespacedGeminiId, isChatworthyGeminiModel, GEMINI_STARTER_MODEL, GEMINI_FEATURED } from "@/lib/geminiCatalog";
 import { looksLikeTavilyKey } from "@/lib/tavilySearch";
 
@@ -179,5 +179,60 @@ describe("Tavily free search", () => {
     expect(looksLikeTavilyKey("tvly-abc123")).toBe(true);
     expect(looksLikeTavilyKey("sk-or-v1-xxx")).toBe(false);
     expect(looksLikeTavilyKey("pp_xxx")).toBe(false);
+  });
+});
+
+
+describe("provider key selection (the blocker that shipped)", () => {
+  // Gemini shipped authenticating with the OpenRouter key: `apiKey` was
+  // passed to whichever adapter resolveModel returned. Google got an
+  // sk-or-… string and blamed the user for a key the app never sent.
+  const keys = { apiKey: "sk-or-v1-ROUTER", geminiApiKey: "AIza-GOOGLE", nvidiaKeyLast4: "9999" };
+
+  it("never hands one provider's key to another", () => {
+    expect(providerKey("openrouter", keys)).toBe("sk-or-v1-ROUTER");
+    expect(providerKey("gemini", keys)).toBe("AIza-GOOGLE");
+    expect(providerKey("gemini", keys)).not.toBe(keys.apiKey);
+  });
+
+  it("sends no key at all for relay-backed providers", () => {
+    // NVIDIA's key is write-only and read server-side; the browser must not
+    // send anything, least of all a different provider's secret.
+    expect(providerKey("nvidia", keys)).toBe("");
+    expect(providerKeyField("nvidia")).toBeNull();
+  });
+
+  it("every provider declares where its browser key comes from", () => {
+    for (const p of allProviders()) {
+      const f = providerKeyField(p);
+      expect(f === null || f === "apiKey" || f === "geminiApiKey", p).toBe(true);
+    }
+  });
+
+  it("configured-ness is per provider, so one key never unlocks another", () => {
+    const only = { apiKey: "", geminiApiKey: "AIza-GOOGLE", nvidiaKeyLast4: "" };
+    expect(providerConfigured("gemini", only)).toBe(true);
+    expect(providerConfigured("openrouter", only)).toBe(false);
+    expect(providerConfigured("nvidia", only)).toBe(false);
+  });
+});
+
+describe("lean alias safety", () => {
+  it("does not fire on ordinary prose containing 'broke'", () => {
+    // A novel-writing app: these must never silently switch spending off.
+    for (const line of [
+      "write a story about a broke musician",
+      "he broke down crying in the rain",
+      "the deal broke down at the last minute",
+      "she broke the window with a stone",
+    ]) {
+      expect(leanModeFromPhrase(line), line).toBeNull();
+    }
+  });
+
+  it("still catches the real thing", () => {
+    expect(leanModeFromPhrase("broke mode")).toBe("lean");
+    expect(leanModeFromPhrase("im broke")).toBe("lean");
+    expect(leanModeFromPhrase("I can't afford images right now")).toBe("chat_only");
   });
 });

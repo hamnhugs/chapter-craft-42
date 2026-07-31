@@ -11,7 +11,7 @@ import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { fetchWikis, type Wiki } from "@/lib/wikisApi";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { isNvidiaModel } from "@/lib/providers/registry";
+import { isNvidiaModel, modelProvider } from "@/lib/providers/registry";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -45,7 +45,7 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
   // an "nvidia:" id would be forwarded verbatim and 400 on every retry. Send
   // null instead so the server falls back to its own default model.
   const ingestModelRaw = libraryIngestModel || selectedModel || "";
-  const ingestModel = ingestModelRaw && !isNvidiaModel(ingestModelRaw) ? ingestModelRaw : null;
+  const ingestModel = ingestModelRaw && modelProvider(ingestModelRaw) === "openrouter" ? ingestModelRaw : null;
   const { loadBookFile, books: allBooks } = useApp();
   const { isPaid, loaded: planLoaded } = usePlan();
   const { isAdmin, loaded: adminLoaded } = useIsAdmin();
@@ -334,11 +334,11 @@ const LibraryCollections: React.FC<Props> = ({ books, renderBook, activeWikiId }
               className="w-full bg-surface-container-high border-none rounded-lg text-sm py-2 px-3"
             >
               <option value="">
-                {isNvidiaModel(selectedModel) ? "Server default (NVIDIA models can't digest)" : `Use active chat model (${selectedModel})`}
+                {modelProvider(selectedModel) !== "openrouter" ? "Server default (only OpenRouter models can digest)" : `Use active chat model (${selectedModel})`}
               </option>
               {/* Digestion is OpenRouter/gateway-only server-side — NVIDIA ids
                   are never offered here. */}
-              {savedModels.filter((m) => !isNvidiaModel(m)).map((m) => <option key={m} value={m}>{m}</option>)}
+              {savedModels.filter((m) => modelProvider(m) === "openrouter").map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
           </div>
           <label className="flex items-start gap-2 text-sm">

@@ -47,7 +47,7 @@ export const LEAN_MODE_INFO: Record<LeanMode, LeanModeInfo> = {
   chat_only: {
     id: "chat_only",
     label: "Chat only",
-    summary: "All paid generation off: no images, video, 3D, or paid web search.",
+    summary: "All generation off — no images, video or 3D — and web search stops too, free backend or not.",
   },
 };
 
@@ -58,12 +58,13 @@ export const LEAN_MODE_INFO: Record<LeanMode, LeanModeInfo> = {
  *  mode that hid your own library would be punishing you for being broke. */
 const BLOCKED_AT: Record<LeanMode, string[]> = {
   full: [],
-  lean: ["generate_video", "generate_splat", "render_splat_views"],
+  lean: ["generate_video", "generate_splat"],
   chat_only: [
-    "generate_video", "generate_splat", "render_splat_views",
+    "generate_video", "generate_splat",
     "generate_image", "edit_image",
-    // The user explicitly asked for search to go too. It bills a separate
-    // Burplexity token rather than image money, but it is still spend.
+    // Blocked at the user's explicit request. Note this stops search even
+    // when the free Tavily backend is configured — the tier means "nothing
+    // reaches out", not just "nothing bills", and the summary says so.
     "web_search",
   ],
 };
@@ -74,7 +75,6 @@ const CAPABILITY_OF: Record<string, string> = {
   edit_image: "image editing",
   generate_video: "video generation",
   generate_splat: "3D model generation",
-  render_splat_views: "3D model rendering",
   web_search: "web search",
 };
 
@@ -115,7 +115,10 @@ export function leanModeFromPhrase(text: string): LeanMode | null {
   const s = text.toLowerCase();
   // "chat only" names the strictest tier outright — no money word needed.
   if (/\bchat[- ]only\b|\bonly chat\b/.test(s)) return "chat_only";
-  if (!/\b(broke|can'?t afford|cannot afford|no money|too expensive|save money|budget|lean mode|cheap mode)\b/.test(s)) {
+  // "broke" alone is the past tense of "break". In a novel-writing app "he
+  // broke down crying" must never silently switch spending off, so the word
+  // only counts when it's clearly about money or about a mode.
+  if (!/\b(broke mode|i'?m broke|im broke|can'?t afford|cannot afford|no money|out of money|too expensive|lean mode|cheap mode)\b/.test(s)) {
     return null;
   }
   // Naming images as unaffordable means the middle tier isn't enough.

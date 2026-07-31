@@ -15,6 +15,7 @@ import ToolApprovalCard from "@/components/ToolApprovalCard";
 import { extractKnowledge } from "@/lib/knowledgeApi";
 import { Loader2, StickyNote, BookmarkPlus } from "lucide-react";
 import { useChatSettings } from "@/hooks/useChatSettings";
+import { isToolBlocked } from "@/lib/leanMode";
 import { usePlan } from "@/hooks/usePlan";
 import { openPricing } from "@/components/PricingDialog";
 import { useReadAloud } from "@/hooks/useReadAloud";
@@ -50,7 +51,7 @@ const ChatPanel: React.FC = () => {
   const { user } = useAuth();
   const isMobile = useIsMobile();
   const {
-    apiKey, nvidiaKeyLast4, savedModels, selectedModel, voiceModel, autoReadReplies, burplexityApiToken, accessAllNeurons, loaded,
+    apiKey, nvidiaKeyLast4, geminiApiKey, leanMode, savedModels, selectedModel, voiceModel, autoReadReplies, burplexityApiToken, accessAllNeurons, loaded,
     handsFreeTtsRate,
     setSelectedModel, setAutoReadReplies,
   } = useChatSettings();
@@ -552,7 +553,7 @@ const ChatPanel: React.FC = () => {
     const text = input.trim();
     const imagesToSend = pendingImages;
     if (!text && imagesToSend.length === 0) return;
-    if (!apiKey && !nvidiaKeyLast4) { toast.error("Add an API key in Settings first — OpenRouter or NVIDIA"); openSettings("models"); return; }
+    if (!apiKey && !nvidiaKeyLast4 && !geminiApiKey) { toast.error("Add an API key in Settings first — OpenRouter, NVIDIA or Gemini"); openSettings("models"); return; }
     sendingRef.current = true;
     // Desktop refocus eligibility: this send came from the composer area
     // (Enter or the send button). Touch devices never refocus.
@@ -562,7 +563,7 @@ const ChatPanel: React.FC = () => {
       dictation.stop();
       setInput("");
       setPendingImages([]);
-      if (voiceQuickSearch && burplexityApiToken && SEARCH_INTENT_RE.test(text)) {
+      if (voiceQuickSearch && burplexityApiToken && !isToolBlocked(leanMode, "web_search") && SEARCH_INTENT_RE.test(text)) {
         runBackgroundSearch(text); // intentionally not awaited
       }
       // Take ownership of the attach-time upload promises: the unmount
@@ -1027,7 +1028,7 @@ const ChatPanel: React.FC = () => {
                 ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} onPaste={handlePaste}
                 inputMode={handsFree.active ? "none" : undefined}
                 aria-label="Message The Librarian"
-                placeholder={dictation.isListening ? "Listening… speak now" : (apiKey || nvidiaKeyLast4) ? "Ask about your books, or drop an image…" : "Add an API key in Settings to start chatting"}
+                placeholder={dictation.isListening ? "Listening… speak now" : (apiKey || nvidiaKeyLast4 || geminiApiKey) ? "Ask about your books, or drop an image…" : "Add an API key in Settings to start chatting"}
                 rows={1} className="bg-surface-container-high border-none rounded-xl text-foreground py-3 pl-4 pr-20 focus:ring-1 focus:ring-primary/40 resize-none min-h-[50px] max-h-[220px] overflow-y-auto"
               />
 

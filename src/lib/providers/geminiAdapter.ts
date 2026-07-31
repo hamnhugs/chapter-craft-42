@@ -13,9 +13,12 @@
 // as partial JSON argument strings that accumulate exactly like OpenAI's
 // (an earlier report claimed they arrive pre-parsed; that was refuted).
 //
-// Google Search grounding is exposed here as an extra tool the CALLER may
-// request, which gives the app a free web-search backend on Gemini's free
-// tier — see `groundedSearch` in geminiSearch.ts.
+// Google Search grounding is deliberately NOT used. Two verified reasons:
+// it does not exist on this OpenAI-compatible surface at all (schema-probed —
+// the field is rejected as unknown), and Google's API terms forbid extracting
+// grounded results for another purpose or interspersing them with other
+// content, which is exactly what "search on Gemini, answer on NVIDIA" would
+// be. Free web search is Tavily instead — see src/lib/tavilySearch.ts.
 
 import {
   ChatCompleteRequest,
@@ -65,7 +68,10 @@ function classify(status: number, body: string): { code: ProviderErrorCode; mess
 async function throwGeminiError(res: Response): Promise<never> {
   const raw = await res.text().catch(() => "");
   const { code, message } = classify(res.status, raw);
-  throw new ProviderError("gemini", code, res.status, FRIENDLY[code] ?? message);
+  // Keep Google's own text alongside our copy: a daily-quota 429 says "retry
+  // in 41283s", and a friendly "wait a minute" alone would be actively wrong.
+  const friendly = FRIENDLY[code];
+  throw new ProviderError("gemini", code, res.status, friendly ? `${friendly} (${message})` : message);
 }
 
 function headers(apiKey: string): Record<string, string> {

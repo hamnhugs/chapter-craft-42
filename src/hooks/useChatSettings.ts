@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { isEmbeddingModel } from "@/lib/utils";
+import { modelProvider, providerConfigured, providerLabel } from "@/lib/providers/registry";
 
 export type LeanMode = "full" | "lean" | "chat_only";
 
@@ -283,7 +284,7 @@ function ensureLoaded(userId: string | null) {
     // it. Falls back to "*" if a column here hasn't been migrated yet, so a
     // lagging migration still loads settings (same resilience convention as
     // the chat_messages select cascade).
-    const READ_COLUMNS = [
+    const READ_COLUMNS: string[] = [
       "user_id", "openrouter_api_key", "nvidia_key_last4", "saved_models", "selected_model",
       "deep_research_model", "voice_model", "tts_rate", "hands_free_tts_rate", "auto_read_replies",
       "wiki_model", "custom_system_prompt", "burplexity_api_token", "inworld_api_key",
@@ -298,22 +299,36 @@ function ensureLoaded(userId: string | null) {
       "splat_model_primary", "splat_default_quality", "splat_max_file_mb",
       "splat_confirm_threshold", "splat_click_to_activate", "splat_monthly_quota",
       "splat_auto_fallback", "gemini_api_key", "tavily_api_key", "lean_mode",
-    ].join(", ");
+    ];
     const sel = (cols: string) => supabase
       .from("user_settings")
       .select(cols as any)
       .eq("user_id", userId)
       .maybeSingle() as any;
-    let { data, error } = await sel(READ_COLUMNS);
-    if (error) {
-      // A column above hasn't been migrated yet. The "*" fallback keeps the
-      // app working — but it would also drag the write-only NVIDIA key into
-      // the response body, which is exactly what the explicit list exists to
-      // prevent. Drop it the instant it arrives, before anything can read it.
-      ({ data, error } = await sel("*"));
-      if (data && typeof data === "object" && "nvidia_api_key" in data) {
-        delete (data as any).nvidia_api_key;
-      }
+    // Migrations lag deploys here, so a named column may not exist yet. Strip
+    // the offender and retry — the SAME convention persistSettings uses — and
+    // never fall back to select("*"): that would put the write-only NVIDIA key
+    // in the response body, which is the one thing the explicit list exists to
+    // prevent.
+    const OPTIONAL_READ = [
+      "gemini_api_key", "tavily_api_key", "lean_mode", "nvidia_key_last4",
+      "auto_show_memory_images", "auto_approve_tool_updates", "access_all_neurons",
+      "max_reply_sentences", "image_extraction_model", "auto_extract_figures",
+      "video_model_primary", "saved_video_models", "video_default_duration",
+      "video_default_resolution", "video_default_aspect", "video_generate_audio",
+      "video_confirm_threshold", "video_identity_scale", "video_qc_enabled",
+      "video_motion_model", "fal_api_key", "splat_model_primary",
+      "splat_default_quality", "splat_max_file_mb", "splat_confirm_threshold",
+      "splat_click_to_activate", "splat_monthly_quota", "splat_auto_fallback",
+    ];
+    let cols = [...READ_COLUMNS];
+    let { data, error } = await sel(cols.join(", "));
+    for (let pass = 0; error && pass < OPTIONAL_READ.length; pass++) {
+      const msg = (error.message || "").toLowerCase();
+      const offender = OPTIONAL_READ.find((c) => cols.includes(c) && msg.includes(c));
+      if (!offender) break;
+      cols = cols.filter((c) => c !== offender);
+      ({ data, error } = await sel(cols.join(", ")));
     }
     if (loadedForUser !== userId) return; // user changed mid-flight
     if (error) {
@@ -449,12 +464,22 @@ export function useChatSettings() {
    *  prevent. */
   const setLeanMode = useCallback(async (mode: LeanMode) => {
     const uid = user?.id;
+    const prev = snapshot.settings.leanMode;
+    if (prev === mode) return;
     publish({ settings: { ...snapshot.settings, leanMode: mode } });
-    if (!uid) return;
+    // Any failure below must ROLL BACK. A budget control that shows a tier it
+    // didn't save is worse than one that refuses — the user would believe
+    // spending was off. Re-spread the CURRENT snapshot so a concurrent change
+    // to an unrelated field isn't clobbered, and use publish (not update) so
+    // this never triggers the debounced full-row write lean_mode is excluded
+    // from.
+    const rollback = () => publish({ settings: { ...snapshot.settings, leanMode: prev } });
+    if (!uid) { rollback(); toast.error("Sign in to change spending settings"); return; }
     const { error } = await supabase
       .from("user_settings")
       .upsert({ user_id: uid, lean_mode: mode } as any, { onConflict: "user_id" });
     if (error) {
+      rollback();
       if ((error.message || "").toLowerCase().includes("lean_mode")) {
         toast.error("Lean Mode needs its migration — ask Lovable to run 20260731140000_gemini_and_lean_mode.sql");
       } else {
@@ -502,18 +527,22 @@ export function useChatSettings() {
     const cur = getSnapshot().settings;
     if (cur.savedModels.includes(id)) { toast.error("Model already saved"); return; }
     const embed = isEmbeddingModel(id);
-    // An NVIDIA model with no NVIDIA key can't run — adding one to try later
-    // must not silently replace a working Active Chat Model.
-    const unusableNvidia = id.startsWith("nvidia:") && !cur.nvidiaKeyLast4;
+    // A model whose provider has no key can't run — adding one to try later
+    // must not silently replace a working Active Chat Model. Registry-driven
+    // so a new provider is covered the moment its row exists.
+    const idProvider = modelProvider(id);
+    const unusable = !providerConfigured(idProvider, {
+      apiKey: cur.apiKey, geminiApiKey: cur.geminiApiKey, nvidiaKeyLast4: cur.nvidiaKeyLast4,
+    });
     update({
       savedModels: [...cur.savedModels, id],
       // Don't make embedding models the active Chat model — they only work for Wiki reindex.
-      selectedModel: embed || unusableNvidia ? cur.selectedModel : id,
+      selectedModel: embed || unusable ? cur.selectedModel : id,
     });
     if (embed) {
       toast.success(`Embedding model "${id}" added — select it in Neuron Settings.`);
-    } else if (unusableNvidia) {
-      toast.success(`Model "${id}" added — add your NVIDIA key in Settings to chat with it.`);
+    } else if (unusable) {
+      toast.success(`Model "${id}" added — add your ${providerLabel(idProvider)} key in Settings to chat with it.`);
     } else {
       toast.success(`Model "${id}" added`);
     }

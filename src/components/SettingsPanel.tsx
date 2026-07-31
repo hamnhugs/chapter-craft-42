@@ -26,7 +26,8 @@ import { getMemoryMode, setMemoryMode, MemoryMode } from "@/lib/knowledgeApi";
 import { consumeSettingsSection } from "@/lib/settingsNav";
 import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
 import { isEmbeddingModel } from "@/lib/utils";
-import { describeModel, isNvidiaModel, localModelId, modelProvider, providerLabel, NVIDIA_PREFIX } from "@/lib/providers/registry";
+import { allProviders, describeModel, freeChatProviders, isNvidiaModel, localModelId, modelProvider, namespacedId, providerConfigured, providerKeyUrl, providerLabel, NVIDIA_PREFIX } from "@/lib/providers/registry";
+import type { ProviderId } from "@/lib/providers/types";
 import { namespacedNvidiaId, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
 import { LEAN_MODES, LEAN_MODE_INFO } from "@/lib/leanMode";
 import { validateNvidiaKey } from "@/lib/providers/nvidiaAdapter";
@@ -145,39 +146,52 @@ const SecretField: React.FC<{
 const selectCls =
   "w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40";
 
-/** Saved-model options, provider-labelled. Two providers serve 13 models
- *  under BYTE-IDENTICAL names, so every option carries its provider in the
- *  text — grouping alone is not enough, and an <option> cannot hold a badge.
- *  Labels are never stripped of provenance. `excludeNvidia` is for features
- *  that run server-side on the OpenRouter key only (wiki ops). */
-const ModelOptions: React.FC<{ models: string[]; excludeNvidia?: boolean }> = ({ models, excludeNvidia }) => {
-  const or = models.filter((m) => !isNvidiaModel(m));
-  const nv = excludeNvidia ? [] : models.filter((m) => isNvidiaModel(m));
-  if (nv.length === 0) {
-    return <>{or.map((m) => (<option key={m} value={m}>{describeModel(m)}</option>))}</>;
+const PROVIDER_GROUP_LABEL: Record<ProviderId, string> = {
+  nvidia: "NVIDIA — free, no balance needed",
+  gemini: "Gemini — free tier, billed to Google beyond it",
+  openrouter: "OpenRouter — billed to your OpenRouter balance",
+};
+
+/** Saved-model options, provider-labelled. Providers serve many models under
+ *  BYTE-IDENTICAL names, so every option carries its provider in the text —
+ *  grouping alone is not enough, and an <option> cannot hold a badge. Labels
+ *  are never stripped of provenance. `openrouterOnly` is for features that
+ *  run server-side on the OpenRouter key (wiki ops, digestion, figures) —
+ *  a POSITIVE filter, so a newly added provider can't leak in by omission. */
+const ModelOptions: React.FC<{ models: string[]; openrouterOnly?: boolean }> = ({ models, openrouterOnly }) => {
+  const groups = allProviders()
+    .map((p) => ({
+      provider: p,
+      models: openrouterOnly && p !== "openrouter" ? [] : models.filter((m) => modelProvider(m) === p),
+    }))
+    .filter((g) => g.models.length > 0);
+  // One provider in play ⇒ the flat list users saw before groups existed.
+  if (groups.length <= 1) {
+    return <>{(groups[0]?.models ?? []).map((m) => (<option key={m} value={m}>{describeModel(m)}</option>))}</>;
   }
   return (
     <>
-      <optgroup label="NVIDIA — free, no balance needed">
-        {nv.map((m) => (<option key={m} value={m}>{describeModel(m)}</option>))}
-      </optgroup>
-      <optgroup label="OpenRouter — billed to your OpenRouter balance">
-        {or.map((m) => (<option key={m} value={m}>{describeModel(m)}</option>))}
-      </optgroup>
+      {groups.map((g) => (
+        <optgroup key={g.provider} label={PROVIDER_GROUP_LABEL[g.provider]}>
+          {g.models.map((m) => (<option key={m} value={m}>{describeModel(m)}</option>))}
+        </optgroup>
+      ))}
     </>
   );
 };
 
-/** Provider badge for surfaces that CAN hold markup (chips, rows). */
+/** Provider badge for surfaces that CAN hold markup (chips, rows). Free-tier
+ *  providers get the accent so "this one costs nothing" reads at a glance. */
 const ProviderBadge: React.FC<{ id: string }> = ({ id }) => {
-  const nv = isNvidiaModel(id);
+  const p = modelProvider(id);
+  const free = freeChatProviders().includes(p);
   return (
     <span
       className={`text-[9px] font-bold uppercase tracking-widest px-1 py-0.5 rounded shrink-0 ${
-        nv ? "bg-primary-container/30 text-primary" : "bg-surface-container-highest text-on-surface-variant"
+        free ? "bg-primary-container/30 text-primary" : "bg-surface-container-highest text-on-surface-variant"
       }`}
     >
-      {nv ? "NVIDIA" : "OpenRouter"}
+      {providerLabel(p)}
     </span>
   );
 };
@@ -200,7 +214,7 @@ const SettingsPanel: React.FC = () => {
   } = useChatSettings();
 
   const [newModelInput, setNewModelInput] = useState("");
-  const [newModelProvider, setNewModelProvider] = useState<"openrouter" | "nvidia">("openrouter");
+  const [newModelProvider, setNewModelProvider] = useState<ProviderId>("openrouter");
   const [nvidiaKeyDraft, setNvidiaKeyDraft] = useState("");
   const [testingNvidia, setTestingNvidia] = useState(false);
   const [nvidiaStatus, setNvidiaStatus] = useState<string | null>(null);
@@ -210,15 +224,15 @@ const SettingsPanel: React.FC = () => {
   // plaintext from component state.
   useEffect(() => { if (nvidiaKeyLast4) setNvidiaKeyDraft(""); }, [nvidiaKeyLast4]);
 
-  const activeProviderUsable =
-    modelProvider(selectedModel) === "nvidia" ? !!nvidiaKeyLast4 : !!apiKey;
+  const activeProviderUsable = providerConfigured(modelProvider(selectedModel), { apiKey, geminiApiKey, nvidiaKeyLast4 });
 
   /** Paste repair: a pasted "nvidia:vendor/model" sets the provider select
    *  and strips the tag, so the routing token is never typed OR retyped. */
   const handleModelInputChange = (raw: string) => {
-    if (raw.startsWith(NVIDIA_PREFIX)) {
-      setNewModelProvider("nvidia");
-      setNewModelInput(raw.slice(NVIDIA_PREFIX.length));
+    const p = modelProvider(raw);
+    if (p !== "openrouter") {
+      setNewModelProvider(p);
+      setNewModelInput(localModelId(raw));
       return;
     }
     setNewModelInput(raw);
@@ -400,13 +414,13 @@ const SettingsPanel: React.FC = () => {
   };
 
   const handleAddModel = () => {
-    const raw = newModelInput.trim().replace(/^nvidia:/, "");
+    const raw = localModelId(newModelInput.trim());
     if (!raw) return;
-    if (newModelProvider === "nvidia" && /:(free|nitro|floor|exacto)$/.test(raw)) {
-      toast.error("Suffixes like :free are OpenRouter routing variants — NVIDIA models don't have them.");
+    if (newModelProvider !== "openrouter" && /:(free|nitro|floor|exacto)$/.test(raw)) {
+      toast.error(`Suffixes like :free are OpenRouter routing variants — ${providerLabel(newModelProvider)} models don't have them.`);
       return;
     }
-    addModel(newModelProvider === "nvidia" ? namespacedNvidiaId(raw) : raw);
+    addModel(namespacedId(newModelProvider, raw));
     setNewModelInput("");
   };
 
@@ -636,7 +650,7 @@ const SettingsPanel: React.FC = () => {
                   Blocked capabilities are removed from the assistant's tools entirely, so it can't offer or
                   attempt them — it will say so once and give you the best free version instead. Anything you've
                   already made stays fully viewable in every mode. Applies to all your devices.
-                  {leanMode !== "full" && " Book digests already queued will still finish."}
+                  {leanMode !== "full" && " Book digestion and figure extraction aren’t covered — they run on your OpenRouter key whenever you queue them."}
                 </Hint>
               </div>
               <div>
@@ -674,8 +688,9 @@ const SettingsPanel: React.FC = () => {
                     className="bg-surface-container-high border-none rounded-lg text-sm text-primary py-2 px-3 shrink-0"
                     aria-label="Provider for the model being added"
                   >
-                    <option value="openrouter">OpenRouter</option>
-                    <option value="nvidia">NVIDIA</option>
+                    {allProviders().map((p) => (
+                      <option key={p} value={p}>{providerLabel(p)}</option>
+                    ))}
                   </select>
                   <Input
                     type="text"
@@ -999,7 +1014,7 @@ const SettingsPanel: React.FC = () => {
                     const known = new Set([...FIGURE_MODELS_PAID, ...FIGURE_MODELS_FREE].map((m) => m.id));
                     // Figure extraction runs server-side on OpenRouter/gateway
                     // — NVIDIA ids would be forwarded verbatim and 400.
-                    const extra = savedModels.filter((m) => !known.has(m) && !isEmbeddingModel(m) && !isNvidiaModel(m));
+                    const extra = savedModels.filter((m) => !known.has(m) && !isEmbeddingModel(m) && modelProvider(m) === "openrouter");
                     return extra.length > 0 ? (
                       <optgroup label="Your saved models">
                         {extra.map((m) => (<option key={m} value={m}>{m}</option>))}
@@ -1070,7 +1085,7 @@ const SettingsPanel: React.FC = () => {
                   {/* Wiki ops run server-side against OpenRouter only — NVIDIA
                       models are excluded here so a pick can't silently break
                       reindexing. */}
-                  <ModelOptions models={savedModels} excludeNvidia />
+                  <ModelOptions models={savedModels} openrouterOnly />
                 </select>
                 <Hint>Powers wiki extract and health checks. Custom models use OpenRouter and need your API key above (NVIDIA models aren't available for wiki ops).</Hint>
                 {wikiModel && !apiKey && (

@@ -20,9 +20,11 @@ import { parseArtifact, type Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle } from "@/lib/workspaceStore";
 import { toast } from "sonner";
 import { isEmbeddingModel } from "@/lib/utils";
-import { describeModel, localModelId, modelProvider, providerLabel, resolveModel } from "@/lib/providers/registry";
+import { describeModel, freeChatProviders, localModelId, modelProvider, providerConfigured, providerKey, providerKeyUrl, providerLabel, resolveModel } from "@/lib/providers/registry";
+import type { ProviderId } from "@/lib/providers/types";
 import { namespacedNvidiaId, nvidiaModelInfo, nvidiaNoThinkingBody, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
 import { blockedTools } from "@/lib/leanMode";
+import { namespacedGeminiId, GEMINI_STARTER_MODEL } from "@/lib/geminiCatalog";
 
 export interface ChatMessage {
   id?: string;
@@ -183,6 +185,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold,
     videoIdentityScale, videoQcEnabled, videoMotionModel,
     falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback } = useChatSettings();
+  // Every client-visible credential in one object, so key selection is a
+  // registry lookup instead of a branch each new provider must remember to
+  // extend. Shipping Gemini WITHOUT this sent Google the OpenRouter key.
+  const providerKeys = { apiKey, geminiApiKey, nvidiaKeyLast4 };
+
   const { isPaid, loaded: planLoaded } = usePlan();
   const { getActiveBodyForScope, migrate } = usePromptPresets();
 
@@ -227,6 +234,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loadedRef = useRef(false);
   const summaryRef = useRef<RollingSummary>({ summary: "", covered: 0 });
   const summarizingRef = useRef(false);
+  // Lean Mode read at TOOL-EXECUTION time, not turn-start: flipping the
+  // switch mid-reply must stop the next generation in that same turn.
+  const leanModeRef = useRef(leanMode);
+  useEffect(() => { leanModeRef.current = leanMode; }, [leanMode]);
 
   useEffect(() => {
     summaryRef.current = user ? loadRollingSummary(user.id) : { summary: "", covered: 0 };
@@ -257,8 +268,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // as chat — with only the OTHER provider's key saved, they'd silently
       // 404 forever otherwise. No key for this provider → skip quietly.
       const { adapter, provider, localId } = resolveModel(model);
-      if (provider === "openrouter" && !apiKey) return;
-      if (provider === "nvidia" && !nvidiaKeyLast4) return;
+      if (!providerConfigured(provider, providerKeys)) return;
       const batch = allMsgs.slice(cur.covered, target);
       if (batch.length === 0) return;
       let transcript = batch
@@ -270,7 +280,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const text = (await adapter.completeChat({
           model: localId,
           maxTokens: 500,
-          apiKey,
+          apiKey: providerKey(provider, providerKeys),
           extraBody: provider === "nvidia" ? nvidiaNoThinkingBody(localId) : undefined,
           messages: [
             {
@@ -292,7 +302,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         summarizingRef.current = false;
       }
     },
-    [user, apiKey, nvidiaKeyLast4, selectedModel]
+    [user, apiKey, geminiApiKey, nvidiaKeyLast4, selectedModel]
   );
 
   // Bind the durable Workspace store to the signed-in user so its files sync
@@ -520,8 +530,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!trimmed) return "";
       // Chat needs SOME provider configured; which key the chosen model
       // actually requires is checked after model resolution below.
-      if (!apiKey && !nvidiaKeyLast4) {
-        toast.error("Add an API key in Settings first — OpenRouter or NVIDIA");
+      // Any configured provider is enough — a Gemini-only or NVIDIA-only
+      // user must not be told to go get a key they deliberately didn't pick.
+      if (!apiKey && !nvidiaKeyLast4 && !geminiApiKey) {
+        toast.error("Add an API key in Settings first — OpenRouter, NVIDIA or Gemini");
         throw new Error("Missing API key");
       }
 
@@ -711,19 +723,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
         return;
       }
-      // Provider-aware key gate: the model decides which key this turn needs.
+      // Provider-aware key gate — the model decides which key this turn
+      // needs, and the registry decides which key that is.
       const turnProvider = modelProvider(model);
-      viaModelRef = model;
-      if (turnProvider === "nvidia" && !nvidiaKeyLast4) {
-        const msg = `"${model}" runs on NVIDIA — add your NVIDIA API key in Settings first (free at build.nvidia.com).`;
-        toast.error(msg);
-        assistantText = `❌ ${msg}`;
-        updateAssistant();
-        setIsLoading(false);
-        return;
-      }
-      if (turnProvider === "openrouter" && !apiKey) {
-        const msg = `"${model}" runs on OpenRouter — set your OpenRouter API key in Settings (or pick an NVIDIA model).`;
+      if (!providerConfigured(turnProvider, providerKeys)) {
+        const msg = `"${localModelId(model)}" runs on ${providerLabel(turnProvider)} — add your ${providerLabel(turnProvider)} API key in Settings (${providerKeyUrl(turnProvider)}).`;
         toast.error(msg);
         assistantText = `❌ ${msg}`;
         updateAssistant();
@@ -793,7 +797,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             messages: workingMessages,
             tools: toolDefs,
             signal: abortRef.current.signal,
-            apiKey,
+            apiKey: providerKey(turnProviderId, providerKeys),
             extraBody: nvInfo?.extraBody,
           });
 
@@ -890,7 +894,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               removeChapter,
               burplexityApiToken,
               tavilyApiKey,
-              leanMode,
+              leanMode: leanModeRef.current,
               openRouterApiKey: apiKey,
               isPaid,
               imageModelPrimary,
@@ -1125,18 +1129,25 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // an NVIDIA key exists, the fix is one tap away — offer it here
         // rather than making the user find Settings mid-conversation.
         const code = err?.code;
+        // Offer whichever FREE provider the user actually has configured —
+        // not a hardcoded one. Both NVIDIA and Gemini qualify now.
+        const escapeTo = freeChatProviders().find(
+          (p) => p !== modelProvider(model) && providerConfigured(p, providerKeys),
+        );
         const escapable =
           modelProvider(model) === "openrouter" &&
-          !!nvidiaKeyLast4 &&
+          !!escapeTo &&
           (code === "credits" || code === "rate_limit" || code === "auth");
         if (escapable) {
-          const target = savedModels.find((m) => modelProvider(m) === "nvidia")
-            || namespacedNvidiaId(NVIDIA_STARTER_MODEL);
+          const target = savedModels.find((m) => modelProvider(m) === escapeTo)
+            || (escapeTo === "gemini"
+              ? namespacedGeminiId(GEMINI_STARTER_MODEL)
+              : namespacedNvidiaId(NVIDIA_STARTER_MODEL));
           toast.error(msg, {
             duration: 15000,
-            description: `NVIDIA needs no balance — switch chat to ${localModelId(target)}?`,
+            description: `${providerLabel(escapeTo!)} needs no balance — switch chat to ${localModelId(target)}?`,
             action: {
-              label: "Switch to NVIDIA",
+              label: `Switch to ${providerLabel(escapeTo!)}`,
               onClick: () => {
                 if (!savedModels.includes(target)) addModel(target);
                 else setSelectedModel(target);
