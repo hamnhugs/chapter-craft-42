@@ -1704,6 +1704,8 @@ export type Database = {
           library_ingest_auto_file: boolean
           library_ingest_model: string | null
           max_reply_sentences: number | null
+          nvidia_api_key: string | null
+          nvidia_key_last4: string | null
           openrouter_api_key: string | null
           saved_image_models: Json
           saved_models: Json | null
@@ -1763,6 +1765,8 @@ export type Database = {
           library_ingest_auto_file?: boolean
           library_ingest_model?: string | null
           max_reply_sentences?: number | null
+          nvidia_api_key?: string | null
+          nvidia_key_last4?: string | null
           openrouter_api_key?: string | null
           saved_image_models?: Json
           saved_models?: Json | null
@@ -1822,6 +1826,8 @@ export type Database = {
           library_ingest_auto_file?: boolean
           library_ingest_model?: string | null
           max_reply_sentences?: number | null
+          nvidia_api_key?: string | null
+          nvidia_key_last4?: string | null
           openrouter_api_key?: string | null
           saved_image_models?: Json
           saved_models?: Json | null
