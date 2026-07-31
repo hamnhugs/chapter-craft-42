@@ -19,6 +19,11 @@ import {
   SHARED_WITH_OPENROUTER,
   type NvidiaModelInfo,
 } from "@/lib/nvidiaCatalog";
+import {
+  fetchGeminiCatalog,
+  namespacedGeminiId,
+  type GeminiModelInfo,
+} from "@/lib/geminiCatalog";
 
 // Ranked live from OpenRouter's public API — the same usage data behind
 // openrouter.ai/rankings. "Top overall" / categories return the weekly-usage
@@ -34,8 +39,8 @@ const labelFor = (key: string) =>
   CATEGORY_LABELS[key] || key.charAt(0).toUpperCase() + key.slice(1);
 
 const ModelExplorer: React.FC = () => {
-  const { savedModels, nvidiaKeyLast4, addModel, loaded } = useChatSettings();
-  const [provider, setProvider] = useState<"openrouter" | "nvidia">("openrouter");
+  const { savedModels, nvidiaKeyLast4, geminiApiKey, addModel, loaded } = useChatSettings();
+  const [provider, setProvider] = useState<"openrouter" | "nvidia" | "gemini">("openrouter");
   const [view, setView] = useState<ViewKey>("top");
   const [models, setModels] = useState<ORModel[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +52,24 @@ const ModelExplorer: React.FC = () => {
   // Separate counter: a failed NVIDIA retry must not also blow away a
   // perfectly good OpenRouter list (their fetches share nothing else).
   const [nvReloadKey, setNvReloadKey] = useState(0);
+  const [gmModels, setGmModels] = useState<GeminiModelInfo[] | null>(null);
+  const [gmError, setGmError] = useState<string | null>(null);
+  const [gmReloadKey, setGmReloadKey] = useState(0);
+
+  useEffect(() => {
+    if (provider !== "gemini" || gmModels !== null) return;
+    let cancelled = false;
+    setGmError(null);
+    (async () => {
+      try {
+        const list = await fetchGeminiCatalog(geminiApiKey);
+        if (!cancelled) setGmModels(list);
+      } catch (err: any) {
+        if (!cancelled) setGmError(err.message || "Failed to load Gemini models");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [provider, gmModels, gmReloadKey, geminiApiKey]);
 
   useEffect(() => {
     if (provider !== "nvidia" || nvModels !== null) return;
@@ -110,13 +133,15 @@ const ModelExplorer: React.FC = () => {
 
         <div className="space-y-2 mb-8">
           <span className="px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded text-[10px] font-bold tracking-widest uppercase">
-            {provider === "nvidia" ? "Served by NVIDIA" : "Served by OpenRouter"}
+            {provider === "nvidia" ? "Served by NVIDIA" : provider === "gemini" ? "Served by Google" : "Served by OpenRouter"}
           </span>
           <h1 className="font-headline font-bold text-4xl sm:text-5xl text-primary tracking-tight">
             Top Models
           </h1>
           <p className="text-on-surface-variant max-w-2xl">
-            {provider === "nvidia"
+            {provider === "gemini"
+              ? "Google's own models, called directly from your browser. Chat and vision are free with a generous daily allowance; image generation needs billing enabled on your Google account."
+              : provider === "nvidia"
               ? "Models NVIDIA hosts — mostly other companies' open models (Llama, DeepSeek, GPT-OSS, Gemma), free with an NVIDIA key and no balance required. Adding from this tab tags them as NVIDIA so they route correctly."
               : "Ranked by real weekly usage across OpenRouter. Pick a category to see what people actually use for that kind of work, then add any model to your list — it appears in Counsel's model picker instantly."}
           </p>
@@ -127,6 +152,7 @@ const ModelExplorer: React.FC = () => {
           {([
             { key: "openrouter" as const, label: "OpenRouter" },
             { key: "nvidia" as const, label: "NVIDIA" },
+            { key: "gemini" as const, label: "Gemini" },
           ]).map(({ key, label }) => (
             <button
               key={key}
@@ -184,8 +210,75 @@ const ModelExplorer: React.FC = () => {
           )}
         </div>
 
-        {/* NVIDIA list */}
-        {provider === "nvidia" ? (
+        {/* Gemini list */}
+        {provider === "gemini" ? (
+          !geminiApiKey ? (
+            <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant gap-3">
+              <span className="material-symbols-outlined text-5xl opacity-40">key</span>
+              <p className="text-sm text-center max-w-md">
+                Add your Gemini key in Settings → AI Models &amp; Keys to browse Google's models.
+                It's free at{" "}
+                <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" className="text-primary underline">aistudio.google.com/apikey</a>.
+              </p>
+            </div>
+          ) : gmError ? (
+            <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant gap-3">
+              <span className="material-symbols-outlined text-5xl opacity-40">cloud_off</span>
+              <p className="text-sm text-center max-w-md">{gmError}</p>
+              <Button variant="outline" onClick={() => { setGmModels(null); setGmReloadKey((k) => k + 1); }}>Retry</Button>
+            </div>
+          ) : gmModels === null ? (
+            <div className="flex items-center justify-center py-20">
+              <Loader2 className="w-8 h-8 animate-spin text-on-surface-variant" />
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {gmModels
+                .filter((m) => {
+                  const q = query.trim().toLowerCase();
+                  return !q || `${m.localId} ${m.label}`.toLowerCase().includes(q);
+                })
+                .map((m) => {
+                  const nsId = namespacedGeminiId(m.localId);
+                  const saved = savedModels.includes(nsId);
+                  return (
+                    <div key={m.localId} className="flex items-start gap-3 sm:gap-4 p-4 rounded-xl bg-surface-container-high border border-outline-variant/10">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="font-bold text-foreground leading-tight">{m.label}</h3>
+                          {m.featured && (
+                            <span className="px-1.5 py-0.5 rounded bg-primary-container/25 text-primary text-[9px] font-bold uppercase tracking-widest">Featured</span>
+                          )}
+                          {!m.freeTier && (
+                            <span className="px-1.5 py-0.5 rounded bg-destructive/15 text-destructive text-[9px] font-bold uppercase tracking-widest">Needs billing</span>
+                          )}
+                        </div>
+                        <div className="font-mono text-[11px] text-on-surface-variant truncate">{m.localId}</div>
+                        {m.note && <p className="text-xs text-on-surface-variant mt-1.5 line-clamp-2">{m.note}</p>}
+                        <div className="flex items-center gap-3 mt-2 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">
+                          {m.contextLength ? <span title="Context window">{formatContext(m.contextLength)} ctx</span> : <span>— ctx</span>}
+                          {m.caps.tools && (<><span className="text-outline-variant">•</span><span>tools</span></>)}
+                          {m.caps.vision && (<><span className="text-outline-variant">•</span><span>vision</span></>)}
+                          {m.caps.images && (<><span className="text-outline-variant">•</span><span>makes images</span></>)}
+                          <span className="text-outline-variant">•</span>
+                          <span>{m.freeTier ? "free tier" : "billing required"}</span>
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant={saved ? "outline" : "default"}
+                        disabled={saved || !loaded}
+                        onClick={() => addModel(nsId)}
+                        className="shrink-0 gap-1.5 mt-1"
+                      >
+                        {saved ? (<><Check className="w-3.5 h-3.5" /> Added</>) : (<><Plus className="w-3.5 h-3.5" /> Add to my list</>)}
+                      </Button>
+                    </div>
+                  );
+                })}
+            </div>
+          )
+        ) : provider === "nvidia" ? (
           nvError ? (
             <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant gap-3">
               <span className="material-symbols-outlined text-5xl opacity-40">cloud_off</span>

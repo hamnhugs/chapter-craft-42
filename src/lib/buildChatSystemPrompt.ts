@@ -3,6 +3,7 @@ import { fetchKnowledgeEntries, fetchConversationMemory, retrieveKnowledge, filt
 import { fetchImagesForEntries } from "@/lib/imageGen";
 import { getRecallStates, type MemoryImageCandidate, type RecallState } from "@/lib/memoryLens";
 import { listTools } from "@/lib/toolFoundry";
+import { leanModePromptBlock, type LeanMode } from "@/lib/leanMode";
 import { DEEP_RESEARCH_SYSTEM_PROMPT, DEEP_RESEARCH_ADVANCED_PROMPT } from "@/lib/deepResearchPrompt";
 
 interface BuildOpts {
@@ -35,6 +36,11 @@ interface BuildOpts {
   /** Tool Foundry enabled (opt-in perms + migration applied): inject the
    *  forge/run guidance and the approved-tool roster. */
   foundryTools?: boolean;
+  /** Budget tier. When not "full", a block explains which paid capabilities
+   *  are off and how to answer well without them. The tools themselves are
+   *  removed from the roster in ChatContext — this block is only so the
+   *  model can TALK about it gracefully, never the enforcement. */
+  leanMode?: LeanMode;
 }
 
 /** A memory entry that was injected into the prompt — surfaced in the UI so
@@ -140,7 +146,7 @@ function isChapterContextRelevant(query: string | undefined, book: BookDocument)
 //     the context best, so the retrieved memories — the most query-specific,
 //     highest-value content — go LAST, right before the conversation.
 export async function buildChatSystemPrompt({
-  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeNeurons = [], allNeurons, reflex = true, maxReplySentences = 0, foundryTools = false,
+  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeNeurons = [], allNeurons, reflex = true, maxReplySentences = 0, foundryTools = false, leanMode = "full",
 }: BuildOpts): Promise<BuiltPrompt> {
   const parts: string[] = [];
   const usedMemories: UsedMemory[] = [];
@@ -518,6 +524,12 @@ export async function buildChatSystemPrompt({
         });
       }
     }
+  }
+
+  if (leanMode !== "full") {
+    // Placed before the trailing length limit so the sentence cap keeps the
+    // last word (recency), but late enough to frame the reply's shape.
+    parts.push("", leanModePromptBlock(leanMode));
   }
 
   parts.push("", "Be concise but thorough. Reference specific chapter names and page numbers when relevant. When contradictions are surfaced, present both sides explicitly.");

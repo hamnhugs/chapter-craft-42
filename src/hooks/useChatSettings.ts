@@ -4,6 +4,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { isEmbeddingModel } from "@/lib/utils";
 
+export type LeanMode = "full" | "lean" | "chat_only";
+
 const DEFAULT_MODEL = "google/gemini-2.5-flash";
 const DEFAULT_DEEP_RESEARCH_MODEL = "google/gemini-2.5-pro";
 const DEFAULT_TTS_RATE = 1.05;
@@ -17,6 +19,18 @@ interface ChatSettings {
    *  from the debounced full-row upsert so unrelated saves can't clobber it.
    *  Non-empty ⇒ "an NVIDIA key is configured". */
   nvidiaKeyLast4: string;
+  /** Google Gemini key. CLIENT-READ, unlike the NVIDIA key: Gemini's API is
+   *  CORS-open, so the browser calls it directly and needs the value. Same
+   *  posture as inworldApiKey. */
+  geminiApiKey: string;
+  /** Tavily key — the free web-search backend (1,000/month, no card).
+   *  Used by web_search when no Burplexity token is set. */
+  tavilyApiKey: string;
+  /** Budget tier. 'full' = everything on · 'lean' = no video/3D · 'chat_only'
+   *  = also no image generation and no paid web search. Enforced by removing
+   *  tools from the model's roster (a capability it cannot see is one it
+   *  cannot pretend to use) AND by a terminal refusal in the executor. */
+  leanMode: LeanMode;
   savedModels: string[];
   selectedModel: string;
   deepResearchModel: string;
@@ -63,7 +77,10 @@ interface ChatSettings {
   videoDefaultResolution: string; // "" = auto
   videoDefaultAspect: string; // "" = auto
   videoGenerateAudio: boolean;
-  videoConfirmThreshold: number; // USD estimate above which generate_video must be confirmed
+  /** USD estimate above which generate_video must be confirmed. Default 0.25,
+   *  NOT 1.00: a standard 8-second clip costs ≈$0.96, so a $1 threshold meant
+   *  the app's most expensive routine action never once asked first. */
+  videoConfirmThreshold: number;
   videoIdentityScale: number; // default appearance-pinning strength (0-1) for identity-locked clips
   videoQcEnabled: boolean; // run the client-side consistency check on identity-locked clips
   videoMotionModel: string; // preferred fal motion-transfer endpoint ("" = default)
@@ -81,6 +98,9 @@ interface ChatSettings {
 const defaults: ChatSettings = {
   apiKey: "",
   nvidiaKeyLast4: "",
+  geminiApiKey: "",
+  tavilyApiKey: "",
+  leanMode: "full",
   savedModels: [DEFAULT_MODEL],
   selectedModel: DEFAULT_MODEL,
   deepResearchModel: DEFAULT_DEEP_RESEARCH_MODEL,
@@ -115,7 +135,7 @@ const defaults: ChatSettings = {
   videoDefaultResolution: "",
   videoDefaultAspect: "",
   videoGenerateAudio: true,
-  videoConfirmThreshold: 1.0,
+  videoConfirmThreshold: 0.25,
   videoIdentityScale: 0.85,
   videoQcEnabled: true,
   videoMotionModel: "",
@@ -184,6 +204,11 @@ function rowToSettings(data: any): ChatSettings {
     // Deliberately NOT data.nvidia_api_key — the full key never enters
     // client state (write-only convention; see the interface comment).
     nvidiaKeyLast4: data.nvidia_key_last4 || "",
+    geminiApiKey: data.gemini_api_key || "",
+    tavilyApiKey: data.tavily_api_key || "",
+    leanMode: (["full", "lean", "chat_only"] as const).includes(data.lean_mode)
+      ? (data.lean_mode as LeanMode)
+      : "full",
     savedModels: (data.saved_models as string[]) || [DEFAULT_MODEL],
     selectedModel: data.selected_model || DEFAULT_MODEL,
     deepResearchModel: data.deep_research_model || DEFAULT_DEEP_RESEARCH_MODEL,
@@ -226,7 +251,7 @@ function rowToSettings(data: any): ChatSettings {
     videoDefaultResolution: data.video_default_resolution || "",
     videoDefaultAspect: data.video_default_aspect || "",
     videoGenerateAudio: data.video_generate_audio !== false,
-    videoConfirmThreshold: typeof data.video_confirm_threshold === "number" ? data.video_confirm_threshold : 1.0,
+    videoConfirmThreshold: typeof data.video_confirm_threshold === "number" ? data.video_confirm_threshold : 0.25,
     videoIdentityScale: typeof data.video_identity_scale === "number" ? data.video_identity_scale : 0.85,
     videoQcEnabled: data.video_qc_enabled !== false,
     videoMotionModel: data.video_motion_model || "",
@@ -272,7 +297,7 @@ function ensureLoaded(userId: string | null) {
       "video_identity_scale", "video_qc_enabled", "video_motion_model", "fal_api_key",
       "splat_model_primary", "splat_default_quality", "splat_max_file_mb",
       "splat_confirm_threshold", "splat_click_to_activate", "splat_monthly_quota",
-      "splat_auto_fallback",
+      "splat_auto_fallback", "gemini_api_key", "tavily_api_key", "lean_mode",
     ].join(", ");
     const sel = (cols: string) => supabase
       .from("user_settings")
@@ -280,7 +305,16 @@ function ensureLoaded(userId: string | null) {
       .eq("user_id", userId)
       .maybeSingle() as any;
     let { data, error } = await sel(READ_COLUMNS);
-    if (error) ({ data, error } = await sel("*"));
+    if (error) {
+      // A column above hasn't been migrated yet. The "*" fallback keeps the
+      // app working — but it would also drag the write-only NVIDIA key into
+      // the response body, which is exactly what the explicit list exists to
+      // prevent. Drop it the instant it arrives, before anything can read it.
+      ({ data, error } = await sel("*"));
+      if (data && typeof data === "object" && "nvidia_api_key" in data) {
+        delete (data as any).nvidia_api_key;
+      }
+    }
     if (loadedForUser !== userId) return; // user changed mid-flight
     if (error) {
       console.error("Failed to load settings:", error);
@@ -296,6 +330,10 @@ function ensureLoaded(userId: string | null) {
 function persistSettings(userId: string, next: ChatSettings) {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
+    // NOTE: lean_mode is intentionally absent too. It is a deliberate
+    // self-binding choice, and a stale tab's full-row write must never be
+    // able to silently switch spending back on — it saves through its own
+    // targeted upsert (setLeanMode) instead.
     // NOTE: nvidia_api_key / nvidia_key_last4 are intentionally absent —
     // they save ONLY through saveNvidiaKey's targeted upsert, so this
     // full-row write can never blank a key the client doesn't hold.
@@ -313,6 +351,8 @@ function persistSettings(userId: string, next: ChatSettings) {
       custom_system_prompt: next.customSystemPrompt || "",
       burplexity_api_token: next.burplexityApiToken || "",
       inworld_api_key: next.inworldApiKey || "",
+      gemini_api_key: next.geminiApiKey || "",
+      tavily_api_key: next.tavilyApiKey || "",
       inworld_enabled: next.inworldEnabled,
       inworld_voice_id: next.inworldVoiceId || "",
       access_all_neurons: next.accessAllNeurons,
@@ -361,7 +401,7 @@ function persistSettings(userId: string, next: ChatSettings) {
       "video_model_primary", "saved_video_models", "video_default_duration", "video_default_resolution",
       "video_default_aspect", "video_generate_audio", "video_confirm_threshold",
       "video_identity_scale", "video_qc_enabled", "video_motion_model",
-      "fal_api_key", "splat_model_primary", "splat_default_quality", "splat_max_file_mb",
+      "gemini_api_key", "tavily_api_key", "fal_api_key", "splat_model_primary", "splat_default_quality", "splat_max_file_mb",
       "splat_confirm_threshold", "splat_click_to_activate", "splat_monthly_quota", "splat_auto_fallback"];
     for (let pass = 0; error && pass < optionalColumns.length; pass++) {
       const offender = optionalColumns.find(
@@ -400,6 +440,30 @@ export function useChatSettings() {
     if (key) toast.success("API key saved");
     else toast.success("API key removed");
   }, [update]);
+
+  /** Lean Mode saves through its OWN targeted upsert, never the debounced
+   *  full-row write. A budget choice is a self-binding commitment: if a stale
+   *  tab on another device could quietly revert it by saving an unrelated
+   *  setting, the guarantee is worthless — and the failure mode (spending
+   *  silently switched back on) is the exact one this feature exists to
+   *  prevent. */
+  const setLeanMode = useCallback(async (mode: LeanMode) => {
+    const uid = user?.id;
+    publish({ settings: { ...snapshot.settings, leanMode: mode } });
+    if (!uid) return;
+    const { error } = await supabase
+      .from("user_settings")
+      .upsert({ user_id: uid, lean_mode: mode } as any, { onConflict: "user_id" });
+    if (error) {
+      if ((error.message || "").toLowerCase().includes("lean_mode")) {
+        toast.error("Lean Mode needs its migration — ask Lovable to run 20260731140000_gemini_and_lean_mode.sql");
+      } else {
+        toast.error(`Couldn't save Lean Mode: ${error.message}`);
+      }
+      return;
+    }
+    settingsChannel?.postMessage("settings-updated");
+  }, [user]);
 
   /** Write-only NVIDIA key save: a targeted upsert of just the key columns,
    *  never part of the debounced full-row write. Only the last-4 sibling
@@ -468,6 +532,9 @@ export function useChatSettings() {
     loaded: snap.loaded,
     saveApiKey,
     saveNvidiaKey,
+    setLeanMode,
+    setGeminiApiKey: (k: string) => update({ geminiApiKey: k.trim() }),
+    setTavilyApiKey: (k: string) => update({ tavilyApiKey: k.trim() }),
     setSelectedModel: (m: string) => update({ selectedModel: m }),
     setDeepResearchModel: (m: string) => update({ deepResearchModel: m }),
     setVoiceModel: (m: string) => update({ voiceModel: m }),

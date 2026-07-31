@@ -28,6 +28,7 @@ import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/i
 import { isEmbeddingModel } from "@/lib/utils";
 import { describeModel, isNvidiaModel, localModelId, modelProvider, providerLabel, NVIDIA_PREFIX } from "@/lib/providers/registry";
 import { namespacedNvidiaId, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
+import { LEAN_MODES, LEAN_MODE_INFO } from "@/lib/leanMode";
 import { validateNvidiaKey } from "@/lib/providers/nvidiaAdapter";
 import { FIGURE_MODELS_PAID, FIGURE_MODELS_FREE, DEFAULT_FIGURE_MODEL } from "@/lib/figureModels";
 
@@ -186,12 +187,12 @@ const SettingsPanel: React.FC = () => {
   const { isPaid, plan } = usePlan();
   const { themeId, setThemeId, themes } = useTheme();
   const {
-    apiKey, nvidiaKeyLast4, savedModels, selectedModel, deepResearchModel, voiceModel, visionModel, ttsRate,
+    apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, savedModels, selectedModel, deepResearchModel, voiceModel, visionModel, ttsRate,
     handsFreeTtsRate, maxReplySentences,
     autoReadReplies, wikiModel, customSystemPrompt, burplexityApiToken,
     inworldApiKey, inworldEnabled, inworldVoiceId, accessAllNeurons, loaded,
     imageExtractionModel, autoExtractFigures,
-    saveApiKey, saveNvidiaKey, addModel, removeModel, setSelectedModel, setDeepResearchModel,
+    saveApiKey, saveNvidiaKey, setGeminiApiKey, setTavilyApiKey, setLeanMode, addModel, removeModel, setSelectedModel, setDeepResearchModel,
     setVoiceModel, setVisionModel, setTtsRate, setHandsFreeTtsRate, setMaxReplySentences, setAutoReadReplies, setWikiModel,
     setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey,
     setInworldEnabled, setInworldVoiceId, setAccessAllNeurons,
@@ -598,6 +599,64 @@ const SettingsPanel: React.FC = () => {
               </div>
 
               <div>
+                <FieldLabel>Spending</FieldLabel>
+                <div className="mt-1.5 grid gap-1.5">
+                  {LEAN_MODES.map((m) => {
+                    const info = LEAN_MODE_INFO[m];
+                    const active = leanMode === m;
+                    return (
+                      <button
+                        key={m}
+                        onClick={() => { void setLeanMode(m); }}
+                        aria-pressed={active}
+                        className={`text-left rounded-lg border px-4 py-3 transition-colors ${
+                          active
+                            ? "bg-primary-container/20 border-primary-container/50"
+                            : "bg-surface-container-high border-outline-variant/10 hover:border-primary-container/30"
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span
+                            className={`material-symbols-outlined text-base ${active ? "text-primary" : "text-on-surface-variant/40"}`}
+                            aria-hidden
+                          >
+                            {active ? "radio_button_checked" : "radio_button_unchecked"}
+                          </span>
+                          <span className={`text-sm font-semibold ${active ? "text-primary" : "text-foreground"}`}>
+                            {info.label}
+                          </span>
+                          {m === "lean" && <span className="text-[10px] text-on-surface-variant">recommended when watching money</span>}
+                        </span>
+                        <span className="block text-xs text-on-surface-variant mt-0.5 ml-6">{info.summary}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <Hint>
+                  Blocked capabilities are removed from the assistant's tools entirely, so it can't offer or
+                  attempt them — it will say so once and give you the best free version instead. Anything you've
+                  already made stays fully viewable in every mode. Applies to all your devices.
+                  {leanMode !== "full" && " Book digests already queued will still finish."}
+                </Hint>
+              </div>
+              <div>
+                <FieldLabel>Google Gemini API Key</FieldLabel>
+                <div className="mt-1.5">
+                  <SecretField
+                    value={geminiApiKey}
+                    placeholder="AIza..."
+                    icon="auto_awesome"
+                    onSave={(v) => { setGeminiApiKey(v); toast.success(v ? "Gemini key saved" : "Gemini key removed"); }}
+                  />
+                </div>
+                <Hint>
+                  Free chat with a generous daily allowance —{" "}
+                  <a className="text-primary underline" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">aistudio.google.com/apikey</a>.
+                  Gemini also generates and edits images, but <strong>image generation needs billing enabled on your Google account</strong> —
+                  the free tier is chat and vision only.
+                </Hint>
+              </div>
+              <div>
                 <FieldLabel>Active Chat Model</FieldLabel>
                 <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} className={`${selectCls} mt-1.5`}>
                   <ModelOptions models={savedModels.filter((m) => !isEmbeddingModel(m) || m === selectedModel)} />
@@ -858,6 +917,22 @@ const SettingsPanel: React.FC = () => {
                   />
                 </div>
                 <Hint>Enables the live <code>web_search</code> tool. Generate at your Burplexity app → API Keys.</Hint>
+              </div>
+              <div>
+                <FieldLabel>Tavily API Key (free web search)</FieldLabel>
+                <div className="mt-1.5">
+                  <SecretField
+                    value={tavilyApiKey}
+                    placeholder="tvly-..."
+                    icon="search"
+                    onSave={(v) => { setTavilyApiKey(v); toast.success(v ? "Tavily key saved" : "Tavily key removed"); }}
+                  />
+                </div>
+                <Hint>
+                  The free option: 1,000 searches a month, no credit card —{" "}
+                  <a className="text-primary underline" href="https://app.tavily.com" target="_blank" rel="noreferrer">app.tavily.com</a>.
+                  Used automatically when no Burplexity token is set, so search keeps working without paying for it.
+                </Hint>
               </div>
               <div>
                 <FieldLabel>Deep Research Model</FieldLabel>

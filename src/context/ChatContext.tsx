@@ -22,6 +22,7 @@ import { toast } from "sonner";
 import { isEmbeddingModel } from "@/lib/utils";
 import { describeModel, localModelId, modelProvider, providerLabel, resolveModel } from "@/lib/providers/registry";
 import { namespacedNvidiaId, nvidiaModelInfo, nvidiaNoThinkingBody, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
+import { blockedTools } from "@/lib/leanMode";
 
 export interface ChatMessage {
   id?: string;
@@ -178,7 +179,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { user } = useAuth();
   const { books, activeBookId, activeWiki, activeWikiId, activeWikis, wikis, addChapter, updateChapter, removeChapter, setActiveBookSilent } = useApp();
 
-  const { apiKey, nvidiaKeyLast4, selectedModel, setSelectedModel, savedModels, addModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, maxReplySentences, autoShowMemoryImages, chatToolPermissions, visionModel, imageModelPrimary, imageModelFallback,
+  const { apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, selectedModel, setSelectedModel, savedModels, addModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, maxReplySentences, autoShowMemoryImages, chatToolPermissions, visionModel, imageModelPrimary, imageModelFallback,
     videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold,
     videoIdentityScale, videoQcEnabled, videoMotionModel,
     falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback } = useChatSettings();
@@ -608,6 +609,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         allNeurons,
         reflex: isReflexEnabled(),
         maxReplySentences: sentenceCap,
+        leanMode,
         foundryTools: foundryEnabled,
       });
 
@@ -736,23 +738,37 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       abortRef.current = new AbortController();
 
+      // ── Tool roster: computed ONCE, frozen for the whole turn ───────────
+      // It must not change between iterations. The transcript accumulates
+      // assistant tool_calls and role:"tool" replies as the loop runs, and a
+      // request whose `tools` no longer declares a function still referenced
+      // in `messages` is rejected outright by some providers (Gemini) and
+      // confuses the rest — the "context-dangling tool" failure. So the
+      // roster is decided from the turn's opening state and held.
+      const { provider: turnProviderId, localId: turnLocalId } = resolveModel(model);
+      const nvInfo = turnProviderId === "nvidia" ? nvidiaModelInfo(turnLocalId) : null;
+      // NVIDIA 400s when tools reach a model without function calling, and
+      // its VL models disable tools on image turns.
+      const turnOpensWithImages = workingMessages.some((m: any) =>
+        Array.isArray(m?.content) && m.content.some((p: any) => p?.type === "image_url"));
+      const sendTools = !nvInfo || (nvInfo.caps.tools && !(nvInfo.imagesDisableTools && turnOpensWithImages));
+      // Lean Mode is enforced HERE, by omission: a capability the model
+      // cannot see is one it cannot pretend to use. Prompt steering alone
+      // gets about half compliance and fails by narrating media it never
+      // made. The executor keeps a terminal refusal as the backstop for
+      // calls replayed from history (see leanMode.blockedToolResult).
+      const leanBlocked = blockedTools(leanMode);
+      const toolDefs = sendTools
+        ? CHAT_TOOL_DEFINITIONS.filter((t: any) =>
+            (t.function.name !== "forge_tool" || forgeEnabled) &&
+            (t.function.name !== "run_tool" || runEnabled) &&
+            !leanBlocked.includes(t.function.name))
+        : undefined;
+
       try {
         for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
           capSegStart = assistantText.length;
-          const { provider, adapter, localId } = resolveModel(model);
-          const nvInfo = provider === "nvidia" ? nvidiaModelInfo(localId) : null;
-          // Caps-gated tool roster: NVIDIA 400s when tools reach a model
-          // without function calling, and its VL playground marks image turns
-          // as disabling tools — omit the roster entirely in both cases
-          // (OpenRouter keeps today's always-send behavior).
-          const turnHasImages = workingMessages.some((m: any) =>
-            Array.isArray(m?.content) && m.content.some((p: any) => p?.type === "image_url"));
-          const sendTools = !nvInfo || (nvInfo.caps.tools && !(nvInfo.imagesDisableTools && turnHasImages));
-          const toolDefs = sendTools
-            ? CHAT_TOOL_DEFINITIONS.filter((t: any) =>
-                (t.function.name !== "forge_tool" || forgeEnabled) &&
-                (t.function.name !== "run_tool" || runEnabled))
-            : undefined;
+          const { adapter, localId } = resolveModel(model);
 
           let iterText = "";
           const toolCallAcc: Record<number, { id?: string; name?: string; args: string }> = {};
@@ -873,6 +889,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               updateChapter,
               removeChapter,
               burplexityApiToken,
+              tavilyApiKey,
+              leanMode,
               openRouterApiKey: apiKey,
               isPaid,
               imageModelPrimary,
@@ -1136,7 +1154,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
       }
     },
-    [apiKey, nvidiaKeyLast4, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, autoShowMemoryImages, foundryEnabled, forgeEnabled, runEnabled, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
+    [apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, autoShowMemoryImages, foundryEnabled, forgeEnabled, runEnabled, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
   );
 
 

@@ -1,4 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
+import { tavilySearch } from "@/lib/tavilySearch";
+import { blockedToolResult, isToolBlocked, type LeanMode } from "@/lib/leanMode";
 import { BookDocument, Chapter } from "@/types/library";
 import { parseBlocksVerbose } from "@/lib/responseBlocks";
 import { parseArtifact } from "@/lib/artifacts";
@@ -87,6 +89,12 @@ export interface ToolDeps {
   updateChapter: (bookId: string, chapterId: string, name: string) => Promise<void> | void;
   removeChapter: (bookId: string, chapterId: string) => Promise<void> | void;
   burplexityApiToken?: string;
+  /** Free web-search backend (Tavily). Used when no Burplexity token is set. */
+  tavilyApiKey?: string;
+  /** Budget tier — blocked generators return a TERMINAL refusal here as the
+   *  backstop for calls replayed from history after the mode was switched on.
+   *  Primary enforcement is roster omission in ChatContext. */
+  leanMode?: LeanMode;
   /** OpenRouter key — needed by the image generation tools. */
   openRouterApiKey?: string;
   /** Paid plan flag — image generation/editing are Pro features. */
@@ -1237,6 +1245,23 @@ export async function executeChatTool(
   rawArgs: string,
   deps: ToolDeps
 ): Promise<{ result: unknown; event: ToolEvent }> {
+  // Lean Mode backstop. Primary enforcement is roster omission in
+  // ChatContext — the model never sees a blocked tool. This catches the one
+  // case omission can't: a call replayed from earlier in the transcript,
+  // from before the mode was switched on. Terminal by design (retriable:
+  // false, "do not retry" in the message) because the documented model
+  // default is 2-3 self-corrective retries, and three refused image calls
+  // inside a 5-iteration loop is exactly the token burn Lean Mode exists to
+  // avoid.
+  const lean = deps.leanMode ?? "full";
+  if (lean !== "full" && isToolBlocked(lean, name)) {
+    const blocked = blockedToolResult(lean, name);
+    return {
+      result: blocked,
+      event: { name, summary: `${blocked.capability} is off (Lean Mode)`, ok: false },
+    };
+  }
+
   let args: any = {};
   try {
     args = rawArgs ? JSON.parse(rawArgs) : {};
@@ -1385,10 +1410,26 @@ export async function executeChatTool(
         const q = String(args.query || "").trim();
         if (!q) return { result: { error: "Empty query" }, event: { name, summary: "Empty query", ok: false } };
         const token = (deps.burplexityApiToken || "").trim();
+        const tavilyKey = (deps.tavilyApiKey || "").trim();
+        // Free backend first when Burplexity isn't configured — Tavily gives
+        // 1,000 searches a month with no card, so "no token" stops being a
+        // dead end for anyone who hasn't paid for search.
+        if (!token && tavilyKey) {
+          try {
+            const r = await tavilySearch(tavilyKey, q, { maxResults: 5 });
+            return {
+              result: { answer: r.answer, citations: r.citations, provider: "Tavily" },
+              event: { name, summary: `Searched the web (Tavily): ${q.slice(0, 60)}`, ok: true },
+            };
+          } catch (e) {
+            const msg = (e as Error)?.message || "Tavily search failed";
+            return { result: { error: msg }, event: { name, summary: msg.slice(0, 80), ok: false } };
+          }
+        }
         if (!token) {
           return {
-            result: { error: "Burplexity API token not configured. Ask the user to paste a pp_… token in Settings → Burplexity API Token." },
-            event: { name, summary: "Burplexity token missing — add it in Settings", ok: false },
+            result: { error: "No web-search key configured. Ask the user to add a free Tavily key (tvly-…, 1,000 searches/month, no card) or a Burplexity token in Settings → Research & Web Search." },
+            event: { name, summary: "No search key — add a free Tavily key in Settings", ok: false },
           };
         }
         try {
