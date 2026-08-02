@@ -10,8 +10,11 @@ import { sheetIntrinsicSize } from "@/lib/blueprint/raster";
 import { renderBlueprintSheet } from "@/lib/blueprint/sheet";
 import { BlueprintSchema } from "@/lib/blueprint/schema";
 
+const parseBlueprintDoc = ((v: unknown) => BlueprintSchema.parse(v)) as (v: unknown) => any;
+const parseSceneDoc = ((v: unknown) => SceneSchema.parse(v)) as (v: unknown) => any;
+
 function forge(over: Partial<Scene> = {}): Scene {
-  return SceneSchema.parse({
+  return parseSceneDoc({
     name: "The Forge",
     slug: "INT. FORGE — NIGHT",
     unit: "m",
@@ -238,7 +241,7 @@ describe("stage plan rendering", () => {
   });
 
   it("renders an empty stage without falling over", () => {
-    const empty = SceneSchema.parse({ name: "Void", extent: { w: 5, h: 5 } });
+    const empty = parseSceneDoc({ name: "Void", extent: { w: 5, h: 5 } });
     const plan = renderPlanSheet(empty);
     expect(validateSheetSvg(plan.svg)).toEqual([]);
   });
@@ -257,7 +260,7 @@ describe("stage plan rendering", () => {
 
 describe("raster sizing", () => {
   it("reads a sheet's intrinsic size from its viewBox", () => {
-    const svg = renderBlueprintSheet(BlueprintSchema.parse({
+    const svg = renderBlueprintSheet(parseBlueprintDoc({
       kind: "prop", form: "hard_surface", name: "Crate", heightHeads: 1,
     })).svg;
     const size = sheetIntrinsicSize(svg);

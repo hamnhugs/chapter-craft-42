@@ -1084,6 +1084,7 @@ export type Database = {
         Row: {
           assembly_tag: string
           banned_traits: string[]
+          blueprint: Json | null
           created_at: string
           entry_id: string | null
           front_azimuth_deg: number
@@ -1103,6 +1104,7 @@ export type Database = {
         Insert: {
           assembly_tag?: string
           banned_traits?: string[]
+          blueprint?: Json | null
           created_at?: string
           entry_id?: string | null
           front_azimuth_deg?: number
@@ -1122,6 +1124,7 @@ export type Database = {
         Update: {
           assembly_tag?: string
           banned_traits?: string[]
+          blueprint?: Json | null
           created_at?: string
           entry_id?: string | null
           front_azimuth_deg?: number
@@ -1247,6 +1250,53 @@ export type Database = {
             columns: ["book_id"]
             isOneToOne: false
             referencedRelation: "books"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      production_scenes: {
+        Row: {
+          book_id: string | null
+          chapter_index: number | null
+          created_at: string
+          entry_id: string | null
+          id: string
+          name: string
+          plan: Json
+          slug: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          book_id?: string | null
+          chapter_index?: number | null
+          created_at?: string
+          entry_id?: string | null
+          id?: string
+          name: string
+          plan: Json
+          slug?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          book_id?: string | null
+          chapter_index?: number | null
+          created_at?: string
+          entry_id?: string | null
+          id?: string
+          name?: string
+          plan?: Json
+          slug?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "production_scenes_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_entries"
             referencedColumns: ["id"]
           },
         ]
@@ -2466,6 +2516,7 @@ export type Database = {
           visits: number
         }[]
       }
+      app_open_access: { Args: never; Returns: boolean }
       approve_tool: {
         Args: { p_expected_sha256: string; p_tool_id: string }
         Returns: Json

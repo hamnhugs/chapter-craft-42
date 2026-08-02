@@ -13,6 +13,8 @@ import { packShelves, packGrid } from "@/lib/blueprint/pack";
 import { parseBlueprint, validateBlueprint, formatProblems, BlueprintSchema } from "@/lib/blueprint/schema";
 import type { Blueprint } from "@/lib/blueprint/schema";
 
+const parseBlueprintDoc = ((v: unknown) => BlueprintSchema.parse(v)) as (v: unknown) => any;
+
 // ── camera ──────────────────────────────────────────────────────────────────
 
 describe("angle of view", () => {
@@ -373,7 +375,7 @@ describe("bounds", () => {
 // ── assembly ────────────────────────────────────────────────────────────────
 
 function robot(): Blueprint {
-  return BlueprintSchema.parse({
+  return parseBlueprintDoc({
     kind: "character",
     form: "hard_surface",
     name: "Test robot",

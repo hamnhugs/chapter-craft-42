@@ -6,6 +6,9 @@ import { BlueprintSchema, type Blueprint } from "@/lib/blueprint/schema";
 import { SceneSchema, type Scene } from "@/lib/blueprint/scene";
 import type { MasterAssetRow } from "@/lib/masterAssets";
 
+const parseBlueprintDoc = ((v: unknown) => BlueprintSchema.parse(v)) as (v: unknown) => any;
+const parseSceneDoc = ((v: unknown) => SceneSchema.parse(v)) as (v: unknown) => any;
+
 function master(over: Partial<MasterAssetRow> = {}): MasterAssetRow {
   return {
     id: "00000000-0000-0000-0000-000000000001",
@@ -30,7 +33,7 @@ function master(over: Partial<MasterAssetRow> = {}): MasterAssetRow {
 }
 
 function blueprint(over: Partial<Blueprint> = {}): Blueprint {
-  return BlueprintSchema.parse({
+  return parseBlueprintDoc({
     kind: "character",
     form: "hard_surface",
     name: "Rustbucket",
@@ -129,7 +132,7 @@ describe("effectivity", () => {
 
 describe("scene references", () => {
   function scene(over: Partial<Scene> = {}): Scene {
-    return SceneSchema.parse({
+    return parseSceneDoc({
       name: "The Forge",
       extent: { w: 10, h: 8 },
       blocking: [{ id: "smith", name: "Smith", at: { x: 5, y: 5 }, master: "robot_master" }],
