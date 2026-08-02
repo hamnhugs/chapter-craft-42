@@ -3,8 +3,10 @@ import { renderBlueprintSheet, SHEET_WIDTH } from "@/lib/blueprint/sheet";
 import { validateSheetSvg, countSheetNodes } from "@/lib/blueprint/sheetValidate";
 import { BlueprintSchema, type Blueprint } from "@/lib/blueprint/schema";
 
+const parseBlueprintDoc = ((v: unknown) => BlueprintSchema.parse(v)) as (v: unknown) => any;
+
 function robot(over: Partial<Blueprint> = {}): Blueprint {
-  return BlueprintSchema.parse({
+  return parseBlueprintDoc({
     kind: "character",
     form: "hard_surface",
     name: "Rustbucket",
@@ -160,7 +162,7 @@ describe("sheet rendering", () => {
   });
 
   it("survives a blueprint with nothing optional filled in", () => {
-    const bare = BlueprintSchema.parse({ kind: "prop", form: "hard_surface", name: "Crate", heightHeads: 1 });
+    const bare = parseBlueprintDoc({ kind: "prop", form: "hard_surface", name: "Crate", heightHeads: 1 });
     const sheet = renderBlueprintSheet(bare);
     expect(validateSheetSvg(sheet.svg)).toEqual([]);
   });
