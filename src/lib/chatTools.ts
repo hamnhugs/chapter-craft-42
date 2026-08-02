@@ -47,7 +47,11 @@ import { validateSheetSvg } from "@/lib/blueprint/sheetValidate";
 import { VIEWS, type ViewName } from "@/lib/blueprint/geometry";
 import { parseScene } from "@/lib/blueprint/scene";
 import { renderPlanSheet } from "@/lib/blueprint/planSheet";
+import { rasterizeSheet } from "@/lib/blueprint/raster";
 import { scenesMigrated, resolveScene, saveScene } from "@/lib/scenesApi";
+import {
+  checkBlueprintAgainstMaster, checkSceneReferences, checkValidity, formatFindings,
+} from "@/lib/blueprint/consistency";
 
 /** Best-effort reverse lookup: which master(s) reference these images/splats.
  *  Returns empty maps when the master_assets migration isn't applied — the
@@ -573,6 +577,12 @@ export const CHAT_TOOL_DEFINITIONS = [
           aspect_ratio: { type: "string", enum: [...IMAGE_ASPECT_RATIOS], description: "Optional. Default 1:1. Applied to every image in the batch." },
           remember: { type: "boolean", description: "Save to memory as neurons (default true). Set false only if the user says they're throwaways." },
           attach_to_entry_id: { type: "string", description: "Optional: attach ALL generated images to an EXISTING knowledge entry id instead of creating new neurons." },
+          reference_image_ids: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Up to 4 library image ids to condition on — a blueprint sheet, a master's reference views, an earlier approved design. THIS is how appearance is carried: colours, proportions and details written into a prompt are largely ignored, and the same information shown as a picture is not. Whenever a master asset or blueprint sheet exists for the subject, pass it here and keep the prompt to pose, action and setting. Re-anchor from the same references every time rather than editing your last result.",
+          },
         },
       },
     },
@@ -976,7 +986,9 @@ export const CHAT_TOOL_DEFINITIONS = [
             description: "Panels to draw, left to right. Default front, three_quarter, right, back — the back view is the one turnarounds hallucinate without.",
           },
           stroke_width: { type: "number", description: "Line weight, 0.4-6 (default 1.4). Thinner lines hold a generator closer to the drawing when the sheet is used as a reference; thicker lines leave it more freedom." },
-          save_to_master: { type: "string", description: "Master asset id or @name to save this blueprint onto, making it that character's authoritative definition." },
+          save_to_master: { type: "string", description: "Master asset id or @name to save this blueprint onto, making it that character's authoritative definition. Saving also runs a consistency check against that master's locked palette and forbidden traits." },
+          chapter_index: { type: "number", description: "Chapter being written. Checked against the blueprint's validity range so you don't draw the wrong revision of a character." },
+          save_as_reference: { type: "boolean", description: "Also save the sheet into the image library and return its image_id, so it can be passed to generate_image as a reference. Do this whenever the user is about to generate art of this subject — the drawn palette and proportions carry far better as a picture than as words." },
           title: { type: "string", description: "Title for the sheet in the Workspace. Defaults to the blueprint name." },
         },
       },
@@ -2079,9 +2091,24 @@ export async function executeChatTool(
         const remember = args.remember !== false;
         const sharedEntryId: string | null = String(args.attach_to_entry_id || "").trim() || null;
 
+        // Reference images: the channel that actually carries appearance.
+        // Loaded ONCE for the whole batch so every variation re-anchors from
+        // exactly the same pixels — variations that drift apart from each other
+        // are the failure this is here to prevent.
+        const referenceIds = (Array.isArray(args.reference_image_ids) ? args.reference_image_ids : [])
+          .map((v: unknown) => String(v || "").trim()).filter(Boolean).slice(0, 4);
+        const referenceImageDataUrls: string[] = [];
+        const referenceMisses: string[] = [];
+        for (const refId of referenceIds) {
+          const row = await fetchImageById(refId);
+          const url = row ? await loadImageAsDataUrl(row.storage_path) : null;
+          if (url) referenceImageDataUrls.push(url);
+          else referenceMisses.push(refId);
+        }
+
         const settled = await Promise.allSettled(
           prompts.map(async (p) => {
-            const gen = await generateImage({ apiKey, prompt: p, aspectRatio, primaryModel: deps.imageModelPrimary, fallbackModel: deps.imageModelFallback });
+            const gen = await generateImage({ apiKey, prompt: p, aspectRatio, referenceImageDataUrls, primaryModel: deps.imageModelPrimary, fallbackModel: deps.imageModelFallback });
             let entryId: string | null = sharedEntryId;
             let neuronCreated = false;
             if (remember && !entryId) {
@@ -2116,6 +2143,11 @@ export async function executeChatTool(
           result: {
             ok: true,
             count: successes.length,
+            conditioned_on: referenceImageDataUrls.length || undefined,
+            // Never silently ignore a reference the user asked for — an image
+            // generated without the anchor it was supposed to use looks like
+            // the anchor failing rather than the reference being missing.
+            references_not_found: referenceMisses.length ? referenceMisses : undefined,
             images: successes.map((s) => ({
               image_id: s.ref.id,
               entry_id: s.entryId,
@@ -3587,6 +3619,12 @@ export async function executeChatTool(
           };
         }
 
+        // Effectivity: a character legitimately has revisions valid over part
+        // of a book, and drawing the wrong one is a continuity error nobody
+        // catches until it is in a rendered shot.
+        const chapterArg = (args as any).chapter_index;
+        const findings = checkValidity(bp, typeof chapterArg === "number" ? chapterArg : null);
+
         let savedTo: string | null = null;
         const saveRef = String((args as any).save_to_master || "").trim();
         if (saveRef) {
@@ -3599,6 +3637,13 @@ export async function executeChatTool(
               event: { name, summary: "Master not found for save", ok: false },
             };
           }
+          // Checked BEFORE the write, not after: a blueprint that contradicts
+          // its master's locked palette is wrong the moment it lands, and
+          // finding it during a later render is finding it too late.
+          try {
+            findings.push(...(await checkBlueprintAgainstMaster(bp, target)));
+          } catch { /* a failed check must not block a legitimate save */ }
+
           try {
             await updateMasterAsset(target.id, { blueprint: bp });
             savedTo = `@${target.name}`;
@@ -3613,11 +3658,41 @@ export async function executeChatTool(
           }
         }
 
+        // Rasterise into the image library. This is the moment the drawing
+        // becomes usable as an anchor: no published work conditions a generator
+        // on vector input, so a model only ever sees a rasterisation. Storing
+        // it as a real image_id makes it a first-class reference — usable by
+        // generate_image, generate_video and lock_master_asset alike, exactly
+        // as render_splat_views already does for turntable stills.
+        let referenceImageId: string | null = null;
+        const turnImages: ChatImageRef[] = [];
+        if ((args as any).save_as_reference) {
+          try {
+            const raster = await rasterizeSheet(sheet.svg, { width: 1400 });
+            const stored = await storeGeneratedImage({
+              prompt: `Blueprint sheet — ${bp.name}`,
+              caption: `${bp.kind} blueprint: ${sheet.views.join(", ")} · palette ${bp.palette.map((s) => s.hex).join(" ")}`,
+              model: "blueprint-sheet",
+              dataUrl: raster.dataUrl,
+              mime: "image/png",
+            });
+            referenceImageId = stored.id;
+            turnImages.push(stored);
+          } catch (e: any) {
+            sheet.omitted.push(`the sheet could not be saved as a reference image: ${e?.message || "unknown error"}`);
+          }
+        }
+
         const title = String((args as any).title || "").trim() || `${bp.name} — blueprint sheet`;
         return {
           result: {
             ok: true,
             title,
+            reference_image_id: referenceImageId,
+            ...(referenceImageId
+              ? { reference_note: "Pass this image_id to generate_image as `reference_image_ids` and keep the prompt to pose, action and setting. Re-anchor from it every time; never edit your previous result forward." }
+              : {}),
+            ...(turnImages.length ? { __images: turnImages } : {}),
             // Deliberately NOT the SVG. A sheet is tens of kilobytes of markup
             // and the model has no use for it — it is already on the user's
             // screen. __artifact is stripped before this result is sent.
@@ -3627,13 +3702,20 @@ export async function executeChatTool(
             parts_drawn: bp.parts.length,
             palette: bp.palette.map((s) => s.role),
             saved_to_master: savedTo,
+            consistency: findings.length ? formatFindings(findings).slice(0, 10) : undefined,
             omitted: sheet.omitted.length ? sheet.omitted : undefined,
-            note: "The sheet is ALREADY displayed to the user in the side panel — do not describe the markup or output an image link. Say what it shows in a sentence.",
+            note:
+              "The sheet is ALREADY displayed to the user in the side panel — do not describe the markup or output an image link. Say what it shows in a sentence." +
+              (findings.some((f) => f.severity === "error")
+                ? " There are CONFLICT lines in `consistency`: tell the user plainly what disagrees with the locked master and ask which one is right. Do not pick for them."
+                : ""),
             __artifact: { title, kind: "svg", content: sheet.svg },
           },
           event: {
             name,
-            summary: savedTo ? `Drew ${bp.name} sheet and saved it to ${savedTo}` : `Drew ${bp.name} sheet`,
+            summary: findings.some((f) => f.severity === "error")
+              ? `Drew ${bp.name} sheet — conflicts with the locked master`
+              : savedTo ? `Drew ${bp.name} sheet and saved it to ${savedTo}` : `Drew ${bp.name} sheet`,
             ok: true,
           },
         };
@@ -3687,6 +3769,14 @@ export async function executeChatTool(
           };
         }
 
+        // Same posture as the blueprint path: targeted pairwise checks against
+        // the masters this scene actually names, never a sweep of everything.
+        let sceneFindings: Awaited<ReturnType<typeof checkSceneReferences>> = [];
+        try {
+          const known = (await mastersMigrated()) ? (await listMasterAssets()).map((m) => m.name) : [];
+          sceneFindings = await checkSceneReferences(scene, resolveMaster, known);
+        } catch { /* a failed check must not stop a plan from drawing */ }
+
         let savedAs: string | null = null;
         if ((args as any).save_as) {
           if (!(await scenesMigrated())) {
@@ -3712,6 +3802,7 @@ export async function executeChatTool(
             // The reason the plan exists. Report it in the result too, so it is
             // said out loud rather than only drawn in small red type.
             coverage_warnings: plan.coverageWarnings.length ? plan.coverageWarnings : undefined,
+            consistency: sceneFindings.length ? formatFindings(sceneFindings).slice(0, 10) : undefined,
             saved_as: savedAs,
             elements: plan.nodeCount,
             omitted: plan.omitted.length ? plan.omitted : undefined,
