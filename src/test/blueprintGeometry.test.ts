@@ -7,7 +7,7 @@ import {
   identity, multiply, translation, rotation, transformPoint,
   attachLocalPosition, primitivePoints, resolveAssembly, projectAssembly,
   projectPoint, convexHull, boundsOf, clampBox, boxContains, commonBounds,
-  DEFAULT_VIEWS, VIEWS,
+  clipPolygonToBox, DEFAULT_VIEWS, VIEWS,
 } from "@/lib/blueprint/geometry";
 import { packShelves, packGrid } from "@/lib/blueprint/pack";
 import { parseBlueprint, validateBlueprint, formatProblems, BlueprintSchema } from "@/lib/blueprint/schema";
@@ -333,6 +333,33 @@ describe("bounds", () => {
   it("leaves a healthy box alone", () => {
     const box = { x: 1, y: 2, w: 30, h: 40 };
     expect(clampBox(box)).toEqual(box);
+  });
+
+  it("clips a polygon to a box", () => {
+    const box = { x: 0, y: 0, w: 10, h: 10 };
+    const clipped = clipPolygonToBox([{ x: -5, y: 5 }, { x: 15, y: 5 }, { x: 5, y: 15 }], box);
+    expect(clipped.length).toBeGreaterThan(2);
+    for (const p of clipped) {
+      expect(p.x).toBeGreaterThanOrEqual(-1e-9);
+      expect(p.x).toBeLessThanOrEqual(10 + 1e-9);
+      expect(p.y).toBeGreaterThanOrEqual(-1e-9);
+      expect(p.y).toBeLessThanOrEqual(10 + 1e-9);
+    }
+  });
+
+  it("leaves a polygon already inside the box untouched", () => {
+    const box = { x: 0, y: 0, w: 10, h: 10 };
+    const poly = [{ x: 2, y: 2 }, { x: 8, y: 2 }, { x: 5, y: 8 }];
+    expect(clipPolygonToBox(poly, box)).toEqual(poly);
+  });
+
+  it("returns nothing for a polygon entirely outside", () => {
+    const box = { x: 0, y: 0, w: 10, h: 10 };
+    expect(clipPolygonToBox([{ x: 50, y: 50 }, { x: 60, y: 50 }, { x: 55, y: 60 }], box)).toEqual([]);
+  });
+
+  it("returns nothing for degenerate input", () => {
+    expect(clipPolygonToBox([{ x: 1, y: 1 }, { x: 2, y: 2 }], { x: 0, y: 0, w: 10, h: 10 })).toEqual([]);
   });
 
   it("knows containment", () => {

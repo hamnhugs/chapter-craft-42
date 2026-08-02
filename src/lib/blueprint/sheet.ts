@@ -5,6 +5,10 @@ import {
   DEFAULT_VIEWS, VIEW_LABEL,
 } from "./geometry";
 import { packGrid } from "./pack";
+import {
+  INK, MUTED, RULE, FAINT, PAPER, ACCENT, NONPHOTO,
+  esc, n, label, wrap, truncate,
+} from "./svgText";
 
 // The production sheet renderer. Blueprint in, SVG out, deterministically.
 //
@@ -36,93 +40,9 @@ const TITLE_H = 74;
 const PANEL_LABEL_H = 22;
 const SECTION_GAP = 26;
 
-const INK = "#16191d";
-const RULE = "#c7ced6";
-const FAINT = "#e6eaef";
-const PART_FILL = "#ffffff";
+const PART_FILL = PAPER;
 const PART_STROKE = "#1c2126";
 const MIRROR_STROKE = "#7d8894";
-const ACCENT = "#b8402a";
-const NONPHOTO = "#6d97ba";
-const PAPER = "#ffffff";
-
-/** Average advance width as a fraction of font size, used ONLY to decide where
- *  to wrap a note or truncate a long name. It is an estimate and is documented
- *  as one: anything that must fit exactly gets textLength instead. */
-const ADVANCE = 0.52;
-
-function esc(s: string): string {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-/** Round to 2dp so the same blueprint always yields byte-identical markup and
- *  a sheet can be diffed. */
-function n(v: number): string {
-  if (!Number.isFinite(v)) return "0";
-  return String(Math.round(v * 100) / 100);
-}
-
-function charsThatFit(width: number, fontSize: number): number {
-  return Math.max(1, Math.floor(width / (fontSize * ADVANCE)));
-}
-
-function truncate(text: string, width: number, fontSize: number): string {
-  const max = charsThatFit(width, fontSize);
-  return text.length <= max ? text : `${text.slice(0, Math.max(1, max - 1))}…`;
-}
-
-function wrap(text: string, width: number, fontSize: number): string[] {
-  const max = charsThatFit(width, fontSize);
-  const words = text.split(/\s+/).filter(Boolean);
-  const lines: string[] = [];
-  let line = "";
-  for (const w of words) {
-    const next = line ? `${line} ${w}` : w;
-    if (next.length > max && line) {
-      lines.push(line);
-      line = w;
-    } else {
-      line = next;
-    }
-  }
-  if (line) lines.push(line);
-  return lines;
-}
-
-/**
- * A label that cannot overflow its box.
- *
- * `textLength` + `lengthAdjust="spacingAndGlyphs"` makes the user agent squeeze
- * the run to exactly the width given, which is the one way to guarantee fit
- * without measuring. It is only applied when the estimate says the text would
- * otherwise be too wide — squeezing short text would look wrong.
- */
-function label(
-  text: string,
-  x: number,
-  y: number,
-  opts: { size?: number; fill?: string; anchor?: "start" | "middle" | "end"; maxWidth?: number; weight?: number; mono?: boolean } = {},
-): string {
-  const size = opts.size ?? 12;
-  const fill = opts.fill ?? INK;
-  const anchor = opts.anchor ?? "start";
-  const family = opts.mono
-    ? "ui-monospace, Consolas, monospace"
-    : "system-ui, Segoe UI, Helvetica, Arial, sans-serif";
-  const weightAttr = opts.weight ? ` font-weight="${opts.weight}"` : "";
-  const clean = esc(text);
-  let fit = "";
-  if (opts.maxWidth !== undefined) {
-    const estimated = text.length * size * ADVANCE;
-    if (estimated > opts.maxWidth) fit = ` textLength="${n(opts.maxWidth)}" lengthAdjust="spacingAndGlyphs"`;
-  }
-  return `<text x="${n(x)}" y="${n(y)}" font-family="${family}" font-size="${n(size)}" fill="${fill}" text-anchor="${anchor}"${weightAttr}${fit}>${clean}</text>`;
-}
 
 // ── symbol library ──────────────────────────────────────────────────────────
 //
@@ -245,7 +165,7 @@ export function renderBlueprintSheet(bp: Blueprint, opts: SheetOptions = {}): Sh
     const map = makeMapper(shared, panel, scale);
 
     push(`<rect x="${n(panel.x)}" y="${n(panel.y)}" width="${n(panel.w)}" height="${n(panel.h)}" fill="${PAPER}" stroke="${RULE}" stroke-width="1"/>`);
-    push(label(VIEW_LABEL[panel.view], panel.x, panel.y - 7, { size: 11, fill: "#5c6570", weight: 600, maxWidth: panel.w, mono: true }));
+    push(label(VIEW_LABEL[panel.view], panel.x, panel.y - 7, { size: 11, fill: MUTED, weight: 600, maxWidth: panel.w, mono: true }));
 
     // Landmarks first so solids overprint them.
     if (showLandmarks && bp.landmarks.length) {
@@ -306,7 +226,7 @@ export function renderBlueprintSheet(bp: Blueprint, opts: SheetOptions = {}): Sh
   // shown to the model measured ΔE 0.90 against 11.25 for the text. The picture
   // is the specification.
   if (bp.palette.length) {
-    push(label("PALETTE", MARGIN, cursorY, { size: 10, fill: "#5c6570", weight: 700, mono: true }));
+    push(label("PALETTE", MARGIN, cursorY, { size: 10, fill: MUTED, weight: 700, mono: true }));
     cursorY += 12;
     const chipW = 96, chipH = 52, chipGap = 10;
     const perRow = Math.max(1, Math.floor((SHEET_WIDTH - MARGIN * 2 + chipGap) / (chipW + chipGap)));
@@ -315,13 +235,13 @@ export function renderBlueprintSheet(bp: Blueprint, opts: SheetOptions = {}): Sh
       const y = cursorY + Math.floor(i / perRow) * (chipH + chipGap);
       push(`<rect x="${n(x)}" y="${n(y)}" width="${n(chipW)}" height="${n(chipH - 20)}" fill="${esc(sw.hex)}" stroke="${RULE}" stroke-width="0.8"/>`);
       push(label(sw.role, x, y + chipH - 8, { size: 10, weight: 600, maxWidth: chipW }));
-      push(label(sw.hex.toUpperCase(), x, y + chipH + 3, { size: 9, fill: "#5c6570", maxWidth: chipW, mono: true }));
+      push(label(sw.hex.toUpperCase(), x, y + chipH + 3, { size: 9, fill: MUTED, maxWidth: chipW, mono: true }));
     });
     cursorY += Math.ceil(bp.palette.length / perRow) * (chipH + chipGap) + SECTION_GAP;
   }
 
   // ── scale bar ──
-  push(label("SCALE", MARGIN, cursorY, { size: 10, fill: "#5c6570", weight: 700, mono: true }));
+  push(label("SCALE", MARGIN, cursorY, { size: 10, fill: MUTED, weight: 700, mono: true }));
   cursorY += 16;
   const scaleW = 240;
   push(`<line x1="${n(MARGIN)}" y1="${n(cursorY)}" x2="${n(MARGIN + scaleW)}" y2="${n(cursorY)}" stroke="${INK}" stroke-width="1" marker-start="url(#bp-arrow)" marker-end="url(#bp-arrow)"/>`);
@@ -340,7 +260,7 @@ export function renderBlueprintSheet(bp: Blueprint, opts: SheetOptions = {}): Sh
   // ── text blocks ──
   const textBlock = (heading: string, lines: string[]) => {
     if (!lines.length) return;
-    push(label(heading, MARGIN, cursorY, { size: 10, fill: "#5c6570", weight: 700, mono: true }));
+    push(label(heading, MARGIN, cursorY, { size: 10, fill: MUTED, weight: 700, mono: true }));
     cursorY += 15;
     const colW = SHEET_WIDTH - MARGIN * 2;
     for (const line of lines) {
@@ -373,7 +293,7 @@ export function renderBlueprintSheet(bp: Blueprint, opts: SheetOptions = {}): Sh
   }
   head.push(label(truncate(bp.name, SHEET_WIDTH - MARGIN * 2 - 260, 22), MARGIN, MARGIN + 26, { size: 22, weight: 650, maxWidth: SHEET_WIDTH - MARGIN * 2 - 260 }));
   const meta = [bp.kind, bp.form.replace(/_/g, " "), `${bp.parts.length} parts`, opts.revision ? `rev ${opts.revision}` : ""].filter(Boolean).join("  ·  ");
-  head.push(label(meta, MARGIN, MARGIN + 44, { size: 10, fill: "#5c6570", maxWidth: SHEET_WIDTH - MARGIN * 2 - 260, mono: true }));
+  head.push(label(meta, MARGIN, MARGIN + 44, { size: 10, fill: MUTED, maxWidth: SHEET_WIDTH - MARGIN * 2 - 260, mono: true }));
   if (bp.validity && (bp.validity.fromChapter !== undefined || bp.validity.toChapter !== undefined)) {
     const from = bp.validity.fromChapter ?? "start";
     const to = bp.validity.toChapter ?? "end";

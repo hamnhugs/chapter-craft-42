@@ -395,6 +395,61 @@ export function clampBox(box: Box, minSize = 1e-3): Box {
   };
 }
 
+/**
+ * Sutherland-Hodgman clip of a convex-ish polygon against an axis-aligned box.
+ *
+ * Used so a camera's coverage wedge stops at the edge of the plan instead of
+ * running off the sheet. Clipping NUMERICALLY rather than with a clipPath
+ * matters: a clip-path leaves the original out-of-bounds coordinates in the
+ * markup, and the sheet validator would rightly still flag them. Here the
+ * geometry that ships is genuinely inside the box.
+ *
+ * Concave input can produce degenerate connecting edges — the classic
+ * limitation of this algorithm — which is acceptable for wedges and rectangles
+ * and is the reason it is not offered as a general-purpose clipper.
+ */
+export function clipPolygonToBox(poly: Vec2[], box: Box): Vec2[] {
+  if (poly.length < 3) return [];
+  const left = box.x, right = box.x + box.w, top = box.y, bottom = box.y + box.h;
+
+  const inside = (p: Vec2, edge: number): boolean => {
+    switch (edge) {
+      case 0: return p.x >= left;
+      case 1: return p.x <= right;
+      case 2: return p.y >= top;
+      default: return p.y <= bottom;
+    }
+  };
+  const intersect = (a: Vec2, b: Vec2, edge: number): Vec2 => {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    switch (edge) {
+      case 0: return { x: left, y: a.y + (dy * (left - a.x)) / (dx || 1e-12) };
+      case 1: return { x: right, y: a.y + (dy * (right - a.x)) / (dx || 1e-12) };
+      case 2: return { x: a.x + (dx * (top - a.y)) / (dy || 1e-12), y: top };
+      default: return { x: a.x + (dx * (bottom - a.y)) / (dy || 1e-12), y: bottom };
+    }
+  };
+
+  let output = poly;
+  for (let edge = 0; edge < 4 && output.length; edge++) {
+    const input = output;
+    output = [];
+    for (let i = 0; i < input.length; i++) {
+      const cur = input[i];
+      const prev = input[(i + input.length - 1) % input.length];
+      const curIn = inside(cur, edge);
+      const prevIn = inside(prev, edge);
+      if (curIn) {
+        if (!prevIn) output.push(intersect(prev, cur, edge));
+        output.push(cur);
+      } else if (prevIn) {
+        output.push(intersect(prev, cur, edge));
+      }
+    }
+  }
+  return output;
+}
+
 export function padBox(box: Box, pad: number): Box {
   return { x: box.x - pad, y: box.y - pad, w: box.w + pad * 2, h: box.h + pad * 2 };
 }

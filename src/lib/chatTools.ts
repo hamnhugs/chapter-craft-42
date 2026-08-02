@@ -45,6 +45,9 @@ import { parseBlueprint, formatProblems } from "@/lib/blueprint/schema";
 import { renderBlueprintSheet } from "@/lib/blueprint/sheet";
 import { validateSheetSvg } from "@/lib/blueprint/sheetValidate";
 import { VIEWS, type ViewName } from "@/lib/blueprint/geometry";
+import { parseScene } from "@/lib/blueprint/scene";
+import { renderPlanSheet } from "@/lib/blueprint/planSheet";
+import { scenesMigrated, resolveScene, saveScene } from "@/lib/scenesApi";
 
 /** Best-effort reverse lookup: which master(s) reference these images/splats.
  *  Returns empty maps when the master_assets migration isn't applied — the
@@ -975,6 +978,28 @@ export const CHAT_TOOL_DEFINITIONS = [
           stroke_width: { type: "number", description: "Line weight, 0.4-6 (default 1.4). Thinner lines hold a generator closer to the drawing when the sheet is used as a reference; thicker lines leave it more freedom." },
           save_to_master: { type: "string", description: "Master asset id or @name to save this blueprint onto, making it that character's authoritative definition." },
           title: { type: "string", description: "Title for the sheet in the Workspace. Defaults to the blueprint name." },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_stage_plan",
+      description:
+        "Draw an overhead stage plan and shot list for a scene: set walls, props, where people stand, camera setups with real angle-of-view wedges, lighting positions, and a sequence timeline. FREE: rendered locally, no API call, works in every Lean Mode tier. Coverage is COMPUTED from the optics — the sheet tells you which subjects a given lens genuinely misses from a given mark, which a written shot list cannot. Plan north is +y and headings are degrees clockwise from north. Shot numbers are assigned in steps of ten so a later insert becomes 0015 instead of renumbering the sequence.",
+      parameters: {
+        type: "object",
+        properties: {
+          scene_id: { type: "string", description: "Load a saved scene by id or name. Omit when passing `scene` inline." },
+          scene: {
+            type: "object",
+            description:
+              "The scene document. Keys: name, slug (\"INT. FORGE — NIGHT\"), unit (m|ft), extent {w,h}, designator {show,episode,sequence,scene} for shot numbering, walls[{id,from{x,y},to{x,y},kind:wall|flat|opening|window}], props[{id,name,at{x,y},w,d,rotationDeg,master}], blocking[{id,name,at{x,y},facingDeg,height,master}], cameras[{id,label,at{x,y},headingDeg,focalMm,sensorId,squeeze,throwDistance}], lights[{id,name,at{x,y},kind:key|fill|back|practical|ambient,aimDeg}], shots[{id,camera,movement,subjects[],action,durationS}], notes[]. sensorId is full_frame|super35_4perf|alexa35_og|aps_c|micro43 (default super35_4perf). Leave shot `number` off and it is assigned.",
+          },
+          save_as: { type: "string", description: "Save the scene under this name so it can be reloaded and revised. Uses the scene's own name when set to true-ish and omitted." },
+          show_frustums: { type: "boolean", description: "Draw the camera coverage wedges (default true). Turn off for a clean blocking-only plan." },
+          title: { type: "string", description: "Title for the sheet in the Workspace. Defaults to the scene name." },
         },
       },
     },
@@ -3609,6 +3634,95 @@ export async function executeChatTool(
           event: {
             name,
             summary: savedTo ? `Drew ${bp.name} sheet and saved it to ${savedTo}` : `Drew ${bp.name} sheet`,
+            ok: true,
+          },
+        };
+      }
+      case "create_stage_plan": {
+        // Free and local, same as create_blueprint_sheet — not in any Lean Mode
+        // block list on purpose.
+        let raw: unknown = (args as any).scene;
+        const sceneRef = String((args as any).scene_id || "").trim();
+        if (!raw && sceneRef) {
+          if (!(await scenesMigrated())) {
+            return {
+              result: { error: "Saved scenes need a database migration that hasn't been applied yet (supabase/migrations/20260802090000_blueprint_pipeline.sql). Pass the scene inline with `scene` instead — it will still draw." },
+              event: { name, summary: "Scenes not migrated", ok: false },
+            };
+          }
+          const row = await resolveScene(sceneRef);
+          if (!row) {
+            return { result: { error: `No saved scene matches "${sceneRef}".` }, event: { name, summary: "Scene not found", ok: false } };
+          }
+          raw = row.plan;
+        }
+        if (!raw) {
+          return { result: { error: "Pass either `scene` (the plan document) or `scene_id` (to load a saved one)." }, event: { name, summary: "Nothing to draw", ok: false } };
+        }
+
+        const parsed = parseScene(raw);
+        if (!parsed.ok) {
+          return {
+            result: {
+              error: "The scene did not pass validation, so nothing was drawn.",
+              problems: formatProblems(parsed.problems).slice(0, 12),
+              note: "Fix exactly these and call create_stage_plan again.",
+            },
+            event: { name, summary: `Scene rejected (${parsed.problems.length} problem${parsed.problems.length === 1 ? "" : "s"})`, ok: false },
+          };
+        }
+        const scene = parsed.scene;
+
+        const plan = renderPlanSheet(scene, {
+          showFrustums: (args as any).show_frustums !== false,
+        });
+        const planProblems = validateSheetSvg(plan.svg);
+        if (planProblems.length) {
+          return {
+            result: {
+              error: "The stage plan failed its own validity check and was not shown. This is a renderer fault, not a problem with the scene.",
+              problems: formatProblems(planProblems).slice(0, 6),
+            },
+            event: { name, summary: "Plan failed validation", ok: false },
+          };
+        }
+
+        let savedAs: string | null = null;
+        if ((args as any).save_as) {
+          if (!(await scenesMigrated())) {
+            savedAs = null;
+            plan.omitted.push("the scene could not be saved — the scenes table migration has not been applied yet");
+          } else {
+            try {
+              const row = await saveScene(scene, { bookId: deps.activeBookId || null });
+              savedAs = row.name;
+            } catch (e: any) {
+              plan.omitted.push(`the scene could not be saved: ${e?.message || "unknown error"}`);
+            }
+          }
+        }
+
+        const title = String((args as any).title || "").trim() || `${scene.name} — stage plan`;
+        return {
+          result: {
+            ok: true,
+            title,
+            shots: scene.shots.map((s, i) => s.number || `#${i + 1}`),
+            cameras: scene.cameras.map((c) => `${c.label} (${c.focalMm}mm)`),
+            // The reason the plan exists. Report it in the result too, so it is
+            // said out loud rather than only drawn in small red type.
+            coverage_warnings: plan.coverageWarnings.length ? plan.coverageWarnings : undefined,
+            saved_as: savedAs,
+            elements: plan.nodeCount,
+            omitted: plan.omitted.length ? plan.omitted : undefined,
+            note: "The plan is ALREADY displayed to the user in the side panel — do not describe the markup. If there are coverage warnings, tell the user plainly which shots don't see their subject and offer a wider lens or a moved mark.",
+            __artifact: { title, kind: "svg", content: plan.svg },
+          },
+          event: {
+            name,
+            summary: plan.coverageWarnings.length
+              ? `Drew ${scene.name} plan — ${plan.coverageWarnings.length} coverage warning${plan.coverageWarnings.length === 1 ? "" : "s"}`
+              : `Drew ${scene.name} stage plan`,
             ok: true,
           },
         };
