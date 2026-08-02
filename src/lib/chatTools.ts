@@ -3590,10 +3590,10 @@ export async function executeChatTool(
           return {
             result: {
               error: "The blueprint did not pass validation, so nothing was drawn.",
-              problems: formatProblems(parsed.problems).slice(0, 12),
+              problems: formatProblems((parsed as any).problems).slice(0, 12),
               note: "Fix exactly these and call create_blueprint_sheet again. Do not change anything else.",
             },
-            event: { name, summary: `Blueprint rejected (${parsed.problems.length} problem${parsed.problems.length === 1 ? "" : "s"})`, ok: false },
+            event: { name, summary: `Blueprint rejected (${(parsed as any).problems.length} problem${(parsed as any).problems.length === 1 ? "" : "s"})`, ok: false },
           };
         }
         const bp = parsed.blueprint;
@@ -3747,10 +3747,10 @@ export async function executeChatTool(
           return {
             result: {
               error: "The scene did not pass validation, so nothing was drawn.",
-              problems: formatProblems(parsed.problems).slice(0, 12),
+              problems: formatProblems((parsed as any).problems).slice(0, 12),
               note: "Fix exactly these and call create_stage_plan again.",
             },
-            event: { name, summary: `Scene rejected (${parsed.problems.length} problem${parsed.problems.length === 1 ? "" : "s"})`, ok: false },
+            event: { name, summary: `Scene rejected (${(parsed as any).problems.length} problem${(parsed as any).problems.length === 1 ? "" : "s"})`, ok: false },
           };
         }
         const scene = parsed.scene;

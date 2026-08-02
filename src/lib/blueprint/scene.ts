@@ -354,8 +354,9 @@ export function parseScene(raw: unknown): { ok: true; scene: Scene } | { ok: fal
       })),
     };
   }
-  const problems = validateScene(parsed.data);
-  return problems.length ? { ok: false, problems } : { ok: true, scene: numberShots(parsed.data) };
+  const data = parsed.data as unknown as Scene;
+  const problems = validateScene(data);
+  return problems.length ? { ok: false, problems } : { ok: true, scene: numberShots(data) };
 }
 
 // ── derived coverage ────────────────────────────────────────────────────────

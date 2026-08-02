@@ -488,8 +488,9 @@ export function parseBlueprint(raw: unknown): { ok: true; blueprint: Blueprint }
       })),
     };
   }
-  const problems = validateBlueprint(parsed.data);
-  return problems.length ? { ok: false, problems } : { ok: true, blueprint: parsed.data };
+  const data = parsed.data as unknown as Blueprint;
+  const problems = validateBlueprint(data);
+  return problems.length ? { ok: false, problems } : { ok: true, blueprint: data };
 }
 
 /** One line per problem, for a tool result the model reads. Location, then the
