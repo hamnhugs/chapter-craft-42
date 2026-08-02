@@ -101,7 +101,14 @@ export const AttachPointSchema = z.object({
   u: z.number(),
   v: z.number(),
 });
-export type AttachPoint = z.infer<typeof AttachPointSchema>;
+export interface AttachPoint {
+  id: string;
+  name: string;
+  part: string;
+  face: Face;
+  u: number;
+  v: number;
+}
 
 export const JointSchema = z.object({
   id: ID,
@@ -113,7 +120,14 @@ export const JointSchema = z.object({
   /** Degrees [min, max]. Drawn as an arc on the sheet when present. */
   range: z.tuple([z.number(), z.number()]).optional(),
 });
-export type Joint = z.infer<typeof JointSchema>;
+export interface Joint {
+  id: string;
+  name: string;
+  part: string;
+  at: string;
+  axis: (typeof AXES)[number];
+  range?: [number, number];
+}
 
 /** A horizon line at a given height in head-units — eye line, chin, shoulder,
  *  waist, knee. This is how real model sheets handle organic characters: they
@@ -125,7 +139,11 @@ export const LandmarkSchema = z.object({
   /** Height above the ground plane, in head-units. */
   atHeads: z.number(),
 });
-export type Landmark = z.infer<typeof LandmarkSchema>;
+export interface Landmark {
+  id: string;
+  name: string;
+  atHeads: number;
+}
 
 /** Palette entry. `role` is what parts and costume reference; `hex` is what the
  *  sheet paints and what the ΔE gate scores against. The hex NEVER goes in a
@@ -138,7 +156,11 @@ export const SwatchSchema = z.object({
   hex: HEX,
   note: z.string().max(120).optional(),
 });
-export type Swatch = z.infer<typeof SwatchSchema>;
+export interface Swatch {
+  role: string;
+  hex: string;
+  note?: string;
+}
 
 export const CostumeLayerSchema = z.object({
   id: ID,
@@ -149,7 +171,13 @@ export const CostumeLayerSchema = z.object({
   state: z.string().max(120).optional(),
   swatchRoles: z.array(z.string().max(40)).max(12).default([]),
 });
-export type CostumeLayer = z.infer<typeof CostumeLayerSchema>;
+export interface CostumeLayer {
+  id: string;
+  name: string;
+  covers: string[];
+  state?: string;
+  swatchRoles: string[];
+}
 
 /** Scars, asymmetries, which side the hair parts on. Called out separately
  *  because `symmetry: "mirror_x"` would otherwise silently duplicate them onto
@@ -160,7 +188,12 @@ export const MarkSchema = z.object({
   side: z.enum(["left", "right", "center"]),
   description: z.string().max(200),
 });
-export type Mark = z.infer<typeof MarkSchema>;
+export interface Mark {
+  name: string;
+  part: string;
+  side: "left" | "right" | "center";
+  description: string;
+}
 
 export const BlueprintSchema = z.object({
   version: z.number().int().default(BLUEPRINT_VERSION),
@@ -199,7 +232,25 @@ export const BlueprintSchema = z.object({
   }).optional(),
 });
 
-export type Blueprint = z.infer<typeof BlueprintSchema>;
+export interface Blueprint {
+  version: number;
+  kind: (typeof KINDS)[number];
+  form: Form;
+  name: string;
+  silhouette: string;
+  heightHeads: number;
+  absoluteHeight?: { value: number; unit: "cm" | "m" | "in" | "ft" };
+  parts: Part[];
+  attachPoints: AttachPoint[];
+  joints: Joint[];
+  landmarks: Landmark[];
+  palette: Swatch[];
+  costume: CostumeLayer[];
+  marks: Mark[];
+  negatives: string[];
+  notes: string[];
+  validity?: { fromChapter?: number; toChapter?: number };
+}
 
 // ── structural validation ───────────────────────────────────────────────────
 //

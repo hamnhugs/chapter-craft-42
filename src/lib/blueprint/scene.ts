@@ -115,9 +115,83 @@ export const SceneSchema = z.object({
   notes: z.array(z.string().max(300)).max(20).default([]),
 });
 
-export type Scene = z.infer<typeof SceneSchema>;
-export type Shot = z.infer<typeof ShotSchema>;
-export type PlanCamera = z.infer<typeof CameraSchema>;
+// Written out rather than inferred: without strictNullChecks zod widens every
+// inferred property to optional, which the plan renderer cannot work with.
+export interface ScenePoint { x: number; y: number }
+
+export interface Wall {
+  id: string;
+  name?: string;
+  from: ScenePoint;
+  to: ScenePoint;
+  kind: (typeof WALL_KINDS)[number];
+}
+
+export interface PlanProp {
+  id: string;
+  name: string;
+  at: ScenePoint;
+  w: number;
+  d: number;
+  rotationDeg: number;
+  master?: string;
+}
+
+export interface Blocking {
+  id: string;
+  name: string;
+  at: ScenePoint;
+  facingDeg: number;
+  master?: string;
+  height?: number;
+}
+
+export interface PlanCamera {
+  id: string;
+  label: string;
+  at: ScenePoint;
+  headingDeg: number;
+  focalMm: number;
+  sensorId: string;
+  squeeze: number;
+  throwDistance?: number;
+  heightAbove?: number;
+}
+
+export interface PlanLight {
+  id: string;
+  name: string;
+  at: ScenePoint;
+  kind: (typeof LIGHT_KINDS)[number];
+  aimDeg?: number;
+}
+
+export interface Shot {
+  id: string;
+  number?: string;
+  camera?: string;
+  movement: (typeof MOVEMENTS)[number];
+  subjects: string[];
+  action: string;
+  durationS?: number;
+  notes?: string;
+}
+
+export interface Scene {
+  version: number;
+  name: string;
+  slug: string;
+  unit: "m" | "ft";
+  extent: { w: number; h: number };
+  designator: { show: string; episode: string; sequence: string; scene: string };
+  walls: Wall[];
+  props: PlanProp[];
+  blocking: Blocking[];
+  cameras: PlanCamera[];
+  lights: PlanLight[];
+  shots: Shot[];
+  notes: string[];
+}
 
 // ── shot numbering ──────────────────────────────────────────────────────────
 
