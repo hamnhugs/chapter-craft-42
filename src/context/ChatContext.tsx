@@ -937,8 +937,18 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               if (r.__toolProposal && typeof r.__toolProposal === "object") {
                 turnToolProposals.push(r.__toolProposal);
               }
-              if ("__images" in r || "__videos" in r || "__splats" in r || "__vision" in r || "__toolProposal" in r) {
-                const { __images, __videos, __splats, __vision, __toolProposal, ...clean } = r;
+              // A tool that renders its own document (blueprint sheets, stage
+              // plans) hands it over here rather than through create_artifact's
+              // arguments. This is the whole reason it is a side channel: a
+              // sheet is tens of kilobytes of markup that the model authored
+              // none of and has no use for, and putting it in the transcript
+              // would cost more than the drawing.
+              if (r.__artifact && typeof r.__artifact === "object") {
+                const art = parseArtifact(r.__artifact);
+                if (art) artifacts.push(art);
+              }
+              if ("__images" in r || "__videos" in r || "__splats" in r || "__vision" in r || "__toolProposal" in r || "__artifact" in r) {
+                const { __images, __videos, __splats, __vision, __toolProposal, __artifact, ...clean } = r;
                 modelResult = clean;
               }
             }

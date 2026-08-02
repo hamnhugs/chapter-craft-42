@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { reindexEmbeddings } from "@/lib/knowledgeApi";
 import { fetchImageById } from "@/lib/imageGen";
+import type { Blueprint } from "@/lib/blueprint/schema";
 
 // MasterAsset: a locked character/asset bundle that generate_video loads by id
 // or @name so chat never re-describes the character. Design follows the
@@ -20,6 +21,11 @@ export interface MasterAssetRow {
   splat_id: string | null;
   entry_id: string | null;
   tech_pack_text: string;
+  /** Structured tech pack — the machine-readable twin of tech_pack_text, which
+   *  stays as prose for the human and the QC checklist. Views are PROJECTED
+   *  from this, never drawn, so front/profile/top cannot disagree. Null on
+   *  every master created before the blueprint migration. */
+  blueprint: Blueprint | null;
   assembly_tag: string;
   negative_constraints: string[];
   banned_traits: string[];
@@ -245,7 +251,7 @@ export async function updateMasterAsset(
   patch: Partial<Pick<MasterAssetRow,
     "view_image_ids" | "assembly_tag" | "tech_pack_text" | "negative_constraints" |
     "banned_traits" | "palette" | "front_azimuth_deg" | "ref_embeddings" | "hero_image_id" |
-    "splat_id" | "entry_id"
+    "splat_id" | "entry_id" | "blueprint"
   >>,
 ): Promise<MasterAssetRow | null> {
   const { data, error } = await (supabase.from("master_assets" as any) as any)
@@ -253,8 +259,42 @@ export async function updateMasterAsset(
     .eq("id", id)
     .select("*")
     .maybeSingle();
-  if (error) throw new Error(`Master asset update failed: ${error.message}`);
+  if (error) {
+    // The blueprint column arrives with its own migration. Retry without it
+    // rather than failing the whole write, so a lagging database degrades to
+    // "prose master, no blueprint" instead of "save is broken".
+    if ("blueprint" in patch && /blueprint/i.test(error.message || "")) {
+      const { blueprint: _dropped, ...rest } = patch;
+      if (Object.keys(rest).length === 0) {
+        throw new Error(
+          "This master's blueprint could not be saved because the database hasn't been migrated yet — apply supabase/migrations/20260802090000_blueprint_pipeline.sql, then try again.",
+        );
+      }
+      const retry = await (supabase.from("master_assets" as any) as any)
+        .update({ ...rest, updated_at: new Date().toISOString() })
+        .eq("id", id)
+        .select("*")
+        .maybeSingle();
+      if (retry.error) throw new Error(`Master asset update failed: ${retry.error.message}`);
+      return (retry.data as MasterAssetRow) || null;
+    }
+    throw new Error(`Master asset update failed: ${error.message}`);
+  }
   return (data as MasterAssetRow) || null;
+}
+
+/** True when the blueprint column exists (migration applied). Probed the same
+ *  way mastersMigrated() probes the table — a HEAD select that names only the
+ *  column under test. */
+export async function blueprintMigrated(): Promise<boolean> {
+  try {
+    const { error } = await (supabase.from("master_assets" as any) as any)
+      .select("blueprint", { head: true, count: "exact" })
+      .limit(1);
+    return !error;
+  } catch {
+    return false;
+  }
 }
 
 /** Delete a master. The linked images/splat/neuron are NOT deleted — the

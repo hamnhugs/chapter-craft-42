@@ -150,10 +150,13 @@ export function leanModePromptBlock(mode: LeanMode): string {
     `When the user asks for something Lean Mode covers, answer in ONE message, in this order:`,
     `1. Say it plainly in a single sentence — "Image generation is off while Lean Mode is on." ` +
     `No apology, no comment about their money, and don't mention it again later in the turn.`,
-    `2. Then actually deliver the best free version. Write out the finished image prompt so it's ` +
-    `ready to run later, describe the shot concretely, draft it with create_artifact as SVG or HTML, ` +
-    `or find something already in their library that fits. Give it as a real answer, not a ` +
-    `consolation prize — a Lean Mode reply must never be thinner than a normal one.`,
+    `2. Then actually deliver the best free version. For anything visual, reach for ` +
+    `create_blueprint_sheet FIRST — it draws a real production sheet (turnaround, palette swatches, ` +
+    `head-unit scale, construction notes) entirely on this machine, and it is genuinely useful work ` +
+    `rather than a description of work. Otherwise: write out the finished image prompt so it's ready ` +
+    `to run later, describe the shot concretely, draft it with create_artifact as SVG or HTML, or ` +
+    `find something already in their library that fits. Give it as a real answer, not a consolation ` +
+    `prize — a Lean Mode reply must never be thinner than a normal one.`,
     ``,
     `Never say or imply you generated an image, video or 3D model while Lean Mode is on, and never ` +
     `write a markdown image link to stand in for one — the app renders real media itself, so a ` +

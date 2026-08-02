@@ -41,6 +41,10 @@ import {
   type MasterAssetRow,
 } from "@/lib/masterAssets";
 import { renderSplatViews } from "@/lib/splatViews";
+import { parseBlueprint, formatProblems } from "@/lib/blueprint/schema";
+import { renderBlueprintSheet } from "@/lib/blueprint/sheet";
+import { validateSheetSvg } from "@/lib/blueprint/sheetValidate";
+import { VIEWS, type ViewName } from "@/lib/blueprint/geometry";
 
 /** Best-effort reverse lookup: which master(s) reference these images/splats.
  *  Returns empty maps when the master_assets migration isn't applied — the
@@ -945,6 +949,33 @@ export const CHAT_TOOL_DEFINITIONS = [
           content: { type: "string", description: "Inner body markup. May include <style>/<script>. No <html>/<head>/<body> wrappers and no external network calls (blocked by sandbox CSP)." },
         },
         required: ["content"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_blueprint_sheet",
+      description:
+        "Draw a production sheet — a technical turnaround with palette swatches, proportion scale and construction notes — from a structured blueprint. FREE: rendered locally, no API call, works in every Lean Mode tier. You describe WHAT the thing is made of; the app computes every coordinate and projects the views, so front/profile/top cannot disagree. Never write SVG or coordinates yourself. Think the design through in prose FIRST, then call this once with the finished structure. If it returns `problems`, each one names the location, what is wrong, and which values are valid there — fix exactly those and call again.",
+      parameters: {
+        type: "object",
+        properties: {
+          master_id: { type: "string", description: "Load the blueprint already saved on a master asset (id or @name). Omit when passing `blueprint` inline." },
+          blueprint: {
+            type: "object",
+            description:
+              "The structured tech pack. Sizes are in HEAD-UNITS (the figure is `heightHeads` heads tall) and attach points are normalized 0..1 on a face — there are no absolute coordinates. Keys: kind (character|prop|set), form (hard_surface|organic|mixed), name, heightHeads, silhouette, absoluteHeight {value,unit}, parts[{id,name,primitive,size{x,y,z},parent,attach,offset,rotate,swatch,symmetry}], attachPoints[{id,name,part,face,u,v}], joints[{id,name,part,at,axis,range}], landmarks[{id,name,atHeads}], palette[{role,hex,note}], costume[{id,name,covers,state,swatchRoles}], marks[{name,part,side,description}], negatives[], notes[], validity{fromChapter,toChapter}. primitive is box|plate|wedge|cylinder|capsule|cone|sphere. face is front|back|left|right|top|bottom. symmetry \"mirror_x\" draws the limb twice so the pair can never drift apart. Use form \"organic\" for people and creatures — solids are not projected, the sheet becomes a proportion scaffold and landmarks are required.",
+          },
+          views: {
+            type: "array",
+            items: { type: "string", enum: ["front", "right", "top", "back", "left", "three_quarter"] },
+            description: "Panels to draw, left to right. Default front, three_quarter, right, back — the back view is the one turnarounds hallucinate without.",
+          },
+          stroke_width: { type: "number", description: "Line weight, 0.4-6 (default 1.4). Thinner lines hold a generator closer to the drawing when the sheet is used as a reference; thicker lines leave it more freedom." },
+          save_to_master: { type: "string", description: "Master asset id or @name to save this blueprint onto, making it that character's authoritative definition." },
+          title: { type: "string", description: "Title for the sheet in the Workspace. Defaults to the blueprint name." },
+        },
       },
     },
   },
@@ -3469,6 +3500,118 @@ export async function executeChatTool(
         }
         // Rendered client-side from the tool-call arguments (see ChatContext).
         return { result: { ok: true, title: art.title, kind: art.kind, bytes: art.content.length }, event: { name, summary: `Created artifact "${art.title}"`, ok: true } };
+      }
+      case "create_blueprint_sheet": {
+        // The sheet is drawn, checked and shown entirely on this machine — no
+        // key, no request, no spend. That is why it is not in any Lean Mode
+        // block list: when every generator is switched off this still works.
+        let raw: unknown = (args as any).blueprint;
+        let master: MasterAssetRow | null = null;
+
+        const masterRef = String((args as any).master_id || "").trim();
+        if (!raw && masterRef) {
+          master = await resolveMaster(masterRef);
+          if (!master) {
+            return { result: { error: `No master asset matches "${masterRef}". Call list_master_assets to see what exists.` }, event: { name, summary: "Master not found", ok: false } };
+          }
+          raw = master.blueprint;
+          if (!raw) {
+            return {
+              result: { error: `@${master.name} has no blueprint yet — it only has the prose tech pack. Author a blueprint and pass it as \`blueprint\`, with save_to_master:"${master.name}" to attach it.` },
+              event: { name, summary: `@${master.name} has no blueprint`, ok: false },
+            };
+          }
+        }
+        if (!raw) {
+          return { result: { error: "Pass either `blueprint` (the structured tech pack) or `master_id` (to load one already saved)." }, event: { name, summary: "Nothing to draw", ok: false } };
+        }
+
+        const parsed = parseBlueprint(raw);
+        if (!parsed.ok) {
+          // Location + violation + admissible values. The third part is what
+          // makes a repair loop work; without it the message is nearly useless.
+          return {
+            result: {
+              error: "The blueprint did not pass validation, so nothing was drawn.",
+              problems: formatProblems(parsed.problems).slice(0, 12),
+              note: "Fix exactly these and call create_blueprint_sheet again. Do not change anything else.",
+            },
+            event: { name, summary: `Blueprint rejected (${parsed.problems.length} problem${parsed.problems.length === 1 ? "" : "s"})`, ok: false },
+          };
+        }
+        const bp = parsed.blueprint;
+
+        const sheet = renderBlueprintSheet(bp, {
+          views: Array.isArray((args as any).views) && (args as any).views.length
+            ? ((args as any).views as string[]).filter((v) => (VIEWS as readonly string[]).includes(v)) as ViewName[]
+            : undefined,
+          strokeWidth: Number((args as any).stroke_width) || undefined,
+        });
+
+        const sheetProblems = validateSheetSvg(sheet.svg);
+        if (sheetProblems.length) {
+          // Our own renderer produced something that fails the gate. That is a
+          // bug here, not in the model's blueprint — say so rather than sending
+          // it round a repair loop it cannot win.
+          return {
+            result: {
+              error: "The sheet failed its own validity check and was not shown. This is a renderer fault, not a problem with the blueprint.",
+              problems: formatProblems(sheetProblems).slice(0, 6),
+            },
+            event: { name, summary: "Sheet failed validation", ok: false },
+          };
+        }
+
+        let savedTo: string | null = null;
+        const saveRef = String((args as any).save_to_master || "").trim();
+        if (saveRef) {
+          const target = master && (saveRef === master.id || saveRef.replace(/^@/, "").toLowerCase() === master.name)
+            ? master
+            : await resolveMaster(saveRef);
+          if (!target) {
+            return {
+              result: { error: `The sheet drew fine, but no master matches "${saveRef}" so the blueprint was not saved. Call list_master_assets, then call again with a real id or @name.` },
+              event: { name, summary: "Master not found for save", ok: false },
+            };
+          }
+          try {
+            await updateMasterAsset(target.id, { blueprint: bp });
+            savedTo = `@${target.name}`;
+          } catch (e: any) {
+            return {
+              result: {
+                error: `The sheet drew fine but the blueprint could not be saved: ${e?.message || "unknown error"}`,
+                note: "Tell the user the sheet is on screen but not attached to the master yet.",
+              },
+              event: { name, summary: "Blueprint save failed", ok: false },
+            };
+          }
+        }
+
+        const title = String((args as any).title || "").trim() || `${bp.name} — blueprint sheet`;
+        return {
+          result: {
+            ok: true,
+            title,
+            // Deliberately NOT the SVG. A sheet is tens of kilobytes of markup
+            // and the model has no use for it — it is already on the user's
+            // screen. __artifact is stripped before this result is sent.
+            views: sheet.views,
+            elements: sheet.nodeCount,
+            size: `${sheet.width}×${sheet.height}`,
+            parts_drawn: bp.parts.length,
+            palette: bp.palette.map((s) => s.role),
+            saved_to_master: savedTo,
+            omitted: sheet.omitted.length ? sheet.omitted : undefined,
+            note: "The sheet is ALREADY displayed to the user in the side panel — do not describe the markup or output an image link. Say what it shows in a sentence.",
+            __artifact: { title, kind: "svg", content: sheet.svg },
+          },
+          event: {
+            name,
+            summary: savedTo ? `Drew ${bp.name} sheet and saved it to ${savedTo}` : `Drew ${bp.name} sheet`,
+            ok: true,
+          },
+        };
       }
       case "render_blocks": {
         const { blocks, issues } = parseBlocksVerbose((args as any).blocks ?? args);
