@@ -74,7 +74,23 @@ export const PartSchema = z.object({
    *  arm declaration yields two arms that cannot drift apart. */
   symmetry: z.enum(["none", "mirror_x"]).optional(),
 });
-export type Part = z.infer<typeof PartSchema>;
+// Types are written out rather than inferred with z.infer: this project builds
+// without strictNullChecks, under which zod widens every inferred property to
+// optional and the geometry kernel can no longer trust that a size has an x.
+export interface Vec3Lit { x: number; y: number; z: number }
+
+export interface Part {
+  id: string;
+  name: string;
+  primitive: Primitive;
+  size: Vec3Lit;
+  parent?: string;
+  attach?: string;
+  offset?: Vec3Lit;
+  rotate?: Vec3Lit;
+  swatch?: string;
+  symmetry?: "none" | "mirror_x";
+}
 
 export const AttachPointSchema = z.object({
   id: ID,
