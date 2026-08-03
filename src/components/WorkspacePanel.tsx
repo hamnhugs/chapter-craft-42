@@ -4,6 +4,7 @@ import { safeUrlTransform, safeMarkdownComponents } from "@/lib/markdownSafety";
 import { toast } from "sonner";
 import { type Artifact } from "@/lib/artifacts";
 import ArtifactFrame from "@/components/ArtifactFrame";
+import SvgArtifactViewer from "@/components/SvgArtifactViewer";
 import {
   useWorkspaceItems,
   workspaceStore,
@@ -211,6 +212,9 @@ const WorkspacePanel: React.FC<{
                 </div>
               )}
             </div>
+          ) : selected.kind === "svg" ? (
+            // SVG sheets get zoom + SVG/PDF export; keyed so zoom resets per item.
+            <SvgArtifactViewer key={selected.id} title={selected.title} content={selected.content} />
           ) : (
             <div className="flex-1 min-h-0 bg-white">
               <ArtifactFrame
@@ -218,7 +222,7 @@ const WorkspacePanel: React.FC<{
                 title={selected.title}
                 artifact={{
                   title: selected.title,
-                  kind: selected.kind === "svg" ? "svg" : "html",
+                  kind: "html",
                   content: selected.content,
                 } as Artifact}
               />

@@ -21,6 +21,12 @@ import {
 const FAL_QUEUE = "https://queue.fal.run";
 const BUCKET = "generated-videos";
 
+// Every outbound fetch carries a deadline: a request with no signal can hang
+// the tab forever on a socket the server accepted but never answers. 45s for
+// submit/poll/result API calls, 180s for the finished-clip download.
+const API_TIMEOUT_MS = 45_000;
+const MEDIA_TIMEOUT_MS = 180_000;
+
 export interface FalVideoModel {
   id: string;
   label: string;
@@ -157,21 +163,28 @@ export interface FalSubmitResult {
 }
 
 async function submitToFal(apiKey: string, model: string, body: Record<string, unknown>): Promise<FalSubmitResult> {
-  const res = await fetch(`${FAL_QUEUE}/${model}`, {
-    method: "POST",
-    headers: falHeaders(apiKey),
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${FAL_QUEUE}/${model}`, {
+      method: "POST",
+      headers: falHeaders(apiKey),
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+  } catch (e: any) {
+    if (e?.name === "TimeoutError") throw new Error(`fal.ai · ${model}: video submit timed out after ${API_TIMEOUT_MS / 1000}s.`);
+    throw e;
+  }
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
     if (res.status === 401 || res.status === 403) throw new Error("Invalid fal.ai API key.");
     if (res.status === 402) throw new Error("Insufficient fal.ai credits — this bills to your own fal key.");
-    if (res.status === 422) throw new Error(`fal rejected the request: ${extractApiError(errText)}`);
-    throw new Error(`Video submit failed (HTTP ${res.status}) ${extractApiError(errText)}`);
+    if (res.status === 422) throw new Error(`fal.ai · ${model}: rejected the request — ${extractApiError(errText)}`);
+    throw new Error(`fal.ai · ${model}: video submit failed (HTTP ${res.status}) ${extractApiError(errText)}`);
   }
   const data = await res.json().catch(() => ({}));
   const requestId: string | undefined = data?.request_id || data?.requestId;
-  if (!requestId) throw new Error("fal submit returned no request id.");
+  if (!requestId) throw new Error(`fal.ai · ${model}: submit returned no request id.`);
   return { requestId, jobId: `${FAL_JOB_PREFIX}${requestId}` };
 }
 
@@ -253,13 +266,25 @@ export async function pollFalVideo(
 ): Promise<FalVideoPollSnapshot> {
   const requestId = falRequestId(opts.jobId);
   const url = `${FAL_QUEUE}/${queueBase(opts.model)}/requests/${encodeURIComponent(requestId)}/status`;
-  const res = await fetch(url, { headers: { Authorization: `Key ${apiKey}` } });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { Authorization: `Key ${apiKey}` },
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+  } catch (e: any) {
+    // Thrown errors were already the contract for network failures (the
+    // bubble's poll loop catches and keeps polling) — a timeout rides the
+    // same path, it just says who stalled.
+    if (e?.name === "TimeoutError") throw new Error(`fal.ai · ${opts.model}: status poll timed out after ${API_TIMEOUT_MS / 1000}s.`);
+    throw e;
+  }
   if (!res.ok) {
     if (res.status === 401 || res.status === 403) {
       return { status: "failed", error: "fal.ai rejected the API key — the clip may still be rendering. Fix the key in Settings and press Try again.", ready: false, authError: true };
     }
     if (res.status === 404 || res.status === 410) {
-      return { status: "failed", error: `Video job unavailable (HTTP ${res.status}).`, ready: false };
+      return { status: "failed", error: `fal.ai · ${opts.model}: video job unavailable (HTTP ${res.status}).`, ready: false };
     }
     return { status: "processing", error: null, ready: false };
   }
@@ -267,7 +292,7 @@ export async function pollFalVideo(
   const raw = String(data?.status || "").toUpperCase();
   if (raw === "COMPLETED") return { status: "completed", error: null, ready: true };
   if (raw === "FAILED" || raw === "ERROR") {
-    return { status: "failed", error: String(data?.error || "Generation failed"), ready: false };
+    return { status: "failed", error: `fal.ai · ${opts.model}: ${String(data?.error || "generation failed upstream")}`, ready: false };
   }
   if (raw === "IN_QUEUE") return { status: "pending", error: null, ready: false };
   return { status: "processing", error: null, ready: false };
@@ -333,8 +358,18 @@ export async function finalizeFalVideoJob(opts: {
   }
 
   const requestId = falRequestId(opts.jobId);
-  const resultUrl = `${FAL_QUEUE}/${queueBase(existing.model || opts.model)}/requests/${encodeURIComponent(requestId)}`;
-  const res = await fetch(resultUrl, { headers: { Authorization: `Key ${opts.apiKey}` } });
+  const modelId = existing.model || opts.model;
+  const resultUrl = `${FAL_QUEUE}/${queueBase(modelId)}/requests/${encodeURIComponent(requestId)}`;
+  let res: Response;
+  try {
+    res = await fetch(resultUrl, {
+      headers: { Authorization: `Key ${opts.apiKey}` },
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+  } catch (e: any) {
+    if (e?.name === "TimeoutError") throw new Error(`fal.ai · ${modelId}: reading the finished clip timed out after ${API_TIMEOUT_MS / 1000}s.`);
+    throw e;
+  }
   if (!res.ok) {
     const t = await res.text().catch(() => "");
     // A 422 here is the job's TERMINAL outcome, not a read hiccup: fal
@@ -343,23 +378,32 @@ export async function finalizeFalVideoJob(opts: {
     // the row is honest and the one-in-flight rail frees immediately instead
     // of blocking new fal jobs for up to 30 minutes.
     if (res.status === 422) {
-      const msg = `The provider rejected the job's inputs: ${extractApiError(t)}`;
+      const msg = `fal.ai · ${modelId}: rejected the job's inputs — ${extractApiError(t)}`;
       await markVideoJobFailed(opts.jobId, msg);
       throw new Error(msg);
     }
-    throw new Error(`Could not read the finished clip (HTTP ${res.status}) ${extractApiError(t).slice(0, 160)}`);
+    throw new Error(`fal.ai · ${modelId}: could not read the finished clip (HTTP ${res.status}) ${extractApiError(t).slice(0, 160)}`);
   }
   const payload = await res.json().catch(() => ({}));
 
   const videoUrl = extractFalVideoUrl(payload);
   if (!videoUrl) {
-    await markVideoJobFailed(opts.jobId, "The finished job contained no video file.");
-    throw new Error("The finished job contained no video file.");
+    const msg = `fal.ai · ${modelId}: the finished job contained no video file.`;
+    await markVideoJobFailed(opts.jobId, msg);
+    throw new Error(msg);
   }
 
-  const clipRes = await fetch(videoUrl);
-  if (!clipRes.ok) throw new Error(`Video download failed (HTTP ${clipRes.status})`);
-  const blob = await clipRes.blob();
+  let blob: Blob;
+  try {
+    // The deadline covers the body read too — blob() on a stalled stream
+    // hangs exactly like the initial request would.
+    const clipRes = await fetch(videoUrl, { signal: AbortSignal.timeout(MEDIA_TIMEOUT_MS) });
+    if (!clipRes.ok) throw new Error(`fal.ai · ${modelId}: video download failed (HTTP ${clipRes.status})`);
+    blob = await clipRes.blob();
+  } catch (e: any) {
+    if (e?.name === "TimeoutError") throw new Error(`fal.ai · ${modelId}: video download timed out after ${MEDIA_TIMEOUT_MS / 1000}s.`);
+    throw e;
+  }
 
   const safeJob = opts.jobId.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 80);
   const base = `${uid}/${safeJob}`;

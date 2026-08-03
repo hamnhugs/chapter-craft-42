@@ -2,6 +2,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { lazy, Suspense } from "react";
 import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AppProvider } from "@/context/AppContext";
 import { ChatProvider } from "@/context/ChatContext";
@@ -10,12 +11,13 @@ import { useAuth } from "@/hooks/useAuth";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
-import MemoryGuide from "./pages/MemoryGuide";
-import WikiControlsGuide from "./pages/WikiControlsGuide";
-import Admin from "./pages/Admin";
-import PaymentSuccess from "./pages/PaymentSuccess";
-import ModelExplorer from "./pages/ModelExplorer";
-import NotFound from "./pages/NotFound";
+// Non-critical routes are code-split so the initial bundle only carries Index/Auth
+const MemoryGuide = lazy(() => import("./pages/MemoryGuide"));
+const WikiControlsGuide = lazy(() => import("./pages/WikiControlsGuide"));
+const Admin = lazy(() => import("./pages/Admin"));
+const PaymentSuccess = lazy(() => import("./pages/PaymentSuccess"));
+const ModelExplorer = lazy(() => import("./pages/ModelExplorer"));
+const NotFound = lazy(() => import("./pages/NotFound"));
 
 const queryClient = new QueryClient();
 
@@ -43,6 +45,8 @@ const App = () => (
         <HashRouter>
           <AppProvider>
             <ChatProvider>
+              {/* Fallback mirrors the ProtectedRoute loading state so chunk loads look identical */}
+              <Suspense fallback={<div className="flex items-center justify-center h-screen text-muted-foreground">Loading…</div>}>
               <Routes>
                 <Route path="/auth" element={<AuthRoute />} />
                 {/* /admin has its own self-contained login gate — not wrapped in ProtectedRoute */}
@@ -89,6 +93,7 @@ const App = () => (
                 />
                 <Route path="*" element={<NotFound />} />
               </Routes>
+              </Suspense>
             </ChatProvider>
           </AppProvider>
         </HashRouter>

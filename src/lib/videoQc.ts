@@ -16,6 +16,16 @@ import type { VideoQcResult } from "@/lib/videoGen";
 // Everything is a tunable heuristic — thresholds ship as a versioned config,
 // never hardcoded elsewhere. The gate WARNS; it never blocks or deletes a
 // paid clip.
+//
+// Optionally a VLM identity judge runs as a SECOND opinion (see
+// judgeIdentityWithVlm). EntityBench (2026) measured that embedding
+// similarity disagrees with judged identity: DINO cosine correlates with
+// human raters at only ~51%, while a vision-model judge reaches ~83%. The
+// two signals are therefore reported side by side and NEVER averaged —
+// folding a ~51%-correlated number into an ~83%-correlated one would launder
+// the weaker signal, and their disagreement is itself the most informative
+// thing the report can surface (amber ≠ precision; thresholds here still
+// deserve calibration against real clips).
 
 export const QC_VERSION = 1;
 
@@ -42,6 +52,31 @@ export const QC_THRESHOLDS: QcThresholds = {
   paletteDeltaE: { green: 10, red: 20 },
   maxFrames: 12,
 };
+
+/** What the VLM judge returns: its own 0–1 identity score plus a categorical
+ *  verdict. Deliberately NOT on the green/amber/red scale — it answers a
+ *  different question ("same character?") than the cosine does. */
+export interface VlmIdentityJudgement {
+  score: number;
+  verdict: "match" | "drift" | "mismatch";
+  reasons: string[];
+}
+
+/** The judge signal as embedded in a QC report: judgement + provenance +
+ *  an explicit disagreement flag so consumers never have to re-derive it. */
+export interface VlmJudgeSignal extends VlmIdentityJudgement {
+  model: string;
+  /** True when the judge and the DINO identity band point different
+   *  directions (per EntityBench, when they disagree the judge is the one
+   *  more likely to match a human rater — but we surface, never override). */
+  disagrees_with_embedding: boolean;
+}
+
+/** VideoQcResult (videoGen.ts) plus the optional judge signal. Additive and
+ *  optional so persisted rows from before the judge existed parse unchanged. */
+export interface VideoQcResultV2 extends VideoQcResult {
+  vlm_judge?: VlmJudgeSignal;
+}
 
 // ── Embedder (lazy singleton) ───────────────────────────────────────────────
 
@@ -102,9 +137,14 @@ interface SampledFrame {
   embedUrl: string;
   /** Small ImageData for palette extraction. */
   palettePixels: Uint8ClampedArray;
+  /** Aspect-correct ≤512px data URL for the VLM judge — the 224×224 embed
+   *  crop squashes aspect, which is fine for DINO but would distort exactly
+   *  the silhouette cues the judge is asked to weigh. Captured only when a
+   *  judge is requested. */
+  judgeUrl?: string;
 }
 
-async function sampleFrames(videoUrl: string, maxFrames: number): Promise<SampledFrame[]> {
+async function sampleFrames(videoUrl: string, maxFrames: number, captureJudgeFrames = false): Promise<SampledFrame[]> {
   const video = document.createElement("video");
   video.crossOrigin = "anonymous"; // Supabase storage serves CORS — keeps the canvas untainted
   video.muted = true;
@@ -135,6 +175,18 @@ async function sampleFrames(videoUrl: string, maxFrames: number): Promise<Sample
   const palCtx = palCanvas.getContext("2d", { willReadFrequently: true });
   if (!embedCtx || !palCtx) throw new Error("Canvas unavailable for QC");
 
+  let judgeCtx: CanvasRenderingContext2D | null = null;
+  let judgeCanvas: HTMLCanvasElement | null = null;
+  if (captureJudgeFrames) {
+    const vw = video.videoWidth || 512, vh = video.videoHeight || 512;
+    const scale = Math.min(1, 512 / Math.max(vw, vh));
+    judgeCanvas = document.createElement("canvas");
+    judgeCanvas.width = Math.max(1, Math.round(vw * scale));
+    judgeCanvas.height = Math.max(1, Math.round(vh * scale));
+    judgeCtx = judgeCanvas.getContext("2d");
+    // No judge canvas ⇒ the judge silently doesn't run; embed QC still does.
+  }
+
   const frames: SampledFrame[] = [];
   for (const ts of timestamps) {
     await new Promise<void>((resolve, reject) => {
@@ -145,10 +197,16 @@ async function sampleFrames(videoUrl: string, maxFrames: number): Promise<Sample
     });
     embedCtx.drawImage(video, 0, 0, 224, 224);
     palCtx.drawImage(video, 0, 0, 48, 48);
+    let judgeUrl: string | undefined;
+    if (judgeCtx && judgeCanvas) {
+      judgeCtx.drawImage(video, 0, 0, judgeCanvas.width, judgeCanvas.height);
+      judgeUrl = judgeCanvas.toDataURL("image/jpeg", 0.9);
+    }
     frames.push({
       ts: Math.round(ts * 100) / 100,
       embedUrl: embedCanvas.toDataURL("image/jpeg", 0.9),
       palettePixels: palCtx.getImageData(0, 0, 48, 48).data.slice(),
+      judgeUrl,
     });
   }
   try { video.src = ""; video.load(); } catch { /* teardown best-effort */ }
@@ -236,6 +294,169 @@ export async function embedImageUrl(url: string): Promise<number[]> {
   return vec;
 }
 
+// ── VLM identity judge (optional second opinion) ────────────────────────────
+
+// Same endpoint imageGen uses — hardcoded on purpose: the adapter seam is for
+// chat routing, and QC must not grow a dependency on files mid-refactor.
+const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
+
+/** Balanced-brace scan for the first {...} block, string-aware. Models love
+ *  wrapping JSON in prose or markdown fences, so "parse the whole reply" is a
+ *  losing strategy, and a greedy regex breaks on trailing text. */
+function extractFirstJsonObject(text: string): any | null {
+  const start = text.indexOf("{");
+  if (start === -1) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        try { return JSON.parse(text.slice(start, i + 1)); } catch { return null; }
+      }
+    }
+  }
+  return null;
+}
+
+/** Signed ref URL → aspect-correct ≤512px jpeg data URL (the judge API wants
+ *  inline images, and full-res refs would bloat the request for no benefit).
+ *  Null on any failure — one bad ref shouldn't kill the judge. */
+async function refToDataUrl(url: string): Promise<string | null> {
+  try {
+    if (url.startsWith("data:")) return url;
+    const img = new Image();
+    img.crossOrigin = "anonymous"; // Supabase storage serves CORS — keeps the canvas untainted
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("ref image timed out")), 10000);
+      img.onload = () => { clearTimeout(timeout); resolve(); };
+      img.onerror = () => { clearTimeout(timeout); reject(new Error("ref image failed to load")); };
+      img.src = url;
+    });
+    const scale = Math.min(1, 512 / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+    const w = Math.max(1, Math.round((img.naturalWidth || 1) * scale));
+    const h = Math.max(1, Math.round((img.naturalHeight || 1) * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, w, h);
+    return canvas.toDataURL("image/jpeg", 0.9);
+  } catch { return null; }
+}
+
+/** Up to n items spread evenly across the array (always includes both ends). */
+function pickSpread<T>(arr: T[], n: number): T[] {
+  if (arr.length <= n) return arr.slice();
+  const out: T[] = [];
+  for (let i = 0; i < n; i++) out.push(arr[Math.round((i * (arr.length - 1)) / (n - 1))]);
+  return out;
+}
+
+const JUDGE_RUBRIC = `You are a character-identity judge for animated-video QC.
+The images labeled "REFERENCE (canonical)" define the one true look of a character.
+The images labeled "FRAME n" are frames sampled from a generated video.
+Judge whether the character in the frames is the SAME character as in the references.
+Compare: face/head structure, overall silhouette and proportions, color palette,
+and costume/marking details. Ignore pose, camera angle, lighting, background,
+compression artifacts, and motion blur.
+Verdicts: "match" = clearly the same character; "drift" = same character but
+details have shifted (palette, proportions, costume); "mismatch" = a different character.
+Reply with STRICT JSON only, no prose, no markdown, exactly this shape:
+{"score": <number 0..1, identity similarity>, "verdict": "match"|"drift"|"mismatch", "reasons": [<short concrete observations>]}`;
+
+/** Ask a vision model the actual question the cosine only approximates:
+ *  "is this the same character?". EntityBench (2026): DINO embedding
+ *  similarity agrees with human raters ~51% of the time, a VLM judge ~83% —
+ *  which is why this exists at all, and why its output is reported as its own
+ *  labeled signal instead of being averaged into the embedding score.
+ *
+ *  Returns null on ANY failure (network, refusal, unparseable). Callers must
+ *  treat null strictly as "judge unavailable" — never as a pass or a fail. */
+export async function judgeIdentityWithVlm(opts: {
+  /** Frame data URLs, ≤4 used. */
+  frames: string[];
+  /** Reference data URLs (hero first), ≤3 used. */
+  referenceImages: string[];
+  apiKey: string;
+  model: string;
+  /** Only OpenRouter today; the field exists so a second judge host is an
+   *  additive change, not a signature break. */
+  endpoint?: "openrouter";
+}): Promise<VlmIdentityJudgement | null> {
+  const frames = opts.frames.slice(0, 4);
+  const refs = opts.referenceImages.slice(0, 3);
+  if (frames.length === 0 || refs.length === 0 || !opts.apiKey || !opts.model) return null;
+  try {
+    // Rubric first, then labeled images — the labels are text parts directly
+    // before each image so the model can address them unambiguously.
+    const content: any[] = [{ type: "text", text: JUDGE_RUBRIC }];
+    refs.forEach((url, i) => {
+      content.push({ type: "text", text: `REFERENCE (canonical) ${i + 1}:` });
+      content.push({ type: "image_url", image_url: { url } });
+    });
+    frames.forEach((url, i) => {
+      content.push({ type: "text", text: `FRAME ${i + 1}:` });
+      content.push({ type: "image_url", image_url: { url } });
+    });
+    const res = await fetch(OPENROUTER_CHAT_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${opts.apiKey}`,
+        "HTTP-Referer": window.location.origin,
+        "X-Title": "Chapter Craft",
+      },
+      body: JSON.stringify({
+        model: opts.model,
+        messages: [{ role: "user", content }],
+        // Deterministic-ish judging; enough tokens for a handful of reasons.
+        temperature: 0,
+        max_tokens: 600,
+        stream: false,
+      }),
+      signal: AbortSignal.timeout(45_000),
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(`OpenRouter · ${opts.model}: HTTP ${res.status} ${errText.slice(0, 200)}`);
+    }
+    const data = await res.json();
+    if (data?.error) throw new Error(`OpenRouter · ${opts.model}: ${data.error?.message || "API error"}`);
+    const raw = data?.choices?.[0]?.message?.content;
+    // Content can be a plain string or an array of parts, provider-dependent.
+    const text = typeof raw === "string"
+      ? raw
+      : Array.isArray(raw) ? raw.map((p: any) => p?.text || "").join("\n") : "";
+    const parsed = extractFirstJsonObject(text);
+    if (!parsed || typeof parsed.score !== "number" || !Number.isFinite(parsed.score)) return null;
+    const score = Math.min(1, Math.max(0, parsed.score));
+    // A missing/garbled verdict with a sane score is still usable — derive it
+    // rather than discarding a whole paid judge call.
+    const verdict: VlmIdentityJudgement["verdict"] =
+      parsed.verdict === "match" || parsed.verdict === "drift" || parsed.verdict === "mismatch"
+        ? parsed.verdict
+        : score >= 0.75 ? "match" : score >= 0.4 ? "drift" : "mismatch";
+    const reasons: string[] = Array.isArray(parsed.reasons)
+      ? parsed.reasons.filter((r: any) => typeof r === "string" && r.trim()).slice(0, 8)
+      : [];
+    return { score: Math.round(score * 1000) / 1000, verdict, reasons };
+  } catch (e: any) {
+    // Named so a bug report can say WHICH provider/model failed (the
+    // provider-visibility lesson) — but the judge stays advisory: null out.
+    console.warn(`OpenRouter · ${opts.model}: VLM identity judge unavailable —`, e?.message || e);
+    return null;
+  }
+}
+
 // ── Main entry ──────────────────────────────────────────────────────────────
 
 export async function runVideoQc(opts: {
@@ -245,12 +466,15 @@ export async function runVideoQc(opts: {
   refImageUrls: string[];
   lockPalette?: string[] | null;
   thresholds?: QcThresholds;
-}): Promise<VideoQcResult> {
+  /** When set, a VLM second opinion runs whenever the DINO identity signal is
+   *  anything short of a clear green (see the EntityBench note up top). */
+  vlmJudge?: { apiKey: string; model: string } | null;
+}): Promise<VideoQcResultV2> {
   const t = opts.thresholds || QC_THRESHOLDS;
   const started = Date.now();
   const { embed, device } = await getEmbedder();
 
-  const frames = await sampleFrames(opts.videoUrl, t.maxFrames);
+  const frames = await sampleFrames(opts.videoUrl, t.maxFrames, !!opts.vlmJudge);
   if (frames.length < 2) throw new Error("Not enough frames for QC");
 
   const frameVecs: number[][] = [];
@@ -289,12 +513,13 @@ export async function runVideoQc(opts: {
   // Verdict = worst band across the metrics that actually ran.
   type Band = "green" | "amber" | "red";
   const bands: Band[] = [];
+  let identityBand: Band | null = null;
   if (refSimMean != null && refSimMin != null) {
-    bands.push(
+    identityBand =
       refSimMean < t.identity.redMean ? "red"
       : refSimMean >= t.identity.greenMean && refSimMin >= t.identity.greenMin ? "green"
-      : "amber",
-    );
+      : "amber";
+    bands.push(identityBand);
   }
   if (temporalMean != null) {
     bands.push(temporalMean < t.temporal.red ? "red" : temporalMean >= t.temporal.green ? "green" : "amber");
@@ -303,6 +528,42 @@ export async function runVideoQc(opts: {
     bands.push(paletteDeltaE > t.paletteDeltaE.red ? "red" : paletteDeltaE <= t.paletteDeltaE.green ? "green" : "amber");
   }
   const verdict: Band = bands.includes("red") ? "red" : bands.includes("amber") ? "amber" : "green";
+
+  // Optional VLM second opinion — only when the caller supplied a key AND the
+  // embedding identity signal is not a clear green (amber, red, or absent).
+  // EntityBench (2026): DINO cosine agrees with human raters ~51%, a VLM
+  // judge ~83% — so a non-green cosine is exactly where a second, differently
+  // wired signal earns its API spend. The judge result is a SEPARATE labeled
+  // field: it never moves ref_sim_* numbers, never shifts the band verdict,
+  // and carries an explicit disagreement flag instead of being blended away.
+  let vlmJudge: VlmJudgeSignal | undefined;
+  if (opts.vlmJudge?.apiKey && opts.vlmJudge.model && identityBand !== "green" && opts.refImageUrls.length > 0) {
+    const judgeFrames = pickSpread(frames, 4)
+      .map((f) => f.judgeUrl || f.embedUrl)
+      .filter(Boolean);
+    const refDataUrls: string[] = [];
+    for (const url of opts.refImageUrls.slice(0, 3)) {
+      const d = await refToDataUrl(url);
+      if (d) refDataUrls.push(d);
+    }
+    if (judgeFrames.length > 0 && refDataUrls.length > 0) {
+      const judged = await judgeIdentityWithVlm({
+        frames: judgeFrames,
+        referenceImages: refDataUrls,
+        apiKey: opts.vlmJudge.apiKey,
+        model: opts.vlmJudge.model,
+      });
+      // null = judge unavailable — the report simply omits the signal.
+      if (judged) {
+        const judgeBand: Band = judged.verdict === "match" ? "green" : judged.verdict === "drift" ? "amber" : "red";
+        vlmJudge = {
+          ...judged,
+          model: opts.vlmJudge.model,
+          disagrees_with_embedding: identityBand != null && judgeBand !== identityBand,
+        };
+      }
+    }
+  }
 
   const round = (v: number | null) => (v == null ? null : Math.round(v * 1000) / 1000);
   return {
@@ -316,6 +577,9 @@ export async function runVideoQc(opts: {
     palette_delta_e: paletteDeltaE,
     verdict,
     runtime_ms: Date.now() - started,
+    // Omitted (not null) when the judge didn't run — JSON.stringify drops it,
+    // so persisted rows only carry the field when there is a real judgement.
+    vlm_judge: vlmJudge,
   };
 }
 
@@ -329,10 +593,15 @@ export async function writeQcResult(jobId: string, qc: VideoQcResult): Promise<v
   } catch { /* advisory only */ }
 }
 
-export function qcSummaryLine(qc: VideoQcResult): string {
+export function qcSummaryLine(qc: VideoQcResultV2): string {
   const parts: string[] = [];
   if (qc.ref_sim_mean != null) parts.push(`identity ${qc.ref_sim_mean}`);
   if (qc.temporal_mean != null) parts.push(`temporal ${qc.temporal_mean}`);
   if (qc.palette_delta_e != null) parts.push(`palette ΔE ${qc.palette_delta_e}`);
+  // The judge is its own labeled signal; when it disagrees with the embedding,
+  // say so out loud — that disagreement is the report's most useful fact.
+  if (qc.vlm_judge) {
+    parts.push(`judge ${qc.vlm_judge.verdict} ${qc.vlm_judge.score}${qc.vlm_judge.disagrees_with_embedding ? " (disagrees with embedding)" : ""}`);
+  }
   return parts.join(" · ");
 }

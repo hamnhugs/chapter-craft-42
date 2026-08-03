@@ -25,7 +25,8 @@ import { describeModel } from "@/lib/providers/registry";
 import { useDictation } from "@/hooks/useDictation";
 import { requestSettingsSection } from "@/lib/settingsNav";
 import VoiceNotesPanel, { appendVoiceNote } from "@/components/VoiceNotesPanel";
-import ResponseBlocks from "@/components/ResponseBlocks";
+// Lazy: ResponseBlocks pulls recharts (~large) but only renders when a model emits chart blocks
+const ResponseBlocks = React.lazy(() => import("@/components/ResponseBlocks"));
 import GeneratedImage from "@/components/GeneratedImage";
 import VideoBubble from "@/components/VideoBubble";
 import SplatBubble from "@/components/SplatBubble";
@@ -39,6 +40,8 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations, isSearchRateLimited } from "@/lib/chatTools";
 import { useDownloadableTtsId, downloadTtsAudio } from "@/lib/ttsAudioCache";
 import { fileToDownscaledDataUrl, isAcceptedImage, uploadChatImage, registerUploadedImage, removeUploadedChatImage, type PendingChatImage } from "@/lib/imageUpload";
+import { extractMentions, resolveMentions, buildMentionNote, findActiveMention, mentionTokenEnd, getCachedMasters, refreshMastersCache, type ActiveMention } from "@/lib/mentions";
+import type { MasterAssetRow } from "@/lib/masterAssets";
 
 
 const VOICE_QUICK_SEARCH_KEY = "voice_quick_search";
@@ -135,6 +138,21 @@ const ChatPanel: React.FC = () => {
   const [deepSearching, setDeepSearching] = useState(false);
   const [digesting, setDigesting] = useState(false);
 
+  // ---- @mention autocomplete over master assets ----
+  // `mention` is the "@tok|en" under the caret, or null (popup closed). It is
+  // ONLY ever set from real user events on the textarea — never on mount — and
+  // the textarea is never programmatically focused/blurred (Android Chrome pops
+  // the soft keyboard on any programmatic focus once the session has seen a
+  // gesture; this file's focus policy exists to prevent exactly that).
+  const [mention, setMention] = useState<ActiveMention | null>(null);
+  const [mentionMasters, setMentionMasters] = useState<MasterAssetRow[]>(() => getCachedMasters() || []);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const mentionWasOpenRef = useRef(false);
+  // Caret target for after a completion is inserted. Doubles as a "value/caret
+  // not settled yet" latch so a trailing keyup can't recompute the token from
+  // the pre-insertion DOM value and flash the popup back open.
+  const pendingCaretRef = useRef<number | null>(null);
+
   // ---- Voice features absorbed from the former Echo (Voice) tab ----
   const [notesPanelOpen, setNotesPanelOpen] = useState(false);
   // Configured in the Settings tab; read-only here.
@@ -173,6 +191,66 @@ const ChatPanel: React.FC = () => {
     suppressDictationRef.current = false;
     dictation.start();
   };
+
+  // Recompute the active @-token from the LIVE textarea value/caret. Reads the
+  // DOM element (not `input` state) so it's accurate inside onChange, before
+  // React commits. Only meaningful while the textarea already holds focus.
+  const syncMention = useCallback(() => {
+    if (pendingCaretRef.current != null) return; // mid-completion — see applyMention
+    const el = inputRef.current;
+    if (!el || document.activeElement !== el) { setMention(null); return; }
+    setMention(findActiveMention(el.value, el.selectionStart ?? el.value.length));
+  }, []);
+
+  const mentionQuery = mention?.query;
+  const mentionMatches = mention
+    ? mentionMasters.filter((m) => m.name.startsWith(mention.query)).slice(0, 6)
+    : [];
+
+  // Highlight resets to the top whenever the typed prefix changes.
+  useEffect(() => { setMentionIndex(0); }, [mentionQuery]);
+
+  // Refresh the session-cached master list once per popup-open (the cached
+  // list renders instantly; new masters appear when the fetch lands).
+  const mentionOpen = mention !== null;
+  useEffect(() => {
+    if (mentionOpen && !mentionWasOpenRef.current) {
+      void refreshMastersCache().then(setMentionMasters);
+    }
+    mentionWasOpenRef.current = mentionOpen;
+  }, [mentionOpen]);
+
+  // Replace the whole token with "@name " and park the caret after the space.
+  // Value and caret only — the textarea keeps whatever focus it already has.
+  const applyMention = useCallback((name?: string) => {
+    if (!mention || !name) return;
+    const value = input;
+    const end = mentionTokenEnd(value, mention.start);
+    const rest = value.slice(end);
+    // Don't double up when a space already follows the token; either way the
+    // caret lands just past it, ready for the next word.
+    const insert = `@${name}${rest.startsWith(" ") ? "" : " "}`;
+    const next = value.slice(0, mention.start) + insert + rest;
+    const caret = mention.start + name.length + 2;
+    setMention(null);
+    if (next === value) {
+      // Completion was a no-op (token already complete) — setInput won't
+      // re-render, so the caret latch below would never release. Move it now.
+      const el = inputRef.current;
+      if (el && document.activeElement === el) el.setSelectionRange(caret, caret);
+      return;
+    }
+    pendingCaretRef.current = caret;
+    setInput(next);
+  }, [mention, input]);
+  useLayoutEffect(() => {
+    const caret = pendingCaretRef.current;
+    if (caret == null) return;
+    pendingCaretRef.current = null;
+    const el = inputRef.current;
+    // Move the caret only while the textarea is ALREADY focused — never focus it.
+    if (el && document.activeElement === el) el.setSelectionRange(caret, caret);
+  }, [input]);
 
   // Auto-scroll only when the TAIL of the conversation changes (a new message
   // appended, or the streaming reply growing) — never when older history is
@@ -563,6 +641,18 @@ const ChatPanel: React.FC = () => {
       dictation.stop();
       setInput("");
       setPendingImages([]);
+      setMention(null); // popup state would otherwise outlive the cleared draft
+      // Pre-resolve @master mentions in parallel with the image uploads so the
+      // model learns the real ids exist WITHOUT a list_master_assets round-trip.
+      // Hard 1.5s cap: the note is advisory and must never hold the send
+      // hostage — on timeout the message goes out bare.
+      const mentionNotePromise: Promise<string | null> =
+        text && extractMentions(text).length > 0
+          ? Promise.race([
+              resolveMentions(text).then(buildMentionNote),
+              new Promise<string | null>((resolve) => { window.setTimeout(() => resolve(null), 1500); }),
+            ]).catch(() => null)
+          : Promise.resolve(null);
       if (voiceQuickSearch && burplexityApiToken && !isToolBlocked(leanMode, "web_search") && SEARCH_INTENT_RE.test(text)) {
         runBackgroundSearch(text); // intentionally not awaited
       }
@@ -609,8 +699,11 @@ const ChatPanel: React.FC = () => {
       if (imagesForModel.some((i) => !("ref" in i) || !i.ref)) {
         toast.warning("An image couldn't be saved to your library — the AI can see it this turn, but won't be able to edit or reuse it later.");
       }
+      // Visibly appended (the transcript shows exactly what the model saw).
+      const mentionNote = await mentionNotePromise;
+      const outgoing = mentionNote ? `${text}\n\n${mentionNote}` : text;
       try {
-        await sendMessage(text || "(see attached image)", { images: imagesForModel });
+        await sendMessage(outgoing || "(see attached image)", { images: imagesForModel });
       } catch { /* surfaced via toast */ }
     } finally {
       sendingRef.current = false;
@@ -618,6 +711,14 @@ const ChatPanel: React.FC = () => {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // While the mention popup is showing, the navigation keys belong to it —
+    // Enter accepts a completion instead of sending.
+    if (mention && mentionMatches.length > 0) {
+      if (e.key === "ArrowDown") { e.preventDefault(); setMentionIndex((i) => (i + 1) % mentionMatches.length); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); setMentionIndex((i) => (i - 1 + mentionMatches.length) % mentionMatches.length); return; }
+      if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); applyMention(mentionMatches[mentionIndex]?.name); return; }
+      if (e.key === "Escape") { e.preventDefault(); setMention(null); return; }
+    }
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
 
@@ -871,7 +972,11 @@ const ChatPanel: React.FC = () => {
                     </details>
                   )}
                   {msg.content && <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown urlTransform={safeUrlTransform} components={safeMarkdownComponents}>{msg.content}</ReactMarkdown></div>}
-                  {msg.blocks && msg.blocks.length > 0 && <ResponseBlocks blocks={msg.blocks} />}
+                  {msg.blocks && msg.blocks.length > 0 && (
+                    <React.Suspense fallback={null}>
+                      <ResponseBlocks blocks={msg.blocks} />
+                    </React.Suspense>
+                  )}
                   {msg.artifact && (
                     <button
                       onClick={() => openArtifactInWorkspace(msg)}
@@ -1024,8 +1129,38 @@ const ChatPanel: React.FC = () => {
               <span className="material-symbols-outlined text-xl">attach_file</span>
             </button>
             <div className="flex-grow relative">
+              {/* @mention popup — anchored above the composer. Options use
+                  onMouseDown preventDefault so choosing one never steals focus
+                  from the textarea (the caret math in applyMention only runs
+                  while it is already focused; Android keyboard rule). */}
+              {mention && mentionMatches.length > 0 && (
+                <div
+                  role="listbox"
+                  aria-label="Master assets"
+                  className="absolute bottom-full left-0 mb-2 z-50 min-w-[200px] max-w-[280px] max-h-52 overflow-y-auto rounded-xl bg-surface-container-high border border-outline-variant/30 shadow-xl py-1"
+                >
+                  {mentionMatches.map((m, i) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      role="option"
+                      aria-selected={i === mentionIndex}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => applyMention(m.name)}
+                      onPointerMove={() => setMentionIndex(i)}
+                      className={`w-full text-left px-3 py-1.5 text-sm flex items-center gap-2 transition-colors ${i === mentionIndex ? "bg-primary-container/30 text-foreground" : "text-on-surface-variant"}`}
+                    >
+                      <span className="font-medium truncate">@{m.name}</span>
+                      {m.blueprint && (
+                        <span className="ml-auto text-[9px] font-bold uppercase tracking-widest text-primary-container" title="Has blueprint">blueprint</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
               <Textarea
-                ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} onPaste={handlePaste}
+                ref={inputRef} value={input} onChange={(e) => { setInput(e.target.value); syncMention(); }} onKeyDown={handleKeyDown} onPaste={handlePaste}
+                onKeyUp={syncMention} onClick={syncMention} onBlur={() => setMention(null)}
                 inputMode={handsFree.active ? "none" : undefined}
                 aria-label="Message The Librarian"
                 placeholder={dictation.isListening ? "Listening… speak now" : (apiKey || nvidiaKeyLast4 || geminiApiKey) ? "Ask about your books, or drop an image…" : "Add an API key in Settings to start chatting"}

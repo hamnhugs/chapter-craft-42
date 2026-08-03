@@ -48,7 +48,7 @@ const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, 
  *  it downloads + stores the clip and swaps in a player. The `video_generations`
  *  row (keyed by job_id) is the source of truth, so a reload resumes correctly. */
 const VideoBubble: React.FC<{ video: ChatVideoRef }> = ({ video }) => {
-  const { apiKey, falApiKey, videoQcEnabled, loaded } = useChatSettings();
+  const { apiKey, falApiKey, videoQcEnabled, loaded, visionModel } = useChatSettings();
   const { maxHeight, tierLabel, cycle } = useMediaHeightTier("video");
   const [phase, setPhase] = useState<Phase>("loading");
   const [url, setUrl] = useState<string | null>(null);
@@ -109,6 +109,11 @@ const VideoBubble: React.FC<{ video: ChatVideoRef }> = ({ video }) => {
         videoUrl: signedUrl,
         refImageUrls: urls,
         lockPalette: row.lock_palette || null,
+        // VLM second opinion, only when a vision model + OpenRouter key exist:
+        // embedding similarity provably disagrees with judged identity (the
+        // EntityBench note in videoQc.ts), so the judge runs whenever the
+        // DINO band is short of a clear green. Advisory — null never gates.
+        ...(apiKey && visionModel ? { vlmJudge: { apiKey, model: visionModel } } : {}),
       });
       if (!mountedRef.current) return;
       setQc(result);
@@ -118,7 +123,7 @@ const VideoBubble: React.FC<{ video: ChatVideoRef }> = ({ video }) => {
     } finally {
       if (mountedRef.current) setQcRunning(false);
     }
-  }, [videoQcEnabled, loaded]);
+  }, [videoQcEnabled, loaded, apiKey, visionModel]);
 
   const showCompleted = useCallback(async (row: VideoGenerationRow) => {
     stopTimers();

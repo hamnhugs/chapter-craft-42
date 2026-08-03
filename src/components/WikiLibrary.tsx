@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Link } from "react-router-dom";
-import { Loader2, Plus, Check, Search, Sparkles, ArrowRight, HelpCircle, Lock, Image as ImageIcon, Link2, Pencil } from "lucide-react";
+import { Loader2, Plus, Check, Search, Sparkles, ArrowRight, HelpCircle, Lock, Image as ImageIcon, Link2, Pencil, Fingerprint } from "lucide-react";
 import ImagesPanel from "@/components/ImagesPanel";
+import MasterAssetsPanel from "@/components/MasterAssetsPanel";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -227,6 +228,7 @@ const WikiLibrary: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>("gallery");
   const [imagesOpen, setImagesOpen] = useState(false);
+  const [mastersOpen, setMastersOpen] = useState(false);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [selected, setSelected] = useState<WikiWithStats | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -604,6 +606,17 @@ const WikiLibrary: React.FC = () => {
                 <span className="material-symbols-outlined text-sm">neurology</span>
               </button>
             </div>
+
+            {/* Masters sit next to Images: both are generated-asset browsers,
+                so they share one home and one button idiom. */}
+            <button
+              onClick={() => setMastersOpen(true)}
+              className="flex items-center gap-1.5 bg-surface-container-high text-on-surface px-3 py-1.5 rounded-lg font-bold text-sm active:scale-95 transition-transform border border-outline-variant/20 hover:bg-surface-container-highest"
+              title="Browse and edit locked master assets"
+            >
+              <Fingerprint className="w-4 h-4" />
+              <span>MASTERS</span>
+            </button>
 
             <button
               onClick={() => setImagesOpen(true)}

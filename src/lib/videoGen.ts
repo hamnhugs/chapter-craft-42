@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { reindexEmbeddings } from "@/lib/knowledgeApi";
 import { getSignedImageUrl } from "@/lib/imageGen";
+import { sanitizeIlike } from "@/lib/sanitize";
 import {
   DEFAULT_VIDEO_MODEL, providerSlugFor, negativePromptKey, identityScaleKey,
   type VideoModel, type FrameImageType,
@@ -18,6 +19,13 @@ import {
 
 const OR_BASE = "https://openrouter.ai/api/v1";
 const BUCKET = "generated-videos";
+
+// Every outbound fetch carries a deadline: a request with no signal can hang
+// the tab forever on a socket the server accepted but never answers. 45s for
+// submit/poll API calls, 180s for media downloads (a finished MP4 can be tens
+// of MB). Preflight keeps its own, deliberately shorter, 8s budget.
+const API_TIMEOUT_MS = 45_000;
+const MEDIA_TIMEOUT_MS = 180_000;
 
 export { DEFAULT_VIDEO_MODEL };
 
@@ -175,17 +183,13 @@ export async function preflightRemoteMedia(
   const WARN_VIDEO_BYTES = 100 * 1024 * 1024;
 
   const checkOne = async (t: { url: string; label: string; expect: "image" | "video"; strict: boolean }): Promise<PreflightIssue | null> => {
-    // Each attempt gets its OWN controller and deadline — with a shared one,
-    // a HEAD that hangs to the timeout hands the GET arbiter a pre-aborted
-    // signal and a valid job gets refused.
+    // Each attempt gets its OWN deadline (fresh AbortSignal.timeout) — with a
+    // shared signal, a HEAD that hangs to the timeout hands the GET arbiter a
+    // pre-aborted signal and a valid job gets refused.
     const probe = async (method: "HEAD" | "GET"): Promise<Response> => {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-      try {
-        const res = await fetch(t.url, { method, signal: ctrl.signal });
-        if (method === "GET") void res.body?.cancel().catch(() => {});
-        return res;
-      } finally { clearTimeout(timer); }
+      const res = await fetch(t.url, { method, signal: AbortSignal.timeout(timeoutMs) });
+      if (method === "GET") void res.body?.cancel().catch(() => {});
+      return res;
     };
     try {
       let res: Response | null = null;
@@ -347,7 +351,8 @@ export async function submitVideo({
   apiKey, model, prompt, duration, resolution, aspectRatio, generateAudio, seed,
   frameImages, inputReferences, providerOptions,
 }: SubmitArgs): Promise<{ jobId: string }> {
-  const body: Record<string, unknown> = { model: model || DEFAULT_VIDEO_MODEL, prompt };
+  const modelId = model || DEFAULT_VIDEO_MODEL;
+  const body: Record<string, unknown> = { model: modelId, prompt };
   if (duration) body.duration = duration;
   if (resolution) body.resolution = resolution;
   if (aspectRatio) body.aspect_ratio = aspectRatio;
@@ -372,20 +377,27 @@ export async function submitVideo({
     body.provider = providerOptions;
   }
 
-  const res = await fetch(`${OR_BASE}/videos`, {
-    method: "POST",
-    headers: orHeaders(apiKey),
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${OR_BASE}/videos`, {
+      method: "POST",
+      headers: orHeaders(apiKey),
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+  } catch (e: any) {
+    if (e?.name === "TimeoutError") throw new Error(`OpenRouter · ${modelId}: video submit timed out after ${API_TIMEOUT_MS / 1000}s.`);
+    throw e;
+  }
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
     if (res.status === 401) throw new Error("Invalid OpenRouter API key.");
     if (res.status === 402) throw new Error("Insufficient OpenRouter credits — video is billed to your own OpenRouter key and cannot run on NVIDIA.");
-    throw new Error(`Video submit failed (HTTP ${res.status}) ${extractApiError(errText)}`);
+    throw new Error(`OpenRouter · ${modelId}: video submit failed (HTTP ${res.status}) ${extractApiError(errText)}`);
   }
   const data = await res.json().catch(() => ({}));
   const jobId: string | undefined = data?.id || data?.data?.id || data?.generation_id;
-  if (!jobId) throw new Error("Video submit returned no job id.");
+  if (!jobId) throw new Error(`OpenRouter · ${modelId}: video submit returned no job id.`);
   return { jobId };
 }
 
@@ -412,11 +424,24 @@ export interface PollSnapshot {
   authError?: boolean;
 }
 
-/** Poll a job's status. Never throws for normal not-ready states. */
-export async function pollVideo(apiKey: string, jobId: string): Promise<PollSnapshot> {
-  const res = await fetch(`${OR_BASE}/videos/${encodeURIComponent(jobId)}`, {
-    headers: orHeaders(apiKey),
-  });
+/** Poll a job's status. Never throws for normal not-ready states. `model` is
+ *  attribution-only (optional so existing callers keep working — without it,
+ *  messages degrade to naming the provider alone). */
+export async function pollVideo(apiKey: string, jobId: string, model?: string): Promise<PollSnapshot> {
+  const who = model ? `OpenRouter · ${model}` : "OpenRouter";
+  let res: Response;
+  try {
+    res = await fetch(`${OR_BASE}/videos/${encodeURIComponent(jobId)}`, {
+      headers: orHeaders(apiKey),
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+  } catch (e: any) {
+    // Thrown errors were already the contract for network failures (the
+    // bubble's poll loop catches and keeps polling) — a timeout rides the
+    // same path, it just says who stalled.
+    if (e?.name === "TimeoutError") throw new Error(`${who}: status poll timed out after ${API_TIMEOUT_MS / 1000}s.`);
+    throw e;
+  }
   if (!res.ok) {
     // 401/403 is a KEY problem, not a job problem: stop polling but leave the
     // row alone so the paid clip stays recoverable after the key is fixed.
@@ -426,7 +451,7 @@ export async function pollVideo(apiKey: string, jobId: string): Promise<PollSnap
     // Terminal: the job is gone (404/410 purged or expired) — fail rather
     // than polling forever. Other non-2xx (5xx, 429) are transient.
     if (res.status === 404 || res.status === 410) {
-      return { status: "failed", cost: null, error: `Video job unavailable (HTTP ${res.status}).`, ready: false };
+      return { status: "failed", cost: null, error: `${who}: video job unavailable (HTTP ${res.status}).`, ready: false };
     }
     return { status: "processing", cost: null, error: null, ready: false };
   }
@@ -455,17 +480,27 @@ export async function pollVideo(apiKey: string, jobId: string): Promise<PollSnap
   const cost = typeof data?.usage?.cost === "number" ? data.usage.cost
     : typeof nested?.usage?.cost === "number" ? nested.usage.cost
     : null;
-  const error = status === "failed" ? String(upstreamErr || "Generation failed") : null;
+  const error = status === "failed" ? `${who}: ${String(upstreamErr || "generation failed upstream")}` : null;
   return { status, cost, error, ready: status === "completed" };
 }
 
-/** Download the finished MP4 (requires the Authorization header). */
-export async function downloadVideoContent(apiKey: string, jobId: string, index = 0): Promise<Blob> {
-  const res = await fetch(`${OR_BASE}/videos/${encodeURIComponent(jobId)}/content?index=${index}`, {
-    headers: { Authorization: `Bearer ${apiKey}` },
-  });
-  if (!res.ok) throw new Error(`Video download failed (HTTP ${res.status})`);
-  return await res.blob();
+/** Download the finished MP4 (requires the Authorization header). `model` is
+ *  attribution-only, so errors can name what actually failed. */
+export async function downloadVideoContent(apiKey: string, jobId: string, index = 0, model?: string): Promise<Blob> {
+  const who = model ? `OpenRouter · ${model}` : "OpenRouter";
+  try {
+    // The deadline covers the body read too — blob() on a stalled stream
+    // hangs exactly like the initial request would.
+    const res = await fetch(`${OR_BASE}/videos/${encodeURIComponent(jobId)}/content?index=${index}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(MEDIA_TIMEOUT_MS),
+    });
+    if (!res.ok) throw new Error(`${who}: video download failed (HTTP ${res.status})`);
+    return await res.blob();
+  } catch (e: any) {
+    if (e?.name === "TimeoutError") throw new Error(`${who}: video download timed out after ${MEDIA_TIMEOUT_MS / 1000}s.`);
+    throw e;
+  }
 }
 
 /** Best-effort first-frame capture for a poster image. Returns null on failure
@@ -687,7 +722,7 @@ export async function finalizeVideoJob(opts: {
     if (!existing) throw new Error("Video job record could not be created");
   }
 
-  const blob = await downloadVideoContent(opts.apiKey, opts.jobId);
+  const blob = await downloadVideoContent(opts.apiKey, opts.jobId, 0, existing.model || opts.model);
   // Deterministic path (keyed by job_id) with upsert:true so concurrent
   // finalizers (e.g. two open tabs) converge on ONE object instead of each
   // writing a random path and orphaning the loser's file.
@@ -769,7 +804,7 @@ export async function searchVideos(query: string | undefined, limit = 10): Promi
       .limit(Math.min(25, Math.max(1, limit)));
     const trimmed = (query || "").trim();
     if (trimmed) {
-      const safe = trimmed.replace(/[%,()]/g, " ");
+      const safe = sanitizeIlike(trimmed);
       q = q.or(`prompt.ilike.%${safe}%,caption.ilike.%${safe}%`);
     }
     return q;

@@ -3,7 +3,6 @@ import { useApp } from "@/context/AppContext";
 import { BookDocument } from "@/types/library";
 import { pdfjs } from "react-pdf";
 import { Progress } from "@/components/ui/progress";
-import { convertEpubToPdf } from "@/lib/epubToPdf";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { usePlan } from "@/hooks/usePlan";
 import { openPricing } from "@/components/PricingDialog";
@@ -371,6 +370,8 @@ const Library: React.FC = () => {
       if (isEpub) {
         updateUploadState(item.id, { status: "uploading", attempts: 0, error: "Converting EPUB…" });
         try {
+          // Loaded on demand: the converter drags in JSZip + jsPDF, which only EPUB uploads need
+          const { convertEpubToPdf } = await import("@/lib/epubToPdf");
           const result = await convertEpubToPdf(item.file);
           fileToUpload = result.file;
           pageCount = result.pageCount;

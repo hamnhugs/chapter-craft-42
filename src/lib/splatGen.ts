@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { reindexEmbeddings } from "@/lib/knowledgeApi";
 import { getSignedImageUrl } from "@/lib/imageGen";
+import { sanitizeIlike } from "@/lib/sanitize";
 import {
   DEFAULT_SPLAT_MODEL, getSplatModel, getTier, detectSplatFormat,
   mimeForFormat, extForFormat, estimateSplatCostUSD,
@@ -25,6 +26,13 @@ import {
 
 const FAL_QUEUE = "https://queue.fal.run";
 const BUCKET = "generated-splats";
+
+// Every outbound fetch carries a deadline: a request with no signal can hang
+// the tab forever on a socket the server accepted but never answers. 45s for
+// submit/poll/result API calls, 180s for asset/poster downloads (PLY size is
+// genuinely unpredictable).
+const API_TIMEOUT_MS = 45_000;
+const MEDIA_TIMEOUT_MS = 180_000;
 
 export { DEFAULT_SPLAT_MODEL };
 
@@ -144,21 +152,28 @@ export async function submitSplat({
   if (info?.supportsGaussianCount && outputFormat && outputFormat !== "glb") body.output_format = outputFormat;
   if (typeof seed === "number") body.seed = seed;
 
-  const res = await fetch(`${FAL_QUEUE}/${id}`, {
-    method: "POST",
-    headers: falHeaders(apiKey),
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${FAL_QUEUE}/${id}`, {
+      method: "POST",
+      headers: falHeaders(apiKey),
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+  } catch (e: any) {
+    if (e?.name === "TimeoutError") throw new Error(`fal.ai · ${id}: splat submit timed out after ${API_TIMEOUT_MS / 1000}s.`);
+    throw e;
+  }
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
     if (res.status === 401 || res.status === 403) throw new Error("Invalid fal.ai API key.");
     if (res.status === 402) throw new Error("Insufficient fal.ai credits — splats are billed to your own fal key.");
-    if (res.status === 422) throw new Error(`fal rejected the request: ${errText.slice(0, 200)}`);
-    throw new Error(`Splat submit failed (HTTP ${res.status}) ${errText.slice(0, 200)}`);
+    if (res.status === 422) throw new Error(`fal.ai · ${id}: rejected the request — ${errText.slice(0, 200)}`);
+    throw new Error(`fal.ai · ${id}: splat submit failed (HTTP ${res.status}) ${errText.slice(0, 200)}`);
   }
   const data = await res.json().catch(() => ({}));
   const requestId: string | undefined = data?.request_id || data?.requestId;
-  if (!requestId) throw new Error("Splat submit returned no request id.");
+  if (!requestId) throw new Error(`fal.ai · ${id}: splat submit returned no request id.`);
   return {
     requestId,
     statusUrl: typeof data?.status_url === "string" ? data.status_url : null,
@@ -183,12 +198,24 @@ export async function pollSplat(
   const url = opts.statusUrl
     || `${FAL_QUEUE}/${queueBase(opts.model)}/requests/${encodeURIComponent(opts.requestId)}/status`;
 
-  const res = await fetch(url, { headers: { Authorization: `Key ${apiKey}` } });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { Authorization: `Key ${apiKey}` },
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+  } catch (e: any) {
+    // Thrown errors were already the contract for network failures (callers'
+    // poll loops catch and keep polling) — a timeout rides the same path, it
+    // just says who stalled.
+    if (e?.name === "TimeoutError") throw new Error(`fal.ai · ${opts.model}: status poll timed out after ${API_TIMEOUT_MS / 1000}s.`);
+    throw e;
+  }
   if (!res.ok) {
     // Terminal: job purged/expired, or the key is rejected. Everything else
     // (5xx, 429) is transient — keep polling.
     if (res.status === 404 || res.status === 410 || res.status === 401 || res.status === 403) {
-      return { status: "failed", error: `Splat job unavailable (HTTP ${res.status}).`, ready: false, queuePosition: null };
+      return { status: "failed", error: `fal.ai · ${opts.model}: splat job unavailable (HTTP ${res.status}).`, ready: false, queuePosition: null };
     }
     return { status: "processing", error: null, ready: false, queuePosition: null };
   }
@@ -198,7 +225,7 @@ export async function pollSplat(
 
   if (raw === "COMPLETED") return { status: "completed", error: null, ready: true, queuePosition: null };
   if (raw === "FAILED" || raw === "ERROR") {
-    return { status: "failed", error: String(data?.error || "Generation failed"), ready: false, queuePosition: null };
+    return { status: "failed", error: `fal.ai · ${opts.model}: ${String(data?.error || "generation failed upstream")}`, ready: false, queuePosition: null };
   }
   if (raw === "IN_QUEUE") return { status: "pending", error: null, ready: false, queuePosition };
   return { status: "processing", error: null, ready: false, queuePosition };
@@ -211,10 +238,19 @@ export async function fetchSplatResult(
 ): Promise<any> {
   const url = opts.responseUrl
     || `${FAL_QUEUE}/${queueBase(opts.model)}/requests/${encodeURIComponent(opts.requestId)}`;
-  const res = await fetch(url, { headers: { Authorization: `Key ${apiKey}` } });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { Authorization: `Key ${apiKey}` },
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
+  } catch (e: any) {
+    if (e?.name === "TimeoutError") throw new Error(`fal.ai · ${opts.model}: reading the finished splat timed out after ${API_TIMEOUT_MS / 1000}s.`);
+    throw e;
+  }
   if (!res.ok) {
     const t = await res.text().catch(() => "");
-    throw new Error(`Could not read the finished splat (HTTP ${res.status}) ${t.slice(0, 160)}`);
+    throw new Error(`fal.ai · ${opts.model}: could not read the finished splat (HTTP ${res.status}) ${t.slice(0, 160)}`);
   }
   return await res.json().catch(() => ({}));
 }
@@ -428,8 +464,9 @@ export async function finalizeSplatJob(opts: {
     }
   }
 
+  const modelId = existing.model || opts.model;
   const payload = await fetchSplatResult(opts.apiKey, {
-    model: existing.model || opts.model,
+    model: modelId,
     requestId: opts.requestId,
     responseUrl: existing.response_url,
   });
@@ -443,12 +480,20 @@ export async function finalizeSplatJob(opts: {
     throw new Error(message);
   };
 
-  const assetUrl = extractSplatFileUrl(existing.model || opts.model, payload);
-  if (!assetUrl) await failTerminal("The finished job contained no 3D file.");
+  const assetUrl = extractSplatFileUrl(modelId, payload);
+  if (!assetUrl) await failTerminal(`fal.ai · ${modelId}: the finished job contained no 3D file.`);
 
-  const assetRes = await fetch(assetUrl as string);
-  if (!assetRes.ok) throw new Error(`Splat download failed (HTTP ${assetRes.status})`);
-  const buf = await assetRes.arrayBuffer();
+  let buf: ArrayBuffer;
+  try {
+    // The deadline covers the body read too — arrayBuffer() on a stalled
+    // stream hangs exactly like the initial request would.
+    const assetRes = await fetch(assetUrl as string, { signal: AbortSignal.timeout(MEDIA_TIMEOUT_MS) });
+    if (!assetRes.ok) throw new Error(`fal.ai · ${modelId}: splat download failed (HTTP ${assetRes.status})`);
+    buf = await assetRes.arrayBuffer();
+  } catch (e: any) {
+    if (e?.name === "TimeoutError") throw new Error(`fal.ai · ${modelId}: splat download timed out after ${MEDIA_TIMEOUT_MS / 1000}s.`);
+    throw e;
+  }
   const bytes = buf.byteLength;
 
   // Size guard BEFORE upload — an oversized asset fails cleanly instead of
@@ -456,7 +501,7 @@ export async function finalizeSplatJob(opts: {
   const maxMb = typeof opts.maxFileMb === "number" && opts.maxFileMb > 0 ? opts.maxFileMb : 25;
   if (bytes > maxMb * 1024 * 1024) {
     await failTerminal(
-      `The generated file is ${(bytes / 1048576).toFixed(1)} MB, over your ${maxMb} MB limit. Try the Fast or Standard quality.`,
+      `fal.ai · ${modelId}: the generated file is ${(bytes / 1048576).toFixed(1)} MB, over your ${maxMb} MB limit. Try the Fast or Standard quality.`,
     );
   }
 
@@ -467,7 +512,7 @@ export async function finalizeSplatJob(opts: {
   const requested = (existing.format as SplatFormat) || "splat";
   const actual: SplatFormat = sniffed === "unknown" ? requested : sniffed;
   if (sniffed === "unknown") {
-    await failTerminal("The downloaded file wasn't a recognisable splat, PLY or GLB.");
+    await failTerminal(`fal.ai · ${modelId}: the downloaded file wasn't a recognisable splat, PLY or GLB.`);
   }
 
   const safeId = opts.requestId.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 80);
@@ -488,7 +533,7 @@ export async function finalizeSplatJob(opts: {
   const posterUrl = extractPosterUrl(payload);
   if (!posterPath && posterUrl) {
     try {
-      const pRes = await fetch(posterUrl);
+      const pRes = await fetch(posterUrl, { signal: AbortSignal.timeout(MEDIA_TIMEOUT_MS) });
       if (pRes.ok) {
         const pBlob = await pRes.blob();
         const pPath = `${base}.jpg`;
@@ -572,7 +617,7 @@ export async function searchSplats(query: string | undefined, limit = 10): Promi
     .limit(Math.min(25, Math.max(1, limit)));
   const trimmed = (query || "").trim();
   if (trimmed) {
-    const safe = trimmed.replace(/[%,()]/g, " ");
+    const safe = sanitizeIlike(trimmed);
     q = q.or(`prompt.ilike.%${safe}%,caption.ilike.%${safe}%`);
   }
   const { data } = await q;

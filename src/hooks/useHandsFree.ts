@@ -416,7 +416,24 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeController {
         });
       }
     } catch {
-      /* error already surfaced via toast in sendMessage */
+      // sendMessage's toast covers sighted use, but in hands-free the user may
+      // not be looking at the screen — a swallowed failure here was pure
+      // silence (mic reopens, nothing acknowledges the lost turn). Speak a
+      // one-line ack through the SAME TTS path as replies: its onDone settles
+      // exactly once on every terminal path (useReadAloud's completion
+      // contract), so the finally block below still owns the cooldown →
+      // listening handoff — no timer, no new exit from "speaking". The
+      // generation check mirrors the reply path: a turn orphaned by stopAll
+      // must never speak over a newer session's open mic.
+      if (activeRef.current && gen === generationRef.current) {
+        setFsm("speaking");
+        await new Promise<void>((resolve) => {
+          optsRef.current.speak(
+            "That didn't go through — say it again or check your connection.",
+            { onDone: () => resolve() },
+          );
+        });
+      }
     } finally {
       // A stale generation owns nothing anymore — a newer session may be
       // live, so leave busyRef, the FSM, and scheduling entirely to it.
