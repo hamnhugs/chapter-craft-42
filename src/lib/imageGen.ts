@@ -1,5 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import { reindexEmbeddings } from "@/lib/knowledgeApi";
+import { sanitizeIlike } from "@/lib/sanitize";
 
 // Nano Banana image generation via OpenRouter (the user's existing key).
 // Primary: Nano Banana 2 (Gemini 3.1 Flash Image) — near-Pro quality at half
@@ -11,6 +12,12 @@ export const IMAGE_MODELS = [
 ];
 
 export const IMAGE_ASPECT_RATIOS = ["1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9", "21:9"] as const;
+
+// Every outbound fetch carries a deadline: a request with no signal can hang
+// the tab forever on a socket the server accepted but never answers. 45s for
+// API calls, 180s for media transfers (multi-MB image bodies).
+const API_TIMEOUT_MS = 45_000;
+const MEDIA_TIMEOUT_MS = 180_000;
 
 /** Lightweight reference attached to chat messages — the actual pixels stay
  *  in the private `generated-images` bucket and load via short-lived signed URLs. */
@@ -42,6 +49,9 @@ export interface ImageAttachmentRow {
 
 interface GenerateArgs {
   apiKey: string;
+  /** Gemini key — used when no OpenRouter key exists (or the chosen model is
+   *  a gemini id), so Gemini-only users keep image generation. */
+  geminiApiKey?: string;
   prompt: string;
   aspectRatio?: string;
   /** When set, the image is sent as input — Nano Banana edits/refines it. */
@@ -76,10 +86,87 @@ export interface GenerateResult {
   modelUsed: string;
 }
 
-/** Generate (or edit) an image through OpenRouter's chat-completions API with
- *  `modalities: ["image", "text"]`. Tries each Nano Banana model in order. */
-export async function generateImage({ apiKey, prompt, aspectRatio, inputImageDataUrl, referenceImageDataUrls, primaryModel, fallbackModel }: GenerateArgs): Promise<GenerateResult> {
+/** Direct-to-Gemini image models, tried in order when the OpenRouter path is
+ *  unavailable. The Gemini image line takes TYPED reference inputs (Nano
+ *  Banana 2: up to 4 character-consistency images; NB Pro: 5) — sending each
+ *  reference as its own labeled part, canonical sheet first, is the measured
+ *  best practice, not a composite collage. */
+const GEMINI_IMAGE_MODELS = ["gemini-2.5-flash-image", "gemini-3-pro-image-preview"];
+
+/** One generation attempt against the Gemini API (browser-direct — the same
+ *  origin the Gemini chat adapter already uses, covered by the CSP). */
+async function generateViaGemini(
+  model: string,
+  geminiKey: string,
+  prompt: string,
+  attachments: string[],
+  aspectRatio?: string,
+): Promise<GenerateResult> {
+  const parts: any[] = [{ text: prompt }];
+  attachments.forEach((url, i) => {
+    const comma = url.indexOf(",");
+    const meta = url.slice(5, url.indexOf(";"));
+    // Each reference is its own LABELED part — the typed-slot pattern. The
+    // label tells the model what the image is FOR; the prompt then only needs
+    // to carry pose, action and setting.
+    parts.push({ text: i === 0 && attachments.length > 1
+      ? `Reference ${i + 1} (canonical character/tech sheet — match identity, proportions and palette exactly):`
+      : `Reference ${i + 1} (match appearance exactly):` });
+    parts.push({ inline_data: { mime_type: meta || "image/png", data: url.slice(comma + 1) } });
+  });
+  const body: any = { contents: [{ role: "user", parts }] };
+  if (aspectRatio && (IMAGE_ASPECT_RATIOS as readonly string[]).includes(aspectRatio)) {
+    body.generationConfig = { imageConfig: { aspectRatio } };
+  }
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": geminiKey },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    },
+  );
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Gemini · ${model}: HTTP ${res.status} ${errText.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  const respParts: any[] = data?.candidates?.[0]?.content?.parts || [];
+  const img = respParts.find((p) => p?.inlineData?.data || p?.inline_data?.data);
+  const text = respParts.filter((p) => typeof p?.text === "string").map((p) => p.text).join(" ").trim();
+  if (!img) {
+    throw new Error(text
+      ? `Gemini · ${model} declined: ${text.slice(0, 300)}`
+      : `Gemini · ${model}: no image in response`);
+  }
+  const inline = img.inlineData || img.inline_data;
+  const mime = inline.mimeType || inline.mime_type || "image/png";
+  return { dataUrl: `data:${mime};base64,${inline.data}`, mime, text, modelUsed: model };
+}
+
+/** Generate (or edit) an image. OpenRouter's chat-completions API with
+ *  `modalities: ["image", "text"]` when an OpenRouter key exists; otherwise
+ *  direct-to-Gemini with the Gemini key. Tries each candidate in order. */
+export async function generateImage({ apiKey, geminiApiKey, prompt, aspectRatio, inputImageDataUrl, referenceImageDataUrls, primaryModel, fallbackModel }: GenerateArgs): Promise<GenerateResult> {
   let lastError = "";
+  // No OpenRouter key: the Gemini path is the whole show.
+  if (!apiKey && geminiApiKey) {
+    const gemAttachments = [
+      ...(inputImageDataUrl ? [inputImageDataUrl] : []),
+      ...(referenceImageDataUrls || []).filter((u) => typeof u === "string" && u.startsWith("data:")),
+    ].slice(0, 7);
+    for (const model of GEMINI_IMAGE_MODELS) {
+      try {
+        return await generateViaGemini(model, geminiApiKey, prompt, gemAttachments, aspectRatio);
+      } catch (e: any) {
+        lastError = e?.name === "TimeoutError"
+          ? `Gemini · ${model}: request timed out after ${API_TIMEOUT_MS / 1000}s`
+          : e?.message || `Gemini · ${model}: request failed`;
+      }
+    }
+    throw new Error(lastError || `Gemini · ${GEMINI_IMAGE_MODELS[0]}: image generation failed`);
+  }
   // Build candidate list: user's primary, user's fallback, then the built-in
   // defaults. Dedupe while preserving order.
   const seen = new Set<string>();
@@ -94,7 +181,7 @@ export async function generateImage({ apiKey, prompt, aspectRatio, inputImageDat
       const attachments = [
         ...(inputImageDataUrl ? [inputImageDataUrl] : []),
         ...(referenceImageDataUrls || []).filter((u) => typeof u === "string" && u.startsWith("data:")),
-      ].slice(0, 5);
+      ].slice(0, 7); // 1 optional input image + up to 6 references — matches the tool's cap
       const content: any = attachments.length
         ? [
             { type: "text", text: prompt },
@@ -119,11 +206,12 @@ export async function generateImage({ apiKey, prompt, aspectRatio, inputImageDat
           "X-Title": "Chapter Craft",
         },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(API_TIMEOUT_MS),
       });
       if (!res.ok) {
         const errText = await res.text().catch(() => "");
         if (res.status === 402) throw new Error("Insufficient OpenRouter credits — image generation is billed to the user's own OpenRouter key (~$0.04–0.07 per image) and cannot run on NVIDIA.");
-        lastError = `${model}: HTTP ${res.status} ${errText.slice(0, 200)}`;
+        lastError = `OpenRouter · ${model}: HTTP ${res.status} ${errText.slice(0, 200)}`;
         continue;
       }
       const data = await res.json();
@@ -132,17 +220,19 @@ export async function generateImage({ apiKey, prompt, aspectRatio, inputImageDat
       const text = String(message?.content || "").trim();
       if (!imageUrl || !imageUrl.startsWith("data:")) {
         // Model replied with text only — usually a safety refusal. Surface it.
-        lastError = text ? `${model} declined: ${text.slice(0, 300)}` : `${model}: no image in response`;
+        lastError = text ? `OpenRouter · ${model} declined: ${text.slice(0, 300)}` : `OpenRouter · ${model}: no image in response`;
         continue;
       }
       const mime = imageUrl.slice(5, imageUrl.indexOf(";")) || "image/png";
       return { dataUrl: imageUrl, mime, text, modelUsed: model };
     } catch (e: any) {
       if (e?.message?.includes("Insufficient OpenRouter credits")) throw e;
-      lastError = `${model}: ${e?.message || "request failed"}`;
+      lastError = e?.name === "TimeoutError"
+        ? `OpenRouter · ${model}: request timed out after ${API_TIMEOUT_MS / 1000}s`
+        : `OpenRouter · ${model}: ${e?.message || "request failed"}`;
     }
   }
-  throw new Error(lastError || "Image generation failed");
+  throw new Error(lastError || `OpenRouter · ${candidates[0] || IMAGE_MODELS[0]}: image generation failed`);
 }
 
 /** Upload a generated image to the private bucket + record its attachment row. */
@@ -160,7 +250,16 @@ export async function storeGeneratedImage(opts: {
   if (!uid) throw new Error("Not signed in");
   const ext = opts.mime === "image/jpeg" ? "jpg" : opts.mime === "image/webp" ? "webp" : "png";
   const path = `${uid}/${crypto.randomUUID()}.${ext}`;
-  const blob = await (await fetch(opts.dataUrl)).blob();
+  let blob: Blob;
+  try {
+    blob = await (await fetch(opts.dataUrl, { signal: AbortSignal.timeout(MEDIA_TIMEOUT_MS) })).blob();
+  } catch (e: any) {
+    // Attribute to the right provider — Gemini-generated images come through
+    // here too, and blaming OpenRouter for them is the anonymity bug again.
+    const who = opts.model.startsWith("gemini") ? "Gemini" : "OpenRouter";
+    if (e?.name === "TimeoutError") throw new Error(`${who} · ${opts.model}: image decode timed out after ${MEDIA_TIMEOUT_MS / 1000}s.`);
+    throw e;
+  }
   const { error: upErr } = await supabase.storage
     .from("generated-images")
     .upload(path, blob, { contentType: opts.mime, upsert: false });
@@ -322,7 +421,7 @@ export async function searchImages(query: string | undefined, limit = 10): Promi
     .limit(Math.min(25, Math.max(1, limit)));
   const trimmed = (query || "").trim();
   if (trimmed) {
-    const safe = trimmed.replace(/[%,()]/g, " ");
+    const safe = sanitizeIlike(trimmed);
     q = q.or(`prompt.ilike.%${safe}%,caption.ilike.%${safe}%`);
   }
   const { data } = await q;
@@ -427,7 +526,7 @@ export async function loadImageAsDataUrl(storagePath: string): Promise<string | 
   const url = await getSignedImageUrl(storagePath);
   if (!url) return null;
   try {
-    const blob = await (await fetch(url)).blob();
+    const blob = await (await fetch(url, { signal: AbortSignal.timeout(MEDIA_TIMEOUT_MS) })).blob();
     return await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result));

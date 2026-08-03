@@ -4,10 +4,20 @@ import { z } from "zod";
 // side panel (the Claude/ChatGPT-Canvas pattern). They run with NO access to
 // the parent page, cookies, storage, or network — see buildArtifactDoc.
 
+/** Hard cap on artifact content. Sized ABOVE the blueprint sheet validator's
+ *  node budget (1,500 nodes of dense presentation markup lands well past the
+ *  old 100 KB cap) — the two limits used to be uncoordinated, and a sheet
+ *  could pass the node gate, fail this one, and vanish without a trace while
+ *  the tool result claimed it was on screen. Anything the renderer can emit
+ *  under its own budget must fit here. */
+export const ARTIFACT_MAX_CONTENT = 400_000;
+
 export const ArtifactSchema = z.object({
-  title: z.preprocess((v) => (v == null || v === "" ? "Artifact" : String(v)), z.string().max(160)),
+  // Truncate, never reject: a 200-char title must not silently drop a whole
+  // drawn document after its producer already reported it displayed.
+  title: z.preprocess((v) => (v == null || v === "" ? "Artifact" : String(v).slice(0, 160)), z.string().max(160)),
   kind: z.enum(["html", "svg"]).catch("html"),
-  content: z.string().min(1).max(100000),
+  content: z.string().min(1).max(ARTIFACT_MAX_CONTENT),
 });
 
 export type Artifact = z.infer<typeof ArtifactSchema>;

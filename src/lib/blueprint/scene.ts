@@ -90,6 +90,10 @@ export const ShotSchema = z.object({
   action: z.string().max(300).default(""),
   durationS: z.number().optional(),
   notes: z.string().max(300).optional(),
+  /** A tombstone: the shot was cut after the scene was locked. Its number is
+   *  never reused and the sheet lists it struck through — the film-set
+   *  convention, where a hole in the numbering is information. */
+  omitted: z.boolean().optional(),
 });
 
 export const SceneSchema = z.object({
@@ -175,6 +179,7 @@ export interface Shot {
   action: string;
   durationS?: number;
   notes?: string;
+  omitted?: boolean;
 }
 
 export interface Scene {
@@ -248,6 +253,80 @@ export function numberShots(scene: Scene): Scene {
     return numbered;
   });
   return { ...scene, shots };
+}
+
+/**
+ * Merge an incoming revision against the saved scene so shot numbers behave
+ * like a real production's: a shot keeps its number for life (matched by id),
+ * a shot inserted between two others takes a gap number (0015 between 0010 and
+ * 0020 — this is the call site insertShotOrdinal was written for), and, once
+ * the scene is locked, a shot dropped from the revision is kept as an omitted
+ * tombstone instead of vanishing. Renumbering an act to absorb one new shot is
+ * exactly the churn the count-by-tens convention exists to prevent.
+ */
+export function preserveShotNumbers(
+  saved: Scene,
+  incoming: Scene,
+  opts: { locked?: boolean } = {},
+): Scene {
+  const savedById = new Map(saved.shots.map((s) => [s.id, s]));
+
+  // Tombstones are computed FIRST so pass 2 can treat their numbers as
+  // reserved — assigning gap numbers before knowing the tombstones let a new
+  // shot take exactly the ordinal of a shot cut in the same revision,
+  // yielding two shots numbered 0020 in a locked scene.
+  const incomingIds = new Set(incoming.shots.map((s) => s.id));
+  const dropped: Shot[] = opts.locked
+    ? saved.shots.filter((s) => !incomingIds.has(s.id) && s.number).map((s) => ({ ...s, omitted: true }))
+    : [];
+
+  // Pass 1 — matched shots keep their saved number, whatever the revision
+  // says. Under lock a tombstone also keeps its OMITTED flag unless the
+  // revision explicitly reinstates it (omitted:false): merely echoing the id
+  // without the field must not silently resurrect a cut shot.
+  const shots: Shot[] = incoming.shots.map((s) => {
+    const prior = savedById.get(s.id);
+    if (prior?.number) {
+      const omitted = opts.locked && prior.omitted && s.omitted === undefined ? true : s.omitted;
+      return { ...s, number: prior.number, omitted };
+    }
+    return { ...s, number: undefined };
+  });
+
+  const reserved = new Set<number>(
+    [...shots, ...dropped].map((s) => shotOrdinal(s.number)).filter((n): n is number => n !== null),
+  );
+
+  // Pass 2 — new shots take a number that sorts where they were placed: the
+  // midpoint of the surrounding gap when one exists, a fresh multiple of ten
+  // otherwise. Left-to-right so consecutive inserts split the gap fairly.
+  const ordinalAt = (i: number): number | null => shotOrdinal(shots[i]?.number);
+  for (let i = 0; i < shots.length; i++) {
+    if (shots[i].number) continue;
+    let before: number | null = null;
+    for (let j = i - 1; j >= 0; j--) { const o = ordinalAt(j); if (o !== null) { before = o; break; } }
+    let after: number | null = null;
+    for (let j = i + 1; j < shots.length; j++) { const o = ordinalAt(j); if (o !== null) { after = o; break; } }
+    let ordinal: number | null = null;
+    if (before !== null && after !== null) ordinal = insertShotOrdinal(before, after);
+    if (ordinal !== null && reserved.has(ordinal)) ordinal = null; // gap midpoint is a tombstone's number
+    if (ordinal === null) {
+      const base = before !== null ? before : reserved.size ? Math.max(...reserved) : 0;
+      ordinal = (Math.floor(base / 10) + 1) * 10;
+      // Skip over any ordinal already taken (an insert past a crowded gap).
+      while (reserved.has(ordinal)) ordinal += 10;
+    }
+    reserved.add(ordinal);
+    shots[i] = { ...shots[i], number: shotDesignator(incoming, ordinal) };
+  }
+
+  // Pass 3 — under lock, the tombstones rejoin the list, in ordinal order.
+  if (dropped.length) {
+    shots.push(...dropped);
+    shots.sort((a, b) => (shotOrdinal(a.number) ?? 0) - (shotOrdinal(b.number) ?? 0));
+  }
+
+  return { ...incoming, shots };
 }
 
 // ── validation ──────────────────────────────────────────────────────────────

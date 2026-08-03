@@ -262,12 +262,14 @@ export async function updateMasterAsset(
   if (error) {
     // The blueprint column arrives with its own migration. Retry without it
     // rather than failing the whole write, so a lagging database degrades to
-    // "prose master, no blueprint" instead of "save is broken".
-    if ("blueprint" in patch && /blueprint/i.test(error.message || "")) {
+    // "prose master, no blueprint" instead of "save is broken". Matched on the
+    // Postgres error code (42703 = undefined column) the way persistMessage
+    // does — the message text is server-owned prose and not a contract.
+    if ("blueprint" in patch && ((error as any).code === "42703" || /blueprint/i.test(error.message || ""))) {
       const { blueprint: _dropped, ...rest } = patch;
       if (Object.keys(rest).length === 0) {
         throw new Error(
-          "This master's blueprint could not be saved because the database hasn't been migrated yet — apply supabase/migrations/20260802090000_blueprint_pipeline.sql, then try again.",
+          "This master's blueprint could not be saved because the database hasn't been migrated yet — ask Lovable to apply the blueprint pipeline migration, then try again.",
         );
       }
       const retry = await (supabase.from("master_assets" as any) as any)

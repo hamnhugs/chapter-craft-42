@@ -2,9 +2,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { tavilySearch } from "@/lib/tavilySearch";
 import { modelProvider, providerLabel } from "@/lib/providers/registry";
 import { blockedToolResult, isToolBlocked, type LeanMode } from "@/lib/leanMode";
+import { TOOL_PERMISSION, permissionRefusal } from "@/lib/toolPermissions";
+import { sanitizeIlike } from "@/lib/sanitize";
 import { BookDocument, Chapter } from "@/types/library";
 import { parseBlocksVerbose } from "@/lib/responseBlocks";
-import { parseArtifact } from "@/lib/artifacts";
+import { parseArtifact, ARTIFACT_MAX_CONTENT } from "@/lib/artifacts";
 import {
   generateImage, storeGeneratedImage, saveImageNeuron,
   fetchImageById, searchImages, loadImageAsDataUrl,
@@ -37,7 +39,7 @@ import {
 } from "@/lib/falVideoGen";
 import {
   mastersMigrated, resolveMaster, listMasterAssets, createMasterAsset,
-  updateMasterAsset, deleteMasterAsset, masterNegatives,
+  updateMasterAsset, deleteMasterAsset, masterNegatives, masterImagePack,
   type MasterAssetRow,
 } from "@/lib/masterAssets";
 import { renderSplatViews } from "@/lib/splatViews";
@@ -45,10 +47,11 @@ import { parseBlueprint, formatProblems } from "@/lib/blueprint/schema";
 import { renderBlueprintSheet } from "@/lib/blueprint/sheet";
 import { validateSheetSvg } from "@/lib/blueprint/sheetValidate";
 import { VIEWS, type ViewName } from "@/lib/blueprint/geometry";
-import { parseScene } from "@/lib/blueprint/scene";
+import { parseScene, preserveShotNumbers } from "@/lib/blueprint/scene";
 import { renderPlanSheet } from "@/lib/blueprint/planSheet";
 import { rasterizeSheet } from "@/lib/blueprint/raster";
-import { scenesMigrated, resolveScene, saveScene } from "@/lib/scenesApi";
+import { scenesMigrated, resolveScene, saveScene, listScenes, deleteScene, setSceneLocked } from "@/lib/scenesApi";
+import { recordGeneration, decideGeneration, ledgerStats, ledgerMigrated, REJECTION_REASONS, type RejectionReason } from "@/lib/generationLedger";
 import {
   checkBlueprintAgainstMaster, checkSceneReferences, checkValidity, formatFindings,
 } from "@/lib/blueprint/consistency";
@@ -109,6 +112,10 @@ export interface ToolDeps {
   leanMode?: LeanMode;
   /** OpenRouter key — needed by the image generation tools. */
   openRouterApiKey?: string;
+  /** Gemini key — image generation can run direct-to-Gemini when the chosen
+   *  model is a gemini: id, so a Gemini-only user is not locked out of a
+   *  capability their key supports. */
+  geminiApiKey?: string;
   /** Paid plan flag — image generation/editing are Pro features. */
   isPaid?: boolean;
   /** Optional user-preferred image model overrides. */
@@ -567,7 +574,7 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "generate_image",
       description:
-        "Generate one or more AI images with Nano Banana (Google's Gemini image model) and show them to the user inline. By default each image is also saved to the user's memory as a neuron. Use when the user asks for an image, picture, illustration, visualization, logo, scene, character art, etc. For multiple images in one turn: pass `count` (2–4) for variations of the SAME prompt, or `prompts: [...]` (2–4 entries) for a DISTINCT set in one call. Each image costs a few cents on their OpenRouter key — match the count to what the user asked for, don't pad.",
+        "Generate one or more AI images with Nano Banana (Google's Gemini image model) and show them to the user inline. By default each image is also saved to the user's memory as a neuron. Use when the user asks for an image, picture, illustration, visualization, logo, scene, character art, etc. For multiple images in one turn: pass `count` (2–4) for variations of the SAME prompt, or `prompts: [...]` (2–4 entries) for a DISTINCT set in one call. Each image costs a few cents, billed to the user's OpenRouter key (or their Gemini key when only a Gemini key is configured) — match the count to what the user asked for, don't pad.",
       parameters: {
         type: "object",
         properties: {
@@ -581,7 +588,7 @@ export const CHAT_TOOL_DEFINITIONS = [
             type: "array",
             items: { type: "string" },
             description:
-              "Up to 4 library image ids to condition on — a blueprint sheet, a master's reference views, an earlier approved design. THIS is how appearance is carried: colours, proportions and details written into a prompt are largely ignored, and the same information shown as a picture is not. Whenever a master asset or blueprint sheet exists for the subject, pass it here and keep the prompt to pose, action and setting. Re-anchor from the same references every time rather than editing your last result.",
+              "Up to 6 library image ids to condition on — per-view blueprint ids first, then the master's reference views, an earlier approved design. THIS is how appearance is carried: colours, proportions and details written into a prompt are largely ignored, and the same information shown as a picture is not. Whenever a master asset or blueprint sheet exists for the subject, pass it here and keep the prompt to pose, action and setting. Re-anchor from the same references every time rather than editing your last result.",
           },
         },
       },
@@ -723,7 +730,7 @@ export const CHAT_TOOL_DEFINITIONS = [
           master_id: { type: "string", description: "PREFERRED. Master asset id or @name (from list_master_assets). Auto-loads its hero image, multi-view pack, assembly tag, negative constraints, and palette." },
           image_id: { type: "string", description: "Identity/first-frame source image (from generate_image, list_images, or a user-uploaded image's '[Attached image …]' note). Use when no master exists." },
           image_url: { type: "string", description: "Public http(s) image URL as the identity source, if the user supplied one directly." },
-          reference_image_ids: { type: "array", items: { type: "string" }, description: "Up to 4 image ids forming a multi-view identity pack (front, 3/4, side, back). Requires a reference-capable model." },
+          reference_image_ids: { type: "array", items: { type: "string" }, description: "Up to 7 image ids forming a multi-view identity pack (front, 3/4, side, back — Vidu Q2 takes all 7 slots; other models use fewer). Re-send the SAME pack for every shot: per-shot re-anchoring is what prevents cross-shot drift. Requires a reference-capable model. With references attached, the prompt must describe only ACTION and CAMERA — never the character's appearance." },
           splat_id: { type: "string", description: "A 3D splat as the identity source: consistent multi-view stills are rendered from it automatically and used as the reference pack (honest path — the splat itself is not animated)." },
           condition_mode: { type: "string", enum: ["identity_lock", "first_frame", "reference"], description: "identity_lock (default) auto-picks the strongest mode the model supports. first_frame = exact composition anchor. reference = multi-image identity pack." },
           identity_scale: { type: "number", description: "0-1, how hard to pin appearance (default from user settings, 0.85). Mapped to the model's own knob (Veo conditioningScale, Kling cfg_scale); reported as skipped when the model has none." },
@@ -978,17 +985,117 @@ export const CHAT_TOOL_DEFINITIONS = [
           blueprint: {
             type: "object",
             description:
-              "The structured tech pack. Sizes are in HEAD-UNITS (the figure is `heightHeads` heads tall) and attach points are normalized 0..1 on a face — there are no absolute coordinates. Keys: kind (character|prop|set), form (hard_surface|organic|mixed), name, heightHeads, silhouette, absoluteHeight {value,unit}, parts[{id,name,primitive,size{x,y,z},parent,attach,offset,rotate,swatch,symmetry}], attachPoints[{id,name,part,face,u,v}], joints[{id,name,part,at,axis,range}], landmarks[{id,name,atHeads}], palette[{role,hex,note}], costume[{id,name,covers,state,swatchRoles}], marks[{name,part,side,description}], negatives[], notes[], validity{fromChapter,toChapter}. primitive is box|plate|wedge|cylinder|capsule|cone|sphere. face is front|back|left|right|top|bottom. symmetry \"mirror_x\" draws the limb twice so the pair can never drift apart. Use form \"organic\" for people and creatures — solids are not projected, the sheet becomes a proportion scaffold and landmarks are required.",
+              "The structured tech pack. Sizes are in HEAD-UNITS (the figure is `heightHeads` heads tall) and attach points are normalized 0..1 on a face — there are no absolute coordinates. Use form \"organic\" for people and creatures: solids are not projected, the sheet becomes a proportion scaffold, and landmarks are required. EXAMPLE (hard-surface robot): {\"kind\":\"character\",\"form\":\"hard_surface\",\"name\":\"Rustbucket\",\"silhouette\":\"barrel torso on stubby legs\",\"heightHeads\":4,\"parts\":[{\"id\":\"torso\",\"name\":\"Torso\",\"primitive\":\"cylinder\",\"size\":{\"x\":1.6,\"y\":1.8,\"z\":1.2}},{\"id\":\"head\",\"name\":\"Head\",\"primitive\":\"box\",\"size\":{\"x\":1,\"y\":1,\"z\":1},\"parent\":\"torso\",\"attach\":\"neck\"},{\"id\":\"arm\",\"name\":\"Arm\",\"primitive\":\"capsule\",\"size\":{\"x\":0.4,\"y\":1.6,\"z\":0.4},\"parent\":\"torso\",\"attach\":\"shoulder\",\"swatch\":\"accent\",\"symmetry\":\"mirror_x\"}],\"attachPoints\":[{\"id\":\"neck\",\"name\":\"Neck\",\"part\":\"torso\",\"face\":\"top\",\"u\":0.5,\"v\":0.5},{\"id\":\"shoulder\",\"name\":\"Shoulder\",\"part\":\"torso\",\"face\":\"right\",\"u\":0.5,\"v\":0.15}],\"palette\":[{\"role\":\"hull\",\"hex\":\"#6b4a2f\"},{\"role\":\"accent\",\"hex\":\"#c9a227\"}],\"negatives\":[\"no visible rivets\"]} — EXAMPLE (organic): same shape but form \"organic\", landmarks [{\"id\":\"eye\",\"name\":\"Eye line\",\"atHeads\":3.5},{\"id\":\"waist\",\"name\":\"Waist\",\"atHeads\":2.4}] and parts optional.",
+            properties: {
+              kind: { type: "string", enum: ["character", "prop", "set"] },
+              form: { type: "string", enum: ["hard_surface", "organic", "mixed"], description: "organic = proportion scaffold with landmarks (people, creatures); hard_surface = projected solids (robots, props)." },
+              name: { type: "string" },
+              silhouette: { type: "string", description: "One line naming the read-at-a-glance shape." },
+              heightHeads: { type: "number", description: "Total height in heads. The unit everything else is measured in." },
+              absoluteHeight: {
+                type: "object",
+                description: "Optional real-world height, for the scale bar.",
+                properties: { value: { type: "number" }, unit: { type: "string", enum: ["cm", "m", "in", "ft"] } },
+              },
+              parts: {
+                type: "array",
+                description: "Solid primitives, assembled by parent/attach references. Required for hard_surface, optional for organic.",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    name: { type: "string" },
+                    primitive: { type: "string", enum: ["box", "plate", "wedge", "cylinder", "capsule", "cone", "sphere"] },
+                    size: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, z: { type: "number" } }, description: "Extents in head-units." },
+                    parent: { type: "string", description: "Part id this hangs from. Exactly one part has no parent (the root)." },
+                    attach: { type: "string", description: "Attach-point id on the parent where this part mounts." },
+                    offset: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, z: { type: "number" } } },
+                    rotate: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, z: { type: "number" } }, description: "Degrees." },
+                    swatch: { type: "string", description: "Palette ROLE (not a hex) this part is painted." },
+                    symmetry: { type: "string", enum: ["none", "mirror_x"], description: "mirror_x draws the part twice, mirrored — one arm declaration, two arms that cannot drift apart." },
+                  },
+                },
+              },
+              attachPoints: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    name: { type: "string" },
+                    part: { type: "string", description: "Part id this point sits on." },
+                    face: { type: "string", enum: ["front", "back", "left", "right", "top", "bottom"] },
+                    u: { type: "number", description: "0..1 across the face." },
+                    v: { type: "number", description: "0..1 down the face." },
+                  },
+                },
+              },
+              joints: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    name: { type: "string" },
+                    part: { type: "string" },
+                    at: { type: "string", description: "Attach-point id where the pivot sits." },
+                    axis: { type: "string", enum: ["x", "y", "z"] },
+                    range: { type: "array", items: { type: "number" }, description: "[min, max] degrees; drawn as an arc." },
+                  },
+                },
+              },
+              landmarks: {
+                type: "array",
+                description: "Horizon lines at heights in heads (eye line, waist, knee). REQUIRED when form is organic.",
+                items: { type: "object", properties: { id: { type: "string" }, name: { type: "string" }, atHeads: { type: "number" } } },
+              },
+              palette: {
+                type: "array",
+                description: "Roles + hex. The hex is PAINTED on the sheet as a swatch — it never goes in a generation prompt (models obey a painted swatch ~12x better than a hex string).",
+                items: { type: "object", properties: { role: { type: "string" }, hex: { type: "string", description: "#rrggbb" }, note: { type: "string" } } },
+              },
+              costume: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    name: { type: "string" },
+                    covers: { type: "array", items: { type: "string" }, description: "Part ids under this layer." },
+                    state: { type: "string" },
+                    swatchRoles: { type: "array", items: { type: "string" } },
+                  },
+                },
+              },
+              marks: {
+                type: "array",
+                description: "Scars, asymmetries, which side the hair parts on. A mark on a mirror_x part is rejected — mirroring would copy it onto both sides.",
+                items: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string" },
+                    part: { type: "string" },
+                    side: { type: "string", enum: ["left", "right", "center"] },
+                    description: { type: "string" },
+                  },
+                },
+              },
+              negatives: { type: "array", items: { type: "string" }, description: "Hard bans, e.g. \"no visible rivets\"." },
+              notes: { type: "array", items: { type: "string" } },
+              validity: { type: "object", properties: { fromChapter: { type: "number" }, toChapter: { type: "number" } }, description: "Chapters this revision is canon for." },
+            },
           },
           views: {
             type: "array",
             items: { type: "string", enum: ["front", "right", "top", "back", "left", "three_quarter"] },
-            description: "Panels to draw, left to right. Default front, three_quarter, right, back — the back view is the one turnarounds hallucinate without.",
+            description: "Panels to draw, left to right. Default front, three_quarter, right, back — the back view is the one turnarounds hallucinate without. Fewer views = smaller sheet if the drawing budget is exceeded.",
           },
           stroke_width: { type: "number", description: "Line weight, 0.4-6 (default 1.4). Thinner lines hold a generator closer to the drawing when the sheet is used as a reference; thicker lines leave it more freedom." },
-          save_to_master: { type: "string", description: "Master asset id or @name to save this blueprint onto, making it that character's authoritative definition. Saving also runs a consistency check against that master's locked palette and forbidden traits." },
+          save_to_master: { type: "string", description: "Master asset id or @name to save this blueprint onto, making it that character's authoritative definition. Saving also runs a consistency check against that master's locked palette and forbidden traits. Needs the 'Save blueprints to masters' permission." },
+          confirm_replace: { type: "boolean", description: "Required true when save_to_master would REPLACE an existing blueprint — replacement is permanent, so tell the user what changes and get their go-ahead first." },
           chapter_index: { type: "number", description: "Chapter being written. Checked against the blueprint's validity range so you don't draw the wrong revision of a character." },
           save_as_reference: { type: "boolean", description: "Also save the sheet into the image library and return its image_id, so it can be passed to generate_image as a reference. Do this whenever the user is about to generate art of this subject — the drawn palette and proportions carry far better as a picture than as words." },
+          save_views_as_references: { type: "boolean", description: "Additionally save EACH VIEW as its own reference image (up to 4). Per-view references fill the generator's typed reference slots one view each, which measurably beats a single composite sheet." },
           title: { type: "string", description: "Title for the sheet in the Workspace. Defaults to the blueprint name." },
         },
       },
@@ -1003,17 +1110,198 @@ export const CHAT_TOOL_DEFINITIONS = [
       parameters: {
         type: "object",
         properties: {
-          scene_id: { type: "string", description: "Load a saved scene by id or name. Omit when passing `scene` inline." },
+          scene_id: { type: "string", description: "Load a saved scene by id or name (list_scenes shows what exists). Omit when passing `scene` inline." },
           scene: {
             type: "object",
             description:
-              "The scene document. Keys: name, slug (\"INT. FORGE — NIGHT\"), unit (m|ft), extent {w,h}, designator {show,episode,sequence,scene} for shot numbering, walls[{id,from{x,y},to{x,y},kind:wall|flat|opening|window}], props[{id,name,at{x,y},w,d,rotationDeg,master}], blocking[{id,name,at{x,y},facingDeg,height,master}], cameras[{id,label,at{x,y},headingDeg,focalMm,sensorId,squeeze,throwDistance}], lights[{id,name,at{x,y},kind:key|fill|back|practical|ambient,aimDeg}], shots[{id,camera,movement,subjects[],action,durationS}], notes[]. sensorId is full_frame|super35_4perf|alexa35_og|aps_c|micro43 (default super35_4perf). Leave shot `number` off and it is assigned.",
+              "The scene document. Plan north is +y; headings are degrees clockwise from north; positions are in `unit` (m or ft). EXAMPLE: {\"name\":\"The Forge\",\"slug\":\"INT. FORGE — NIGHT\",\"unit\":\"m\",\"extent\":{\"w\":10,\"h\":8},\"designator\":{\"show\":\"AGM\",\"episode\":\"104\",\"sequence\":\"TCC\",\"scene\":\"067\"},\"walls\":[{\"id\":\"n\",\"from\":{\"x\":0,\"y\":8},\"to\":{\"x\":10,\"y\":8},\"kind\":\"wall\"}],\"props\":[{\"id\":\"anvil\",\"name\":\"Anvil\",\"at\":{\"x\":5,\"y\":5},\"w\":1,\"d\":0.5,\"rotationDeg\":0}],\"blocking\":[{\"id\":\"smith\",\"name\":\"Smith\",\"at\":{\"x\":4.5,\"y\":4.5},\"facingDeg\":90,\"master\":\"robot_master\"}],\"cameras\":[{\"id\":\"a\",\"label\":\"A\",\"at\":{\"x\":2,\"y\":2},\"headingDeg\":45,\"focalMm\":35,\"sensorId\":\"super35_4perf\"}],\"shots\":[{\"id\":\"s1\",\"camera\":\"a\",\"movement\":\"static\",\"subjects\":[\"smith\"],\"action\":\"Smith hammers the blade\",\"durationS\":4}]} — leave shot `number` off and it is assigned in steps of ten.",
+            properties: {
+              name: { type: "string" },
+              slug: { type: "string", description: "Master scene heading, e.g. \"INT. FORGE — NIGHT\"." },
+              unit: { type: "string", enum: ["m", "ft"] },
+              extent: { type: "object", properties: { w: { type: "number" }, h: { type: "number" } }, description: "Stage size in `unit`." },
+              designator: {
+                type: "object",
+                properties: { show: { type: "string" }, episode: { type: "string" }, sequence: { type: "string" }, scene: { type: "string" } },
+                description: "Prefix for generated shot numbers (SHOW_EP_SEQ_SCENE_0010).",
+              },
+              walls: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    name: { type: "string" },
+                    from: { type: "object", properties: { x: { type: "number" }, y: { type: "number" } } },
+                    to: { type: "object", properties: { x: { type: "number" }, y: { type: "number" } } },
+                    kind: { type: "string", enum: ["wall", "flat", "opening", "window"] },
+                  },
+                },
+              },
+              props: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    name: { type: "string" },
+                    at: { type: "object", properties: { x: { type: "number" }, y: { type: "number" } } },
+                    w: { type: "number" },
+                    d: { type: "number" },
+                    rotationDeg: { type: "number" },
+                    master: { type: "string", description: "Master asset @name this prop is an instance of." },
+                  },
+                },
+              },
+              blocking: {
+                type: "array",
+                description: "Where people/characters stand.",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    name: { type: "string" },
+                    at: { type: "object", properties: { x: { type: "number" }, y: { type: "number" } } },
+                    facingDeg: { type: "number" },
+                    height: { type: "number", description: "Metres/feet tall, for shot-size classification." },
+                    master: { type: "string", description: "Master asset @name for this character." },
+                  },
+                },
+              },
+              cameras: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    label: { type: "string" },
+                    at: { type: "object", properties: { x: { type: "number" }, y: { type: "number" } } },
+                    headingDeg: { type: "number" },
+                    focalMm: { type: "number" },
+                    sensorId: { type: "string", enum: ["full_frame", "super35_4perf", "alexa35_og", "aps_c", "micro43"] },
+                    squeeze: { type: "number", description: "Anamorphic squeeze (1 = spherical; 2 doubles the horizontal field)." },
+                    throwDistance: { type: "number" },
+                  },
+                },
+              },
+              lights: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    name: { type: "string" },
+                    at: { type: "object", properties: { x: { type: "number" }, y: { type: "number" } } },
+                    kind: { type: "string", enum: ["key", "fill", "back", "practical", "ambient"] },
+                    aimDeg: { type: "number" },
+                  },
+                },
+              },
+              shots: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    number: { type: "string", description: "Leave off — assigned in steps of ten. Existing numbers are preserved on re-save." },
+                    camera: { type: "string", description: "Camera id." },
+                    movement: { type: "string", enum: ["static", "pan", "tilt", "dolly", "track", "crane", "handheld", "steadicam", "zoom"] },
+                    subjects: { type: "array", items: { type: "string" }, description: "Blocking ids in frame — checked against what the lens actually covers." },
+                    action: { type: "string" },
+                    durationS: { type: "number" },
+                    notes: { type: "string" },
+                  },
+                },
+              },
+              notes: { type: "array", items: { type: "string" } },
+            },
           },
-          save_as: { type: "string", description: "Save the scene under this name so it can be reloaded and revised. Uses the scene's own name when set to true-ish and omitted." },
-          show_frustums: { type: "boolean", description: "Draw the camera coverage wedges (default true). Turn off for a clean blocking-only plan." },
+          save_as: { type: "string", description: "Save the scene under this name (renames the plan if it differs from scene.name) so it can be reloaded with scene_id later. On re-save, existing shots KEEP their numbers and new shots take gap numbers. Needs the 'Save production scenes' permission." },
+          chapter_index: { type: "number", description: "Chapter this scene is pinned to in the manuscript." },
+          show_frustums: { type: "boolean", description: "Draw the camera coverage wedges (default true). Turn off for a clean blocking-only plan, or when the sheet exceeds the drawing budget." },
           title: { type: "string", description: "Title for the sheet in the Workspace. Defaults to the scene name." },
         },
       },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_scenes",
+      description: "List saved production scenes: name, id, lock state, shot/camera counts. FREE and read-only. Use before create_stage_plan with scene_id, and to find what exists instead of guessing names.",
+      parameters: {
+        type: "object",
+        properties: { limit: { type: "number", description: "Max scenes to return (default 25, max 50)." } },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_scene",
+      description: "Permanently delete a saved production scene. Destructive — requires the user's explicit confirmation.",
+      parameters: {
+        type: "object",
+        properties: {
+          scene_id: { type: "string", description: "Scene id or exact name." },
+          confirm: { type: "boolean", description: "Must be true, and only after the user explicitly confirmed deleting this exact scene." },
+        },
+        required: ["scene_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "lock_scene",
+      description: "Lock (or unlock) a saved scene's shot list — the film-set convention at the end of planning. After lock: shot numbers are immutable, inserts take gap numbers, and shots cut by a revision persist as OMITTED tombstones on the sheet instead of vanishing.",
+      parameters: {
+        type: "object",
+        properties: {
+          scene_id: { type: "string", description: "Scene id or exact name." },
+          locked: { type: "boolean", description: "true to lock (default), false to unlock." },
+        },
+        required: ["scene_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "accept_generation",
+      description: "Record in the production ledger that a generated image/video/splat is ACCEPTED — promoting it from disposable candidate to a take future work re-anchors on. Use when the user says a result is good/final/the keeper.",
+      parameters: {
+        type: "object",
+        properties: {
+          generation_id: { type: "string", description: "Ledger id from the generation's result, or \"latest\" (default) for the newest undecided candidate." },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "reject_generation",
+      description: "Record in the production ledger that a generation is REJECTED, with the reason — this is what makes cost-per-accepted-shot per model computable. Use when the user discards a result; pick the reason that best matches their complaint.",
+      parameters: {
+        type: "object",
+        properties: {
+          generation_id: { type: "string", description: "Ledger id, or \"latest\" (default) for the newest undecided candidate." },
+          reason: {
+            type: "string",
+            enum: ["structural", "identity", "temporal", "compositional", "prompt_miss", "policy", "aesthetic"],
+            description: "structural = anatomy/geometry wrong · identity = doesn't match the master · temporal = flicker/morphing (video) · compositional = framing wrong · prompt_miss = ignored the instruction · policy = provider refused · aesthetic = fine but not good.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_production_stats",
+      description: "Per-model scorecard from the production ledger: candidates, acceptance rate, estimated spend, and est_cost_per_accepted — the number that actually governs which model is cheap. FREE and read-only.",
+      parameters: { type: "object", properties: {} },
     },
   },
   {
@@ -1238,7 +1526,7 @@ function buildLiveCapabilities(deps: ToolDeps): (cap: string, capArgs: unknown) 
     const a = (rawArgs && typeof rawArgs === "object" ? rawArgs : {}) as Record<string, unknown>;
     switch (cap) {
       case "memory_search": {
-        const q = String(a.query || "").trim().replace(/[%,()]/g, " ");
+        const q = sanitizeIlike(String(a.query || ""));
         const limit = Math.min(20, Math.max(1, Number(a.limit) || 10));
         const { activeWikiIds, allNeurons } = await getNeuronScope();
         const build = (withSupersedeFilter: boolean) => {
@@ -1309,6 +1597,30 @@ function buildLiveCapabilities(deps: ToolDeps): (cap: string, capArgs: unknown) 
   };
 }
 
+/** Consecutive validation-rejection counters for the two blueprint tools —
+ *  the stopping-policy state. Reset on any success. Module-level and
+ *  session-scoped on purpose: the 2026 repair-loop measurements (validity
+ *  peaks at round 2, then further repair DAMAGES already-correct parts) are
+ *  about consecutive patched retries, and a success is exactly what breaks
+ *  the chain. Keyed by SUBJECT (the document's own name), so failing on one
+ *  blueprint never inherits escalation earned by a different one. */
+const repairRejections = {
+  blueprint: { subject: "", count: 0 },
+  scene: { subject: "", count: 0 },
+};
+
+/** Bump the counter for this subject; a subject change starts over at 1. */
+function repairRound(kind: "blueprint" | "scene", subjectRaw: unknown): number {
+  const subject = String((subjectRaw as any)?.name || (subjectRaw as any) || "").slice(0, 120) || "(unnamed)";
+  const state = repairRejections[kind];
+  if (state.subject !== subject) {
+    state.subject = subject;
+    state.count = 0;
+  }
+  state.count += 1;
+  return state.count;
+}
+
 export async function executeChatTool(
   name: string,
   rawArgs: string,
@@ -1329,6 +1641,26 @@ export async function executeChatTool(
       result: blocked,
       event: { name, summary: `${blocked.capability} is off (Lean Mode)`, ok: false },
     };
+  }
+
+  // Per-tool permission choke point. This is the ONLY place tool-level
+  // permissions are enforced — the per-case gates that used to be sprinkled
+  // through the switch covered 9 of 19 toggles and silently missed the rest.
+  // One read, one map (lib/toolPermissions.ts), one refusal shape; the
+  // coverage test keeps the map honest against the settings UI.
+  const permissionId = TOOL_PERMISSION[name];
+  if (permissionId) {
+    const { data: permPrefs } = await supabase
+      .from("user_settings")
+      .select("chat_tool_permissions" as any)
+      .maybeSingle();
+    const perms = (((permPrefs as any)?.chat_tool_permissions) || {}) as Record<string, boolean>;
+    if (perms[permissionId] === false) {
+      return {
+        result: permissionRefusal(name, permissionId),
+        event: { name, summary: `${name} blocked by user settings`, ok: false },
+      };
+    }
   }
 
   let args: any = {};
@@ -1407,7 +1739,9 @@ export async function executeChatTool(
         return { result: { ok: true }, event: { name, summary: `Focused on "${book.title}"`, ok: true } };
       }
       case "search_wiki": {
-        const q = String(args.query || "").trim();
+        // sanitizeIlike: this was the one search that interpolated the model's
+        // query into .or() unsanitized — a comma appended arbitrary OR-conditions.
+        const q = sanitizeIlike(String(args.query || ""));
         if (!q) return { result: { error: "Empty query" }, event: { name, summary: "Empty query", ok: false } };
         const limit = Math.min(25, Math.max(1, Number(args.limit) || 10));
         const { activeWikiId, activeWikiIds, allNeurons } = await getNeuronScope();
@@ -1608,6 +1942,31 @@ export async function executeChatTool(
         if (cErr) throw cErr;
         if (!c) return { result: { error: "Conflict not found" }, event: { name, summary: "Conflict not found", ok: false } };
 
+        // Branch permissions: resolving a conflict edits/supersedes/deletes
+        // knowledge entries, so the MEMORY toggles govern it — without this,
+        // switching off every memory-edit permission still left the same
+        // writes reachable through the conflict tool. acknowledge/dismiss
+        // only touch the conflict row and stay ungated.
+        const { data: confPrefs } = await supabase
+          .from("user_settings")
+          .select("chat_tool_permissions" as any)
+          .maybeSingle();
+        const confPerms = (((confPrefs as any)?.chat_tool_permissions) || {}) as Record<string, boolean>;
+        const CONFLICT_ACTION_PERM: Record<string, string> = {
+          keep_a_delete_b: "supersede_memory_entry",
+          keep_b_delete_a: "supersede_memory_entry",
+          merge: "update_memory_entry",
+          edit_a: "update_memory_entry",
+          edit_b: "update_memory_entry",
+        };
+        const neededPerm = CONFLICT_ACTION_PERM[action];
+        if (neededPerm && confPerms[neededPerm] === false) {
+          return {
+            result: permissionRefusal(`resolve_conflict (${action})`, neededPerm),
+            event: { name, summary: `resolve_conflict ${action} blocked by user settings`, ok: false },
+          };
+        }
+
         const setStatus = async (status: string) => {
           const { error } = await supabase.from("knowledge_conflicts").update({ status }).eq("id", id);
           if (error) throw error;
@@ -1638,7 +1997,15 @@ export async function executeChatTool(
             supersede_reason: reason,
           } as any).eq("id", loserId);
           if (!error) return "retired";
-          if (isMissingSupersessionSchema(error)) { await deleteEntry(loserId); return "deleted"; }
+          if (isMissingSupersessionSchema(error)) {
+            // The legacy fallback is a HARD delete — a different permission
+            // class than the history-preserving retirement above.
+            if (confPerms["delete_memory_entry"] === false) {
+              throw new Error("History-preserving retirement isn't available (supersession migration not applied) and the legacy fallback is a permanent delete, which is disabled in the user's AI permissions. Ask the user to enable 'Delete memory entries' or apply the supersession migration.");
+            }
+            await deleteEntry(loserId);
+            return "deleted";
+          }
           throw error;
         };
 
@@ -1945,18 +2312,11 @@ export async function executeChatTool(
         };
       }
       case "delete_wiki": {
-        // Per-tool permission gate. Defaults to allowed.
+        // Permission enforced at the executeChatTool choke point.
         const { data: prefs } = await supabase
           .from("user_settings")
-          .select("chat_tool_permissions, active_wiki_id" as any)
+          .select("active_wiki_id" as any)
           .maybeSingle();
-        const perms = (((prefs as any)?.chat_tool_permissions) || {}) as Record<string, boolean>;
-        if (perms.delete_wiki === false) {
-          return {
-            result: { error: "Tool 'delete_wiki' is disabled in the user's AI permissions. Ask the user to enable it in Settings." },
-            event: { name, summary: "delete_wiki blocked by user settings", ok: false },
-          };
-        }
         const wid = String(args.wiki_id || "");
         if (!wid) return { result: { error: "wiki_id required" }, event: { name, summary: "Missing wiki_id", ok: false } };
         if (args.confirm !== true) {
@@ -2062,11 +2422,17 @@ export async function executeChatTool(
         return { result: { ok: true }, event: { name, summary: `Deleted chapter`, ok: true } };
       }
       case "generate_image": {
+        // Provider seam: OpenRouter when its key exists; otherwise a Gemini
+        // key alone is enough — the Gemini image models run direct. The old
+        // gate demanded OpenRouter specifically, which locked Gemini-only
+        // users (the exact users the free-tier path steers toward) out of a
+        // capability their key supports.
         const apiKey = (deps.openRouterApiKey || "").trim();
-        if (!apiKey) {
+        const gemKey = (deps.geminiApiKey || "").trim();
+        if (!apiKey && !gemKey) {
           return {
-            result: { error: "Image generation needs an OPENROUTER key specifically (it is billed to OpenRouter, not NVIDIA). Ask the user to add one in Settings → AI Models & Keys. Do not suggest switching to an NVIDIA model — NVIDIA cannot generate images here." },
-            event: { name, summary: "OpenRouter key missing", ok: false },
+            result: { error: "Image generation needs an OpenRouter or Gemini key (it bills that provider — NVIDIA cannot generate images here). Ask the user to add one in Settings → AI Models & Keys." },
+            event: { name, summary: "No image-capable key", ok: false },
           };
         }
         if (deps.isPaid === false) {
@@ -2095,8 +2461,10 @@ export async function executeChatTool(
         // Loaded ONCE for the whole batch so every variation re-anchors from
         // exactly the same pixels — variations that drift apart from each other
         // are the failure this is here to prevent.
+        // Cap 6: the Gemini image line takes 4-5 typed character slots plus
+        // style refs; OpenRouter's path forwards what the model supports.
         const referenceIds = (Array.isArray(args.reference_image_ids) ? args.reference_image_ids : [])
-          .map((v: unknown) => String(v || "").trim()).filter(Boolean).slice(0, 4);
+          .map((v: unknown) => String(v || "").trim()).filter(Boolean).slice(0, 6);
         const referenceImageDataUrls: string[] = [];
         const referenceMisses: string[] = [];
         for (const refId of referenceIds) {
@@ -2108,7 +2476,7 @@ export async function executeChatTool(
 
         const settled = await Promise.allSettled(
           prompts.map(async (p) => {
-            const gen = await generateImage({ apiKey, prompt: p, aspectRatio, referenceImageDataUrls, primaryModel: deps.imageModelPrimary, fallbackModel: deps.imageModelFallback });
+            const gen = await generateImage({ apiKey, geminiApiKey: gemKey, prompt: p, aspectRatio, referenceImageDataUrls, primaryModel: deps.imageModelPrimary, fallbackModel: deps.imageModelFallback });
             let entryId: string | null = sharedEntryId;
             let neuronCreated = false;
             if (remember && !entryId) {
@@ -2119,7 +2487,19 @@ export async function executeChatTool(
               prompt: p, caption: gen.text, model: gen.modelUsed,
               dataUrl: gen.dataUrl, mime: gen.mime, entryId,
             });
-            return { ref, entryId, neuronCreated, model: gen.modelUsed, prompt: p };
+            // Production ledger: every generation lands as a CANDIDATE.
+            // Best-effort — a ledger miss never fails the generation — but
+            // reported, never silent.
+            const ledger = await recordGeneration({
+              kind: "image",
+              provider: gen.modelUsed.startsWith("gemini") ? "Gemini" : "OpenRouter",
+              model: gen.modelUsed,
+              prompt: p,
+              params: { aspectRatio, references: referenceImageDataUrls.length },
+              costEstimate: 0.05, // rough per-image figure; better than a null that reads as "free"
+              outputId: ref.id,
+            });
+            return { ref, entryId, neuronCreated, model: gen.modelUsed, prompt: p, ledgerId: ledger.id, ledgerNote: ledger.note };
           }),
         );
 
@@ -2154,9 +2534,11 @@ export async function executeChatTool(
               saved_to_memory: !!s.entryId,
               prompt: s.prompt,
               model: s.model,
+              generation_id: s.ledgerId || undefined,
             })),
             failures: failures.length ? failures : undefined,
-            note: "All images above are ALREADY displayed to the user inline — do NOT output markdown image links. Briefly describe what you created.",
+            ledger_note: successes.some((s) => s.ledgerNote) ? successes.find((s) => s.ledgerNote)?.ledgerNote : undefined,
+            note: "All images above are ALREADY displayed to the user inline — do NOT output markdown image links. Briefly describe what you created. When the user keeps or discards a result, record it with accept_generation / reject_generation.",
             __images: refs,
           },
           event: { name, summary, ok: true },
@@ -2166,8 +2548,11 @@ export async function executeChatTool(
         const imageId = String(args.image_id || "").trim();
         const instruction = String(args.instruction || "").trim();
         if (!imageId || !instruction) return { result: { error: "image_id and instruction required" }, event: { name, summary: "Missing args", ok: false } };
+        // Same seam as generate_image: Gemini-only users can edit too — the
+        // Gemini path takes inputImageDataUrl exactly like the OpenRouter one.
         const apiKey = (deps.openRouterApiKey || "").trim();
-        if (!apiKey) return { result: { error: "Image editing needs an OPENROUTER key specifically (billed to OpenRouter, not NVIDIA). Ask the user to add one in Settings." }, event: { name, summary: "OpenRouter key missing", ok: false } };
+        const gemEditKey = (deps.geminiApiKey || "").trim();
+        if (!apiKey && !gemEditKey) return { result: { error: "Image editing needs an OpenRouter or Gemini key (it bills that provider — NVIDIA cannot edit images here). Ask the user to add one in Settings." }, event: { name, summary: "No image-capable key", ok: false } };
         if (deps.isPaid === false) {
           return {
             result: { error: "Image editing is a Pro feature. Tell the user that upgrading to Pro or Lifetime unlocks it." },
@@ -2180,6 +2565,7 @@ export async function executeChatTool(
         if (!srcDataUrl) return { result: { error: "Could not load source image" }, event: { name, summary: "Source image unavailable", ok: false } };
         const gen = await generateImage({
           apiKey,
+          geminiApiKey: gemEditKey,
           prompt: instruction,
           aspectRatio: args.aspect_ratio ? String(args.aspect_ratio) : undefined,
           inputImageDataUrl: srcDataUrl,
@@ -2193,10 +2579,19 @@ export async function executeChatTool(
           dataUrl: gen.dataUrl, mime: gen.mime,
           entryId: src.entry_id, sourceImageId: src.id,
         });
+        const editLedger = await recordGeneration({
+          kind: "image",
+          provider: gen.modelUsed.startsWith("gemini") ? "Gemini" : "OpenRouter",
+          model: gen.modelUsed,
+          prompt: instruction, params: { edit_of: src.id },
+          costEstimate: 0.05, // rough per-image figure; better than a null that reads as "free"
+          outputId: ref.id,
+        });
         return {
           result: {
             ok: true, image_id: ref.id, entry_id: src.entry_id, model: gen.modelUsed,
-            note: "The edited image is already displayed to the user inline. Briefly describe the change.",
+            generation_id: editLedger.id || undefined,
+            note: "The edited image is already displayed to the user inline. Briefly describe the change. Remember: editing an edit compounds drift — the next refinement should re-anchor from the original references.",
             __images: [ref],
           },
           event: { name, summary: `Edited image: "${instruction.slice(0, 60)}"`, ok: true },
@@ -2300,18 +2695,7 @@ export async function executeChatTool(
       }
       case "delete_image":
       case "delete_image_memory": {
-        // Per-tool permission gate. Defaults to allowed.
-        const { data: prefs } = await supabase
-          .from("user_settings")
-          .select("chat_tool_permissions" as any)
-          .maybeSingle();
-        const perms = (((prefs as any)?.chat_tool_permissions) || {}) as Record<string, boolean>;
-        if (perms[name] === false) {
-          return {
-            result: { error: `Tool '${name}' is disabled in the user's AI permissions. Ask the user to enable it in Settings → AI permissions → Images.` },
-            event: { name, summary: `${name} blocked by user settings`, ok: false },
-          };
-        }
+        // Permission enforced at the executeChatTool choke point.
         if (args.confirm !== true) {
           return {
             result: { error: "Deletion requires confirm:true. Paraphrase the exact image back to the user, get explicit approval, then retry with confirm:true." },
@@ -2372,18 +2756,7 @@ export async function executeChatTool(
       case "save_image_to_memory": {
         const imageId = String(args.image_id || "").trim();
         if (!imageId) return { result: { error: "image_id required" }, event: { name, summary: "Missing image_id", ok: false } };
-        // Per-tool permission gate. Defaults to allowed.
-        const { data: prefs } = await supabase
-          .from("user_settings")
-          .select("chat_tool_permissions" as any)
-          .maybeSingle();
-        const perms = (((prefs as any)?.chat_tool_permissions) || {}) as Record<string, boolean>;
-        if (perms[name] === false) {
-          return {
-            result: { error: `Tool '${name}' is disabled in the user's AI permissions. Ask the user to enable it in Settings → AI permissions → Images.` },
-            event: { name, summary: `${name} blocked by user settings`, ok: false },
-          };
-        }
+        // Permission enforced at the executeChatTool choke point.
         try {
           const saved = await saveImageToMemory({
             imageId,
@@ -2437,8 +2810,12 @@ export async function executeChatTool(
         // ── Identity inputs (explicit args override the master's bundle) ────
         const motionMode = String(args.motion_mode || "text").trim();
         const tierArg = String(args.tier || "standard").trim();
+        // Cap 7: Vidu Q2's reference-to-video takes seven slots — re-sending
+        // the same master pack with EVERY shot re-anchors identity per shot,
+        // which sidesteps cross-shot drift entirely. Models with fewer slots
+        // drop extras in their adapter.
         const refIdsArg: string[] = Array.isArray(args.reference_image_ids)
-          ? args.reference_image_ids.map((s: any) => String(s || "").trim()).filter(Boolean).slice(0, 4)
+          ? args.reference_image_ids.map((s: any) => String(s || "").trim()).filter(Boolean).slice(0, 7)
           : [];
         const wantsIdentity = !!(args.master_id || args.image_id || args.image_url || args.splat_id
           || refIdsArg.length > 0 || motionMode === "motion_plate" || tierArg === "draft");
@@ -2473,7 +2850,9 @@ export async function executeChatTool(
         if (heroImageUrlDirect && !/^https?:\/\//i.test(heroImageUrlDirect)) {
           return { result: { error: "image_url must be an http(s) URL." }, event: { name, summary: "Bad image_url", ok: false } };
         }
-        const refIds: string[] = refIdsArg.length > 0 ? refIdsArg : (master?.view_image_ids || []);
+        const refIds: string[] = refIdsArg.length > 0
+          ? refIdsArg
+          : (master ? masterImagePack(master).filter((id) => id !== master.hero_image_id).slice(0, 7) : []);
         const splatId: string | null = String(args.splat_id || "").trim() || master?.splat_id || null;
         const masterId = master?.id || null;
 
@@ -2636,10 +3015,17 @@ export async function executeChatTool(
           } catch (e) {
             console.warn("[generate_video] insertPendingVideo failed", e);
           }
+          // Ledger: candidate at submit — cost is committed when the job starts.
+          const motionLedger = await recordGeneration({
+            kind: "video", provider: "fal.ai", model: motionModel, prompt,
+            params: { motion_mode: "motion_plate", duration_s: knownDuration },
+            costEstimate: estCost, masterId,
+          });
           const ref: ChatVideoRef = { job_id: jobId, prompt, model: motionModel };
           return {
             result: {
               ok: true, job_id: jobId, provider: "fal", model: motionModel, motion_mode: "motion_plate",
+              generation_id: motionLedger.id || undefined,
               duration_s: knownDuration, estimated_cost_usd: estCost != null ? Number(estCost.toFixed(2)) : null,
               source: { master: master?.name || null, image_ids: sourceIds, motion_video_id: motionVideoId },
               ...(refsIgnoredNote || mpfWarnings.length > 0
@@ -2789,11 +3175,18 @@ export async function executeChatTool(
           } catch (e) {
             console.warn("[generate_video] insertPendingVideo failed", e);
           }
+          // Ledger: candidate at submit — cost is committed when the job starts.
+          const draftLedger = await recordGeneration({
+            kind: "video", provider: "fal.ai", model: draftModel, prompt: draftPrompt,
+            params: { tier: "draft", duration_s: durationS, resolution, references: urls.length },
+            costEstimate: estCost, masterId,
+          });
           const ref: ChatVideoRef = { job_id: jobId, prompt: draftPrompt, model: draftModel };
           return {
             result: {
               ok: true, job_id: jobId, provider: "fal", model: draftModel, tier: "draft",
               condition_mode: "reference", reference_count: urls.length, duration_s: durationS,
+              generation_id: draftLedger.id || undefined,
               estimated_cost_usd: estCost != null ? Number(estCost.toFixed(2)) : null,
               source: { master: master?.name || null, image_ids: sentIds, splat_id: sourceSplatId },
               ...(draftNotes.length > 0 ? { adjustments: draftNotes } : {}),
@@ -3129,10 +3522,22 @@ export async function executeChatTool(
           // The job is running on OpenRouter; the bubble can still poll by job_id.
           console.warn("[generate_video] insertPendingVideo failed", e);
         }
+        // Production ledger: the clip lands as a CANDIDATE at submit (cost is
+        // committed the moment the job starts, not when it finishes).
+        const videoLedger = await recordGeneration({
+          kind: "video",
+          provider: "OpenRouter",
+          model,
+          prompt: finalPrompt,
+          params: { duration_s: duration, resolution, condition_mode: conditionMode || null, references: sourceImageIds.length },
+          costEstimate: estCost,
+          masterId,
+        });
         const ref: ChatVideoRef = { job_id: jobId, prompt: finalPrompt, model };
         return {
           result: {
             ok: true, job_id: jobId, model, prompt: finalPrompt, duration_s: duration, resolution,
+            generation_id: videoLedger.id || undefined,
             estimated_cost_usd: estCost != null ? Number(estCost.toFixed(2)) : null,
             ...(adjustments.length > 0 ? { adjustments } : {}),
             ...(conditionMode ? {
@@ -3185,11 +3590,7 @@ export async function executeChatTool(
         return { result: out, event: { name, summary: `Listed ${out.length} video(s)${args.query ? ` matching "${String(args.query).slice(0, 40)}"` : ""}`, ok: true } };
       }
       case "delete_video": {
-        const { data: prefs } = await supabase.from("user_settings").select("chat_tool_permissions" as any).maybeSingle();
-        const perms = (((prefs as any)?.chat_tool_permissions) || {}) as Record<string, boolean>;
-        if (perms[name] === false) {
-          return { result: { error: `Tool '${name}' is disabled in the user's AI permissions. Ask the user to enable it in Settings.` }, event: { name, summary: `${name} blocked by user settings`, ok: false } };
-        }
+        // Permission enforced at the executeChatTool choke point.
         if (args.confirm !== true) {
           return { result: { error: "Deletion requires confirm:true. Paraphrase the exact clip back to the user, get explicit approval, then retry with confirm:true." }, event: { name, summary: "Refused: confirmation required", ok: false } };
         }
@@ -3342,10 +3743,17 @@ export async function executeChatTool(
           console.warn("[generate_splat] insertPendingSplat failed", e);
         }
 
+        // Ledger: candidate at submit — the job is paid for the moment it starts.
+        const splatLedger = await recordGeneration({
+          kind: "splat", provider: "fal.ai", model: usedModel, prompt,
+          params: { format: usedFormat, quality: tier.id },
+          costEstimate: estimateSplatCostUSD(usedModel),
+        });
         const ref: ChatSplatRef = { request_id: submitted.requestId, prompt, model: usedModel };
         return {
           result: {
             ok: true, request_id: submitted.requestId, model: usedModel,
+            generation_id: splatLedger.id || undefined,
             ...(usedModel !== model ? { fell_back_from: model } : {}),
             quality: tier.id, approx_file_size: tierSizeLabel(tier),
             note: "A live 'building 3D model' card is now shown to the user inline; it becomes an interactive 3D preview they can orbit. Do NOT claim it's ready or output any link — just briefly say it's being built.",
@@ -3383,11 +3791,7 @@ export async function executeChatTool(
         return { result: out, event: { name, summary: `Listed ${out.length} 3D model(s)${args.query ? ` matching "${String(args.query).slice(0, 40)}"` : ""}`, ok: true } };
       }
       case "delete_splat": {
-        const { data: prefs } = await supabase.from("user_settings").select("chat_tool_permissions" as any).maybeSingle();
-        const perms = (((prefs as any)?.chat_tool_permissions) || {}) as Record<string, boolean>;
-        if (perms[name] === false) {
-          return { result: { error: `Tool '${name}' is disabled in the user's AI permissions. Ask the user to enable it in Settings.` }, event: { name, summary: `${name} blocked by user settings`, ok: false } };
-        }
+        // Permission enforced at the executeChatTool choke point.
         if (args.confirm !== true) {
           return { result: { error: "Deletion requires confirm:true. Paraphrase the exact 3D model back to the user, get explicit approval, then retry with confirm:true." }, event: { name, summary: "Refused: confirmation required", ok: false } };
         }
@@ -3530,11 +3934,7 @@ export async function executeChatTool(
         return { result: out, event: { name, summary: `Listed ${out.length} master asset(s)`, ok: true } };
       }
       case "delete_master_asset": {
-        const { data: prefs } = await supabase.from("user_settings").select("chat_tool_permissions" as any).maybeSingle();
-        const perms = (((prefs as any)?.chat_tool_permissions) || {}) as Record<string, boolean>;
-        if (perms[name] === false) {
-          return { result: { error: `Tool '${name}' is disabled in the user's AI permissions. Ask the user to enable it in Settings.` }, event: { name, summary: `${name} blocked by user settings`, ok: false } };
-        }
+        // Permission enforced at the executeChatTool choke point.
         if (args.confirm !== true) {
           return { result: { error: "Deletion requires confirm:true. Paraphrase the master (@name) back to the user, get explicit approval, then retry with confirm:true." }, event: { name, summary: "Refused: confirmation required", ok: false } };
         }
@@ -3587,15 +3987,27 @@ export async function executeChatTool(
         if (!parsed.ok) {
           // Location + violation + admissible values. The third part is what
           // makes a repair loop work; without it the message is nearly useless.
+          // The note escalates with consecutive rejections because the 2026
+          // repair-loop literature is unambiguous: success plateaus at round
+          // two, and further "repair" starts damaging parts that were right.
+          const round = repairRound("blueprint", raw);
+          const note =
+            round <= 1
+              ? "Fix exactly these and call create_blueprint_sheet again. Do not change anything else."
+              : round === 2
+                ? "Second rejection. Fix ONLY the problems listed — do not restructure parts that already passed. If this attempt fails, stop patching."
+                : "Stop repairing — patched retries stop converging after two rounds. Either rebuild the blueprint fresh from the master/description (do not start from your last attempt), or show the user the remaining problems and ask for direction.";
           return {
             result: {
               error: "The blueprint did not pass validation, so nothing was drawn.",
               problems: formatProblems((parsed as any).problems).slice(0, 12),
-              note: "Fix exactly these and call create_blueprint_sheet again. Do not change anything else.",
+              repair_round: round,
+              note,
             },
-            event: { name, summary: `Blueprint rejected (${(parsed as any).problems.length} problem${(parsed as any).problems.length === 1 ? "" : "s"})`, ok: false },
+            event: { name, summary: `Blueprint rejected (${(parsed as any).problems.length} problem${(parsed as any).problems.length === 1 ? "" : "s"}, round ${round})`, ok: false },
           };
         }
+        repairRejections.blueprint.count = 0;
         const bp = parsed.blueprint;
 
         const sheet = renderBlueprintSheet(bp, {
@@ -3607,15 +4019,39 @@ export async function executeChatTool(
 
         const sheetProblems = validateSheetSvg(sheet.svg);
         if (sheetProblems.length) {
-          // Our own renderer produced something that fails the gate. That is a
-          // bug here, not in the model's blueprint — say so rather than sending
-          // it round a repair loop it cannot win.
+          // Two very different failures used to share one message. A budget
+          // overflow (too many nodes for one sheet) is the MODEL's to fix by
+          // drawing fewer views — telling it "renderer fault, don't retry" was
+          // a dead end with the remedy forbidden. Anything else genuinely is a
+          // renderer bug and retrying the same blueprint cannot win.
+          const budget = sheetProblems.filter((p) => /node budget|Reduce the view count/i.test(p.problem + (p.allowed || []).join(" ")));
+          if (budget.length && budget.length === sheetProblems.length) {
+            return {
+              result: {
+                error: "The sheet exceeded the drawing budget and was not shown. The blueprint itself is valid — there is just too much to draw on one sheet.",
+                problems: formatProblems(sheetProblems).slice(0, 6),
+                note: `Call again with fewer views (e.g. views: ["front","right"]) or split costume layers across two sheets. Do not change the blueprint's geometry.`,
+              },
+              event: { name, summary: "Sheet over drawing budget — retry with fewer views", ok: false },
+            };
+          }
           return {
             result: {
-              error: "The sheet failed its own validity check and was not shown. This is a renderer fault, not a problem with the blueprint.",
+              error: "The sheet failed its own validity check and was not shown. This is a renderer fault, not a problem with the blueprint — do not retry the same call.",
               problems: formatProblems(sheetProblems).slice(0, 6),
             },
             event: { name, summary: "Sheet failed validation", ok: false },
+          };
+        }
+        if (sheet.svg.length > ARTIFACT_MAX_CONTENT) {
+          // The artifact pipeline would silently drop anything past its cap —
+          // refuse HERE, honestly, instead of claiming the sheet is on screen.
+          return {
+            result: {
+              error: `The sheet is too large to display (${Math.round(sheet.svg.length / 1024)} KB against a ${Math.round(ARTIFACT_MAX_CONTENT / 1024)} KB cap) and was not shown.`,
+              note: `Call again with fewer views (e.g. views: ["front","right"]). The blueprint itself is valid.`,
+            },
+            event: { name, summary: "Sheet too large to display", ok: false },
           };
         }
 
@@ -3625,6 +4061,27 @@ export async function executeChatTool(
         const chapterArg = (args as any).chapter_index;
         const findings = checkValidity(bp, typeof chapterArg === "number" ? chapterArg : null);
 
+        // Drawn FROM a master → checked against that master on every draw, not
+        // only on save. And a check that cannot run reports itself as missing
+        // rather than silently passing — the old bare catch meant a culori
+        // load failure switched the palette gate off forever, invisibly.
+        if (master) {
+          try {
+            findings.push(...(await checkBlueprintAgainstMaster(bp, master)));
+          } catch (e: any) {
+            findings.push({ where: "consistency", severity: "warning", problem: `the palette/trait check could not run (${e?.message || "unknown error"}) — its findings are MISSING, not passing` });
+          }
+        }
+
+        // The artifact exists from this point on. Every branch below —
+        // including every failure — returns it, because the sheet is valid and
+        // drawn; what varies is only whether the save succeeded, and the model
+        // must never be told the sheet is on screen when it is not (or vice
+        // versa). This exact path used to drop the artifact on save failure
+        // while instructing the model to say it was visible.
+        const title = (String((args as any).title || "").trim() || `${bp.name} — blueprint sheet`).slice(0, 160);
+        const artifact = { title, kind: "svg", content: sheet.svg };
+
         let savedTo: string | null = null;
         const saveRef = String((args as any).save_to_master || "").trim();
         if (saveRef) {
@@ -3633,16 +4090,51 @@ export async function executeChatTool(
             : await resolveMaster(saveRef);
           if (!target) {
             return {
-              result: { error: `The sheet drew fine, but no master matches "${saveRef}" so the blueprint was not saved. Call list_master_assets, then call again with a real id or @name.` },
-              event: { name, summary: "Master not found for save", ok: false },
+              result: {
+                error: `No master matches "${saveRef}", so the blueprint was NOT saved. The sheet itself IS on screen. Call list_master_assets, then call again with a real id or @name.`,
+                __artifact: artifact,
+              },
+              event: { name, summary: "Sheet drawn; master not found for save", ok: false },
+            };
+          }
+          // Branch permission: drawing is free and ungated; WRITING a master's
+          // authoritative geometry is not.
+          const { data: savePrefs } = await supabase
+            .from("user_settings")
+            .select("chat_tool_permissions" as any)
+            .maybeSingle();
+          const savePerms = (((savePrefs as any)?.chat_tool_permissions) || {}) as Record<string, boolean>;
+          if (savePerms["save_blueprint_to_master"] === false) {
+            return {
+              result: {
+                error: "Saving blueprints to masters is disabled in the user's AI permissions. The sheet itself IS on screen — tell the user, and ask them to enable 'Save blueprints to masters' in Settings if they want it attached.",
+                __artifact: artifact,
+              },
+              event: { name, summary: "Sheet drawn; save blocked by user settings", ok: false },
+            };
+          }
+          // Replacing an existing blueprint is destructive — there is no
+          // version history on the column. One confirmation, like every other
+          // destructive tool in the app.
+          if (target.blueprint && (args as any).confirm_replace !== true) {
+            return {
+              result: {
+                error: `@${target.name} already has a blueprint — replacing it permanently discards the current one. The new sheet IS on screen. Tell the user what would change, get their explicit go-ahead, then retry with confirm_replace:true.`,
+                __artifact: artifact,
+              },
+              event: { name, summary: `Sheet drawn; replacing @${target.name}'s blueprint needs confirmation`, ok: false },
             };
           }
           // Checked BEFORE the write, not after: a blueprint that contradicts
           // its master's locked palette is wrong the moment it lands, and
           // finding it during a later render is finding it too late.
-          try {
-            findings.push(...(await checkBlueprintAgainstMaster(bp, target)));
-          } catch { /* a failed check must not block a legitimate save */ }
+          if (target !== master) {
+            try {
+              findings.push(...(await checkBlueprintAgainstMaster(bp, target)));
+            } catch (e: any) {
+              findings.push({ where: "consistency", severity: "warning", problem: `the palette/trait check could not run (${e?.message || "unknown error"}) — its findings are MISSING, not passing` });
+            }
+          }
 
           try {
             await updateMasterAsset(target.id, { blueprint: bp });
@@ -3650,10 +4142,11 @@ export async function executeChatTool(
           } catch (e: any) {
             return {
               result: {
-                error: `The sheet drew fine but the blueprint could not be saved: ${e?.message || "unknown error"}`,
-                note: "Tell the user the sheet is on screen but not attached to the master yet.",
+                error: `The blueprint could not be saved: ${e?.message || "unknown error"}`,
+                note: "The sheet IS on screen — tell the user it drew fine but is not attached to the master yet.",
+                __artifact: artifact,
               },
-              event: { name, summary: "Blueprint save failed", ok: false },
+              event: { name, summary: "Sheet drawn; blueprint save failed", ok: false },
             };
           }
         }
@@ -3665,6 +4158,7 @@ export async function executeChatTool(
         // generate_image, generate_video and lock_master_asset alike, exactly
         // as render_splat_views already does for turntable stills.
         let referenceImageId: string | null = null;
+        const viewReferenceIds: Array<{ view: string; image_id: string }> = [];
         const turnImages: ChatImageRef[] = [];
         if ((args as any).save_as_reference) {
           try {
@@ -3682,15 +4176,42 @@ export async function executeChatTool(
             sheet.omitted.push(`the sheet could not be saved as a reference image: ${e?.message || "unknown error"}`);
           }
         }
+        // Per-view references: one raster PER PANEL, so each view can ride its
+        // own typed reference slot (Gemini's image models take several
+        // character-consistency inputs; a stack of single views measurably
+        // beats one composite collage). Each panel is re-rendered alone so it
+        // fills its raster instead of being a crop.
+        if ((args as any).save_views_as_references) {
+          for (const v of sheet.views.slice(0, 4)) {
+            try {
+              const single = renderBlueprintSheet(bp, {
+                views: [v as ViewName],
+                strokeWidth: Number((args as any).stroke_width) || undefined,
+              });
+              if (validateSheetSvg(single.svg).length) continue; // never save an invalid panel
+              const raster = await rasterizeSheet(single.svg, { width: 1000 });
+              const stored = await storeGeneratedImage({
+                prompt: `Blueprint view — ${bp.name} (${v})`,
+                caption: `${bp.kind} blueprint, ${v} view · palette ${bp.palette.map((s) => s.hex).join(" ")}`,
+                model: "blueprint-sheet",
+                dataUrl: raster.dataUrl,
+                mime: "image/png",
+              });
+              viewReferenceIds.push({ view: v, image_id: stored.id });
+            } catch (e: any) {
+              sheet.omitted.push(`the ${v} view could not be saved as a reference: ${e?.message || "unknown error"}`);
+            }
+          }
+        }
 
-        const title = String((args as any).title || "").trim() || `${bp.name} — blueprint sheet`;
         return {
           result: {
             ok: true,
             title,
             reference_image_id: referenceImageId,
-            ...(referenceImageId
-              ? { reference_note: "Pass this image_id to generate_image as `reference_image_ids` and keep the prompt to pose, action and setting. Re-anchor from it every time; never edit your previous result forward." }
+            view_reference_ids: viewReferenceIds.length ? viewReferenceIds : undefined,
+            ...(referenceImageId || viewReferenceIds.length
+              ? { reference_note: "Pass these image_ids to generate_image as `reference_image_ids` (per-view ids beat the composite when both exist) and keep the prompt to pose, action and setting — the references carry the appearance. Re-anchor from them every time; never edit your previous result forward." }
               : {}),
             ...(turnImages.length ? { __images: turnImages } : {}),
             // Deliberately NOT the SVG. A sheet is tens of kilobytes of markup
@@ -3709,7 +4230,7 @@ export async function executeChatTool(
               (findings.some((f) => f.severity === "error")
                 ? " There are CONFLICT lines in `consistency`: tell the user plainly what disagrees with the locked master and ask which one is right. Do not pick for them."
                 : ""),
-            __artifact: { title, kind: "svg", content: sheet.svg },
+            __artifact: artifact,
           },
           event: {
             name,
@@ -3724,19 +4245,21 @@ export async function executeChatTool(
         // Free and local, same as create_blueprint_sheet — not in any Lean Mode
         // block list on purpose.
         let raw: unknown = (args as any).scene;
+        let loadedSceneRowId: string | null = null;
         const sceneRef = String((args as any).scene_id || "").trim();
         if (!raw && sceneRef) {
           if (!(await scenesMigrated())) {
             return {
-              result: { error: "Saved scenes need a database migration that hasn't been applied yet (supabase/migrations/20260802090000_blueprint_pipeline.sql). Pass the scene inline with `scene` instead — it will still draw." },
+              result: { error: "Saved scenes need the blueprint pipeline migration, which hasn't been applied yet — the user can ask Lovable to apply it. Pass the scene inline with `scene` instead — it will still draw." },
               event: { name, summary: "Scenes not migrated", ok: false },
             };
           }
           const row = await resolveScene(sceneRef);
           if (!row) {
-            return { result: { error: `No saved scene matches "${sceneRef}".` }, event: { name, summary: "Scene not found", ok: false } };
+            return { result: { error: `No saved scene matches "${sceneRef}". Call list_scenes to see what exists.` }, event: { name, summary: "Scene not found", ok: false } };
           }
           raw = row.plan;
+          loadedSceneRowId = row.id;
         }
         if (!raw) {
           return { result: { error: "Pass either `scene` (the plan document) or `scene_id` (to load a saved one)." }, event: { name, summary: "Nothing to draw", ok: false } };
@@ -3744,55 +4267,134 @@ export async function executeChatTool(
 
         const parsed = parseScene(raw);
         if (!parsed.ok) {
+          // Same stopping policy as the blueprint path: escalate at round two,
+          // abstain-and-rebuild past it.
+          const round = repairRound("scene", raw);
+          const note =
+            round <= 1
+              ? "Fix exactly these and call create_stage_plan again."
+              : round === 2
+                ? "Second rejection. Fix ONLY the problems listed — do not restructure parts that already passed. If this attempt fails, stop patching."
+                : "Stop repairing — patched retries stop converging after two rounds. Either rebuild the scene fresh from the description (do not start from your last attempt), or show the user the remaining problems and ask for direction.";
           return {
             result: {
               error: "The scene did not pass validation, so nothing was drawn.",
               problems: formatProblems((parsed as any).problems).slice(0, 12),
-              note: "Fix exactly these and call create_stage_plan again.",
+              repair_round: round,
+              note,
             },
-            event: { name, summary: `Scene rejected (${(parsed as any).problems.length} problem${(parsed as any).problems.length === 1 ? "" : "s"})`, ok: false },
+            event: { name, summary: `Scene rejected (${(parsed as any).problems.length} problem${(parsed as any).problems.length === 1 ? "" : "s"}, round ${round})`, ok: false },
           };
         }
-        const scene = parsed.scene;
+        repairRejections.scene.count = 0;
+        let scene = parsed.scene;
+
+        // `save_as` is a RENAME-and-save: the value was accepted and silently
+        // ignored for one release, with the result claiming otherwise. When
+        // the scene was LOADED from a saved row, that row's id rides along so
+        // the save renames it in place — resolving by the new name would find
+        // nothing, insert a copy, and strand the original (with its lock and
+        // tombstones) under the old name.
+        const saveAsRaw = (args as any).save_as;
+        const saveName = typeof saveAsRaw === "string" && saveAsRaw.trim() && saveAsRaw !== "true"
+          ? saveAsRaw.trim().slice(0, 80)
+          : null;
+        if (saveName && saveName !== scene.name) scene = { ...scene, name: saveName };
+        const wantsSave = Boolean(saveAsRaw);
+
+        // When this save will revise an existing row, merge BEFORE rendering —
+        // otherwise the sheet shows the pre-merge numbers while the database
+        // stores the post-merge ones (gap numbers, tombstones), and the user
+        // is looking at a document that was never saved. saveScene re-runs the
+        // same merge, which is idempotent on an already-merged plan.
+        if (wantsSave && (await scenesMigrated())) {
+          try {
+            const existingRow = loadedSceneRowId
+              ? await resolveScene(loadedSceneRowId)
+              : await resolveScene(scene.name);
+            if (existingRow) {
+              scene = preserveShotNumbers(existingRow.plan, scene, { locked: !!existingRow.locked_at });
+            }
+          } catch { /* render the incoming plan; the save path reports its own failures */ }
+        }
 
         const plan = renderPlanSheet(scene, {
           showFrustums: (args as any).show_frustums !== false,
         });
         const planProblems = validateSheetSvg(plan.svg);
         if (planProblems.length) {
+          const budget = planProblems.filter((p) => /node budget|Reduce the view count/i.test(p.problem + (p.allowed || []).join(" ")));
+          if (budget.length && budget.length === planProblems.length) {
+            return {
+              result: {
+                error: "The stage plan exceeded the drawing budget and was not shown. The scene itself is valid — there is just too much to draw on one sheet.",
+                problems: formatProblems(planProblems).slice(0, 6),
+                note: "Call again with show_frustums:false, or split the shot list across two scenes.",
+              },
+              event: { name, summary: "Plan over drawing budget — retry smaller", ok: false },
+            };
+          }
           return {
             result: {
-              error: "The stage plan failed its own validity check and was not shown. This is a renderer fault, not a problem with the scene.",
+              error: "The stage plan failed its own validity check and was not shown. This is a renderer fault, not a problem with the scene — do not retry the same call.",
               problems: formatProblems(planProblems).slice(0, 6),
             },
             event: { name, summary: "Plan failed validation", ok: false },
           };
         }
+        if (plan.svg.length > ARTIFACT_MAX_CONTENT) {
+          return {
+            result: {
+              error: `The stage plan is too large to display (${Math.round(plan.svg.length / 1024)} KB) and was not shown.`,
+              note: "Call again with show_frustums:false or fewer shots per scene. The scene itself is valid.",
+            },
+            event: { name, summary: "Plan too large to display", ok: false },
+          };
+        }
 
         // Same posture as the blueprint path: targeted pairwise checks against
         // the masters this scene actually names, never a sweep of everything.
+        // A check that cannot run reports itself instead of vanishing.
         let sceneFindings: Awaited<ReturnType<typeof checkSceneReferences>> = [];
         try {
           const known = (await mastersMigrated()) ? (await listMasterAssets()).map((m) => m.name) : [];
           sceneFindings = await checkSceneReferences(scene, resolveMaster, known);
-        } catch { /* a failed check must not stop a plan from drawing */ }
+        } catch (e: any) {
+          sceneFindings = [{ where: "consistency", severity: "warning", problem: `the master-reference check could not run (${e?.message || "unknown error"}) — its findings are MISSING, not passing` }];
+        }
+
+        const title = (String((args as any).title || "").trim() || `${scene.name} — stage plan`).slice(0, 160);
+        const planArtifact = { title, kind: "svg", content: plan.svg };
 
         let savedAs: string | null = null;
-        if ((args as any).save_as) {
+        if (wantsSave) {
           if (!(await scenesMigrated())) {
-            savedAs = null;
-            plan.omitted.push("the scene could not be saved — the scenes table migration has not been applied yet");
+            plan.omitted.push("the scene could NOT be saved — the scenes migration has not been applied yet (the user can ask Lovable to apply it)");
           } else {
-            try {
-              const row = await saveScene(scene, { bookId: deps.activeBookId || null });
-              savedAs = row.name;
-            } catch (e: any) {
-              plan.omitted.push(`the scene could not be saved: ${e?.message || "unknown error"}`);
+            // Branch permission: drawing is free; writing a scene row is gated.
+            const { data: scenePrefs } = await supabase
+              .from("user_settings")
+              .select("chat_tool_permissions" as any)
+              .maybeSingle();
+            const scenePerms = (((scenePrefs as any)?.chat_tool_permissions) || {}) as Record<string, boolean>;
+            if (scenePerms["save_scene"] === false) {
+              plan.omitted.push("the scene was NOT saved — saving scenes is disabled in the user's AI permissions");
+            } else {
+              try {
+                const chapterArg2 = (args as any).chapter_index;
+                const row = await saveScene(scene, {
+                  bookId: deps.activeBookId || null,
+                  chapterIndex: typeof chapterArg2 === "number" ? chapterArg2 : null,
+                  existingId: loadedSceneRowId,
+                });
+                savedAs = row.name;
+              } catch (e: any) {
+                plan.omitted.push(`the scene could NOT be saved: ${e?.message || "unknown error"}`);
+              }
             }
           }
         }
 
-        const title = String((args as any).title || "").trim() || `${scene.name} — stage plan`;
         return {
           result: {
             ok: true,
@@ -3806,8 +4408,10 @@ export async function executeChatTool(
             saved_as: savedAs,
             elements: plan.nodeCount,
             omitted: plan.omitted.length ? plan.omitted : undefined,
-            note: "The plan is ALREADY displayed to the user in the side panel — do not describe the markup. If there are coverage warnings, tell the user plainly which shots don't see their subject and offer a wider lens or a moved mark.",
-            __artifact: { title, kind: "svg", content: plan.svg },
+            note:
+              "The plan is ALREADY displayed to the user in the side panel — do not describe the markup. If there are coverage warnings, tell the user plainly which shots don't see their subject and offer a wider lens or a moved mark." +
+              (wantsSave && !savedAs ? " The scene was NOT saved — see `omitted` for why; tell the user." : ""),
+            __artifact: planArtifact,
           },
           event: {
             name,
@@ -3817,6 +4421,120 @@ export async function executeChatTool(
             ok: true,
           },
         };
+      }
+      case "list_scenes": {
+        // Scenes were write-only for one release: saveScene existed, nothing
+        // listed, nothing deleted — a saved plan was findable only by guessing
+        // its exact name. This is the read path.
+        if (!(await scenesMigrated())) {
+          return { result: { error: "Saved scenes need the blueprint pipeline migration, which hasn't been applied yet — the user can ask Lovable to apply it." }, event: { name, summary: "Scenes not migrated", ok: false } };
+        }
+        try {
+          const rows = await listScenes(Math.min(50, Math.max(1, Number((args as any).limit) || 25)));
+          const out = rows.map((r) => ({
+            id: r.id,
+            name: r.name,
+            slug: r.slug || undefined,
+            chapter_index: r.chapter_index ?? undefined,
+            locked: !!r.locked_at,
+            shots: Array.isArray(r.plan?.shots) ? r.plan.shots.filter((s) => !s.omitted).length : 0,
+            cameras: Array.isArray(r.plan?.cameras) ? r.plan.cameras.length : 0,
+            updated_at: r.updated_at || r.created_at,
+          }));
+          return { result: out, event: { name, summary: `Listed ${out.length} scene(s)`, ok: true } };
+        } catch (e: any) {
+          return { result: { error: e?.message || "Scenes could not be listed." }, event: { name, summary: "Scene list failed", ok: false } };
+        }
+      }
+      case "delete_scene": {
+        // Permission enforced at the executeChatTool choke point.
+        if (args.confirm !== true) {
+          return { result: { error: "Deletion requires confirm:true. Name the exact scene back to the user, get explicit approval, then retry with confirm:true." }, event: { name, summary: "Refused: confirmation required", ok: false } };
+        }
+        const row = await resolveScene(String((args as any).scene_id || ""));
+        if (!row) return { result: { error: `No saved scene matches "${String((args as any).scene_id || "")}". Call list_scenes.` }, event: { name, summary: "Scene not found", ok: false } };
+        try {
+          await deleteScene(row.id);
+          return { result: { ok: true, deleted: row.name }, event: { name, summary: `Deleted scene "${row.name}"`, ok: true } };
+        } catch (e: any) {
+          return { result: { error: e?.message || "Scene could not be deleted." }, event: { name, summary: "Scene delete failed", ok: false } };
+        }
+      }
+      case "lock_scene": {
+        // Permission (save_scene) enforced at the executeChatTool choke point.
+        const row = await resolveScene(String((args as any).scene_id || ""));
+        if (!row) return { result: { error: `No saved scene matches "${String((args as any).scene_id || "")}". Call list_scenes.` }, event: { name, summary: "Scene not found", ok: false } };
+        const locked = (args as any).locked !== false;
+        try {
+          const updated = await setSceneLocked(row.id, locked);
+          return {
+            result: {
+              ok: true,
+              scene: updated.name,
+              locked: !!updated.locked_at,
+              note: locked
+                ? "Shot numbers are now immutable: a shot keeps its number for life, inserts take gap numbers (0015 between 0010 and 0020), and cut shots become OMITTED tombstones on the sheet instead of disappearing."
+                : "The scene is unlocked — future revisions may renumber freely again.",
+            },
+            event: { name, summary: `${locked ? "Locked" : "Unlocked"} scene "${updated.name}"`, ok: true },
+          };
+        } catch (e: any) {
+          return { result: { error: e?.message || "Scene lock could not be changed." }, event: { name, summary: "Scene lock failed", ok: false } };
+        }
+      }
+      case "accept_generation":
+      case "reject_generation": {
+        // Permission (production_ledger) enforced at the choke point.
+        if (!(await ledgerMigrated())) {
+          return { result: { error: "The production ledger needs migration 20260802153000, which hasn't been applied yet — the user can ask Lovable to apply it." }, event: { name, summary: "Ledger not migrated", ok: false } };
+        }
+        const genId = String((args as any).generation_id || "latest").trim() || "latest";
+        const verdict = name === "accept_generation" ? "accepted" as const : "rejected" as const;
+        const reasonRaw = String((args as any).reason || "").trim();
+        const reason = (REJECTION_REASONS as readonly string[]).includes(reasonRaw) ? (reasonRaw as RejectionReason) : undefined;
+        if (verdict === "rejected" && reasonRaw && !reason) {
+          return {
+            result: { error: `"${reasonRaw}" is not a rejection reason.`, allowed: [...REJECTION_REASONS] },
+            event: { name, summary: "Unknown rejection reason", ok: false },
+          };
+        }
+        try {
+          const row = await decideGeneration(genId, verdict, reason);
+          return {
+            result: {
+              ok: true,
+              generation_id: row.id,
+              model: `${row.provider} · ${row.model}`,
+              status: row.status,
+              ...(row.rejection_reason ? { reason: row.rejection_reason } : {}),
+              ...(verdict === "accepted"
+                ? { note: "Accepted — this take is now a promoted reference in the ledger. Future re-anchors should condition on IT, not on rejected siblings." }
+                : {}),
+            },
+            event: { name, summary: `${verdict === "accepted" ? "Accepted" : `Rejected (${row.rejection_reason})`} ${row.kind} from ${row.model}`, ok: true },
+          };
+        } catch (e: any) {
+          return { result: { error: e?.message || "Ledger update failed." }, event: { name, summary: "Ledger update failed", ok: false } };
+        }
+      }
+      case "get_production_stats": {
+        if (!(await ledgerMigrated())) {
+          return { result: { error: "The production ledger needs migration 20260802153000, which hasn't been applied yet — the user can ask Lovable to apply it." }, event: { name, summary: "Ledger not migrated", ok: false } };
+        }
+        try {
+          const stats = await ledgerStats();
+          return {
+            result: {
+              models: stats,
+              note: stats.length
+                ? "est_cost_per_accepted is the number that matters — a cheap model with a low acceptance rate is usually more expensive per finished shot than a strong one. Null means no acceptances yet OR no cost data for that model (image costs are rough estimates; video/splat use real quotes) — check the accepted count before concluding nothing was kept."
+                : "The ledger is empty — generations record themselves as candidates automatically; accept_generation / reject_generation record verdicts.",
+            },
+            event: { name, summary: `Production stats: ${stats.length} model(s)`, ok: true },
+          };
+        } catch (e: any) {
+          return { result: { error: e?.message || "Ledger read failed." }, event: { name, summary: "Ledger read failed", ok: false } };
+        }
       }
       case "render_blocks": {
         const { blocks, issues } = parseBlocksVerbose((args as any).blocks ?? args);
@@ -4082,25 +4800,21 @@ export async function executeChatTool(
       case "supersede_memory_entry":
       case "delete_memory_entry":
       case "link_memory_entries": {
-        // Per-tool permission gate. Defaults to allowed.
-        const { data: prefs } = await supabase
-          .from("user_settings")
-          .select("chat_tool_permissions" as any)
-          .maybeSingle();
-        const perms = ((prefs as any)?.chat_tool_permissions || {}) as Record<string, boolean>;
-        if (perms[name] === false) {
-          return {
-            result: { error: `Tool '${name}' is disabled in the user's AI permissions. Ask the user to enable it in Settings.` },
-            event: { name, summary: `${name} blocked by user settings`, ok: false },
-          };
-        }
+        // Tool-level permission enforced at the executeChatTool choke point.
         // Supersede is an update-class edit: the existing "Edit memory entries"
         // toggle governs it too, so disabling edits disables both paths.
-        if (name === "supersede_memory_entry" && perms["update_memory_entry"] === false) {
-          return {
-            result: { error: "Memory editing is disabled in the user's AI permissions (Edit memory entries). Ask the user to enable it in Settings." },
-            event: { name, summary: "supersede blocked by user settings", ok: false },
-          };
+        if (name === "supersede_memory_entry") {
+          const { data: prefs } = await supabase
+            .from("user_settings")
+            .select("chat_tool_permissions" as any)
+            .maybeSingle();
+          const perms = ((prefs as any)?.chat_tool_permissions || {}) as Record<string, boolean>;
+          if (perms["update_memory_entry"] === false) {
+            return {
+              result: { error: "Memory editing is disabled in the user's AI permissions (Edit memory entries). Ask the user to enable it in Settings." },
+              event: { name, summary: "supersede blocked by user settings", ok: false },
+            };
+          }
         }
 
         if (name === "create_memory_entry") {

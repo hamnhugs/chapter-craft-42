@@ -187,11 +187,12 @@ export function renderPlanSheet(scene: Scene, opts: PlanSheetOptions = {}): Plan
   // the document: it names subjects the specified lens genuinely misses.
   const coverage = shotCoverage(scene);
   const coverageWarnings: string[] = [];
-  for (const c of coverage) {
+  coverage.forEach((c, i) => {
+    if (scene.shots[i]?.omitted) return; // a cut shot cannot miss anybody
     if (c.missing.length) {
       coverageWarnings.push(`${c.number}: ${c.cameraLabel} at ${c.focalMm}mm does not cover ${c.missing.join(", ")}`);
     }
-  }
+  });
 
   if (showShots && scene.shots.length) {
     push(label("SHOTS", MARGIN, cursorY, { size: 10, fill: MUTED, weight: 700, mono: true }));
@@ -209,6 +210,21 @@ export function renderPlanSheet(scene: Scene, opts: PlanSheetOptions = {}): Plan
 
     scene.shots.forEach((shot, i) => {
       const cov = coverage[i];
+      // A tombstone keeps its row and its number — the hole in the sequence is
+      // information — but is struck through and coverage-silent: a cut shot
+      // cannot miss anybody.
+      if (shot.omitted) {
+        const cells = [cov.number, "—", "—", "—", "—", "OMITTED"];
+        cx = MARGIN;
+        cells.forEach((text, k) => {
+          const w = cols[k][1];
+          push(label(truncate(text, w - 8, 10), cx, cursorY, { size: 10, fill: MUTED, maxWidth: w - 8, mono: k === 0 }));
+          cx += w;
+        });
+        push(`<line x1="${n(MARGIN)}" y1="${n(cursorY - 3.5)}" x2="${n(MARGIN + 118)}" y2="${n(cursorY - 3.5)}" stroke="${MUTED}" stroke-width="0.8"/>`);
+        cursorY += 16;
+        return;
+      }
       const cells = [
         cov.number,
         cov.cameraLabel,
@@ -234,7 +250,7 @@ export function renderPlanSheet(scene: Scene, opts: PlanSheetOptions = {}): Plan
     cursorY += SECTION_GAP - 12;
 
     // ── timeline strip ──
-    const timed = scene.shots.filter((s) => (s.durationS ?? 0) > 0);
+    const timed = scene.shots.filter((s) => !s.omitted && (s.durationS ?? 0) > 0);
     if (timed.length) {
       const total = timed.reduce((sum, s) => sum + (s.durationS || 0), 0);
       push(label(`SEQUENCE · ${total.toFixed(1)}s`, MARGIN, cursorY, { size: 10, fill: MUTED, weight: 700, mono: true }));

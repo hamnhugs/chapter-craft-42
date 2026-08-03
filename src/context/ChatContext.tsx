@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useRef, useCallback, useEffect } from "react";
+import React, { createContext, useContext, useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useApp } from "@/context/AppContext";
@@ -11,6 +11,7 @@ import { lensVerdict, type MemoryImageCandidate } from "@/lib/memoryLens";
 import { findSentenceCapIndex, truncateAtSentenceCap } from "@/lib/sentenceCap";
 import { isReflexEnabled } from "@/lib/reflex";
 import { CHAT_TOOL_DEFINITIONS, executeChatTool, ToolEvent, type ToolProposal } from "@/lib/chatTools";
+import { TOOL_PERMISSION } from "@/lib/toolPermissions";
 import { foundryAvailable } from "@/lib/toolFoundry";
 import type { ChatImageRef } from "@/lib/imageGen";
 import type { ChatVideoRef } from "@/lib/videoGen";
@@ -147,7 +148,33 @@ const rowToMessage = (m: any, restored: boolean): ChatMessage => ({
   images: Array.isArray(m.images) && m.images.length > 0 ? m.images : undefined,
   videos: Array.isArray(m.videos) && m.videos.length > 0 ? m.videos : undefined,
   splats: Array.isArray(m.splats) && m.splats.length > 0 ? m.splats : undefined,
+  toolEvents: Array.isArray(m.tool_events) && m.tool_events.length > 0 ? m.tool_events : undefined,
 });
+
+/** A row expands to its main message plus one display bubble per persisted
+ *  artifact — the same shape the live path renders, with STABLE derived ids
+ *  (`{rowId}-artifact-{i}`) so realtime echoes and re-loads dedupe cleanly.
+ *  Before the artifacts column existed, sheets vanished from the transcript
+ *  on reload while surviving only in the Workspace panel. */
+const rowsToMessages = (m: any, restored: boolean): ChatMessage[] => {
+  const out: ChatMessage[] = [rowToMessage(m, restored)];
+  if (Array.isArray(m.artifacts)) {
+    m.artifacts.forEach((raw: unknown, i: number) => {
+      const art = parseArtifact(raw);
+      if (art) {
+        out.push({
+          id: `${m.id}-artifact-${i}`,
+          role: "assistant",
+          content: "",
+          artifact: art,
+          restored: restored || undefined,
+          displayOnly: true,
+        });
+      }
+    });
+  }
+  return out;
+};
 
 interface RollingSummary {
   summary: string;
@@ -194,6 +221,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { getActiveBodyForScope, migrate } = usePromptPresets();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Mirror for callbacks that need the CURRENT transcript without depending
+  // on it — see the note at sendMessage's historySource.
+  const messagesRef = useRef<ChatMessage[]>(messages);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
   const [isLoading, setIsLoading] = useState(false);
   // Tool Foundry gating: OPT-IN (perms === true, inverted from the app's
   // default-allow convention) AND the migration must exist. When either is
@@ -340,7 +371,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .order("created_at", { ascending: false })
         .order("id", { ascending: false })
         .limit(INITIAL_LOAD) as any;
-      let { data, error } = await loadSel("id, role, content, created_at, images, videos, splats");
+      let { data, error } = await loadSel("id, role, content, created_at, images, videos, splats, artifacts, tool_events");
+      if (error) ({ data, error } = await loadSel("id, role, content, created_at, images, videos, splats"));
       if (error) ({ data, error } = await loadSel("id, role, content, created_at, images, videos"));
       if (error) ({ data, error } = await loadSel("id, role, content, created_at, images"));
       if (error) ({ data, error } = await loadSel("id, role, content, created_at"));
@@ -359,8 +391,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setMessages(
         rows
           .filter((m: any) => m.role === "user" || m.role === "assistant")
-          .map((m: any) => rowToMessage(m, true))
           .reverse() // back to chronological for rendering
+          .flatMap((m: any) => rowsToMessages(m, true))
       );
       loadedRef.current = true;
     })();
@@ -393,7 +425,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .order("created_at", { ascending: false })
         .order("id", { ascending: false })
         .limit(EARLIER_PAGE) as any;
-      let { data, error } = await sel("id, role, content, created_at, images, videos, splats");
+      let { data, error } = await sel("id, role, content, created_at, images, videos, splats, artifacts, tool_events");
+      if (error) ({ data, error } = await sel("id, role, content, created_at, images, videos, splats"));
       if (error) ({ data, error } = await sel("id, role, content, created_at, images, videos"));
       if (error) ({ data, error } = await sel("id, role, content, created_at, images"));
       if (error) ({ data, error } = await sel("id, role, content, created_at"));
@@ -409,8 +442,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         cursorRef.current = { createdAt: oldest.created_at, id: oldest.id };
         older = rows
           .filter((m: any) => m.role === "user" || m.role === "assistant")
-          .map((m: any) => rowToMessage(m, true))
-          .reverse();
+          .reverse()
+          .flatMap((m: any) => rowsToMessages(m, true));
         setMessages((prev) => [...older, ...prev]);
       }
       setHasEarlier(rows.length === EARLIER_PAGE);
@@ -435,9 +468,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Our own inserts echo back here too — messages carry their DB id
             // from birth (client-generated), so the id check always catches
             // them. What remains are turns from OTHER devices: live activity,
-            // rendered expanded (not `restored`).
+            // rendered expanded (not `restored`). Skipping on a matched id
+            // also skips the row's derived artifact bubbles — the live path
+            // already rendered its own.
             if (prev.some((x) => x.id === m.id)) return prev;
-            return [...prev, rowToMessage(m, false)];
+            return [...prev, ...rowsToMessages(m, false)];
           });
         }
       )
@@ -462,20 +497,25 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // own insert exactly deduplicatable — the old flow attached the id only
     // after the insert round-trip, and an echo racing that window would have
     // duplicated the bubble.
-    async (id: string, role: "user" | "assistant", content: string, bookId?: string | null, images?: ChatImageRef[], videos?: ChatVideoRef[], splats?: ChatSplatRef[]): Promise<void> => {
+    async (id: string, role: "user" | "assistant", content: string, bookId?: string | null, images?: ChatImageRef[], videos?: ChatVideoRef[], splats?: ChatSplatRef[], artifacts?: Artifact[], toolEvents?: ToolEvent[]): Promise<void> => {
       if (!user) return;
       const base: any = { id, user_id: user.id, role, content, book_id: bookId || null };
-      // `images`/`videos`/`splats` are newer columns — cascade to fewer extras
-      // if a migration hasn't been applied yet (media stays safe in its own
-      // table, and dropping one column must not also drop the others).
+      // `images`/`videos`/`splats`/`artifacts`/`tool_events` are newer columns
+      // — cascade to fewer extras if a migration hasn't been applied yet
+      // (media stays safe in its own table, and dropping one column must not
+      // also drop the others).
       const ins = (row: any) => supabase.from("chat_messages").insert(row);
       const hasImages = !!images && images.length > 0;
       const hasVideos = !!videos && videos.length > 0;
       const hasSplats = !!splats && splats.length > 0;
+      const hasArtifacts = !!artifacts && artifacts.length > 0;
+      const hasEvents = !!toolEvents && toolEvents.length > 0;
       const full: any = { ...base };
       if (hasImages) full.images = images;
       if (hasVideos) full.videos = videos;
       if (hasSplats) full.splats = splats;
+      if (hasArtifacts) full.artifacts = artifacts;
+      if (hasEvents) full.tool_events = toolEvents;
       // 23505 (duplicate key) means a previous attempt actually committed and
       // only its response was lost — the row exists WITH full media: success.
       // Only a missing column (42703) justifies retrying with fewer fields;
@@ -484,6 +524,16 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const colMissing = (e: any) => e?.code === "42703";
       let { error } = await ins(full);
       if (done(error)) return;
+      // Newest columns first: the transcript-persistence migration
+      // (20260802152000) ships after the media columns did.
+      if (colMissing(error) && (hasArtifacts || hasEvents)) {
+        const noTranscript: any = { ...base };
+        if (hasImages) noTranscript.images = images;
+        if (hasVideos) noTranscript.videos = videos;
+        if (hasSplats) noTranscript.splats = splats;
+        ({ error } = await ins(noTranscript));
+        if (done(error)) return;
+      }
       if (colMissing(error) && hasSplats) {
         const noSplats: any = { ...base };
         if (hasImages) noSplats.images = images;
@@ -562,7 +612,13 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         imgs && imgs.length > 0
           ? imgs.map((im) => `[Attached image — image_id: ${im.id}${im.prompt ? ` — "${im.prompt.slice(0, 80)}"` : ""}]`).join("\n")
           : "";
-      const historySource = [...messages, userMsg].filter((m) => !m.displayOnly);
+      // Read via ref, not the state binding: `messages` in the dependency
+      // array gave sendMessage a fresh identity on EVERY streamed token
+      // (updateAssistant → setMessages → new messages → new callback → new
+      // context value), invalidating every child memoized on it, per token.
+      // The ref always holds the latest committed state by the time a user
+      // gesture can invoke sendMessage.
+      const historySource = [...messagesRef.current, userMsg].filter((m) => !m.displayOnly);
       // Anchors the rolling summary's `covered` count to this exact window —
       // see RollingSummary.anchorId.
       const firstHistoryId = historySource[0]?.id;
@@ -762,11 +818,20 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // made. The executor keeps a terminal refusal as the backstop for
       // calls replayed from history (see leanMode.blockedToolResult).
       const leanBlocked = blockedTools(leanMode);
+      // Per-tool permissions are enforced the same two ways as Lean Mode:
+      // roster omission here (primary — an unseen tool cannot be pretended
+      // at), and the executor choke point (backstop for replayed calls). One
+      // map, lib/toolPermissions.ts, drives both.
+      const permBlocked = (toolName: string): boolean => {
+        const permId = TOOL_PERMISSION[toolName];
+        return !!permId && chatToolPermissions?.[permId] === false;
+      };
       const toolDefs = sendTools
         ? CHAT_TOOL_DEFINITIONS.filter((t: any) =>
             (t.function.name !== "forge_tool" || forgeEnabled) &&
             (t.function.name !== "run_tool" || runEnabled) &&
-            !leanBlocked.includes(t.function.name))
+            !leanBlocked.includes(t.function.name) &&
+            !permBlocked(t.function.name))
         : undefined;
 
       try {
@@ -896,6 +961,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               tavilyApiKey,
               leanMode: leanModeRef.current,
               openRouterApiKey: apiKey,
+              geminiApiKey,
               isPaid,
               imageModelPrimary,
               imageModelFallback,
@@ -946,6 +1012,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               if (r.__artifact && typeof r.__artifact === "object") {
                 const art = parseArtifact(r.__artifact);
                 if (art) artifacts.push(art);
+                else {
+                  // parseArtifact returning null used to be discarded with no
+                  // branch — the one gap left where a drawn sheet could vanish
+                  // while the tool result claimed it was on screen. Surface it
+                  // as a failure chip AND a toast; never silently.
+                  assistantEvents.push({ name: t.name || "artifact", summary: "A drawing was produced but could not be displayed (too large or malformed)", ok: false });
+                  toast.error("A drawing could not be displayed (too large or malformed).");
+                }
               }
               if ("__images" in r || "__videos" in r || "__splats" in r || "__vision" in r || "__toolProposal" in r || "__artifact" in r) {
                 const { __images, __videos, __splats, __vision, __toolProposal, __artifact, ...clean } = r;
@@ -963,6 +1037,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (t.name === "create_artifact") {
               const art = parseArtifact(t.args || "{}");
               if (art) artifacts.push(art);
+              else {
+                assistantEvents.push({ name: "create_artifact", summary: "The artifact could not be displayed (too large or malformed)", ok: false });
+                toast.error("An artifact could not be displayed (too large or malformed).");
+              }
             }
             workingMessages.push({
               role: "tool",
@@ -1040,10 +1118,19 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           } catch { /* lens is best-effort — never block the reply */ }
         }
 
-        if (assistantText || turnImages.length > 0 || turnVideos.length > 0 || turnSplats.length > 0) {
+        if (assistantText || turnImages.length > 0 || turnVideos.length > 0 || turnSplats.length > 0 || artifacts.length > 0 || assistantEvents.length > 0) {
           // The bubble already carries assistantId — the realtime echo of this
-          // insert dedupes against it by id.
-          await persistMessage(assistantId, "assistant", assistantText, activeBookId, turnImages.length > 0 ? turnImages : undefined, turnVideos.length > 0 ? turnVideos : undefined, turnSplats.length > 0 ? turnSplats : undefined);
+          // insert dedupes against it by id. Artifacts and tool-event chips
+          // ride the same row so the transcript survives reload — including
+          // the FAILURE chips, which are the audit trail of a repair loop.
+          await persistMessage(
+            assistantId, "assistant", assistantText, activeBookId,
+            turnImages.length > 0 ? turnImages : undefined,
+            turnVideos.length > 0 ? turnVideos : undefined,
+            turnSplats.length > 0 ? turnSplats : undefined,
+            artifacts.length > 0 ? [...artifacts] : undefined,
+            assistantEvents.length > 0 ? [...assistantEvents] : undefined,
+          );
         }
 
         // Surface any artifacts the model created this turn. Persist each into
@@ -1051,7 +1138,19 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // and link the created item id onto the bubble so tapping it opens the
         // Workspace panel.
         if (artifacts.length) {
-          const created = artifacts.map((artifact) =>
+          // Dedupe against sheets already on screen: a confirm-replace flow
+          // legitimately draws the SAME sheet twice (once with the refusal,
+          // once after the user's go-ahead), and posting two identical
+          // documents helps nobody. Identity = title + content, checked
+          // against the recent transcript tail.
+          const recentArtifacts = messagesRef.current
+            .slice(-10)
+            .map((m) => m.artifact)
+            .filter((a): a is Artifact => !!a);
+          const fresh = artifacts.filter(
+            (a) => !recentArtifacts.some((r) => r.title === a.title && r.content === a.content),
+          );
+          const created = fresh.map((artifact) =>
             workspaceStore.add({
               userId: user?.id ?? null,
               kind: artifact.kind === "svg" ? "svg" : "html",
@@ -1062,7 +1161,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           );
           setMessages((prev) => [
             ...prev,
-            ...artifacts.map((artifact, idx) => ({
+            ...fresh.map((artifact, idx) => ({
               id: `artifact-${Date.now()}-${idx}`,
               role: "assistant" as const,
               content: "",
@@ -1175,7 +1274,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
       }
     },
-    [apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, autoShowMemoryImages, foundryEnabled, forgeEnabled, runEnabled, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, messages, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
+    // `messages` is deliberately ABSENT (read via messagesRef) — see the note
+    // at historySource. chatToolPermissions is present so a toggle flip
+    // rebuilds the roster filter on the next turn.
+    [apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, autoShowMemoryImages, foundryEnabled, forgeEnabled, runEnabled, chatToolPermissions, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
   );
 
 
@@ -1186,26 +1288,34 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     ]);
   }, []);
 
+  // Memoized so the context object only changes when a member changes —
+  // previously a raw literal handed every consumer a new identity on every
+  // provider render. Consumers still re-render when `messages` updates
+  // (they must — it is the transcript), but children memoized on the stable
+  // callbacks no longer churn with it.
+  const contextValue = useMemo<ChatContextValue>(
+    () => ({
+      messages,
+      isLoading,
+      deepResearch: chatDeepResearch || voiceDeepResearch,
+      setDeepResearch: setChatDeepResearch,
+      chatDeepResearch,
+      setChatDeepResearch,
+      voiceDeepResearch,
+      setVoiceDeepResearch,
+      sendMessage,
+      injectDisplayMessage,
+      clearChat,
+      abort,
+      loadEarlier,
+      hasEarlier,
+      loadingEarlier,
+    }),
+    [messages, isLoading, chatDeepResearch, voiceDeepResearch, setChatDeepResearch, setVoiceDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort, loadEarlier, hasEarlier, loadingEarlier],
+  );
+
   return (
-    <ChatContext.Provider
-      value={{
-        messages,
-        isLoading,
-        deepResearch: chatDeepResearch || voiceDeepResearch,
-        setDeepResearch: setChatDeepResearch,
-        chatDeepResearch,
-        setChatDeepResearch,
-        voiceDeepResearch,
-        setVoiceDeepResearch,
-        sendMessage,
-        injectDisplayMessage,
-        clearChat,
-        abort,
-        loadEarlier,
-        hasEarlier,
-        loadingEarlier,
-      }}
-    >
+    <ChatContext.Provider value={contextValue}>
       {children}
     </ChatContext.Provider>
   );
