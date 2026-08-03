@@ -72,13 +72,25 @@ serve(async (req) => {
     let customerId: string | null = null;
 
     // Preserve admin-granted lifetime access — never downgrade these from Stripe polling.
-    const { data: existingRow } = await serviceClient
+    // Two parameterized lookups (user_id, then legacy email-only rows) instead of a
+    // single .or — user-derived values must never be interpolated into a filter string.
+    let { data: existingRow } = await serviceClient
       .from("subscribers")
       .select("plan, granted_by_admin_id")
-      .or(`user_id.eq.${user.id},email.eq.${user.email}`)
+      .eq("user_id", user.id)
       .order("updated_at", { ascending: false })
       .limit(1)
       .maybeSingle();
+    if (!existingRow) {
+      const { data: byEmail } = await serviceClient
+        .from("subscribers")
+        .select("plan, granted_by_admin_id")
+        .eq("email", user.email)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      existingRow = byEmail;
+    }
 
     if (existingRow?.plan === "lifetime_admin") {
       return new Response(

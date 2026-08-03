@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
 import { flushSync } from "react-dom";
+import { toast } from "sonner";
 import { BookDocument, Chapter } from "@/types/library";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -486,28 +487,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [user]);
 
   const removeBook = useCallback(async (id: string) => {
+    if (!user) return;
     const existingBook = books.find((book) => book.id === id);
 
-    if (user) {
-      const storagePaths = existingBook
-        ? getStoragePathsForBook(user.id, id, existingBook.fileName)
-        : [`${user.id}/${id}.pdf`];
+    const storagePaths = existingBook
+      ? getStoragePathsForBook(user.id, id, existingBook.fileName)
+      : [`${user.id}/${id}.pdf`];
 
-      await supabase.storage.from("book-pdfs").remove(Array.from(new Set(storagePaths)));
+    await supabase.storage.from("book-pdfs").remove(Array.from(new Set(storagePaths)));
 
-      // Extracted figures: the DB rows go with the book via ON DELETE
-      // CASCADE, but their JPEGs in generated-images would be orphaned
-      // forever — the cascaded rows are the only pointers to them.
-      try {
-        const dir = `${user.id}/figures/${id}`;
-        const { data: figs } = await supabase.storage.from("generated-images").list(dir, { limit: 200 });
-        if (figs && figs.length > 0) {
-          await supabase.storage.from("generated-images").remove(figs.map((f) => `${dir}/${f.name}`));
-        }
-      } catch { /* best-effort — never block the delete */ }
+    // Extracted figures: the DB rows go with the book via ON DELETE
+    // CASCADE, but their JPEGs in generated-images would be orphaned
+    // forever — the cascaded rows are the only pointers to them.
+    try {
+      const dir = `${user.id}/figures/${id}`;
+      const { data: figs } = await supabase.storage.from("generated-images").list(dir, { limit: 200 });
+      if (figs && figs.length > 0) {
+        await supabase.storage.from("generated-images").remove(figs.map((f) => `${dir}/${f.name}`));
+      }
+    } catch { /* best-effort — never block the delete */ }
+
+    const { error } = await supabase.from("books").delete().eq("id", id).eq("user_id", user.id);
+    if (error) {
+      console.error("Failed to delete book:", error);
+      toast.error("Could not delete book — it is still in your library");
+      return;
     }
-
-    await supabase.from("books").delete().eq("id", id);
     setBooks((prev) => prev.filter((b) => b.id !== id));
     setActiveBookId((prev) => (prev === id ? null : prev));
   }, [user, books]);
@@ -596,7 +601,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateChapter = useCallback(async (bookId: string, chapterId: string, name: string) => {
     if (!user) return;
-    await supabase.from("chapters").update({ name }).eq("id", chapterId).eq("user_id", user.id);
+    // Local state only follows a confirmed write — otherwise the UI would
+    // show a rename that silently never persisted.
+    const { error } = await supabase.from("chapters").update({ name }).eq("id", chapterId).eq("user_id", user.id);
+    if (error) {
+      console.error("Failed to rename chapter:", error);
+      toast.error("Could not rename chapter");
+      return;
+    }
     setBooks((prev) =>
       prev.map((b) =>
         b.id === bookId
@@ -608,7 +620,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const removeChapter = useCallback(async (bookId: string, chapterId: string) => {
     if (!user) return;
-    await supabase.from("chapters").delete().eq("id", chapterId).eq("user_id", user.id);
+    const { error } = await supabase.from("chapters").delete().eq("id", chapterId).eq("user_id", user.id);
+    if (error) {
+      console.error("Failed to delete chapter:", error);
+      toast.error("Could not delete chapter");
+      return;
+    }
     setBooks((prev) =>
       prev.map((b) =>
         b.id === bookId
@@ -620,7 +637,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateBookTitle = useCallback(async (bookId: string, newTitle: string) => {
     if (!user) return;
-    await supabase.from("books").update({ title: newTitle }).eq("id", bookId).eq("user_id", user.id);
+    const { error } = await supabase.from("books").update({ title: newTitle }).eq("id", bookId).eq("user_id", user.id);
+    if (error) {
+      console.error("Failed to rename book:", error);
+      toast.error("Could not rename book");
+      return;
+    }
     setBooks((prev) =>
       prev.map((b) => (b.id === bookId ? { ...b, title: newTitle } : b))
     );

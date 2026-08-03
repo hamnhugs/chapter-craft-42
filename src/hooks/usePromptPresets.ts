@@ -48,9 +48,11 @@ export function usePromptPresets() {
     const { data: existing } = await supabase
       .from("prompt_presets").select("id").eq("user_id", user.id).limit(1);
     if (existing && existing.length > 0) return;
-    await supabase.from("prompt_presets").insert({
+    const { error } = await supabase.from("prompt_presets").insert({
       user_id: user.id, name: "My Prompt", body: legacyBody, scope: "both", is_active: true,
     });
+    // Legacy prompt stays in its own store, so a failed seed retries next session.
+    if (error) { console.warn("Failed to migrate legacy prompt:", error); toast.error("Could not migrate your custom prompt"); return; }
     refresh();
   }, [user, refresh]);
 

@@ -1,6 +1,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { checkIsAdmin } from "@/lib/adminApi";
 import { OPEN_ACCESS } from "@/lib/openAccess";
 
 // Single source of truth for plan + admin + locked-neuron set.
@@ -47,7 +48,9 @@ const getSnapshot = () => snapshot;
 export async function refreshEntitlements(): Promise<Entitlements> {
   if (OPEN_ACCESS) {
     publish({
-      isAdmin: false,
+      // Keep a previously-resolved admin flag so refreshes don't flicker the
+      // admin surface off while the RPC below re-confirms it.
+      isAdmin: snapshot.isAdmin,
       plan: "lifetime",
       subscribed: true,
       isPaid: true,
@@ -56,6 +59,15 @@ export async function refreshEntitlements(): Promise<Entitlements> {
       cancelAtPeriodEnd: false,
       lockedWikiIds: new Set<string>(),
       loaded: true,
+    });
+    // Open access publishes instantly for responsiveness, but the in-app admin
+    // surface still needs the real flag — resolve it server-side in the
+    // background and re-publish. checkIsAdmin swallows RPC failure to false.
+    const forUser = loadedForUser;
+    void checkIsAdmin().then((isAdmin) => {
+      // A sign-out/switch may have re-published defaults mid-flight — drop it.
+      if (loadedForUser !== forUser) return;
+      if (snapshot.isAdmin !== isAdmin) publish({ ...snapshot, isAdmin });
     });
     return snapshot;
   }

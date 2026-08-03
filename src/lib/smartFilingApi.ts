@@ -68,11 +68,13 @@ export async function dismissReroute(id: string, kept = false): Promise<void> {
     .eq("id", id);
   if (error) throw error;
   // Log user correction so future learning knows the user kept it (phase 3).
+  // Best-effort telemetry — the dismiss itself already succeeded above.
   if (kept) {
-    await supabase
+    const { error: logErr } = await supabase
       .from("routing_decisions")
       .update({ user_corrected: true })
       .eq("id", id);
+    if (logErr) console.warn("Failed to log routing correction:", logErr);
   }
 }
 
@@ -139,23 +141,26 @@ export async function acceptProposal(p: WikiProposal): Promise<void> {
 
   // Move member entries into the new wiki
   if (p.member_entry_ids.length > 0) {
-    await supabase
+    const { error: moveErr } = await supabase
       .from("knowledge_entries")
       .update({ wiki_id: newWiki.id })
       .in("id", p.member_entry_ids);
+    if (moveErr) throw moveErr;
 
-    // Clear them from incubator
-    await supabase
+    // Clear them from incubator (bookkeeping — the move already succeeded)
+    const { error: incErr } = await supabase
       .from("incubator_entries")
       .update({ status: "promoted" })
       .in("entry_id", p.member_entry_ids);
+    if (incErr) console.warn("Failed to mark incubator entries promoted:", incErr);
   }
 
   // Mark proposal accepted
-  await supabase
+  const { error: statusErr } = await supabase
     .from("wiki_proposals")
     .update({ status: "accepted" })
     .eq("id", p.id);
+  if (statusErr) throw statusErr;
 
   // Kick off centroid recompute (fire and forget)
   supabase.functions.invoke("recompute-centroids", { body: {} }).catch(() => {});
@@ -229,7 +234,9 @@ export async function acceptRename(a: WikiHealthAlert): Promise<void> {
   if (!proposed) throw new Error("No proposed name");
   const { error } = await supabase.from("wikis").update({ name: proposed }).eq("id", a.wiki_id);
   if (error) throw error;
-  await supabase.from("wiki_health_alerts").update({ status: "accepted" }).eq("id", a.id);
+  const { error: statusErr } = await supabase
+    .from("wiki_health_alerts").update({ status: "accepted" }).eq("id", a.id);
+  if (statusErr) throw statusErr;
 }
 
 export async function dismissHealthAlert(id: string): Promise<void> {
