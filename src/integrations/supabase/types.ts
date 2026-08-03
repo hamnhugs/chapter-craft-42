@@ -249,7 +249,8 @@ export type Database = {
         Row: {
           created_at: string
           id: string
-          key_value: string
+          key_hash: string | null
+          key_prefix: string | null
           label: string
           revoked_at: string | null
           user_id: string
@@ -257,7 +258,8 @@ export type Database = {
         Insert: {
           created_at?: string
           id?: string
-          key_value: string
+          key_hash?: string | null
+          key_prefix?: string | null
           label?: string
           revoked_at?: string | null
           user_id: string
@@ -265,7 +267,8 @@ export type Database = {
         Update: {
           created_at?: string
           id?: string
-          key_value?: string
+          key_hash?: string | null
+          key_prefix?: string | null
           label?: string
           revoked_at?: string | null
           user_id?: string
@@ -413,6 +416,7 @@ export type Database = {
       }
       chat_messages: {
         Row: {
+          artifacts: Json | null
           book_id: string | null
           content: string
           created_at: string
@@ -420,10 +424,12 @@ export type Database = {
           images: Json | null
           role: string
           splats: Json | null
+          tool_events: Json | null
           user_id: string
           videos: Json | null
         }
         Insert: {
+          artifacts?: Json | null
           book_id?: string | null
           content?: string
           created_at?: string
@@ -431,10 +437,12 @@ export type Database = {
           images?: Json | null
           role: string
           splats?: Json | null
+          tool_events?: Json | null
           user_id: string
           videos?: Json | null
         }
         Update: {
+          artifacts?: Json | null
           book_id?: string | null
           content?: string
           created_at?: string
@@ -442,6 +450,7 @@ export type Database = {
           images?: Json | null
           role?: string
           splats?: Json | null
+          tool_events?: Json | null
           user_id?: string
           videos?: Json | null
         }
@@ -632,6 +641,74 @@ export type Database = {
           wiki_id?: string | null
         }
         Relationships: []
+      }
+      generation_ledger: {
+        Row: {
+          cost_estimate: number | null
+          created_at: string
+          decided_at: string | null
+          id: string
+          kind: string
+          master_id: string | null
+          model: string
+          output_id: string | null
+          params: Json | null
+          prompt_excerpt: string
+          provider: string
+          rejection_reason: string | null
+          scene_id: string | null
+          shot_number: string | null
+          source_generation_id: string | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          cost_estimate?: number | null
+          created_at?: string
+          decided_at?: string | null
+          id?: string
+          kind: string
+          master_id?: string | null
+          model?: string
+          output_id?: string | null
+          params?: Json | null
+          prompt_excerpt?: string
+          provider?: string
+          rejection_reason?: string | null
+          scene_id?: string | null
+          shot_number?: string | null
+          source_generation_id?: string | null
+          status?: string
+          user_id: string
+        }
+        Update: {
+          cost_estimate?: number | null
+          created_at?: string
+          decided_at?: string | null
+          id?: string
+          kind?: string
+          master_id?: string | null
+          model?: string
+          output_id?: string | null
+          params?: Json | null
+          prompt_excerpt?: string
+          provider?: string
+          rejection_reason?: string | null
+          scene_id?: string | null
+          shot_number?: string | null
+          source_generation_id?: string | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "generation_ledger_source_generation_id_fkey"
+            columns: ["source_generation_id"]
+            isOneToOne: false
+            referencedRelation: "generation_ledger"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       image_attachments: {
         Row: {
@@ -1261,6 +1338,7 @@ export type Database = {
           created_at: string
           entry_id: string | null
           id: string
+          locked_at: string | null
           name: string
           plan: Json
           slug: string
@@ -1273,6 +1351,7 @@ export type Database = {
           created_at?: string
           entry_id?: string | null
           id?: string
+          locked_at?: string | null
           name: string
           plan: Json
           slug?: string
@@ -1285,6 +1364,7 @@ export type Database = {
           created_at?: string
           entry_id?: string | null
           id?: string
+          locked_at?: string | null
           name?: string
           plan?: Json
           slug?: string
