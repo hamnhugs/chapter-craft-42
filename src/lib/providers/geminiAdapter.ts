@@ -83,6 +83,24 @@ function headers(apiKey: string): Record<string, string> {
   };
 }
 
+/** The app legitimately sends up to three system messages per turn (main
+ *  prompt, rolling summary, pinned focus). OpenRouter and the NVIDIA relay
+ *  pass them through verbatim, but Google's OpenAI-compat layer documents a
+ *  single systemInstruction and its folding of extras is unverifiable — so
+ *  this adapter merges all string-content system messages into one, in
+ *  order, at the position of the first. Semantically identical payload,
+ *  provably safe shape. Non-string system content (never produced today)
+ *  passes through untouched. */
+function mergeSystemMessages(messages: any[]): any[] {
+  const systems = messages.filter((m: any) => m?.role === "system");
+  if (systems.length <= 1) return messages;
+  if (systems.some((m: any) => typeof m.content !== "string")) return messages;
+  const first = messages.findIndex((m: any) => m?.role === "system");
+  const out = messages.filter((m: any) => m?.role !== "system");
+  out.splice(first, 0, { role: "system", content: systems.map((m: any) => m.content).join("\n\n") });
+  return out;
+}
+
 export const geminiAdapter: ChatProviderAdapter = {
   id: "gemini",
 
@@ -93,7 +111,7 @@ export const geminiAdapter: ChatProviderAdapter = {
       headers: headers(req.apiKey),
       body: JSON.stringify({
         model: req.model,
-        messages: req.messages,
+        messages: mergeSystemMessages(req.messages),
         ...(req.tools ? { tools: req.tools, tool_choice: "auto" } : {}),
         stream: true,
         ...(req.extraBody || {}),
@@ -161,7 +179,7 @@ export const geminiAdapter: ChatProviderAdapter = {
         model: req.model,
         stream: false,
         ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
-        messages: req.messages,
+        messages: mergeSystemMessages(req.messages),
         ...(req.extraBody || {}),
       }),
       signal: req.signal,

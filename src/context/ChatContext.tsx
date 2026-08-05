@@ -19,6 +19,7 @@ import type { ChatSplatRef } from "@/lib/splatGen";
 import { parseBlocks, type ResponseBlock } from "@/lib/responseBlocks";
 import { parseArtifact, type Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle } from "@/lib/workspaceStore";
+import { buildFocusBlock, type UsedFocusItem } from "@/lib/chatFocus";
 import { toast } from "sonner";
 import { isEmbeddingModel } from "@/lib/utils";
 import { describeModel, freeChatProviders, localModelId, modelProvider, providerConfigured, providerKey, providerKeyUrl, providerLabel, resolveModel } from "@/lib/providers/registry";
@@ -43,6 +44,10 @@ export interface ChatMessage {
   /** Memory entries injected into the prompt for this reply — shown as a
    *  transparency chip ("Drew on N memories") under the bubble. */
   usedMemories?: UsedMemory[];
+  /** Pinned workspace items serialized into this turn's focus block — shown
+   *  as a "Focused on N files" receipt chip so focus is falsifiable, not
+   *  asserted. Transient, like usedMemories. */
+  usedFocus?: UsedFocusItem[];
   /** Generated/recalled images rendered inline in the bubble (from the
    *  generate_image / edit_image / show_image tools). */
   images?: ChatImageRef[];
@@ -338,7 +343,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Bind the durable Workspace store to the signed-in user so its files sync
   // from Supabase (cross-device) and stream live via realtime.
+  // userIdRef mirrors user?.id for sendMessage (which deliberately omits
+  // `user` from its deps — the messagesRef pattern): reading user?.id from
+  // the closure would go stale across login/logout.
+  const userIdRef = useRef<string | null>(null);
   useEffect(() => {
+    userIdRef.current = user?.id ?? null;
     workspaceStore.setUser(user?.id ?? null);
   }, [user]);
 
@@ -708,6 +718,15 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         historyForModel = historyForModel.slice(-HISTORY_HARD_CAP);
       }
 
+      // Pinned workspace focus — resolved fresh from the store at every send
+      // (pins are references, not snapshots: an edited item is never stale, a
+      // deleted one silently drops). It rides as its OWN system message: the
+      // main prompt churns every build (per-build fence nonces), so a
+      // separate byte-stable block is the only cache-friendly placement, and
+      // the summaryNote message below proves multi-system payloads work on
+      // all three providers.
+      const focusBlock = buildFocusBlock(workspaceStore.getFocused(userIdRef.current), { voiceMode: isVoice });
+
       const assistantEvents: ToolEvent[] = [];
       // Raw web_search answers captured this turn, surfaced as a "full answer"
       // card after the model's synthesized reply.
@@ -793,8 +812,16 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const workingMessages: any[] = [
         { role: "system", content: systemPrompt },
         ...(summaryNote ? [{ role: "system", content: summaryNote }] : []),
+        ...(focusBlock ? [{ role: "system", content: focusBlock.message }] : []),
         ...historyForModel,
       ];
+      // Receipt stamped only HERE — after the embedding-model and provider-key
+      // gates — so an error bubble from a send that never reached a provider
+      // can't claim "Focused on N files".
+      if (focusBlock && focusBlock.used.length > 0) {
+        const used = focusBlock.used;
+        setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, usedFocus: used } : m)));
+      }
 
       abortRef.current = new AbortController();
 
@@ -959,6 +986,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               removeChapter,
               burplexityApiToken,
               tavilyApiKey,
+              userId: user?.id ?? null,
               leanMode: leanModeRef.current,
               openRouterApiKey: apiKey,
               geminiApiKey,

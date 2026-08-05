@@ -8,6 +8,7 @@ import SvgArtifactViewer from "@/components/SvgArtifactViewer";
 import {
   useWorkspaceItems,
   workspaceStore,
+  FOCUS_MAX_ITEMS,
   type WorkspaceItem,
 } from "@/lib/workspaceStore";
 
@@ -76,6 +77,15 @@ const WorkspacePanel: React.FC<{
   const handleToggleLibrary = (item: WorkspaceItem) => {
     workspaceStore.toggleLibrary(item.id);
     toast.success(item.savedToLibrary ? "Removed from library" : "Saved to library");
+  };
+
+  const handleToggleFocus = (item: WorkspaceItem) => {
+    const r = workspaceStore.toggleFocused(item.id);
+    if (!r.ok) {
+      toast.error(`Focus is limited to ${FOCUS_MAX_ITEMS} files — unpin one first.`);
+      return;
+    }
+    toast.success(r.focused ? "Pinned as chat focus — sent to the AI every turn" : "Unpinned from chat focus");
   };
 
   const handleCopy = async (content: string) => {
@@ -153,6 +163,22 @@ const WorkspacePanel: React.FC<{
             <span className="truncate text-sm font-semibold text-foreground flex-1" title={selected.title}>
               {selected.title}
             </span>
+            <button
+              onClick={() => handleToggleFocus(selected)}
+              title={selected.meta?.focused ? "Unpin from chat focus" : "Pin as chat focus — sent to the AI every turn"}
+              className={`inline-flex items-center justify-center h-8 w-8 rounded-lg transition-colors ${
+                selected.meta?.focused
+                  ? "text-primary-container"
+                  : "text-on-surface-variant hover:bg-surface-container-high"
+              }`}
+            >
+              <span
+                className="material-symbols-outlined text-[20px]"
+                style={selected.meta?.focused ? { fontVariationSettings: "'FILL' 1" } : undefined}
+              >
+                push_pin
+              </span>
+            </button>
             <button
               onClick={() => handleToggleLibrary(selected)}
               title={selected.savedToLibrary ? "Remove from library" : "Save to library"}
@@ -267,6 +293,15 @@ const WorkspacePanel: React.FC<{
                       <span className="text-sm font-semibold text-foreground truncate flex-1">
                         {item.title}
                       </span>
+                      {item.meta?.focused && (
+                        <span
+                          className="material-symbols-outlined text-primary-container text-base shrink-0"
+                          style={{ fontVariationSettings: "'FILL' 1" }}
+                          title="Pinned as chat focus"
+                        >
+                          push_pin
+                        </span>
+                      )}
                       {item.savedToLibrary && (
                         <span
                           className="material-symbols-outlined text-primary-container text-base shrink-0"
@@ -285,6 +320,25 @@ const WorkspacePanel: React.FC<{
                     className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
                     onClick={(e) => e.stopPropagation()}
                   >
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => handleToggleFocus(item)}
+                      onKeyDown={(e) => { if (e.key === "Enter") handleToggleFocus(item); }}
+                      title={item.meta?.focused ? "Unpin from chat focus" : "Pin as chat focus — sent to the AI every turn"}
+                      className={`inline-flex items-center justify-center h-7 w-7 rounded-lg cursor-pointer transition-colors ${
+                        item.meta?.focused
+                          ? "text-primary-container"
+                          : "text-on-surface-variant hover:bg-surface-container-highest"
+                      }`}
+                    >
+                      <span
+                        className="material-symbols-outlined text-[18px]"
+                        style={item.meta?.focused ? { fontVariationSettings: "'FILL' 1" } : undefined}
+                      >
+                        push_pin
+                      </span>
+                    </span>
                     <span
                       role="button"
                       tabIndex={0}

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import { useApp } from "@/context/AppContext";
 import { useChat } from "@/context/ChatContext";
 import { useAuth } from "@/hooks/useAuth";
@@ -35,6 +35,7 @@ import WorkingMemoryPanel from "@/components/WorkingMemoryPanel";
 import WorkspacePanel from "@/components/WorkspacePanel";
 import type { Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle, useWorkspaceItems } from "@/lib/workspaceStore";
+import { focusStatesForPinned } from "@/lib/chatFocus";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations, isSearchRateLimited } from "@/lib/chatTools";
@@ -164,6 +165,20 @@ const ChatPanel: React.FC = () => {
   const workspaceItems = useWorkspaceItems();
   const workspaceCount = workspaceItems.filter((i) => i.userId == null || i.userId === user?.id).length;
   useEffect(() => { localStorage.setItem("counsel_workspace_open", workspaceOpen ? "1" : "0"); }, [workspaceOpen]);
+  // Pinned focus set — rendered as chips above the composer so what the AI
+  // sees every turn is continuously visible (never inferred, never hidden).
+  const focusedItems = useMemo(
+    () => workspaceItems.filter((i) => (i.userId == null || i.userId === (user?.id ?? null)) && i.meta?.focused === true),
+    [workspaceItems, user?.id]
+  );
+  // Badge states come from the SAME budget loop that builds the real block
+  // (never a per-item shortcut — voice halving and the shared total budget
+  // both change what actually gets sent). hands-free is the composer's live
+  // predictor of whether the next send is a voice turn.
+  const focusStates = useMemo(
+    () => focusStatesForPinned(focusedItems, { voiceMode: handsFree.active }),
+    [focusedItems, handsFree.active]
+  );
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -894,6 +909,22 @@ const ChatPanel: React.FC = () => {
                 </div>
               </details>
             )}
+            {msg.role === "assistant" && msg.usedFocus && msg.usedFocus.some((f) => f.state !== "omitted") && (
+              <details className="mb-2 ml-4">
+                <summary className="cursor-pointer list-none inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md bg-primary-container/20 text-on-surface-variant hover:bg-primary-container/30 transition-colors">
+                  <span className="material-symbols-outlined text-xs">push_pin</span>
+                  {(() => { const n = msg.usedFocus.filter((f) => f.state !== "omitted").length; return `Focused on ${n} ${n === 1 ? "file" : "files"}`; })()}
+                </summary>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {msg.usedFocus.map((f) => (
+                    <span key={f.id} className="text-[11px] px-2 py-0.5 rounded-md bg-surface-container-high text-on-surface-variant border border-outline-variant/20">
+                      {f.title}
+                      {f.state === "excerpt" ? " · excerpt" : f.state === "omitted" ? " · not sent (budget full)" : ""}
+                    </span>
+                  ))}
+                </div>
+              </details>
+            )}
             <div
               className={`relative group ${msg.role === "user" ? "message-bubble-user bg-primary-container text-on-primary-container" : "message-bubble-ai bg-surface-container-high text-foreground border-l-2 border-primary-container/20"} p-5 shadow-sm leading-relaxed select-text`}
               style={{ WebkitTouchCallout: "none" } as React.CSSProperties}
@@ -1080,6 +1111,58 @@ const ChatPanel: React.FC = () => {
               </span>
               {handsFree.interim && <span className="italic truncate">“{handsFree.interim}”</span>}
               <button onClick={handsFree.stop} className="ml-auto text-[10px] font-bold uppercase tracking-widest text-on-surface-variant hover:text-destructive">Stop</button>
+            </div>
+          )}
+          {focusedItems.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 px-1 pb-1 text-xs font-body text-on-surface-variant">
+              <span
+                className="material-symbols-outlined text-[14px] text-primary-container"
+                style={{ fontVariationSettings: "'FILL' 1" }}
+                title="Pinned focus — these files are sent to the AI with every message"
+                aria-hidden
+              >
+                push_pin
+              </span>
+              {focusedItems.map((f) => (
+                <span
+                  key={f.id}
+                  className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-surface-container-high border border-outline-variant/20 max-w-[200px]"
+                >
+                  <button
+                    type="button"
+                    onClick={() => { setWorkspaceSelectedId(f.id); setWorkspaceOpen(true); }}
+                    className="truncate font-semibold text-primary hover:underline"
+                    title={`Open "${f.title}" in the Workspace`}
+                  >
+                    {f.title}
+                  </button>
+                  {focusStates.get(f.id) === "excerpt" && (
+                    <span
+                      className="text-[9px] font-bold uppercase tracking-widest text-on-surface-variant shrink-0"
+                      title="Too big to send in full — the AI gets an excerpt plus a tool to read the rest"
+                    >
+                      excerpt
+                    </span>
+                  )}
+                  {focusStates.get(f.id) === "omitted" && (
+                    <span
+                      className="text-[9px] font-bold uppercase tracking-widest text-destructive shrink-0"
+                      title="NOT sent — the focus budget or 5-file limit is already used up. Unpin something to make room."
+                    >
+                      not sent
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => workspaceStore.toggleFocused(f.id)}
+                    className="rounded-full hover:bg-surface-container-highest p-0.5 leading-none shrink-0"
+                    title={`Unpin "${f.title}" from focus`}
+                    aria-label={`Unpin ${f.title} from focus`}
+                  >
+                    <span className="material-symbols-outlined text-[12px] block">close</span>
+                  </button>
+                </span>
+              ))}
             </div>
           )}
           {pendingImages.length > 0 && (

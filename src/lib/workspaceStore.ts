@@ -46,8 +46,17 @@ export interface WorkspaceItem {
     citations?: WorkspaceCitation[];
     /** Free-form source tag, e.g. "Deep Research", "Web Search". */
     source?: string;
+    /** Pinned as standing chat context ("focus"). Lives in the JSONB meta
+     *  column so it syncs cross-device with zero migration. */
+    focused?: boolean;
   };
 }
+
+/** Hard ceiling on simultaneously focused items. Multi-document research
+ *  shows item COUNT alone degrades answers independent of token length
+ *  (up to 20%, "More Documents, Same Length"), so the store — not the UI —
+ *  enforces the cap and every surface gets the same refusal. */
+export const FOCUS_MAX_ITEMS = 5;
 
 export type NewWorkspaceItem = Omit<WorkspaceItem, "id" | "createdAt" | "savedToLibrary"> &
   Partial<Pick<WorkspaceItem, "savedToLibrary">>;
@@ -372,6 +381,51 @@ export const workspaceStore = {
       void idbPut(changed);
       void serverUpsert(changed);
     }
+  },
+
+  /** Pin/unpin an item as chat focus. Refuses (never silently drops) past
+   *  the cap so callers can explain rather than mystify. */
+  toggleFocused(id: string): { ok: true; focused: boolean } | { ok: false; reason: "cap" } {
+    const target = items.find((i) => i.id === id);
+    // Already gone (realtime delete / another device) — nothing to toggle.
+    if (!target) return { ok: true, focused: false };
+    const turningOn = target.meta?.focused !== true;
+    if (turningOn) {
+      // Count the SAME null-inclusive union getFocused returns — pre-login
+      // (null-userId) pins and account pins share one budget, or the cap
+      // would pass here while buildFocusBlock silently drops the overflow.
+      const viewer = target.userId ?? currentUserId;
+      const current = items.filter(
+        (i) => i.meta?.focused === true && (i.userId == null || i.userId === viewer)
+      ).length;
+      if (current >= FOCUS_MAX_ITEMS) return { ok: false, reason: "cap" };
+    }
+    let changed: WorkspaceItem | undefined;
+    items = items.map((i) => {
+      if (i.id !== id) return i;
+      // Drop the key entirely when unpinning — JSON.stringify skips undefined,
+      // so the synced meta stays clean instead of carrying focused:false noise.
+      const nextMeta = { ...(i.meta || {}) };
+      if (turningOn) nextMeta.focused = true;
+      else delete nextMeta.focused;
+      changed = { ...i, meta: Object.keys(nextMeta).length > 0 ? nextMeta : undefined };
+      return changed;
+    });
+    emit();
+    if (changed) {
+      void idbPut(changed);
+      void serverUpsert(changed);
+    }
+    return { ok: true, focused: turningOn };
+  },
+
+  /** The current focus set for a user, in store (newest-first) order.
+   *  Non-reactive by design: sendMessage reads it at send time without
+   *  adding React state to its dependency graph. */
+  getFocused(userId: string | null): WorkspaceItem[] {
+    return items.filter(
+      (i) => i.meta?.focused === true && (i.userId == null || i.userId === userId)
+    );
   },
 
   rename(id: string, title: string) {
