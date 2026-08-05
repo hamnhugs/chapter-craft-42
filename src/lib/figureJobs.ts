@@ -219,6 +219,7 @@ async function runJob(input: JobInput): Promise<void> {
       continue;
     }
 
+    const batchIds: string[] = [];
     for (let i = 0; i < batch.length; i++) {
       const fig: ExtractedFigure = batch[i];
       // The server normalizes indices to unique 0-based positions; never
@@ -241,7 +242,7 @@ async function runJob(input: JobInput): Promise<void> {
           .upload(path, fig.blob, { contentType: "image/jpeg", upsert: false });
         if (upErr) throw upErr;
         uploaded = true;
-        const { error: insErr } = await (supabase.from("image_attachments" as any) as any).insert({
+        const { data: insRow, error: insErr } = await (supabase.from("image_attachments" as any) as any).insert({
           user_id: uid,
           entry_id: entryId,
           book_id: bookId,
@@ -255,8 +256,9 @@ async function runJob(input: JobInput): Promise<void> {
           model: described.model_used || input.model || "",
           storage_path: path,
           mime: "image/jpeg",
-        });
+        }).select("id").single();
         if (insErr) throw insErr;
+        if ((insRow as any)?.id) batchIds.push((insRow as any).id);
         kept += 1;
         patch(bookId, { progress: `Saved ${kept} figure${kept === 1 ? "" : "s"}…`, kept });
       } catch (e) {
@@ -267,6 +269,10 @@ async function runJob(input: JobInput): Promise<void> {
         }
         skipped += 1;
       }
+    }
+    // Let any open image library refresh as figures land, batch by batch.
+    if (batchIds.length > 0 && typeof window !== "undefined") {
+      try { window.dispatchEvent(new CustomEvent("image-attachments-changed", { detail: { created: batchIds } })); } catch { /* noop */ }
     }
   }
 

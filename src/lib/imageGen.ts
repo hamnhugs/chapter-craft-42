@@ -277,7 +277,16 @@ export async function storeGeneratedImage(opts: {
     })
     .select("id")
     .single();
-  if (insErr) throw new Error(`Image record failed: ${insErr.message}`);
+  if (insErr) {
+    // The row is the source of truth — without it the uploaded object is
+    // invisible to every UI. Remove it instead of orphaning (best-effort,
+    // mirroring figureJobs' rollback).
+    try { await supabase.storage.from("generated-images").remove([path]); } catch { /* best-effort */ }
+    throw new Error(`Image record failed: ${insErr.message}`);
+  }
+  if (typeof window !== "undefined") {
+    try { window.dispatchEvent(new CustomEvent("image-attachments-changed", { detail: { created: [(row as any).id] } })); } catch { /* noop */ }
+  }
   return { id: (row as any).id, storage_path: path, prompt: opts.prompt, entry_id: opts.entryId || null };
 }
 

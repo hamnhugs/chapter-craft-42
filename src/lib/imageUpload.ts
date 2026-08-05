@@ -167,6 +167,12 @@ export async function registerUploadedImage(opts: {
     wikiId: opts.wikiId ?? null,
     source: "upload",
   });
+  if (typeof window !== "undefined") {
+    try {
+      window.dispatchEvent(new CustomEvent("image-attachments-changed", { detail: { created: [(row as any).id] } }));
+      if (memoryId) window.dispatchEvent(new CustomEvent("image-memories-changed", { detail: { created: [memoryId] } }));
+    } catch { /* noop */ }
+  }
   return {
     ref: { id: (row as any).id as string, storage_path: opts.storagePath, prompt, entry_id: null },
     memoryId,
