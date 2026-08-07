@@ -17,18 +17,120 @@
   the parent. connect-src 'none' means nothing it (or the worker it spawns) can
   reach the network.
 
+  TRANSPORT — why the worker arrives as a data: URL, not a blob: URL.
+  A blob: URL minted inside an opaque origin serialises as "blob:null/<uuid>".
+  Loading a TOP-LEVEL MODULE worker script sets the request's mode to
+  "same-origin" (HTML, "fetch a single module script"); re-deriving an origin
+  from "blob:null/..." produces a FRESH opaque origin, and opaque origins
+  compare by identity, so that check can never pass. Measured on Chrome 148:
+  the worker script never loads and the handler receives a bare Event with no
+  message — not an ErrorEvent (vitejs/vite#12002 is the same bug; Vite's own
+  fix, PR #12014, was likewise to switch to a data: URL). A data: URL has no
+  origin to re-derive and loads fine, including WebAssembly. Nothing else about
+  the boundary changes: the frame is still opaque, still connect-src 'none',
+  and terminate() is still an unconditional kill.
+
+  ERRORS — a load-phase worker failure fires a plain Event with NO message
+  (HTML, "run a worker"). Reading `we.message` there can only ever produce
+  nothing, which is why this file used to report the literal string
+  "worker error". Every failure below therefore carries a machine code and a
+  full sentence composed from the code, never a raw event field on its own.
+  Meta-delivered CSP strips report-uri/report-to, so the securitypolicyviolation
+  listener is the only violation channel this frame will ever have.
+
   NEVER build this file's contents from untrusted data — it is static by
   contract, asserted in src/test/toolFoundry.test.ts.
 -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' blob:; worker-src blob:; child-src blob:; connect-src 'none'; img-src 'none'; media-src 'none'; font-src 'none'; style-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' blob: data:; worker-src blob: data:; child-src blob: data:; connect-src 'none'; img-src 'none'; media-src 'none'; font-src 'none'; style-src 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'">
 <meta http-equiv="x-dns-prefetch-control" content="off">
 </head>
 <body><script>
 (function () {
   "use strict";
+
+  /* Protocol constants. Mirrored by src/lib/toolSandbox.ts and asserted equal
+     across the two files by src/test/toolSandboxErrors.test.ts. */
+  var WORKER_URL_PREFIX = "data:text/javascript;base64,";
+  var BOOT_PROBE = "__sandboxWorkerBoot";
+  var EVALUATED_PROBE = "__sandboxWorkerEvaluated";
+  /* Every message THIS frame originates is namespaced, and no message from the
+     worker carrying this prefix is ever forwarded. Two reasons, both real:
+     the worker has its own "ready" and "bootError" messages that would
+     otherwise be read as the frame's, and a worker that ever went wrong could
+     otherwise forge frame-level control traffic to the host. */
+  var FRAME_MSG_PREFIX = "sandbox:";
+  /* Generous on purpose: this only has to cover fetching and parsing a ~1 MB
+     data: URL and running the FIRST statement of the module. Nothing heavy
+     (WASM instantiation, VM boot) happens before the probe fires, so a slow
+     but healthy machine has orders of magnitude of headroom here. */
+  var WORKER_BOOT_BUDGET_MS = 10000;
+  var MAX_BUFFERED_VIOLATIONS = 20;
+
   var booted = false;
   var worker = null;
   var port = null;
+  var workerStarted = false;
+  var bootTimer = 0;
+  var pendingViolations = [];
+
+  function send(msg) {
+    if (!port) return;
+    try { port.postMessage(msg); } catch (e) { /* host closed the port */ }
+  }
+
+  function text(value, cap) {
+    var s;
+    try { s = String(value); } catch (e) { s = "<unprintable>"; }
+    return s.length > cap ? s.slice(0, cap) + "..." : s;
+  }
+
+  function describeThrown(err) {
+    if (!err) return "the browser gave no detail";
+    var name = (err && err.name) ? text(err.name, 60) : "Error";
+    var msg = (err && err.message) ? text(err.message, 300) : "";
+    return msg ? (name + ": " + msg) : (name + " (no message)");
+  }
+
+  /* A load-phase failure delivers a bare Event; a runtime throw delivers an
+     ErrorEvent with a message. Which one arrived is the whole diagnosis, so
+     record the shape rather than reading one field and hoping. */
+  function eventShape(ev) {
+    var ctor = "Event";
+    try { if (ev && ev.constructor && ev.constructor.name) ctor = text(ev.constructor.name, 40); } catch (e) { /* exotic */ }
+    var has = !!(ev && typeof ev.message === "string" && ev.message.length > 0);
+    /* The worker's filename IS the data: URL, i.e. ~975 KB of base64. Naming
+       it adds nothing and would bury the message under a wall of noise, so it
+       is reported as what it is; the line and column still locate the fault. */
+    var file = (ev && ev.filename) ? String(ev.filename) : "";
+    if (file.lastIndexOf(WORKER_URL_PREFIX, 0) === 0) file = "the sandbox worker script";
+    return {
+      eventClass: ctor,
+      hasMessage: has,
+      message: has ? text(ev.message, 300) : "",
+      filename: file ? text(file, 200) : "",
+      lineno: (ev && typeof ev.lineno === "number") ? ev.lineno : 0,
+      colno: (ev && typeof ev.colno === "number") ? ev.colno : 0
+    };
+  }
+
+  /* Capture at window catches violations targeted at the document or at any
+     element, with no chance of double-reporting. Registered before anything
+     else so a violation raised while booting is still observed; violations
+     seen before the port exists are buffered and flushed on boot. */
+  window.addEventListener("securitypolicyviolation", function (e) {
+    var v = {
+      type: "sandbox:cspViolation",
+      code: "SANDBOX_CSP_VIOLATION",
+      directive: text(e.effectiveDirective || e.violatedDirective || "unknown", 60),
+      blockedURI: text(e.blockedURI || "", 200),
+      sourceFile: text(e.sourceFile || "", 200),
+      lineno: (typeof e.lineNumber === "number") ? e.lineNumber : 0,
+      disposition: text(e.disposition || "enforce", 20)
+    };
+    if (port) send(v);
+    else if (pendingViolations.length < MAX_BUFFERED_VIOLATIONS) pendingViolations.push(v);
+  }, true);
+
   window.addEventListener("message", function (e) {
     if (booted) return;
     // Only our embedder may boot this frame. Without this check any other
@@ -36,25 +138,120 @@
     // us via parent.frames[i] and win the boot race with its own worker.
     if (e.source !== window.parent) return;
     var d = e.data;
-    if (!d || d.type !== "boot" || !e.ports || !e.ports[0] || typeof d.workerSource !== "string") return;
+    if (!d || d.type !== "boot" || !e.ports || !e.ports[0]) return;
     booted = true;
     port = e.ports[0];
-    try {
-      var blob = new Blob([d.workerSource], { type: "text/javascript" });
-      worker = new Worker(URL.createObjectURL(blob), { type: "module" });
-    } catch (err) {
-      port.postMessage({ type: "bootError", error: String((err && err.message) || err) });
+    while (pendingViolations.length) send(pendingViolations.shift());
+
+    var url = d.workerUrl;
+    // The frame accepts exactly one transport. Anything else is refused with a
+    // code rather than handed to the Worker constructor to fail obscurely.
+    if (typeof url !== "string" || url.lastIndexOf(WORKER_URL_PREFIX, 0) !== 0) {
+      send({
+        type: "sandbox:bootError",
+        code: "SANDBOX_TRANSPORT_REJECTED",
+        detail: (typeof url === "string")
+          ? ("the boot message carried a string starting " + text(url.slice(0, 40), 40))
+          : ("the boot message carried " + (typeof url) + " where the worker URL should be")
+      });
       return;
     }
-    worker.onmessage = function (we) { port.postMessage(we.data); };
-    worker.onerror = function (we) { port.postMessage({ type: "workerError", error: String(we.message || "worker error") }); };
+
+    try {
+      worker = new Worker(url, { type: "module" });
+    } catch (err) {
+      send({ type: "sandbox:bootError", code: "SANDBOX_WORKER_CONSTRUCTOR_THREW", detail: describeThrown(err) });
+      return;
+    }
+
+    // The worker-level handshake, separate from the frame's. Without it,
+    // "the script never loaded" and "the script loaded and hung" are the same
+    // silence. The probe is injected as the first statement of the worker
+    // module by src/lib/toolSandbox.ts.
+    bootTimer = setTimeout(function () {
+      if (workerStarted) return;
+      send({
+        type: "sandbox:workerBootTimeout",
+        code: "SANDBOX_WORKER_BOOT_TIMEOUT",
+        detail: "no boot probe arrived in " + WORKER_BOOT_BUDGET_MS + "ms, and the browser reported no error either",
+        ms: WORKER_BOOT_BUDGET_MS
+      });
+    }, WORKER_BOOT_BUDGET_MS);
+
+    worker.onmessage = function (we) {
+      var m = we.data;
+      if (m && m.type === BOOT_PROBE) {
+        if (workerStarted) return;
+        workerStarted = true;
+        clearTimeout(bootTimer);
+        send({ type: "sandbox:workerBoot", origin: String(self.origin) });
+        return;
+      }
+      if (m && m.type === EVALUATED_PROBE) { send({ type: "sandbox:workerEvaluated" }); return; }
+      // Forgery guard: the worker may not speak in the frame's namespace.
+      if (m && typeof m.type === "string" && m.type.lastIndexOf(FRAME_MSG_PREFIX, 0) === 0) return;
+      send(m);
+    };
+
+    worker.onerror = function (we) {
+      var s = eventShape(we);
+      if (!workerStarted) {
+        clearTimeout(bootTimer);
+        send({
+          type: "sandbox:workerError",
+          code: "SANDBOX_WORKER_NEVER_STARTED",
+          detail: s.hasMessage
+            ? s.message
+            : ("the browser reported a bare " + s.eventClass + " with no message, which is exactly what a load-phase worker failure looks like"),
+          eventClass: s.eventClass,
+          hasMessage: s.hasMessage
+        });
+        return;
+      }
+      send({
+        type: "sandbox:workerError",
+        code: "SANDBOX_WORKER_RUNTIME_ERROR",
+        detail: s.hasMessage
+          ? (s.message + (s.filename ? (" (at " + s.filename + ":" + s.lineno + ":" + s.colno + ")") : ""))
+          : ("the browser withheld the error text and reported a bare " + s.eventClass + "; the worker script is not same-origin with this frame, so its error details are muted"),
+        eventClass: s.eventClass,
+        hasMessage: s.hasMessage
+      });
+    };
+
+    worker.onmessageerror = function () {
+      send({
+        type: "sandbox:workerError",
+        code: "SANDBOX_MESSAGE_UNDELIVERABLE",
+        detail: "a message posted by the worker could not be deserialised by this frame"
+      });
+    };
+
     port.onmessage = function (pe) {
       var m = pe.data;
       if (!m || typeof m !== "object") return;
-      if (m.type === "kill") { try { worker.terminate(); } catch (x) {} port.postMessage({ type: "killed" }); return; }
-      worker.postMessage(m);
+      if (m.type === "sandbox:kill") {
+        clearTimeout(bootTimer);
+        if (worker) { try { worker.terminate(); } catch (x) { /* already gone */ } }
+        send({ type: "sandbox:killed" });
+        return;
+      }
+      if (!worker) return;
+      try {
+        worker.postMessage(m);
+      } catch (err) {
+        send({
+          type: "sandbox:workerError",
+          code: "SANDBOX_MESSAGE_UNDELIVERABLE",
+          detail: "this frame could not hand a message to the worker: " + describeThrown(err)
+        });
+      }
     };
-    port.postMessage({ type: "ready" });
+
+    // Reported so the host can verify at runtime that this frame really is
+    // opaque ("null"). If it ever isn't, allow-same-origin has crept back in
+    // and the host refuses to run rather than trusting a broken boundary.
+    send({ type: "sandbox:frameReady", origin: String(self.origin) });
   });
 })();
 </script></body>

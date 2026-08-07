@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Tool Foundry sandbox repro harness</title>
+<!--
+================================================================================
+  Tool Foundry sandbox repro harness — permanent, so this is never again
+  diagnosed by guesswork.
+
+  WHY IT EXISTS
+  The Foundry sandbox is an opaque-origin iframe hosting a Worker that runs
+  QuickJS-WASM. Two things in that stack can fail silently, and both used to
+  surface as the same useless string:
+    * the worker SCRIPT never loads (a load-phase worker failure fires a bare
+      Event with NO message, so there is nothing to print), and
+    * the worker loads and then HANGS (no error at all, ever).
+  This page separates them, by hand, in a real browser.
+
+  HOW TO RUN IT
+    1. npx vite build
+    2. cp scripts/sandbox-repro.html dist/sandbox-repro.html
+       (every build wipes dist/, so re-copy after each build)
+    3. npm run preview -- --port 4173 --strictPort
+    4. open http://localhost:4173/sandbox-repro.html
+  Results are printed to the page AND left on window.__repro
+  ({ lines, results, done, summary }) so a driver can read them with
+  javascript_tool. The page prints "@@REPRO-DONE@@" when it has finished.
+
+  QUERY PARAMETERS
+    ?transport=data|blob|classic   worker transport (default: data)
+                                     data    -> data:text/javascript;base64,...
+                                               + { type: "module" }   [PRODUCTION]
+                                     blob    -> blob: URL + { type: "module" }
+                                               (the old transport, which cannot
+                                               load in an opaque origin)
+                                     classic -> blob: URL, classic worker
+                                   blob: URLs are minted INSIDE the frame, not
+                                   handed in: only a blob created in an opaque
+                                   origin serialises as blob:null/<uuid>, and
+                                   that is the URL the bug is about. One handed
+                                   in from the embedder fails differently (a
+                                   synchronous SecurityError), which is a
+                                   different bug and would mislead.
+    ?payload=trivial|wasm|real     what the worker contains (default: trivial)
+                                     trivial -> one statement, posts a result
+                                     wasm    -> instantiates a 41-byte module
+                                     real    -> the built toolWorker asset
+    ?asset=<url>                   explicit URL of the built worker asset; if
+                                   omitted, ?payload=real crawls dist/assets to
+                                   find it and prints what it found
+    ?direct=1                      run the worker in THIS page (same origin, no
+                                   iframe) instead of inside the sandbox frame
+    ?frame=prod|replica            which frame to use (default: prod when the
+                                   transport is `data`, replica otherwise)
+                                     prod    -> the real ./tool-sandbox.html,
+                                                real URL, real CSP, real boot
+                                                protocol (accepts data: only)
+                                     replica -> a blob: document carrying the
+                                                same meta CSP, used only to
+                                                compare transports the
+                                                production frame refuses
+    ?matrix=1                      ignore the switches above and run the whole
+                                   evidence table: every transport, in the
+                                   replica opaque frame, plus same-origin
+                                   controls in this page
+    ?timeout=<ms>                  per-case budget (default 6000)
+
+  WHAT A HEALTHY RUN LOOKS LIKE (Chrome 148 / Windows 10)
+    default (data + trivial, prod frame): frame ready -> workerBoot -> a
+    round-tripped message. Anything less means the transport is broken again.
+================================================================================
+-->
+<style>
+  body { font: 12px/1.5 ui-monospace, Consolas, monospace; margin: 12px; background: #111; color: #ddd; }
+  pre { white-space: pre-wrap; word-break: break-word; }
+  .ok { color: #7fd67f; } .bad { color: #ff8080; } .warn { color: #e8c46a; } .dim { color: #888; }
+  h1 { font-size: 14px; margin: 0 0 8px; }
+</style>
+</head>
+<body>
+<h1>Tool Foundry sandbox repro harness</h1>
+<pre id="out"></pre>
+<script>
+(function () {
+  "use strict";
+
+  /* ---------------------------------------------------------------- */
+  /* plumbing                                                          */
+  /* ---------------------------------------------------------------- */
+
+  var out = document.getElementById("out");
+  var LINES = [];
+  var RESULTS = [];
+  window.__repro = { lines: LINES, results: RESULTS, done: false, summary: null };
+
+  var T0 = Date.now();
+  function log(s, cls) {
+    var line = String(Date.now() - T0).padStart(6, " ") + "ms  " + s;
+    LINES.push(line);
+    var el = document.createElement("span");
+    if (cls) el.className = cls;
+    el.textContent = line + "\n";
+    out.appendChild(el);
+    if (window.console && console.log) console.log("[repro] " + line);
+  }
+  function head(s) { log(""); log("===== " + s + " ====="); }
+
+  var Q = new URLSearchParams(location.search);
+  var qp = function (k, dflt) { var v = Q.get(k); return (v === null || v === "") ? dflt : v; };
+  var TIMEOUT = Math.max(1000, parseInt(qp("timeout", "6000"), 10) || 6000);
+
+  function fail(where, err) {
+    log("FAILED at " + where + ": " + (err && err.message ? (err.name + ": " + err.message) : String(err)), "bad");
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* payloads                                                          */
+  /* ---------------------------------------------------------------- */
+
+  // Mirrors src/lib/toolSandbox.ts. Kept literal here on purpose: the harness
+  // must not import app code, or it stops being an independent witness.
+  var BOOT_PROBE = "__sandboxWorkerBoot";
+  var EVALUATED_PROBE = "__sandboxWorkerEvaluated";
+  var DATA_PREFIX = "data:text/javascript;base64,";
+
+  var PROBE_PRE =
+    'try { self.postMessage({ type: "' + BOOT_PROBE + '" }); } catch (e) {}\n';
+  var PROBE_POST =
+    '\n;try { self.postMessage({ type: "' + EVALUATED_PROBE + '" }); } catch (e) {}\n';
+
+  // One statement. If this does not load, nothing about QuickJS, the 729 KB
+  // bundle or the WASM is involved — the transport is broken.
+  var TRIVIAL_SRC = 'postMessage({ type: "result", ok: true, from: "trivial", origin: String(self.origin) });\n';
+
+  // 41 bytes of WebAssembly exporting foo() => 42. Proves 'wasm-unsafe-eval'
+  // survives whatever transport is under test.
+  var WASM_SRC =
+    'var bytes = new Uint8Array([0,97,115,109,1,0,0,0,1,5,1,96,0,1,127,3,2,1,0,7,7,1,3,102,111,111,0,0,10,6,1,4,0,65,42,11]);\n' +
+    'WebAssembly.instantiate(bytes).then(function (r) {\n' +
+    '  postMessage({ type: "result", ok: true, from: "wasm", value: r.instance.exports.foo(), origin: String(self.origin) });\n' +
+    '}, function (e) {\n' +
+    '  postMessage({ type: "result", ok: false, from: "wasm", error: e.name + ": " + e.message });\n' +
+    '});\n';
+
+  /* ---------------------------------------------------------------- */
+  /* transports                                                        */
+  /* ---------------------------------------------------------------- */
+
+  function utf8(s) { return new TextEncoder().encode(s); }
+
+  function bytesToBase64(bytes) {
+    var STEP = 8192, binary = "";
+    for (var i = 0; i < bytes.length; i += STEP) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + STEP));
+    }
+    return btoa(binary);
+  }
+
+  /** The production encoder, plus the size measurement it costs. */
+  function toDataUrl(sourceBytes, label) {
+    var t = performance.now();
+    var url = DATA_PREFIX + bytesToBase64(sourceBytes);
+    var ms = Math.round((performance.now() - t) * 10) / 10;
+    var pct = Math.round((url.length / sourceBytes.length) * 1000) / 10;
+    log("encode " + (label || "payload") + ": " + sourceBytes.length + " source bytes -> " +
+        url.length + " URL chars (" + pct + "% of source, " + ms + "ms)");
+    // The alternative encoding, measured so the choice is evidence-based.
+    try {
+      var pct2 = Math.round((("data:text/javascript," +
+        encodeURIComponent(new TextDecoder().decode(sourceBytes))).length / sourceBytes.length) * 1000) / 10;
+      log("  (for comparison: percent-encoding the same bytes would be " + pct2 + "% of source)", "dim");
+    } catch (e) { /* comparison only */ }
+    return url;
+  }
+
+  function toBlobUrl(source) {
+    return URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+  }
+
+  /**
+   * transport name -> { url?, source?, opts, note }
+   *
+   * `data` is encoded by the embedder, exactly as src/lib/toolSandbox.ts does.
+   * `blob`/`classic` deliberately hand the SOURCE across instead, so the frame
+   * mints the blob inside its own origin — which is what the old production
+   * code did, and the only way to reproduce a `blob:null/<uuid>` URL.
+   */
+  function buildTransport(transport, source) {
+    if (transport === "data") {
+      return { url: toDataUrl(utf8(source), "worker"), opts: { type: "module" },
+               note: "data: URL + module worker (PRODUCTION)" };
+    }
+    if (transport === "blob") {
+      return { source: source, opts: { type: "module" },
+               note: "blob: URL minted inside the frame + module worker (the old production transport)" };
+    }
+    if (transport === "classic") {
+      return { source: source, opts: null,
+               note: "blob: URL minted inside the frame + CLASSIC worker (no import.meta, no static import)" };
+    }
+    throw new Error("unknown transport " + transport);
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* the replica opaque frame (transport matrix only)                  */
+  /* ---------------------------------------------------------------- */
+
+  // A blob: document carrying the SAME meta CSP as public/tool-sandbox.html.
+  // Loaded with sandbox="allow-scripts" it is opaque-origin exactly like
+  // production. It exists only so transports the production frame refuses
+  // (blob:, classic) can still be measured under the same conditions; it is
+  // labelled REPLICA everywhere so it is never mistaken for the real path.
+  var REPLICA_DOC =
+    '<!DOCTYPE html><html><head><meta charset="utf-8">' +
+    '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; ' +
+    'script-src \'unsafe-inline\' \'wasm-unsafe-eval\' blob: data:; worker-src blob: data:; ' +
+    'child-src blob: data:; connect-src \'none\'; img-src \'none\'; media-src \'none\'; ' +
+    'font-src \'none\'; style-src \'none\'; object-src \'none\'; frame-src \'none\'; ' +
+    'form-action \'none\'; base-uri \'none\'"></head><body><script>\n' +
+    '(function () {\n' +
+    '  var port = null;\n' +
+    '  function send(o) { if (port) try { port.postMessage(o); } catch (e) {} }\n' +
+    '  window.addEventListener("securitypolicyviolation", function (e) {\n' +
+    '    send({ type: "cspViolation", directive: String(e.effectiveDirective || e.violatedDirective),\n' +
+    '           blockedURI: String(e.blockedURI || "").slice(0, 120) });\n' +
+    '  }, true);\n' +
+    '  window.addEventListener("message", function (ev) {\n' +
+    '    if (ev.source !== window.parent) return;\n' +
+    '    var d = ev.data;\n' +
+    '    if (!d || d.type !== "case" || !ev.ports || !ev.ports[0]) return;\n' +
+    '    port = ev.ports[0];\n' +
+    '    send({ type: "frameOrigin", origin: String(self.origin) });\n' +
+    '    var w, done = false, url = d.url;\n' +
+    '    function fin(o) { if (done) return; done = true; send(o); try { w && w.terminate(); } catch (x) {} }\n' +
+    // A blob: URL must be minted HERE, inside the opaque origin, or the test is
+    // not the production one: a blob created by the embedder serialises as
+    // blob:<real-origin>/<uuid>, which fails a different check for a different
+    // reason. Created in here it serialises as blob:null/<uuid> — the case the
+    // production code actually hit.
+    '    if (!url && typeof d.source === "string") {\n' +
+    '      url = URL.createObjectURL(new Blob([d.source], { type: "text/javascript" }));\n' +
+    '      send({ type: "mintedUrl", url: String(url).slice(0, 80) });\n' +
+    '    }\n' +
+    '    try { w = d.opts ? new Worker(url, d.opts) : new Worker(url); }\n' +
+    '    catch (err) { fin({ type: "outcome", phase: "constructor-threw", detail: err.name + ": " + err.message }); return; }\n' +
+    '    w.onmessage = function (me) { fin({ type: "outcome", phase: "message", detail: JSON.stringify(me.data) }); };\n' +
+    '    w.onerror = function (we) {\n' +
+    '      fin({ type: "outcome", phase: "error-event",\n' +
+    '            eventClass: (we && we.constructor && we.constructor.name) || "Event",\n' +
+    '            hasMessage: !!(we && typeof we.message === "string" && we.message.length),\n' +
+    '            detail: (we && we.message) ? String(we.message).slice(0, 300) : "(no message)" });\n' +
+    '    };\n' +
+    '    setTimeout(function () { fin({ type: "outcome", phase: "silence", detail: "no message, no error" }); }, d.timeout);\n' +
+    '  });\n' +
+    '})();\n' +
+    '<\/script></body></html>';
+
+  function openFrame(src, label) {
+    return new Promise(function (resolve, reject) {
+      var ifr = document.createElement("iframe");
+      ifr.setAttribute("sandbox", "allow-scripts"); // NEVER allow-same-origin
+      ifr.style.cssText = "width:1px;height:1px;border:0;position:absolute;left:-9999px";
+      var t = setTimeout(function () { reject(new Error(label + " did not fire load in " + TIMEOUT + "ms")); }, TIMEOUT);
+      ifr.onload = function () {
+        clearTimeout(t);
+        // The replica document's own object URL has served its purpose.
+        if (src.lastIndexOf("blob:", 0) === 0) { try { URL.revokeObjectURL(src); } catch (e) { /* fine */ } }
+        log("frame loaded: " + label, "ok");
+        resolve(ifr);
+      };
+      ifr.onerror = function () { clearTimeout(t); reject(new Error(label + " fired error")); };
+      ifr.src = src;
+      document.body.appendChild(ifr);
+      log("frame appended: " + label + "  (sandbox=\"allow-scripts\", no allow-same-origin)");
+    });
+  }
+
+  function replicaSrc() { return URL.createObjectURL(new Blob([REPLICA_DOC], { type: "text/html" })); }
+
+  /** Run one transport case inside the REPLICA opaque frame. */
+  function runReplicaCase(name, transport, source) {
+    return openFrame(replicaSrc(), "REPLICA (" + name + ")").then(function (ifr) {
+      return new Promise(function (resolve) {
+        var built;
+        try { built = buildTransport(transport, source); }
+        catch (e) { resolve({ name: name, phase: "build-threw", ok: false, detail: String(e.message) }); return; }
+        var ch = new MessageChannel();
+        var settled = false;
+        ch.port1.onmessage = function (ev) {
+          var d = ev.data;
+          if (d.type === "frameOrigin") { log("  replica frame origin = " + JSON.stringify(d.origin)); return; }
+          if (d.type === "mintedUrl") { log("  frame minted worker URL: " + d.url); return; }
+          if (d.type === "cspViolation") { log("  CSP VIOLATION: " + d.directive + " blocked " + d.blockedURI, "warn"); return; }
+          if (d.type === "outcome" && !settled) {
+            settled = true;
+            resolve({ name: name, phase: d.phase, ok: d.phase === "message",
+                      detail: d.detail, eventClass: d.eventClass, hasMessage: d.hasMessage });
+            try { ifr.remove(); } catch (x) {}
+          }
+        };
+        ifr.contentWindow.postMessage(
+          { type: "case", url: built.url, source: built.source, opts: built.opts, timeout: TIMEOUT },
+          "*", [ch.port2]);
+        log("  posted case: " + built.note);
+      });
+    });
+  }
+
+  function reportCase(r) {
+    RESULTS.push(r);
+    var verdict = r.ok ? "LOADS" : (r.phase === "silence" ? "SILENT" : "FAILS");
+    var cls = r.ok ? "ok" : "bad";
+    log("  -> " + verdict + " (" + r.phase + ") " + (r.detail || ""), cls);
+    if (r.phase === "error-event") {
+      log("     error event class = " + r.eventClass + ", carries a message = " + r.hasMessage,
+          r.hasMessage ? "warn" : "bad");
+      if (!r.hasMessage) {
+        log("     ^ a bare Event with no message IS the load-phase failure signature.", "bad");
+      }
+    }
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* the PRODUCTION path: the real tool-sandbox.html                   */
+  /* ---------------------------------------------------------------- */
+
+  function runProdPath(source, label, isRealWorker) {
+    head("PRODUCTION PATH — ./tool-sandbox.html (real URL, real CSP) + " + label);
+    var dataUrl;
+    try {
+      // Exactly what src/lib/toolSandbox.ts hands the frame: the payload with
+      // the liveness probes wrapped around it. Without them the frame's boot
+      // handshake is never exercised, and the harness stops being faithful.
+      dataUrl = toDataUrl(utf8(PROBE_PRE + source + PROBE_POST), label);
+    } catch (e) { fail("encoding the payload", e); return Promise.resolve(); }
+
+    return openFrame("./tool-sandbox.html", "tool-sandbox.html").then(function (ifr) {
+      return new Promise(function (resolve) {
+        var ch = new MessageChannel();
+        var sawReady = false, sawBoot = false, finished = false;
+        var t0 = Date.now();
+        function done(why, cls) {
+          if (finished) return;
+          finished = true;
+          log("PROD PATH RESULT: " + why, cls);
+          RESULTS.push({ name: "prod:" + label, phase: why, ok: cls === "ok", sawReady: sawReady, sawBoot: sawBoot });
+          try { ch.port1.postMessage({ type: "sandbox:kill" }); } catch (x) {}
+          try { ifr.remove(); } catch (x) {}
+          resolve();
+        }
+        ch.port1.onmessage = function (ev) {
+          var d = ev.data || {};
+          log("  <- " + JSON.stringify(d).slice(0, 400));
+          if (d.type === "sandbox:frameReady") {
+            sawReady = true;
+            log("  frame is ready; it reports origin = " + JSON.stringify(String(d.origin)) +
+                (String(d.origin) === "null" ? "  (opaque — correct)" : "  (NOT OPAQUE — boundary broken)"),
+                String(d.origin) === "null" ? "ok" : "bad");
+            return;
+          }
+          if (d.type === "sandbox:workerBoot") {
+            sawBoot = true;
+            log("  WORKER STARTED after " + (Date.now() - t0) + "ms — the transport works", "ok");
+            if (isRealWorker) {
+              log("  posting a real `run` message to the QuickJS worker...");
+              ch.port1.postMessage({
+                type: "run", runId: "repro-" + Math.random().toString(36).slice(2),
+                code: "async function run(args, caps) { return { doubled: (args.n || 0) * 2 }; }",
+                argsJson: JSON.stringify({ n: 21 }), capabilities: [],
+                limits: { memBytes: 67108864, stackBytes: 524288, deadlineMs: TIMEOUT, resultCapBytes: 32768 }
+              });
+            }
+            return;
+          }
+          if (d.type === "sandbox:workerEvaluated") { log("  worker module finished evaluating", "ok"); return; }
+          // toolWorker.ts's own signals, forwarded verbatim by the frame.
+          if (d.type === "ready") { log("  QuickJS VM reports itself usable after " + d.ms + "ms", "ok"); return; }
+          if (d.type === "bootError") { log("  QuickJS VM boot FAILED: " + String(d.error).slice(0, 300), "bad"); return; }
+          if (d.type === "fatal") { log("  worker reported an uncaught " + d.phase + ": " + String(d.message).slice(0, 300), "bad"); return; }
+          if (d.type === "result") { done(d.ok ? "round-tripped a result" : "worker reported a failure", d.ok ? "ok" : "bad"); return; }
+          if (d.type === "sandbox:bootError" || d.type === "sandbox:workerError" || d.type === "sandbox:workerBootTimeout") {
+            done(String(d.code) + " :: " + String(d.detail || "(no detail)"), "bad");
+            return;
+          }
+          if (d.type === "sandbox:cspViolation") {
+            log("  CSP VIOLATION: " + d.directive + " blocked " + d.blockedURI, "warn");
+            return;
+          }
+        };
+        setTimeout(function () {
+          done(sawBoot
+            ? "TIMEOUT after the worker started — the transport is fine, the worker itself is hung (this is the QuickJS fault, not the transport)"
+            : (sawReady ? "TIMEOUT: frame ready but the worker never reported in" : "TIMEOUT: the frame never said ready"),
+            "bad");
+        }, TIMEOUT);
+        log("  -> boot { workerUrl: " + JSON.stringify(dataUrl.slice(0, 48) + "...") + " } (" + dataUrl.length + " chars)");
+        ifr.contentWindow.postMessage({ type: "boot", workerUrl: dataUrl }, "*", [ch.port2]);
+      });
+    }).catch(function (e) { fail("the production path", e); });
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* direct: no iframe, this page's own origin                         */
+  /* ---------------------------------------------------------------- */
+
+  function runDirect(transport, source, label) {
+    head("DIRECT — worker in THIS page (origin " + location.origin + ", no iframe) + " + transport + " + " + label);
+    return new Promise(function (resolve) {
+      var built;
+      try { built = buildTransport(transport, source); }
+      catch (e) { fail("building the transport", e); resolve(); return; }
+      // buildTransport hands blob transports back as SOURCE so the sandbox
+      // frame can mint them in its own origin; here there is no frame, so this
+      // page mints them — which is the whole point of the control: the same
+      // blob module worker in a NON-opaque origin.
+      var url = built.url, objectUrl = null;
+      if (!url) { url = objectUrl = URL.createObjectURL(new Blob([built.source], { type: "text/javascript" })); }
+      log("  " + built.note.replace("minted inside the frame", "minted in this page"));
+      log("  worker URL: " + String(url).slice(0, 80));
+      var w, done = false;
+      function fin(why, cls) {
+        if (done) return; done = true;
+        log("DIRECT RESULT: " + why, cls);
+        RESULTS.push({ name: "direct:" + transport + ":" + label, phase: why, ok: cls === "ok" });
+        try { w && w.terminate(); } catch (x) {}
+        if (objectUrl) { try { URL.revokeObjectURL(objectUrl); } catch (x) {} }
+        resolve();
+      }
+      try { w = built.opts ? new Worker(url, built.opts) : new Worker(url); }
+      catch (e) { fin("constructor threw: " + e.name + ": " + e.message, "bad"); return; }
+      w.onmessage = function (me) { log("  <- " + JSON.stringify(me.data).slice(0, 400)); fin("message received", "ok"); };
+      w.onerror = function (we) {
+        var cls = (we && we.constructor && we.constructor.name) || "Event";
+        var has = !!(we && typeof we.message === "string" && we.message.length);
+        fin("error event (" + cls + ", carries a message = " + has + "): " + (has ? we.message : "(none)"), "bad");
+      };
+      setTimeout(function () { fin("silence — no message and no error", "bad"); }, TIMEOUT);
+    });
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* finding the built worker asset                                    */
+  /* ---------------------------------------------------------------- */
+
+  // Vite emits the worker as new URL("toolWorker-<hash>.js", import.meta.url),
+  // i.e. relative to the CHUNK that references it — not to the page. Match the
+  // bare filename with an optional path, then resolve it against that chunk.
+  var WORKER_RE = /["']((?:[.\w/-]*\/)?toolWorker[-.][A-Za-z0-9_-]+\.js)["']/;
+  var ASSET_RE = /(?:\.\/|\/)?assets\/[A-Za-z0-9_.-]+\.js/g;
+
+  function fetchText(url) {
+    return fetch(url).then(function (r) { return r.ok ? r.text() : ""; }).catch(function () { return ""; });
+  }
+
+  /** Crawl index.html -> its module chunks -> their imports, breadth-first,
+   *  until an `assets/toolWorker-*.js` reference turns up. Bounded so a broken
+   *  build cannot turn this into a download of the whole dist. */
+  function findWorkerAsset() {
+    var explicit = qp("asset", "");
+    if (explicit) { log("using ?asset=" + explicit); return Promise.resolve(explicit); }
+    log("looking for the built worker asset (crawling ./index.html -> assets/*.js, max 40 files)...");
+    var seen = {}, queue = ["./index.html"], visited = 0;
+    function step() {
+      if (!queue.length || visited >= 40) return Promise.resolve("");
+      var url = queue.shift();
+      if (seen[url]) return step();
+      seen[url] = true; visited++;
+      return fetchText(url).then(function (text) {
+        if (!text) return step();
+        var hit = WORKER_RE.exec(text);
+        if (hit) {
+          var resolved = new URL(hit[1], new URL(url, location.href)).href;
+          log("  found in " + url + ": " + hit[1] + " -> " + resolved, "ok");
+          return resolved;
+        }
+        var m = text.match(ASSET_RE) || [];
+        for (var i = 0; i < m.length && queue.length < 60; i++) {
+          var next = m[i].charAt(0) === "/" ? ("." + m[i]) : (m[i].indexOf("./") === 0 ? m[i] : "./" + m[i]);
+          if (!seen[next]) queue.push(next);
+        }
+        return step();
+      });
+    }
+    return step();
+  }
+
+  function loadRealSource() {
+    return findWorkerAsset().then(function (assetUrl) {
+      if (!assetUrl) {
+        log("could not find the worker asset. Pass it explicitly: ?payload=real&asset=./assets/toolWorker-<hash>.js", "bad");
+        log("  (find the name with: ls dist/assets/toolWorker-*.js )", "dim");
+        return null;
+      }
+      return fetch(assetUrl).then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status + " for " + assetUrl);
+        return r.text();
+      }).then(function (src) {
+        log("worker asset " + assetUrl + ": " + src.length + " chars", "ok");
+        return src;
+      });
+    }).catch(function (e) { fail("loading the worker asset", e); return null; });
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* modes                                                             */
+  /* ---------------------------------------------------------------- */
+
+  function runMatrix() {
+    head("TRANSPORT MATRIX — every transport, inside a REPLICA opaque frame");
+    log("The replica carries the same meta CSP as public/tool-sandbox.html and is");
+    log("loaded with sandbox=\"allow-scripts\", so its origin is opaque exactly like");
+    log("production. It exists only because the production frame accepts data: only.");
+
+    var cases = [
+      ["blob: + module (trivial)", "blob", TRIVIAL_SRC],
+      ["blob: + classic (trivial)", "classic", TRIVIAL_SRC],
+      ["blob: + classic + import.meta.url", "classic", 'var u = import.meta.url; postMessage({ ok: true, u: u });'],
+      ["data: + module (trivial)", "data", TRIVIAL_SRC],
+      ["data: + module + WebAssembly", "data", WASM_SRC],
+      ["blob: + module + WebAssembly", "blob", WASM_SRC]
+    ];
+
+    var chain = Promise.resolve();
+    cases.forEach(function (c) {
+      chain = chain.then(function () {
+        head("case: " + c[0]);
+        return runReplicaCase(c[0], c[1], c[2]).then(reportCase);
+      });
+    });
+
+    return chain.then(function () {
+      head("SAME-ORIGIN CONTROL — this page, not an iframe");
+      return runDirect("blob", TRIVIAL_SRC, "trivial");
+    }).then(function () {
+      return runDirect("data", TRIVIAL_SRC, "trivial");
+    });
+  }
+
+  function summarise() {
+    head("SUMMARY");
+    var loads = 0;
+    RESULTS.forEach(function (r) {
+      if (r.ok) loads++;
+      log((r.ok ? "PASS  " : "FAIL  ") + r.name + "  ->  " + r.phase, r.ok ? "ok" : "bad");
+    });
+    window.__repro.summary = loads + "/" + RESULTS.length + " cases loaded and delivered a message";
+    log(window.__repro.summary);
+    window.__repro.done = true;
+    log("@@REPRO-DONE@@");
+  }
+
+  function main() {
+    log("UA: " + navigator.userAgent);
+    log("page origin: " + location.origin + "  secure context: " + window.isSecureContext);
+    log("query: " + (location.search || "(none)"));
+
+    var transport = qp("transport", "data");
+    var payloadName = qp("payload", "trivial");
+    var direct = qp("direct", "") === "1";
+    var frameChoice = qp("frame", transport === "data" ? "prod" : "replica");
+
+    if (qp("matrix", "") === "1") return runMatrix().then(summarise);
+
+    var sourcePromise;
+    if (payloadName === "real") sourcePromise = loadRealSource();
+    else if (payloadName === "wasm") sourcePromise = Promise.resolve(WASM_SRC);
+    else sourcePromise = Promise.resolve(TRIVIAL_SRC);
+
+    return sourcePromise.then(function (source) {
+      if (!source) return;
+      if (direct) return runDirect(transport, source, payloadName);
+      if (frameChoice === "prod") {
+        if (transport !== "data") {
+          log("the production frame accepts data: URLs only — falling back to the replica frame for transport=" + transport, "warn");
+        } else {
+          return runProdPath(source, payloadName, payloadName === "real");
+        }
+      }
+      head("REPLICA FRAME — " + transport + " + " + payloadName);
+      return runReplicaCase(transport + ":" + payloadName, transport, source).then(reportCase);
+    }).then(summarise);
+  }
+
+  main().catch(function (e) { fail("the harness itself", e); window.__repro.done = true; log("@@REPRO-DONE@@"); });
+})();
+</script>
+</body>
+</html>

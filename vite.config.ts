@@ -132,6 +132,40 @@ export default defineConfig(({ mode }) => ({
     // variant's dynamic import into a single module.
     format: "es",
     rollupOptions: { output: { inlineDynamicImports: true } },
+    // The QuickJS emscripten glue carries exactly one `import.meta.url` — a
+    // no-op `new URL(".", …)` probe already wrapped in try/catch. That single
+    // token is a hard SyntaxError ("Cannot use 'import.meta' outside a
+    // module") in a CLASSIC worker, which pins the sandbox transport to
+    // { type: "module" } for no benefit at all. After inlineDynamicImports the
+    // bundle has no import/export statements left, so this token is the only
+    // thing standing between it and a classic-worker-compatible script — which
+    // the opaque-origin iframe may need. `location.href` is the same value
+    // inside a worker, blob-hosted or not.
+    //
+    // The chunk also embeds the whole QuickJS WASM as a string literal, and a
+    // blind rewrite inside THAT would corrupt the engine silently. The token
+    // does not occur there (QuickJS's own diagnostics are "import.meta not
+    // supported in this context" / "import.meta only valid in module code" —
+    // no `.url`), so the expected count is exactly one. More than one means
+    // something changed under us; fail the build rather than gamble.
+    plugins: () => [
+      {
+        name: "sandbox-worker-drop-import-meta",
+        enforce: "post",
+        renderChunk(code: string) {
+          const hits = code.split("import.meta.url").length - 1;
+          if (hits === 0) return null;
+          if (hits > 1) {
+            throw new Error(
+              `sandbox-worker-drop-import-meta: expected at most 1 import.meta.url in the worker ` +
+              `chunk, found ${hits}. Confirm none of them sits inside the embedded WASM string ` +
+              `literal before widening this rewrite — corrupting it fails at runtime, not here.`,
+            );
+          }
+          return { code: code.split("import.meta.url").join("(location.href)"), map: null };
+        },
+      } as Plugin,
+    ],
   },
   build: {
     outDir: "dist",
