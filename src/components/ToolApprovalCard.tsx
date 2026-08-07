@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { approveTool, toolFingerprint } from "@/lib/toolFoundry";
 import { supabase } from "@/integrations/supabase/client";
 import type { ToolProposal } from "@/lib/chatTools";
+import type { ConformanceCheck, ConformanceReport } from "@/lib/toolConformance";
 
 /**
  * Tool Foundry approval card — the Devin-style ratification gate.
@@ -12,12 +13,54 @@ import type { ToolProposal } from "@/lib/chatTools";
  * fingerprint at click time: if the code changed since this card rendered,
  * approve_tool() rejects the mismatch. The Approve button calls the RPC from
  * UI code — the model has no tool that can press it.
+ *
+ * The verification line is deliberately NOT a green tick. A tool that passes
+ * its author's own tests is almost certainly wrong — 96.8% of self-authored
+ * tools score zero on held-out inputs while their in-session verifier stays
+ * green — so this renders the honest ConformanceReport summary, splits the
+ * layers, and says plainly when a layer was never run.
  */
+
+/** Forge-time extras the executor may attach; optional so an older proposal
+ *  (or a build where chatTools has not been wired yet) still renders. */
+type ProposalExtras = {
+  conformance?: ConformanceReport;
+  descriptionPinned?: boolean;
+};
+
+const CheckList: React.FC<{ title: string; checks: ConformanceCheck[] }> = ({ title, checks }) => {
+  if (checks.length === 0) return null;
+  return (
+    <div className="mt-2">
+      <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">{title}</p>
+      <ul className="mt-1 flex flex-col gap-1">
+        {checks.map((c, i) => (
+          <li key={`${c.name}-${i}`} className="flex items-start gap-1.5">
+            <span
+              className={`material-symbols-outlined text-[13px] leading-4 mt-0.5 shrink-0 ${c.pass ? "text-on-surface-variant" : "text-destructive"}`}
+              aria-hidden="true"
+            >
+              {c.pass ? "check_small" : "priority_high"}
+            </span>
+            <span className="min-w-0 text-[11px] text-on-surface-variant break-words">
+              <span className="text-foreground">{c.name}</span> — {c.note}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+};
+
 const ToolApprovalCard: React.FC<{ proposal: ToolProposal }> = ({ proposal }) => {
   const [state, setState] = useState<"pending" | "approving" | "approved" | "rejected">(
     proposal.autoApproved ? "approved" : "pending",
   );
   const [showCode, setShowCode] = useState(false);
+  const [showChecks, setShowChecks] = useState(false);
+
+  const extras = proposal as ToolProposal & ProposalExtras;
+  const report = extras.conformance;
 
   const onApprove = async () => {
     setState("approving");
@@ -51,8 +94,17 @@ const ToolApprovalCard: React.FC<{ proposal: ToolProposal }> = ({ proposal }) =>
     ? "Pure computation — reads nothing, no data access"
     : proposal.capabilities.join(", ");
 
+  // Never collapse a partial pass into a tick. With no report at all, say that
+  // only the author's own cases ran — because that is the layer that lies.
+  const authored = proposal.testResults || [];
+  const authoredPassed = authored.filter((t) => t.pass).length;
+  const verificationLine = report
+    ? report.summary
+    : `${authoredPassed}/${authored.length} of the AI's own test cases passed on fixture data — held-out conformance was not run for this draft.`;
+  const verificationBad = report ? !report.passed : authoredPassed !== authored.length;
+
   return (
-    <div className="rounded-xl border border-primary-container/40 bg-surface-container-high/50 p-3 mt-1 flex flex-col gap-2">
+    <div className="rounded-xl border border-primary-container/40 bg-surface-container-high/50 p-3 mt-1 flex flex-col gap-2 min-w-0">
       <div className="flex items-center gap-2">
         <span className="material-symbols-outlined text-primary-container">construction</span>
         <div className="min-w-0 flex-1">
@@ -68,17 +120,36 @@ const ToolApprovalCard: React.FC<{ proposal: ToolProposal }> = ({ proposal }) =>
         <span className="font-semibold text-foreground">Can touch (verified from the code): </span>{capLabel}
       </div>
       <div className="text-xs text-on-surface-variant">
-        <span className="font-semibold text-foreground">Tests: </span>
-        {proposal.testResults.every((t) => t.pass) ? `${proposal.testResults.length} passed on fixture data` : "failures (should not happen — refuse)"}
+        <span className="font-semibold text-foreground">Checks: </span>
+        <span className={verificationBad ? "text-destructive" : undefined}>{verificationLine}</span>
       </div>
-      <button onClick={() => setShowCode((v) => !v)} className="text-[11px] text-primary text-left hover:underline">
-        {showCode ? "Hide code" : "View code"}
-      </button>
+      {extras.descriptionPinned === false && (
+        <p className="text-[11px] text-on-surface-variant">
+          Note: this draft's wording is not hashed into the approval, so approving it does not lock the description.
+        </p>
+      )}
+      <div className="flex items-center gap-3 flex-wrap">
+        {report && (
+          <button onClick={() => setShowChecks((v) => !v)} className="text-[11px] text-primary text-left hover:underline">
+            {showChecks ? "Hide checks" : "What was checked"}
+          </button>
+        )}
+        <button onClick={() => setShowCode((v) => !v)} className="text-[11px] text-primary text-left hover:underline">
+          {showCode ? "Hide code" : "View code"}
+        </button>
+      </div>
+      {report && showChecks && (
+        <div className="rounded-lg bg-surface-container-low p-2 min-w-0">
+          <CheckList title="The AI's own tests" checks={report.authorTests} />
+          <CheckList title="Held-out fixtures (the AI never saw these)" checks={report.heldOut} />
+          <CheckList title="Properties" checks={report.properties} />
+        </div>
+      )}
       {showCode && (
         <pre className="text-[11px] bg-surface-container-low rounded-lg p-2 overflow-x-auto max-h-64 overflow-y-auto"><code>{proposal.code}</code></pre>
       )}
       {state === "pending" && (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button onClick={onApprove} className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-bold">
             Approve — let the AI run this
           </button>

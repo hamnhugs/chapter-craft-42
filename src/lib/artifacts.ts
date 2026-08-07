@@ -3,6 +3,17 @@ import { z } from "zod";
 // "Artifacts" are full HTML/SVG documents the model can render in a sandboxed
 // side panel (the Claude/ChatGPT-Canvas pattern). They run with NO access to
 // the parent page, cookies, storage, or network — see buildArtifactDoc.
+//
+// ARTIFACT ≠ WORKSPACE FILE. An artifact is the RENDERED surface, so its kind
+// stays html|svg forever: those are exactly the two ACTIVE types (web.dev,
+// "Securely hosting user data") and the sandboxed frame is the only boundary
+// this stack has. The WORKSPACE, by contrast, stores every kind the chat
+// produces — code, documents, data, tool sources — because storage is not
+// execution; see src/lib/workspaceFiles.ts for that taxonomy and for the rule
+// that nothing outside ACTIVE_KINDS may ever reach this frame. Widening the
+// enum below would hand a non-active kind an executing context; don't.
+// ARTIFACT_MAX_CONTENT is deliberately SHARED with the Workspace
+// (WORKSPACE_MAX_CONTENT re-exports it) so "too big to store" is one number.
 
 /** Hard cap on artifact content. Sized ABOVE the blueprint sheet validator's
  *  node budget (1,500 nodes of dense presentation markup lands well past the

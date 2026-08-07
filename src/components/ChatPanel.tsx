@@ -33,6 +33,7 @@ import SplatBubble from "@/components/SplatBubble";
 import MediaReveal from "@/components/MediaReveal";
 import WorkingMemoryPanel from "@/components/WorkingMemoryPanel";
 import WorkspacePanel from "@/components/WorkspacePanel";
+import ToolStatusPanel from "@/components/ToolStatusPanel";
 import type { Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle, useWorkspaceItems } from "@/lib/workspaceStore";
 import { focusStatesForPinned } from "@/lib/chatFocus";
@@ -59,7 +60,7 @@ const ChatPanel: React.FC = () => {
     handsFreeTtsRate,
     setSelectedModel, setAutoReadReplies,
   } = useChatSettings();
-  const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort, loadEarlier, hasEarlier, loadingEarlier } = useChat();
+  const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort, loadEarlier, hasEarlier, loadingEarlier, toolGatesForTurn } = useChat();
   const { isPaid } = usePlan();
   const { speakingId, speak, stop: stopSpeaking, pause: pauseSpeaking, resume: resumeSpeaking, isAudioActive } = useReadAloud();
   // Configured in the Settings tab; re-read here on mount (tab switches remount this panel).
@@ -94,6 +95,35 @@ const ChatPanel: React.FC = () => {
   // Enter could start a concurrent stream and corrupt both bubbles.
   const sendingRef = useRef(false);
   const [dragOver, setDragOver] = useState(false);
+
+  // ── Tool status ──────────────────────────────────────────────────────────
+  // What the NEXT send would carry, derived from the same gate function the
+  // send path uses. `pendingImages.length > 0` is not an approximation of the
+  // send path's image test — it is the same condition: pixels are serialized
+  // only for the current upload turn (older images ride as text notes), so a
+  // message with attachments is exactly what can trip the model-level image
+  // gate. Recomputes whenever a permission, Lean Mode, the model or the
+  // attachment set changes, because toolGatesForTurn's identity changes with
+  // all of them — a chip that stayed stale after a toggle would send the user
+  // back to a switch they had already flipped.
+  const toolGates = useMemo(
+    () => toolGatesForTurn(pendingImages.length > 0),
+    [toolGatesForTurn, pendingImages.length],
+  );
+  // Ground truth from the most recent reply that actually reached a provider.
+  // Recorded at send time, never inferred from the response: a model that
+  // silently lacks function calling finishes identically to one that simply
+  // chose not to call anything.
+  // Returns the stored record BY REFERENCE, never a fresh { offered, withheld }
+  // literal: `messages` changes on every streamed token, and a new object each
+  // time would re-render the status panel once per token for a value that
+  // hasn't moved since the turn began.
+  const lastTurnToolAccess = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].toolAccess) return messages[i].toolAccess;
+    }
+    return undefined;
+  }, [messages]);
 
   // Chips never sent die with the composer (pendingImages is component
   // state, lost on tab switch) — remove their eagerly-uploaded files too.
@@ -506,10 +536,12 @@ const ChatPanel: React.FC = () => {
   };
 
   // Navigate to the consolidated Settings tab, optionally landing on a section.
-  const openSettings = (section?: string) => {
+  // Stable identity so the memoized tool-status chip isn't re-rendered once
+  // per streamed token by a prop that never actually changes.
+  const openSettings = useCallback((section?: string) => {
     if (section) requestSettingsSection(section);
     setActiveTab("settings");
-  };
+  }, [setActiveTab]);
 
   const selectedBook = books.find((b) => b.id === activeBookId);
 
@@ -1314,6 +1346,20 @@ const ChatPanel: React.FC = () => {
                       : `Reading: ${activeWiki?.name || "no neuron"}`}
                 </span>
               </button>
+              {/* Sibling of the "Reading:" chip, and the same kind of claim:
+                  what the assistant can actually reach. Four separate gates
+                  could empty its hands and only one of them ever said so.
+                  Held back until settings have loaded — until then every
+                  permission reads at its default and the chip would spend the
+                  first moment of the session describing a configuration that
+                  isn't the user's. */}
+              {loaded && (
+                <ToolStatusPanel
+                  gates={toolGates}
+                  onOpenSettings={openSettings}
+                  lastTurn={lastTurnToolAccess}
+                />
+              )}
               <button onClick={() => { if (!isPaid) { openPricing("deep-research"); return; } setChatDeepResearch(!chatDeepResearch); }} title={isPaid ? undefined : "Deep Research is a Pro feature"} className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${chatDeepResearch && isPaid ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`}>
                 <span className="material-symbols-outlined text-sm" style={chatDeepResearch && isPaid ? { fontVariationSettings: "'FILL' 1" } : {}}>{isPaid ? "science" : "lock"}</span> Deep Research {chatDeepResearch && isPaid ? "ON" : "OFF"}
               </button>

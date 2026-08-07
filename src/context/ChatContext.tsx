@@ -10,8 +10,11 @@ import { buildChatSystemPrompt, type UsedMemory } from "@/lib/buildChatSystemPro
 import { lensVerdict, type MemoryImageCandidate } from "@/lib/memoryLens";
 import { findSentenceCapIndex, truncateAtSentenceCap } from "@/lib/sentenceCap";
 import { isReflexEnabled } from "@/lib/reflex";
-import { CHAT_TOOL_DEFINITIONS, executeChatTool, ToolEvent, type ToolProposal } from "@/lib/chatTools";
-import { TOOL_PERMISSION } from "@/lib/toolPermissions";
+import { CHAT_TOOL_DEFINITIONS, executeChatTool, resetToolshedCache, ToolEvent, type ToolProposal } from "@/lib/chatTools";
+import {
+  computeToolGates, availableToolNames, groupWithheld,
+  type ToolGate, type ToolGateCode,
+} from "@/lib/toolAvailability";
 import { foundryAvailable } from "@/lib/toolFoundry";
 import type { ChatImageRef } from "@/lib/imageGen";
 import type { ChatVideoRef } from "@/lib/videoGen";
@@ -19,14 +22,18 @@ import type { ChatSplatRef } from "@/lib/splatGen";
 import { parseBlocks, type ResponseBlock } from "@/lib/responseBlocks";
 import { parseArtifact, type Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle } from "@/lib/workspaceStore";
+import { extractCodeBlocks, excludeArtifactDuplicates } from "@/lib/workspaceFiles";
 import { buildFocusBlock, type UsedFocusItem } from "@/lib/chatFocus";
 import { toast } from "sonner";
 import { isEmbeddingModel } from "@/lib/utils";
 import { describeModel, freeChatProviders, localModelId, modelProvider, providerConfigured, providerKey, providerKeyUrl, providerLabel, resolveModel } from "@/lib/providers/registry";
 import type { ProviderId } from "@/lib/providers/types";
 import { namespacedNvidiaId, nvidiaModelInfo, nvidiaNoThinkingBody, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
-import { blockedTools } from "@/lib/leanMode";
 import { namespacedGeminiId, GEMINI_STARTER_MODEL } from "@/lib/geminiCatalog";
+
+/** Every registered tool name, in registration order — the input to the gate
+ *  map, and the denominator for "how many did we offer this turn". */
+const ALL_TOOL_NAMES: string[] = CHAT_TOOL_DEFINITIONS.map((t: any) => t.function.name as string);
 
 export interface ChatMessage {
   id?: string;
@@ -76,6 +83,27 @@ export interface ChatMessage {
    *  bare OpenRouter id). Rendered as a small "via NVIDIA · model" line so
    *  provider is continuously visible, not only on failure. Transient. */
   viaModel?: string;
+  /** Ground truth for "was the tool even offered?" — the size and shape of the
+   *  roster this turn's request actually carried.
+   *
+   *  This is the single fact that makes the whole status surface falsifiable.
+   *  A provider that silently lacks function calling finishes with
+   *  `finish_reason: "stop"` and no tool_calls, byte-identical to a model that
+   *  simply chose not to call one; from the response alone the two are
+   *  indistinguishable, and a panel that guessed would confidently explain the
+   *  wrong thing forever. The app knows how many tools it put on the wire, so
+   *  it records that instead of inferring it.
+   *
+   *  Stamped ONCE per turn, only after the roster is frozen — i.e. after the
+   *  embedding-model and provider-key pre-flight gates — so a bubble from a
+   *  send that never reached a provider can never claim a roster.
+   *
+   *  IN-MEMORY ONLY, deliberately: persisting it would need a new
+   *  chat_messages column and another arm on persistMessage's cascade, and the
+   *  question it answers ("why did this turn have no tools?") is a live one.
+   *  Restored history simply has no toolAccess, which reads as "unknown"
+   *  rather than as a false claim. */
+  toolAccess?: { offered: number; withheld: number; codes: ToolGateCode[] };
 }
 
 interface SendOpts {
@@ -115,6 +143,19 @@ interface ChatContextValue {
   loadEarlier: () => Promise<number>;
   hasEarlier: boolean;
   loadingEarlier: boolean;
+  /** Which tools the NEXT chat turn would carry, and why any are missing.
+   *
+   *  Derived from the same computeToolGates() the send path uses, from the
+   *  same live settings — so the chip near the composer and the roster on the
+   *  wire cannot disagree. `hasImages` mirrors the send path's
+   *  `turnOpensWithImages`: pixels are only ever serialized for the CURRENT
+   *  upload turn (older images ride as text notes), so "this message has
+   *  attachments" is exactly the condition the model-level image gate tests.
+   *
+   *  Prospective, not historical: it describes the next send, never a past
+   *  one. What a past turn actually offered lives on that message's
+   *  `toolAccess`. */
+  toolGatesForTurn: (hasImages: boolean) => Map<string, ToolGate>;
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null);
@@ -240,12 +281,29 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const runOptIn = chatToolPermissions?.run_tool === true;
   const foundryOptIn = forgeOptIn || runOptIn;
   const [foundryReady, setFoundryReady] = useState(false);
+  // Probed EAGERLY, not only once an opt-in flips. The roster is unaffected
+  // either way — forgeEnabled is `forgeOptIn && foundryReady`, so knowing the
+  // migration exists never grants anything on its own — but the status panel
+  // is not. With the lazy probe, the instant after a user turned "Forge new
+  // tools" on, foundryReady was still false and the panel confidently told
+  // them the database migration hadn't run: a reason produced by our own async
+  // state rather than by their configuration, and the exact class of
+  // misleading explanation this ship exists to remove. foundryAvailable()
+  // caches its answer process-wide and dedupes concurrent callers, so this
+  // costs one HEAD query per session.
+  //
+  // Re-probed on sign-in change as well as on the opt-in, and — critically —
+  // NOT sticky on a transient answer. foundryAvailable() only caches a
+  // definite result (schema present, or schema demonstrably missing); a
+  // network blip leaves the cache null, and without re-asking, one bad moment
+  // at page load would have the panel telling the user for the rest of the
+  // session that they need to run a database migration they already ran.
   useEffect(() => {
     let alive = true;
-    if (!foundryOptIn) { setFoundryReady(false); return; }
+    resetToolshedCache();
     foundryAvailable().then((ok) => { if (alive) setFoundryReady(ok); });
     return () => { alive = false; };
-  }, [foundryOptIn]);
+  }, [foundryOptIn, user?.id]);
   // Gate PER TOOL: with a single combined flag, enabling only "forge" would
   // still advertise run_tool to the model, which then calls it and gets a
   // "not enabled" refusal — exactly the mid-chat nagging this design avoids.
@@ -274,6 +332,20 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // switch mid-reply must stop the next generation in that same turn.
   const leanModeRef = useRef(leanMode);
   useEffect(() => { leanModeRef.current = leanMode; }, [leanMode]);
+  // Per-tool permissions, same live-read discipline as Lean Mode — and the
+  // AUTHORITATIVE copy. The roster gate below reads this in-memory snapshot
+  // while the forge_tool / run_tool executors in chatTools.ts re-read
+  // chat_tool_permissions fresh from the database on every call. The settings
+  // save is debounced 500ms and, until this ship, reported failure only to
+  // console.error — so a lagging or failed write made the two disagree in the
+  // cruellest direction: the switch reads ON, the model is offered the tool,
+  // calls it, and gets "the Tool Foundry is opt-in and not enabled" while the
+  // user stares at a switch that says it is on. This ref is handed down
+  // through ToolDeps as `permissionsSnapshot`; the executors are to prefer it
+  // over their own database read. (chatTools.ts is not touched by this ship —
+  // that half is the integrator's.)
+  const permissionsRef = useRef<Record<string, boolean>>(chatToolPermissions || {});
+  useEffect(() => { permissionsRef.current = chatToolPermissions || {}; }, [chatToolPermissions]);
 
   useEffect(() => {
     summaryRef.current = user ? loadRollingSummary(user.id) : { summary: "", covered: 0 };
@@ -838,28 +910,64 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // its VL models disable tools on image turns.
       const turnOpensWithImages = workingMessages.some((m: any) =>
         Array.isArray(m?.content) && m.content.some((p: any) => p?.type === "image_url"));
-      const sendTools = !nvInfo || (nvInfo.caps.tools && !(nvInfo.imagesDisableTools && turnOpensWithImages));
-      // Lean Mode is enforced HERE, by omission: a capability the model
-      // cannot see is one it cannot pretend to use. Prompt steering alone
-      // gets about half compliance and fails by narrating media it never
-      // made. The executor keeps a terminal refusal as the backstop for
-      // calls replayed from history (see leanMode.blockedToolResult).
-      const leanBlocked = blockedTools(leanMode);
-      // Per-tool permissions are enforced the same two ways as Lean Mode:
-      // roster omission here (primary — an unseen tool cannot be pretended
-      // at), and the executor choke point (backstop for replayed calls). One
-      // map, lib/toolPermissions.ts, drives both.
-      const permBlocked = (toolName: string): boolean => {
-        const permId = TOOL_PERMISSION[toolName];
-        return !!permId && chatToolPermissions?.[permId] === false;
-      };
+      const providerSupportsTools = !nvInfo || nvInfo.caps.tools === true;
+      const imageTurnDisablesTools = !!nvInfo && nvInfo.imagesDisableTools === true && turnOpensWithImages;
+      const sendTools = providerSupportsTools && !imageTurnDisablesTools;
+      // ONE choke point for every gate. Every reason a tool can be missing —
+      // the model can't call functions, the model drops tools on picture
+      // turns, the Tool Foundry is opt-in, Lean Mode, a per-tool permission —
+      // is decided by lib/toolAvailability.ts, which is also what the status
+      // chip near the composer reads. Enforcement is still omission: a
+      // capability the model cannot see is one it cannot pretend to use, and
+      // prompt steering alone gets about half compliance while failing by
+      // narrating media it never made. What changed is that the omission is
+      // now EXPLAINED — to the user by the panel, and to the model by a typed
+      // terminal refusal when a gated call is replayed from earlier history.
+      const turnGates = computeToolGates({
+        toolNames: ALL_TOOL_NAMES,
+        leanMode,
+        // The turn-start snapshot, frozen with the rest of the roster — NOT
+        // permissionsRef. The roster must not change between tool iterations
+        // (a request whose `tools` no longer declares a function still named
+        // in `messages` is rejected outright by some providers), so the live
+        // ref belongs only in ToolDeps, where the executor backstop reads it.
+        permissions: chatToolPermissions || {},
+        forgeOptIn,
+        runOptIn,
+        foundryReady,
+        providerSupportsTools,
+        imageTurnDisablesTools,
+      });
+      const offeredNames = new Set(availableToolNames(turnGates));
+      // `tools` stays UNDEFINED — never an empty array — when a model-level
+      // gate fires: some providers reject `tools: []` outright. The gate map
+      // explains the omission; the wire format is unchanged.
       const toolDefs = sendTools
-        ? CHAT_TOOL_DEFINITIONS.filter((t: any) =>
-            (t.function.name !== "forge_tool" || forgeEnabled) &&
-            (t.function.name !== "run_tool" || runEnabled) &&
-            !leanBlocked.includes(t.function.name) &&
-            !permBlocked(t.function.name))
+        ? CHAT_TOOL_DEFINITIONS.filter((t: any) => offeredNames.has(t.function.name))
         : undefined;
+      // Ground truth for this turn: how many tools this request actually put
+      // on the wire. "We never offered it" and "we offered it and the model
+      // declined" are indistinguishable from a response alone — a provider
+      // that silently lacks function calling finishes with `stop` and no
+      // tool_calls, byte-identical to a model that chose not to call one — so
+      // the app records what it knows instead of letting the panel infer.
+      //
+      // COMMITTED ON THE FIRST STREAM EVENT, never here: a bubble is only
+      // entitled to claim a roster once a provider has answered. Stamping at
+      // roster time would have let a DNS failure or a refused connection leave
+      // an error bubble asserting "this reply went out with 58 tools" when
+      // nothing went out at all.
+      const turnToolAccess = {
+        offered: toolDefs?.length ?? 0,
+        withheld: ALL_TOOL_NAMES.length - (toolDefs?.length ?? 0),
+        codes: groupWithheld(turnGates).map((g) => g.code),
+      };
+      let toolAccessStamped = false;
+      const stampToolAccess = () => {
+        if (toolAccessStamped) return;
+        toolAccessStamped = true;
+        setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, toolAccess: turnToolAccess } : m)));
+      };
 
       try {
         for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
@@ -894,6 +1002,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           });
 
           for await (const ev of stream) {
+            // First byte back from the provider — the request demonstrably
+            // went out, so the roster it carried is now a fact this bubble may
+            // state. Cheap: one boolean test per event after the first.
+            stampToolAccess();
             if (ev.type === "reasoning") {
               turnReasoning += ev.delta;
               updateAssistant();
@@ -977,7 +1089,13 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           for (let i = 0; i < toolCalls.length; i++) {
             const t = toolCalls[i];
-            const { result, event } = await executeChatTool(t.name!, t.args || "{}", {
+            // `permissionsSnapshot` is the AUTHORITATIVE in-memory permission
+            // state (see permissionsRef) — the same values that decided which
+            // tools the model was offered. Every executor reads it through
+            // readToolPermissions() in chatTools.ts instead of re-querying
+            // chat_tool_permissions, which could lose a race with the 500ms
+            // debounced save and refuse a tool whose switch reads ON.
+            const toolDeps = {
               books,
               activeBookId,
               setActiveBookId: setActiveBookSilent,
@@ -1009,7 +1127,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               splatConfirmThreshold,
               splatMonthlyQuota,
               splatAutoFallback,
-            });
+              permissionsSnapshot: permissionsRef.current,
+            };
+            const { result, event } = await executeChatTool(t.name!, t.args || "{}", toolDeps);
 
             assistantEvents.push(event);
             const r = result as any;
@@ -1200,6 +1320,32 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ]);
         }
 
+        // Auto-capture: substantial fenced code blocks in the reply become
+        // real Workspace files. A fence in the transcript is gone on reload —
+        // a file is not, and it can be downloaded, pinned and re-read. Runs
+        // once per completed turn (never in a render), after `artifacts` is
+        // populated so a block already filed as an artifact isn't filed twice.
+        // Triple-deduped: against this turn's artifacts, against repeats
+        // inside one reply, and by content fingerprint in the store.
+        if (assistantText) {
+          try {
+            const files = excludeArtifactDuplicates(
+              extractCodeBlocks(assistantText),
+              artifacts.map((a) => a.content),
+            );
+            for (const f of files) {
+              workspaceStore.addFile({
+                userId: user?.id ?? null,
+                title: f.title,
+                kind: f.kind,
+                language: f.language,
+                content: f.content,
+                meta: { source: "Chat" },
+              });
+            }
+          } catch { /* capture is best-effort — never break a delivered reply */ }
+        }
+
         // Render any structured blocks the model emitted this turn.
         if (blockSets.length) {
           setMessages((prev) => [
@@ -1304,10 +1450,43 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     },
     // `messages` is deliberately ABSENT (read via messagesRef) — see the note
     // at historySource. chatToolPermissions is present so a toggle flip
-    // rebuilds the roster filter on the next turn.
-    [apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, autoShowMemoryImages, foundryEnabled, forgeEnabled, runEnabled, chatToolPermissions, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
+    // rebuilds the roster on the next turn, and forgeOptIn/runOptIn/
+    // foundryReady are the raw inputs computeToolGates now takes (it draws the
+    // opt-in and availability distinction itself, so the pre-combined
+    // forgeEnabled/runEnabled are no longer read here).
+    [apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, autoShowMemoryImages, foundryEnabled, forgeOptIn, runOptIn, foundryReady, chatToolPermissions, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, setActiveBookSilent]
   );
 
+
+  /** The roster the next chat turn would carry, as a gate map.
+   *
+   *  Mirrors the send path exactly rather than approximating it: the same
+   *  model resolution (vision override on picture turns, Deep Research model
+   *  when the paid toggle is on, otherwise the chat model), the same NVIDIA
+   *  capability lookup, the same computeToolGates. Anything less and the chip
+   *  would eventually claim a tool was offered when it was not — the one
+   *  failure that would make this whole surface worse than nothing.
+   *
+   *  Reads chatToolPermissions from STATE, not permissionsRef: a ref cannot
+   *  re-render, and a chip that stayed stale after a toggle would send the
+   *  user back to a switch they had already flipped. */
+  const toolGatesForTurn = useCallback((hasImages: boolean): Map<string, ToolGate> => {
+    const model = hasImages && visionModel
+      ? visionModel
+      : ((chatDeepResearch && isPaid) ? deepResearchModel : selectedModel);
+    const { provider, localId } = resolveModel(model);
+    const nv = provider === "nvidia" ? nvidiaModelInfo(localId) : null;
+    return computeToolGates({
+      toolNames: ALL_TOOL_NAMES,
+      leanMode,
+      permissions: chatToolPermissions || {},
+      forgeOptIn,
+      runOptIn,
+      foundryReady,
+      providerSupportsTools: !nv || nv.caps.tools === true,
+      imageTurnDisablesTools: !!nv && nv.imagesDisableTools === true && hasImages,
+    });
+  }, [visionModel, chatDeepResearch, isPaid, deepResearchModel, selectedModel, leanMode, chatToolPermissions, forgeOptIn, runOptIn, foundryReady]);
 
   const injectDisplayMessage = useCallback((content: string) => {
     setMessages((prev) => [
@@ -1338,8 +1517,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       loadEarlier,
       hasEarlier,
       loadingEarlier,
+      toolGatesForTurn,
     }),
-    [messages, isLoading, chatDeepResearch, voiceDeepResearch, setChatDeepResearch, setVoiceDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort, loadEarlier, hasEarlier, loadingEarlier],
+    [messages, isLoading, chatDeepResearch, voiceDeepResearch, setChatDeepResearch, setVoiceDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort, loadEarlier, hasEarlier, loadingEarlier, toolGatesForTurn],
   );
 
   return (

@@ -1,10 +1,19 @@
 import { useSyncExternalStore } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  fileFingerprint,
+  kindForLanguage,
+  mediaTypeFor,
+  normalizeKind,
+  type WorkspaceItemKind,
+} from "@/lib/workspaceFiles";
 
 /**
- * Workspace store — durable, local-first, cross-device home for the "files" the
- * chat produces: sandboxed HTML/SVG artifacts and deep-research / web-search
- * reports.
+ * Workspace store — durable, local-first, cross-device home for EVERY "file"
+ * the chat produces: sandboxed HTML/SVG artifacts, deep-research / web-search
+ * reports, and the code, documents, data and tool sources the assistant writes
+ * inline. The taxonomy and the active/inert split live in workspaceFiles.ts;
+ * this module only stores and syncs.
  *
  * Persistence model (local-first sync):
  *  • Supabase `workspace_items` is the source of truth → items persist
@@ -22,7 +31,10 @@ import { supabase } from "@/integrations/supabase/client";
  * include this table, so DB access goes through an untyped handle on purpose.
  */
 
-export type WorkspaceItemKind = "html" | "svg" | "research";
+/** Re-exported so every existing importer (chatFocus, WorkspacePanel,
+ *  chatTools, ChatContext) keeps its `from "@/lib/workspaceStore"` import
+ *  working unchanged now that the taxonomy lives in workspaceFiles.ts. */
+export type { WorkspaceItemKind } from "@/lib/workspaceFiles";
 
 export interface WorkspaceCitation {
   title?: string;
@@ -36,7 +48,8 @@ export interface WorkspaceItem {
   userId: string | null;
   kind: WorkspaceItemKind;
   title: string;
-  /** For html/svg: the inner body markup. For research: markdown text. */
+  /** For html/svg: the inner body markup. For research: markdown text.
+   *  For code/text/data/tool: the file's source, verbatim. */
   content: string;
   createdAt: number;
   /** Pinned to the library so it stands apart from auto-captured items. */
@@ -49,6 +62,15 @@ export interface WorkspaceItem {
     /** Pinned as standing chat context ("focus"). Lives in the JSONB meta
      *  column so it syncs cross-device with zero migration. */
     focused?: boolean;
+    /** Language token for code/data files ("py", "sql", "json"). Drives the
+     *  download extension, the viewer's chip, and the focus-block label. */
+    language?: string;
+    /** Honest media type, recorded at capture time. Advisory only — the
+     *  downloader re-derives what it puts on the Blob. */
+    mediaType?: string;
+    /** Content identity (see fileFingerprint). Lets a re-run of the extractor
+     *  recognise a block it already filed instead of duplicating it. */
+    fingerprint?: string;
   };
 }
 
@@ -60,6 +82,19 @@ export const FOCUS_MAX_ITEMS = 5;
 
 export type NewWorkspaceItem = Omit<WorkspaceItem, "id" | "createdAt" | "savedToLibrary"> &
   Partial<Pick<WorkspaceItem, "savedToLibrary">>;
+
+/** Input for `workspaceStore.addFile` — the narrow seam the chat uses to file
+ *  a produced file. `kind` is optional: omit it and the language decides (and
+ *  a language can only ever choose an INERT kind, see kindForLanguage). */
+export interface NewWorkspaceFile {
+  userId: string | null;
+  title: string;
+  content: string;
+  kind?: WorkspaceItemKind;
+  language?: string;
+  savedToLibrary?: boolean;
+  meta?: WorkspaceItem["meta"];
+}
 
 const TABLE = "workspace_items";
 // Untyped handle: the generated Database type may not include workspace_items
@@ -163,7 +198,12 @@ function rowToItem(row: WorkspaceRow): WorkspaceItem {
   return {
     id: row.id,
     userId: row.user_id ?? null,
-    kind: (["html", "svg", "research"].includes(row.kind) ? row.kind : "research") as WorkspaceItemKind,
+    // THE reader-side safety valve. This used to coerce anything unrecognised
+    // to "research", which renders as markdown — so a kind written by a newer
+    // client would be INTERPRETED on an older device. normalizeKind degrades
+    // to inert "text" instead: unknown input can only ever be shown, never run
+    // and never parsed.
+    kind: normalizeKind(row.kind),
     title: row.title || "Untitled",
     content: row.content || "",
     createdAt: row.created_at ? Date.parse(row.created_at) || Date.now() : Date.now(),
@@ -204,18 +244,36 @@ async function serverDelete(id: string): Promise<void> {
   }
 }
 
+/** PostgREST silently caps an un-ranged select at max-rows (1000 on hosted
+ *  Supabase) — no error, just a short array. That ceiling used to be
+ *  unreachable; now that every code block, document and dataset lands here it
+ *  is a matter of time, and the failure looks exactly like "my old files
+ *  vanished". Drain in pages instead of trusting one call. */
+const FETCH_PAGE = 1000;
+
 async function serverFetch(userId: string): Promise<WorkspaceItem[] | null> {
   try {
-    const { data, error } = await db
-      .from(TABLE)
-      .select("id, user_id, kind, title, content, saved_to_library, meta, created_at")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false });
-    if (error) {
-      console.debug("[workspace] fetch skipped (local-only):", error.message);
-      return null;
+    const rows: WorkspaceRow[] = [];
+    for (let from = 0; ; from += FETCH_PAGE) {
+      const { data, error } = await db
+        .from(TABLE)
+        .select("id, user_id, kind, title, content, saved_to_library, meta, created_at")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, from + FETCH_PAGE - 1);
+      if (error) {
+        console.debug("[workspace] fetch skipped (local-only):", error.message);
+        // A later page failing would silently truncate the library, which is
+        // the bug this paging exists to prevent — so only a FIRST-page failure
+        // degrades to local-only; anything after it keeps what we have.
+        return from === 0 ? null : rows.map(rowToItem);
+      }
+      const page = (data as WorkspaceRow[]) || [];
+      rows.push(...page);
+      if (page.length < FETCH_PAGE) break;
     }
-    return ((data as WorkspaceRow[]) || []).map(rowToItem);
+    return rows.map(rowToItem);
   } catch (e: any) {
     console.debug("[workspace] fetch failed:", e?.message);
     return null;
@@ -256,7 +314,14 @@ function hydrate() {
   if (hydrated) return;
   hydrated = true;
   idbGetAll().then((loaded) => {
-    items = sortDesc(loaded);
+    // The cache is written by whichever build was last installed, so it gets
+    // the same unknown-kind treatment the server rows get — never trust a
+    // stored kind string on the way in.
+    items = sortDesc(
+      loaded
+        .filter((i): i is WorkspaceItem => !!i && typeof i.id === "string")
+        .map((i) => (i.kind === normalizeKind(i.kind) ? i : { ...i, kind: normalizeKind(i.kind) }))
+    );
     emit();
     if (currentUserId) void syncFromServer(currentUserId);
   });
@@ -327,6 +392,24 @@ function uid(): string {
   return `ws_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function addItem(input: NewWorkspaceItem): WorkspaceItem {
+  const item: WorkspaceItem = {
+    id: uid(),
+    createdAt: Date.now(),
+    savedToLibrary: input.savedToLibrary ?? false,
+    userId: input.userId ?? null,
+    kind: normalizeKind(input.kind),
+    title: (input.title || "Untitled").slice(0, 200),
+    content: input.content || "",
+    meta: input.meta,
+  };
+  items = sortDesc([item, ...items]);
+  emit();
+  void idbPut(item);
+  void serverUpsert(item);
+  return item;
+}
+
 export const workspaceStore = {
   /**
    * Bind the store to the signed-in user: pulls their items from Supabase
@@ -345,21 +428,50 @@ export const workspaceStore = {
 
   /** Capture a new item. Returns the created record. */
   add(input: NewWorkspaceItem): WorkspaceItem {
-    const item: WorkspaceItem = {
-      id: uid(),
-      createdAt: Date.now(),
-      savedToLibrary: input.savedToLibrary ?? false,
-      userId: input.userId ?? null,
-      kind: input.kind,
-      title: (input.title || "Untitled").slice(0, 200),
-      content: input.content || "",
-      meta: input.meta,
-    };
-    items = sortDesc([item, ...items]);
-    emit();
-    void idbPut(item);
-    void serverUpsert(item);
-    return item;
+    return addItem(input);
+  },
+
+  /**
+   * File a produced file — an extracted code block, a `save_file` call, a
+   * forged tool's source — with kind, language and media type filled in.
+   *
+   * DEDUPE IS THE POINT. The extractor is pure and content-addressed, so the
+   * same reply yields the same fingerprints every time it is processed; this
+   * returns the item that already holds that content instead of stacking
+   * copies (`created: false` so the caller can report truthfully rather than
+   * claiming a save that did not happen). Scope matches what the panel shows:
+   * this user's items plus pre-login (null-user) ones.
+   *
+   * `kind` is TRUSTED here — this is an app-code seam, exactly like `add`.
+   * Anything the MODEL supplies must be resolved through parseSaveFileArgs or
+   * extractCodeBlocks first; neither of those can ever return an active kind.
+   */
+  addFile(input: NewWorkspaceFile): { item: WorkspaceItem; created: boolean } {
+    const kind = input.kind ? normalizeKind(input.kind) : kindForLanguage(input.language || "");
+    const content = input.content || "";
+    const language = input.language ? String(input.language) : undefined;
+    const fingerprint = fileFingerprint({ kind, language, content });
+    const userId = input.userId ?? null;
+
+    const existing = items.find(
+      (i) => i.meta?.fingerprint === fingerprint && (i.userId == null || i.userId === userId)
+    );
+    if (existing) return { item: existing, created: false };
+
+    const item = addItem({
+      userId,
+      kind,
+      title: input.title,
+      content,
+      savedToLibrary: input.savedToLibrary,
+      meta: {
+        ...(input.meta || {}),
+        ...(language ? { language } : {}),
+        mediaType: mediaTypeFor(kind, language),
+        fingerprint,
+      },
+    });
+    return { item, created: true };
   },
 
   remove(id: string) {

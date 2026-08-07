@@ -340,9 +340,50 @@ function ensureLoaded(userId: string | null) {
   })();
 }
 
+/** Human names for the settings a save carries, so a failure can say WHICH
+ *  switch didn't stick. "Couldn't save settings" is not actionable; "couldn't
+ *  save AI permissions" sends the user straight back to the toggle they just
+ *  flipped. Anything not listed falls back to the generic phrasing. */
+const SETTING_LABEL: Partial<Record<keyof ChatSettings, string>> = {
+  chatToolPermissions: "AI permissions",
+  apiKey: "your OpenRouter key",
+  geminiApiKey: "your Gemini key",
+  tavilyApiKey: "your Tavily key",
+  falApiKey: "your fal.ai key",
+  burplexityApiToken: "your Burplexity token",
+  inworldApiKey: "your Inworld key",
+  savedModels: "your saved models",
+  selectedModel: "the chat model",
+  deepResearchModel: "the Deep Research model",
+  visionModel: "the vision model",
+  voiceModel: "the voice model",
+  wikiModel: "the neuron model",
+  customSystemPrompt: "your custom instructions",
+  autoApproveToolUpdates: "Tool Foundry auto-approval",
+  accessAllNeurons: "the neuron access setting",
+  maxReplySentences: "the reply-length cap",
+  imageModelPrimary: "the image model",
+  videoModelPrimary: "the video model",
+  splatModelPrimary: "the 3D model setting",
+};
+
+/** Fields written by saves that have not yet succeeded. Accumulated across
+ *  debounced calls (the timer coalesces several updates into one write), so a
+ *  failure can name everything that is still only in memory. */
+const pendingSaveKeys = new Set<keyof ChatSettings>();
+
 // Debounced full-row save. Safe to write the whole row now that there is a
 // single in-memory source of truth — the snapshot can no longer be stale.
-function persistSettings(userId: string, next: ChatSettings) {
+//
+// A failure here used to reach console.error and nowhere else, which produced
+// the worst class of bug this app has: the switch reads ON, the store says ON,
+// and the executors — which re-read chat_tool_permissions from the database on
+// every call — still see OFF. The user is then staring at a control that is
+// telling the truth about the app's memory and lying about its behaviour, with
+// nothing on screen to reconcile the two. So the cascade still runs to
+// exhaustion, and only then does it say so out loud.
+function persistSettings(userId: string, next: ChatSettings, changed?: Array<keyof ChatSettings>) {
+  if (changed) for (const k of changed) pendingSaveKeys.add(k);
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
     // NOTE: lean_mode is intentionally absent too. It is a deliberate
@@ -426,15 +467,34 @@ function persistSettings(userId: string, next: ChatSettings) {
       delete payload[offender];
       ({ error } = await supabase.from("user_settings").upsert(payload, { onConflict: "user_id" }));
     }
-    if (error) console.error("Failed to save settings:", error);
-    else settingsChannel?.postMessage("settings-updated");
+    // Report ONLY after the optional-column cascade has genuinely given up —
+    // a stripped-and-retried column is a successful save, not a failure, and
+    // toasting mid-cascade would cry wolf on every lagging migration.
+    if (error) {
+      console.error("Failed to save settings:", error);
+      const named = Array.from(new Set(
+        Array.from(pendingSaveKeys).map((k) => SETTING_LABEL[k]).filter((s): s is string => !!s),
+      ));
+      const what = named.length > 0
+        ? (named.length > 2 ? `${named.slice(0, 2).join(", ")} and ${named.length - 2} more` : named.join(" and "))
+        : "your settings";
+      toast.error(`Couldn't save ${what}`, {
+        description:
+          "The change is live in this browser but never reached the server, so it won't survive a reload " +
+          "and won't reach your other devices. Check your connection and change it again.",
+        duration: 12000,
+      });
+      return;
+    }
+    pendingSaveKeys.clear();
+    settingsChannel?.postMessage("settings-updated");
   }, 500);
 }
 
 function updateStore(userId: string | undefined, partial: Partial<ChatSettings>) {
   const next = { ...snapshot.settings, ...partial };
   publish({ settings: next });
-  if (userId) persistSettings(userId, next);
+  if (userId) persistSettings(userId, next, Object.keys(partial) as Array<keyof ChatSettings>);
 }
 
 export function useChatSettings() {

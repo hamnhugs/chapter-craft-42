@@ -11,29 +11,88 @@ import {
   FOCUS_MAX_ITEMS,
   type WorkspaceItem,
 } from "@/lib/workspaceStore";
+import {
+  KIND_ICON,
+  KIND_LABEL,
+  downloadWorkspaceFile,
+  languageLabel,
+} from "@/lib/workspaceFiles";
 
 /**
- * Right-side Workspace panel — the durable home for everything the chat creates.
+ * Right-side Workspace panel — the durable home for everything the chat creates:
+ * HTML/SVG artifacts, research reports, and the code, documents, data and tool
+ * sources the assistant writes inline. Each item can be opened, downloaded,
+ * pinned to the library, pinned as chat focus, or deleted.
  *
- * Lists captured HTML/SVG artifacts and deep-research / web-search reports (the
- * "chat files"). Each item can be opened (preview), pinned to the library, or
- * deleted. HTML/SVG render in the same locked-down sandboxed iframe used by the
- * old modal; research reports render as sanitized-by-default markdown.
+ * RENDERING IS AN ALLOWLIST, STORAGE IS NOT. Only `html` and `svg` — the two
+ * ACTIVE types — reach the locked-down sandboxed iframe. Only `research`, whose
+ * markdown path is already sanitized, reaches ReactMarkdown. EVERY other kind,
+ * including any kind a newer client invents, falls through to the inert text
+ * viewer below, which cannot execute or interpret anything. The old code had
+ * this inverted: the frame was the DEFAULT branch, so a `code` item would have
+ * been executed as HTML. Keep the named-kinds-first shape.
  *
  * The list survives tab switches and full reloads because it is backed by the
  * IndexedDB-backed workspaceStore, not ephemeral chat state.
  */
 
-const ICON: Record<WorkspaceItem["kind"], string> = {
-  html: "deployed_code",
-  svg: "image",
-  research: "travel_explore",
-};
+const iconFor = (item: WorkspaceItem): string => KIND_ICON[item.kind] || "draft";
+const labelFor = (item: WorkspaceItem): string => KIND_LABEL[item.kind] || "File";
 
-const KIND_LABEL: Record<WorkspaceItem["kind"], string> = {
-  html: "HTML",
-  svg: "SVG",
-  research: "Research",
+/** Line numbers are cheap on normal files and a jank machine on generated
+ *  ones; past this the gutter is dropped and the text still renders. */
+const MAX_GUTTER_LINES = 2000;
+
+/**
+ * The inert viewer — the terminal render path for every non-active kind.
+ *
+ * Hard rules, all of them load-bearing: no dangerouslySetInnerHTML, no
+ * ReactMarkdown, no iframe. Content only ever becomes a React TEXT child, which
+ * React escapes. Sideways overflow is contained by the scroll box (the page
+ * body must never scroll horizontally on a phone), and the gutter is
+ * `sticky left-0` so line numbers survive that horizontal scroll.
+ */
+const InertFileViewer: React.FC<{ item: WorkspaceItem; onCopy: (text: string) => void }> = ({
+  item,
+  onCopy,
+}) => {
+  const lines = useMemo(() => (item.content || "").split("\n"), [item.content]);
+  const showGutter = lines.length <= MAX_GUTTER_LINES;
+  const lang = item.meta?.language;
+
+  return (
+    <div className="flex flex-col flex-1 min-h-0 min-w-0">
+      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-outline-variant/10 shrink-0 min-w-0">
+        <span className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant truncate">
+          {lang ? languageLabel(lang) : labelFor(item)}
+        </span>
+        <span className="text-[10px] text-on-surface-variant/70 tabular-nums shrink-0">
+          {lines.length} {lines.length === 1 ? "line" : "lines"}
+        </span>
+        <button
+          onClick={() => onCopy(item.content)}
+          title="Copy file text"
+          className="ml-auto shrink-0 inline-flex items-center gap-1 h-7 px-2 rounded-lg text-[10px] font-bold uppercase tracking-widest text-on-surface-variant hover:bg-surface-container-high transition-colors"
+        >
+          <span className="material-symbols-outlined text-[16px]">content_copy</span>
+          Copy
+        </button>
+      </div>
+      <div className="flex-1 min-h-0 overflow-auto bg-surface-container-lowest/40">
+        <div className="flex min-w-max items-start font-mono text-[12px] leading-[1.55]">
+          {showGutter && (
+            <pre
+              aria-hidden="true"
+              className="sticky left-0 z-10 select-none px-2 py-3 text-right text-on-surface-variant/45 bg-surface-container-low border-r border-outline-variant/10 tabular-nums"
+            >
+              {lines.map((_, i) => String(i + 1)).join("\n")}
+            </pre>
+          )}
+          <pre className="px-3 py-3 text-foreground whitespace-pre">{item.content}</pre>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 function timeAgo(ts: number): string {
@@ -97,6 +156,21 @@ const WorkspacePanel: React.FC<{
     }
   };
 
+  /** Every kind is downloadable — the terminal fallback when the app cannot
+   *  render something is a file on disk, never a dropped file. */
+  const handleDownload = (item: WorkspaceItem) => {
+    try {
+      downloadWorkspaceFile({
+        title: item.title,
+        kind: item.kind,
+        language: item.meta?.language,
+        content: item.content,
+      });
+    } catch {
+      toast.error("Couldn't download this file");
+    }
+  };
+
   const handleClearUnsaved = () => {
     const removable = items.filter((i) => !i.savedToLibrary).length;
     if (!removable) {
@@ -149,16 +223,18 @@ const WorkspacePanel: React.FC<{
       {/* Detail view */}
       {selected ? (
         <div className="flex flex-col flex-1 min-h-0">
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-outline-variant/10 shrink-0">
+          {/* min-w-0 + overflow-hidden: with seven controls the row must clip,
+              never widen the panel and scroll the page sideways on a phone. */}
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-outline-variant/10 shrink-0 min-w-0 overflow-hidden">
             <button
               onClick={() => onSelect(null)}
               aria-label="Back to files"
-              className="inline-flex items-center justify-center h-8 w-8 rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-colors"
+              className="shrink-0 inline-flex items-center justify-center h-8 w-8 rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-colors"
             >
               <span className="material-symbols-outlined text-[20px]">arrow_back</span>
             </button>
             <span className="material-symbols-outlined text-primary-container text-lg shrink-0">
-              {ICON[selected.kind]}
+              {iconFor(selected)}
             </span>
             <span className="truncate text-sm font-semibold text-foreground flex-1" title={selected.title}>
               {selected.title}
@@ -166,7 +242,7 @@ const WorkspacePanel: React.FC<{
             <button
               onClick={() => handleToggleFocus(selected)}
               title={selected.meta?.focused ? "Unpin from chat focus" : "Pin as chat focus — sent to the AI every turn"}
-              className={`inline-flex items-center justify-center h-8 w-8 rounded-lg transition-colors ${
+              className={`shrink-0 inline-flex items-center justify-center h-8 w-8 rounded-lg transition-colors ${
                 selected.meta?.focused
                   ? "text-primary-container"
                   : "text-on-surface-variant hover:bg-surface-container-high"
@@ -182,7 +258,7 @@ const WorkspacePanel: React.FC<{
             <button
               onClick={() => handleToggleLibrary(selected)}
               title={selected.savedToLibrary ? "Remove from library" : "Save to library"}
-              className={`inline-flex items-center justify-center h-8 w-8 rounded-lg transition-colors ${
+              className={`shrink-0 inline-flex items-center justify-center h-8 w-8 rounded-lg transition-colors ${
                 selected.savedToLibrary
                   ? "text-primary-container"
                   : "text-on-surface-variant hover:bg-surface-container-high"
@@ -198,14 +274,21 @@ const WorkspacePanel: React.FC<{
             <button
               onClick={() => handleCopy(selected.content)}
               title="Copy source"
-              className="inline-flex items-center justify-center h-8 w-8 rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-colors"
+              className="shrink-0 inline-flex items-center justify-center h-8 w-8 rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-colors"
             >
               <span className="material-symbols-outlined text-[20px]">content_copy</span>
             </button>
             <button
+              onClick={() => handleDownload(selected)}
+              title="Download file"
+              className="shrink-0 inline-flex items-center justify-center h-8 w-8 rounded-lg text-on-surface-variant hover:bg-surface-container-high transition-colors"
+            >
+              <span className="material-symbols-outlined text-[20px]">download</span>
+            </button>
+            <button
               onClick={() => handleDelete(selected.id)}
               title="Delete"
-              className="inline-flex items-center justify-center h-8 w-8 rounded-lg text-on-surface-variant hover:text-destructive hover:bg-surface-container-high transition-colors"
+              className="shrink-0 inline-flex items-center justify-center h-8 w-8 rounded-lg text-on-surface-variant hover:text-destructive hover:bg-surface-container-high transition-colors"
             >
               <span className="material-symbols-outlined text-[20px]">delete</span>
             </button>
@@ -241,7 +324,8 @@ const WorkspacePanel: React.FC<{
           ) : selected.kind === "svg" ? (
             // SVG sheets get zoom + SVG/PDF export; keyed so zoom resets per item.
             <SvgArtifactViewer key={selected.id} title={selected.title} content={selected.content} />
-          ) : (
+          ) : selected.kind === "html" ? (
+            // NAMED, not defaulted. Only the two ACTIVE kinds reach a frame.
             <div className="flex-1 min-h-0 bg-white">
               <ArtifactFrame
                 key={selected.id}
@@ -253,11 +337,17 @@ const WorkspacePanel: React.FC<{
                 } as Artifact}
               />
             </div>
+          ) : (
+            // code / text / data / tool — and anything a newer client invents,
+            // which rowToItem has already normalized to "text".
+            <InertFileViewer key={selected.id} item={selected} onCopy={handleCopy} />
           )}
           <div className="px-3 py-1.5 border-t border-outline-variant/10 shrink-0 text-[10px] text-on-surface-variant">
-            {selected.kind === "research"
-              ? `Saved ${timeAgo(selected.createdAt)}${selected.meta?.source ? ` · ${selected.meta.source}` : ""}`
-              : "Sandboxed preview · no network or page access"}
+            {selected.kind === "html" || selected.kind === "svg"
+              ? "Sandboxed preview · no network or page access"
+              : `Saved ${timeAgo(selected.createdAt)}${selected.meta?.source ? ` · ${selected.meta.source}` : ""}${
+                  selected.kind === "research" ? "" : " · text only, nothing here runs"
+                }`}
           </div>
         </div>
       ) : (
@@ -275,7 +365,7 @@ const WorkspacePanel: React.FC<{
                 <p className="text-xs">
                   {filter === "library"
                     ? "Pin a file with the bookmark to keep it here permanently."
-                    : "Artifacts and research results from the chat will collect here automatically."}
+                    : "Everything the chat produces — artifacts, code, documents, data and research — collects here automatically."}
                 </p>
               </div>
             ) : (
@@ -286,7 +376,7 @@ const WorkspacePanel: React.FC<{
                   className="group flex items-start gap-3 w-full text-left rounded-xl bg-surface-container-high/50 border border-outline-variant/15 p-3 hover:border-primary-container/50 hover:bg-surface-container-high transition-colors"
                 >
                   <span className="material-symbols-outlined text-primary-container text-2xl shrink-0 mt-0.5">
-                    {ICON[item.kind]}
+                    {iconFor(item)}
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
@@ -312,8 +402,10 @@ const WorkspacePanel: React.FC<{
                         </span>
                       )}
                     </div>
-                    <div className="text-[11px] text-on-surface-variant mt-0.5">
-                      {KIND_LABEL[item.kind]} · {timeAgo(item.createdAt)}
+                    <div className="text-[11px] text-on-surface-variant mt-0.5 truncate">
+                      {labelFor(item)}
+                      {item.meta?.language ? ` · ${languageLabel(item.meta.language)}` : ""} ·{" "}
+                      {timeAgo(item.createdAt)}
                     </div>
                   </div>
                   <span
