@@ -19,6 +19,33 @@ const PaymentSuccess = lazy(() => import("./pages/PaymentSuccess"));
 const ModelExplorer = lazy(() => import("./pages/ModelExplorer"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
+/**
+ * Dev-only measuring instrument for the Workspace viewer (#/workspace-lab).
+ *
+ * `import.meta.env.DEV` is statically replaced by Vite, so in a production
+ * build this whole expression folds to `null`, the `import()` sits in dead code
+ * and Rollup drops it from the module graph — the page is not merely
+ * unreachable in production, its chunk is never emitted.
+ *
+ * Measured, both directions: a production build emits no WorkspaceLab chunk and
+ * contains zero occurrences of "workspace-lab", "lab-artifact" or the lab's
+ * fixture text, while every other lazy route still leaves its path string and a
+ * named chunk behind. The same build with NODE_ENV=development emits
+ * `assets/WorkspaceLab-*.js` and all of those strings — so the grep is capable
+ * of finding it, and the absence above is the gate working rather than a grep
+ * that never matches.
+ *
+ * Re-verify with `npm run build`, then grep `dist/` for "workspace-lab". Note
+ * `vite build --mode development` is NOT a control: `vite build` pins
+ * NODE_ENV=production, so DEV stays false and the string is absent for the
+ * wrong reason.
+ *
+ * Deliberately NOT wrapped in ProtectedRoute: the reason this route exists is
+ * that every other surface is behind the auth wall, which makes the layout
+ * invariants in this feature unverifiable in a real browser.
+ */
+const WorkspaceLab = import.meta.env.DEV ? lazy(() => import("./pages/WorkspaceLab")) : null;
+
 const queryClient = new QueryClient();
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -51,6 +78,10 @@ const App = () => (
                 <Route path="/auth" element={<AuthRoute />} />
                 {/* /admin has its own self-contained login gate — not wrapped in ProtectedRoute */}
                 <Route path="/admin" element={<Admin />} />
+                {/* Dev only. `WorkspaceLab` is `null` in a production build, and
+                    React Router skips non-element children, so this line has no
+                    effect there. */}
+                {WorkspaceLab && <Route path="/workspace-lab" element={<WorkspaceLab />} />}
                 <Route
                   path="/memory-guide"
                   element={

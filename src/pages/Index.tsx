@@ -204,7 +204,7 @@ const Index: React.FC = () => {
   const neuronLabel = activeWiki?.name || tabs.find((t) => t.id === "wiki")!.label;
 
   return (
-    <div className="flex flex-col h-screen bg-background">
+    <div className="flex flex-col h-app bg-background">
       {/* Top App Bar */}
       <header data-app-header className="sticky top-0 w-full flex items-center justify-between px-6 py-4 bg-background/80 backdrop-blur-xl z-50 shadow-[0px_4px_20px_rgba(0,0,0,0.04),0px_10px_40px_rgba(0,0,0,0.08)]">
         <div className="flex items-center gap-3">

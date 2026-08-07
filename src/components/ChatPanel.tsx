@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMe
 import { useApp } from "@/context/AppContext";
 import { useChat } from "@/context/ChatContext";
 import { useAuth } from "@/hooks/useAuth";
-import { useIsMobile } from "@/hooks/use-mobile";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
@@ -32,12 +31,11 @@ import VideoBubble from "@/components/VideoBubble";
 import SplatBubble from "@/components/SplatBubble";
 import MediaReveal from "@/components/MediaReveal";
 import WorkingMemoryPanel from "@/components/WorkingMemoryPanel";
-import WorkspacePanel from "@/components/WorkspacePanel";
+import WorkspaceShell from "@/components/WorkspaceShell";
 import ToolStatusPanel from "@/components/ToolStatusPanel";
 import type { Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle, useWorkspaceItems } from "@/lib/workspaceStore";
 import { focusStatesForPinned } from "@/lib/chatFocus";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations, isSearchRateLimited } from "@/lib/chatTools";
 import { useDownloadableTtsId, downloadTtsAudio } from "@/lib/ttsAudioCache";
@@ -54,7 +52,6 @@ const SEARCH_INTENT_RE =
 const ChatPanel: React.FC = () => {
   const { books, activeBookId, activeWiki, activeWikiId, activeWikis, activeWikiIds, toggleNeuronInSession, setActiveTab } = useApp();
   const { user } = useAuth();
-  const isMobile = useIsMobile();
   const {
     apiKey, nvidiaKeyLast4, geminiApiKey, leanMode, savedModels, selectedModel, voiceModel, autoReadReplies, burplexityApiToken, accessAllNeurons, loaded,
     handsFreeTtsRate,
@@ -194,7 +191,19 @@ const ChatPanel: React.FC = () => {
   const [workspaceSelectedId, setWorkspaceSelectedId] = useState<string | null>(null);
   const workspaceItems = useWorkspaceItems();
   const workspaceCount = workspaceItems.filter((i) => i.userId == null || i.userId === user?.id).length;
-  useEffect(() => { localStorage.setItem("counsel_workspace_open", workspaceOpen ? "1" : "0"); }, [workspaceOpen]);
+  // Guarded because this was the repo's only unguarded storage write, and it
+  // runs from an effect: `localStorage.setItem` throws in Safari private mode
+  // and on quota exhaustion, and an unhandled throw inside an effect unmounts
+  // the whole ChatPanel subtree. Key and values are unchanged ("1"/"0") — no
+  // user loses their open/closed state.
+  useEffect(() => {
+    try {
+      localStorage.setItem("counsel_workspace_open", workspaceOpen ? "1" : "0");
+    } catch {
+      // Storage unavailable. The workspace simply does not remember whether it
+      // was open across reloads; nothing else reads this key.
+    }
+  }, [workspaceOpen]);
   // Pinned focus set — rendered as chips above the composer so what the AI
   // sees every turn is continuously visible (never inferred, never hidden).
   const focusedItems = useMemo(
@@ -1441,31 +1450,22 @@ const ChatPanel: React.FC = () => {
       </div>
       </div>
 
-      {/* Desktop: persistent right-side Workspace column */}
-      {!isMobile && workspaceOpen && (
-        <div className="flex h-full shrink-0 w-[360px] lg:w-[420px]">
-          <WorkspacePanel
-            userId={user?.id ?? null}
-            onClose={() => setWorkspaceOpen(false)}
-            selectedId={workspaceSelectedId}
-            onSelect={setWorkspaceSelectedId}
-          />
-        </div>
-      )}
-
-      {/* Mobile: Workspace opens as a right-side sheet */}
-      {isMobile && (
-        <Sheet open={workspaceOpen} onOpenChange={setWorkspaceOpen}>
-          <SheetContent side="right" className="w-full sm:max-w-md p-0">
-            <WorkspacePanel
-              userId={user?.id ?? null}
-              onClose={() => setWorkspaceOpen(false)}
-              selectedId={workspaceSelectedId}
-              onSelect={setWorkspaceSelectedId}
-            />
-          </SheetContent>
-        </Sheet>
-      )}
+      {/* ONE workspace, ONE JSX position. Do not split this back into branches.
+          It replaced a `!isMobile` column plus an `isMobile` <Sheet>: two
+          sibling branches, so crossing 768 px — rotating the phone — swapped
+          which one rendered, and React commits a branch swap as remove +
+          insert. Removing an iframe destroys its document with no unload
+          event, so the user's running mini-app reloaded on every rotation.
+          WorkspaceShell keeps the node still and swaps its class instead, and
+          reads its own geometry from the viewport — open/closed is the only
+          thing this file still decides about the workspace. */}
+      <WorkspaceShell
+        open={workspaceOpen}
+        userId={user?.id ?? null}
+        selectedId={workspaceSelectedId}
+        onSelect={setWorkspaceSelectedId}
+        onClose={() => setWorkspaceOpen(false)}
+      />
 
       <VoiceNotesPanel open={notesPanelOpen} onClose={() => setNotesPanelOpen(false)} />
     </div>

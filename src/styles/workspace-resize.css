@@ -1,0 +1,174 @@
+/**
+ * Workspace resize handle — WS-B.
+ *
+ * Plain CSS, not Tailwind utilities, for two reasons that are not stylistic:
+ *
+ *   1. The hit area has to answer `@media (pointer: coarse)`, and Tailwind
+ *      3.4 (this repo's version) has no `pointer-coarse` variant — that
+ *      arrived in v4.1. `tailwind.config.ts` is frozen for this ship, so a
+ *      custom variant is not on the table either.
+ *   2. `::after`, `:focus-visible` and the hover-delay transition are all
+ *      easier to read as one rule than as six utility strings.
+ *
+ * SIZING (D13). A 2 px visible hairline inside a 12 px hit area on fine
+ * pointers, 24 px on coarse. VS Code ships a 4 px line in an 8 px sash whose
+ * real target is only 4 px (its `::before` is `pointer-events: none`) — which
+ * is precisely what users file bugs about; Cursor took four releases to widen
+ * the same control. 24 px on coarse satisfies WCAG 2.2 SC 2.5.8 outright
+ * instead of leaning on the spacing exception.
+ *
+ * The line is ALWAYS VISIBLE rather than hover-revealed: a handle that only
+ * appears on hover "makes it harder for users to discover that an entity is
+ * draggable", and on a touchscreen there is no hover at all — which matters
+ * here because `drawer` geometry (the landscape phone) is exactly where this
+ * control has to be findable by thumb.
+ *
+ * The 300 ms highlight delay is VS Code's: without it the line strobes as the
+ * pointer sweeps past on its way somewhere else. The delay is removed while
+ * dragging and on keyboard focus, where the feedback must be immediate.
+ *
+ * NO `transform` ANYWHERE IN THIS FILE. The shell root that this handle sits
+ * inside goes `position: fixed` in `drawer`/`full` geometry; a transform on an
+ * ancestor would silently turn it into a containing block and make fullscreen
+ * fill its parent instead of the viewport. The handle is a sibling, not an
+ * ancestor, so it could not do that — but the whole feature has a standing
+ * no-containing-block invariant and this file keeps to it, which is why the
+ * hairline is centred with `left: 50%` + a negative margin rather than
+ * `translateX(-50%)`.
+ *
+ * SAFE AREA (D11) — and why the obvious answer is the wrong one.
+ *
+ * Rotating a Pro iPhone moves the display cutout onto the horizontal axis:
+ * `env(safe-area-inset-left)` becomes ~59 px in landscape. The handle marks the
+ * drawer's INBOARD edge, and under amendment A4 the drawer's ceiling is no
+ * longer a fraction — it is `DRAWER_PEEK_PX`. At full extension the panel is
+ * `viewportWidth − 56 px`, so the handle sits at x = 56 px on an 852 px iPhone
+ * 16 AND on a 780 px Galaxy S24. That is INSIDE a 59 px cutout. Dragged to
+ * maximum on a notched phone, the handle parks under the sensor housing and the
+ * user cannot get it back — in landscape, the exact case this feature is for.
+ *
+ * (The pre-A4 comment here concluded the opposite, correctly for its time: a
+ * 0.85 fraction ceiling left 128 px of peek, well outboard of the cutout.
+ * Raising the ceiling to 0.96 so the drawer could actually approach full screen
+ * is what moved the handle under the notch.)
+ *
+ * The fix is NOT an inset on the handle box: `margin-inline-start: env(...)`
+ * would shove the hairline off the boundary it exists to mark. Instead the
+ * `::before` extends the HIT AREA inboard, into the panel's own safe-area
+ * padding, by exactly the inset. It is absolutely positioned, so it changes no
+ * layout; it is transparent, so it changes no pixels; it hit-tests to the
+ * handle, so the grab target grows from 24 px to 24 + 59 = 83 px, of which at
+ * least 24 px always clears the cutout. Gated to `drawer` because only the
+ * drawer can reach the viewport edge, and in `dock` the same rule would let the
+ * handle steal clicks from panel content.
+ *
+ * The overlay's own four-edge insets remain WS-C's.
+ */
+
+:root {
+  /* Hit area, centred on the visible line. The component mirrors these two
+     numbers through `hitAreaPx()` as an inline custom property so JS and CSS
+     cannot drift; these declarations are the answer before that runs, and if
+     the inline style is ever removed. */
+  --cc-ws-hit: 12px;
+  --cc-ws-line: 2px;
+  --cc-ws-hover-delay: 300ms;
+}
+
+@media (pointer: coarse) {
+  :root {
+    --cc-ws-hit: 24px;
+  }
+}
+
+.cc-ws-resize-handle {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  align-self: stretch;
+  width: var(--cc-ws-hit);
+  min-width: var(--cc-ws-hit);
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+  /* Mandatory. Per spec, viewport manipulation "cannot be suppressed by
+     canceling a pointer event" — only `touch-action` stops the browser from
+     claiming the gesture as a scroll. Without this the handle is simply
+     undraggable by thumb, which would kill the landscape-phone half of the
+     feature. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+
+/**
+ * Hit-area extension for the landscape display cutout. See the header note.
+ * Absolutely positioned so it adds no layout; no `background`, so it adds no
+ * pixels; no `pointer-events: none` — that omission is the entire point, and is
+ * exactly the mistake VS Code's sash makes that shrinks its real target to 4 px.
+ *
+ * DEPENDS ON WS-C (D11): the strip this grows into is the drawer's own
+ * `padding-inline-start: max(0.5rem, env(safe-area-inset-left))`, i.e. dead
+ * space no control occupies. If that padding ever moves off the panel — or onto
+ * the shell root, outboard of this handle — then on a notched phone in
+ * landscape this rule would overlap real panel content by up to 59 px and steal
+ * its taps. Nothing breaks on any device whose insets are 0, which is why the
+ * failure would be invisible in normal testing.
+ */
+.cc-ws-resize-handle[data-cc-geometry="drawer"]::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  /* Negative = grow rightwards, inboard, into the panel's safe-area padding.
+     Resolves to 0 on every device without a cutout, making this inert there. */
+  right: calc(-1 * env(safe-area-inset-left, 0px));
+}
+
+.cc-ws-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: var(--cc-ws-line);
+  margin-left: calc(var(--cc-ws-line) / -2);
+  border-radius: 999px;
+  background: hsl(var(--border));
+  transition:
+    background-color 120ms ease var(--cc-ws-hover-delay),
+    width 120ms ease var(--cc-ws-hover-delay),
+    margin-left 120ms ease var(--cc-ws-hover-delay);
+}
+
+.cc-ws-resize-handle:hover::after {
+  background: hsl(var(--muted-foreground));
+}
+
+.cc-ws-resize-handle:focus-visible::after,
+.cc-ws-resize-handle[data-cc-dragging="true"]::after {
+  background: hsl(var(--primary));
+  width: 4px;
+  margin-left: -2px;
+  /* Immediate: the 300 ms anti-strobe delay is for a pointer passing by, not
+     for the control the user is actually operating. */
+  transition-delay: 0ms;
+}
+
+.cc-ws-resize-handle:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: -2px;
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-ws-resize-handle::after {
+    transition: none;
+  }
+}

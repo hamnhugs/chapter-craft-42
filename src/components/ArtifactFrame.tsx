@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useRef } from "react";
-import { buildArtifactDoc, ARTIFACT_FRAME_PATH, type Artifact } from "@/lib/artifacts";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import { artifactFrameKey, buildArtifactDoc, ARTIFACT_FRAME_PATH, type Artifact } from "@/lib/artifacts";
 
 /**
  * Renders a model-authored artifact in an isolated frame.
@@ -17,8 +17,30 @@ import { buildArtifactDoc, ARTIFACT_FRAME_PATH, type Artifact } from "@/lib/arti
  */
 const ArtifactFrame: React.FC<{ artifact: Artifact; title?: string; className?: string }> = ({ artifact, title, className }) => {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
-  const docRef = useRef("");
-  docRef.current = buildArtifactDoc(artifact);
+
+  // buildArtifactDoc concatenates the whole artifact — up to
+  // ARTIFACT_MAX_CONTENT (400,000 chars) — and this used to run in the RENDER
+  // BODY, so every single re-render allocated a fresh ~400 KB string and threw
+  // it away. That was survivable while the panel had a fixed width. It is not
+  // once a drag handle can re-render this subtree once per pointermove: 60
+  // string allocations of that size per second of drag. Memoized on exactly
+  // the three fields buildArtifactDoc reads, so the doc is rebuilt only when
+  // the artifact genuinely changes.
+  const { kind, content } = artifact;
+  const artifactTitle = artifact.title;
+  const doc = useMemo(
+    () => buildArtifactDoc({ kind, content, title: artifactTitle }),
+    [kind, content, artifactTitle],
+  );
+
+  // send() must keep a STABLE identity — it is the [send] dependency of the
+  // listener effect below and the iframe's onLoad handler, and a new identity
+  // would re-subscribe the message listener on every doc change. So the
+  // document reaches it through a ref rather than through its closure.
+  const docRef = useRef(doc);
+  useEffect(() => {
+    docRef.current = doc;
+  }, [doc]);
 
   const send = useCallback(() => {
     const win = frameRef.current?.contentWindow;
@@ -41,7 +63,9 @@ const ArtifactFrame: React.FC<{ artifact: Artifact; title?: string; className?: 
     <iframe
       ref={frameRef}
       // Remount on content change: the host page writes the document once.
-      key={`${artifact.kind}-${artifact.content.length}-${artifact.title}`}
+      // The key is a function of the ARTIFACT ONLY — see artifactFrameKey for
+      // why no layout input may ever be folded in.
+      key={artifactFrameKey(artifact)}
       title={title || artifact.title}
       src={new URL(ARTIFACT_FRAME_PATH, document.baseURI).href}
       onLoad={send}

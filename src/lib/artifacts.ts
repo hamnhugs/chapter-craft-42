@@ -47,6 +47,29 @@ export function parseArtifact(raw: unknown): Artifact | null {
  *  block the model's inline scripts in any build that ships a policy. */
 export const ARTIFACT_FRAME_PATH = "artifact-frame.html";
 
+/**
+ * The iframe's remount key — a function of the ARTIFACT ALONE.
+ *
+ * Extracted here, verbatim and behaviour-identical, so the remount contract
+ * is testable in isolation. The rule it encodes: nothing about LAYOUT may
+ * ever enter this string. Removing an iframe from the DOM runs the spec's
+ * "destroy a child navigable", which discards the active document with no
+ * unload event and no way back — and public/artifact-frame.html latches
+ * `written = true`, so a re-created frame cannot even be re-fed. A workspace
+ * panel that reloaded the user's running mini-app on every drag, rotation or
+ * fullscreen toggle would be worse than one that could not resize at all.
+ * `artifactFrameKey.length === 1` is the machine-checkable form of that rule:
+ * a second parameter is the shape any layout leak would take.
+ *
+ * KNOWN, PRESERVED BUG: keying on `content.length` rather than the content
+ * means a same-length edit leaves a stale document forever. That is a
+ * content-update bug, not a layout bug; it is kept byte-identical here on
+ * purpose and fixed separately.
+ */
+export function artifactFrameKey(a: Artifact): string {
+  return `${a.kind}-${a.content.length}-${a.title}`;
+}
+
 // Strict, locked-down CSP for the sandboxed frame:
 //  • default-src 'none'         → nothing loads unless explicitly allowed
 //  • script/style 'unsafe-inline' → the model's own inline JS/CSS may run

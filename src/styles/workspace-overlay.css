@@ -1,0 +1,165 @@
+/**
+ * Workspace shell overlay — WS-C.
+ *
+ * Plain CSS, no @apply, no Tailwind directives, no @import, no url(). The
+ * production CSP (`vite.config.ts:57`) is frozen for this ship and every rule
+ * here has to be servable from a same-origin stylesheet with nothing fetched.
+ *
+ * Everything structural about the shell — `fixed`, `inset-0`, `z-[100]`, the
+ * flex row — lives in the three literal Tailwind class strings in
+ * `WorkspaceShell.tsx`, because those are what the geometry swap actually
+ * swaps. What lives HERE is the part Tailwind 3.4 cannot express: `env()`
+ * safe-area maths, the visual-viewport custom properties, and a pre-JS default
+ * for the width variable.
+ *
+ * ─── THE ONE RULE THIS FILE MUST NEVER BREAK ──────────────────────────────
+ *
+ * NO `transform`, `filter`, `backdrop-filter`, `perspective`, `contain`,
+ * `container-type` or `will-change` — not on the shell, not on the panel box,
+ * not on the scrim, not in a hover state, not in a transition.
+ *
+ * The shell is `position: fixed` while remaining a CHILD of ChatPanel's flex
+ * row; there is no portal, because a portal is a change of DOM position and any
+ * change of DOM position destroys the artifact iframe's document. Fixed only
+ * means "against the viewport" while no ancestor is a containing block, and
+ * every property listed above makes one. The failure mode is that fullscreen
+ * quietly fills the chat column instead of the screen, with NO console error —
+ * the repo already lived through this once with aurora's `backdrop-filter`
+ * bubbles confining MediaFrame. `src/test/workspaceContainingBlock.test.ts`
+ * scans this file, and the ancestor chain, for exactly these tokens.
+ *
+ * (Ancestor `overflow: hidden` is fine and is deliberately left alone: a fixed
+ * box whose containing block is the viewport is not clipped by it.)
+ */
+
+/* ── the width variable, before JavaScript ────────────────────────────────
+ *
+ * `WorkspaceShell` seeds `--cc-ws-w` with a px value in a layout effect, which
+ * runs before the first paint, so in practice these defaults are never seen.
+ * They exist because the failure they prevent is disproportionate: an unset
+ * custom property makes `width: var(--cc-ws-w)` invalid at computed-value time,
+ * which computes to `width: auto` — a dock column collapsed to the width of its
+ * own text. An inline `style.setProperty` from the shell or from a live drag
+ * beats both of these declarations.
+ *
+ * The percentages resolve against different boxes on purpose, and correctly in
+ * both cases: in `dock` the shell is a flex child of the chat row, in `drawer`
+ * it is fixed, so its percentage basis is the viewport.
+ */
+:root {
+  /* Roughly `DEFAULT_FRACTION_DOCK`, ceilinged at the old `lg:w-[420px]`. */
+  --cc-ws-w: min(38%, 420px);
+}
+
+.cc-workspace-overlay {
+  /* Roughly `DEFAULT_FRACTION_DRAWER`, floored by `DRAWER_PEEK_PX` so the app
+     behind is never completely covered in `drawer`. */
+  --cc-ws-w: min(86%, calc(100% - 56px));
+
+  /* THE KEYBOARD. `--cc-vvh` is published on <html> by useVisualViewportVars
+     and defaults to the small-viewport unit in `workspace-viewport.css`; the
+     literal `100%` here is a third line of defence for the case where that
+     stylesheet has not been imported at all. Without this the soft keyboard
+     covers the bottom of a landscape drawer and the user cannot see what they
+     are typing into. */
+  max-height: var(--cc-vvh, 100%);
+
+  /* iOS can scroll the VISUAL viewport inside the layout viewport to bring a
+     focused field above the keyboard, which leaves a `position: fixed` overlay
+     anchored to the layout viewport and therefore partly off screen. Shifting
+     by the measured offset re-anchors it. A margin, not a transform: a
+     transform here would make this element a containing block for everything
+     inside it. `--cc-vv-top` is clamped to [0, layoutHeight - height] at the
+     source, so this can never push the overlay off the bottom. */
+  margin-top: var(--cc-vv-top, 0px);
+
+  /* The panel's own surface, so the safe-area padding below is invisible
+     rather than reading as a bezel. */
+  background: hsl(var(--surface-container-low));
+
+  /* An overlay must not leak. Two jobs, both real:
+       1. A wide code block or an over-wide artifact inside the panel would
+          otherwise paint OUTSIDE the drawer, on top of the app it is floating
+          over, with no way to scroll it back.
+       2. It makes this element a scroll container, which is what gives the
+          `overscroll-contain` on the same node something to bind to. Scroll
+          chaining runs from the panel's inner scrollers up through ancestor
+          scroll containers to the page; `overscroll-behavior: contain` only
+          takes effect on a scroll container, so without this the class on the
+          shell root would be inert and a flick inside the file list would
+          rubber-band the app behind the drawer.
+     `overflow` does NOT create a containing block for `position: fixed`, so
+     this is safe under the invariant at the top of this file. Nothing inside is
+     clipped that was not already contained: WorkspacePanel is `h-full` with
+     `min-h-0` scrollers, and the only outline in the subtree is the handle's,
+     which is drawn inset. */
+  overflow: hidden;
+}
+
+.cc-workspace-drawer {
+  border-left: 1px solid hsl(var(--outline-variant) / 0.35);
+  /* box-shadow does NOT create a containing block. transform, filter and
+     backdrop-filter do, which is why the drawer has depth but no blur. */
+  box-shadow: -24px 0 48px -24px rgb(0 0 0 / 0.55);
+}
+
+/* ── safe area ────────────────────────────────────────────────────────────
+ *
+ * `index.html` already ships `viewport-fit=cover`, so on a notched device the
+ * overlay genuinely extends under the hardware. Rotating a Pro iPhone moves the
+ * display cutout onto the HORIZONTAL axis — `safe-area-inset-left` and `-right`
+ * go from 0 to ~59 px — which is exactly the orientation this whole feature is
+ * about, so the inline axis is where this matters most.
+ *
+ * WHY THIS IS ON THE PANEL BOX AND NOT ON THE SHELL ROOT. The resize handle
+ * sits at the shell's inboard edge, outboard of this padding, and
+ * `workspace-resize.css` extends the handle's HIT AREA rightwards into this
+ * exact strip by `env(safe-area-inset-left)` — that is what keeps a drawer
+ * dragged to full extension grabbable when the handle parks under the cutout.
+ * Move this padding to the shell root and that extension starts overlapping
+ * real panel content and stealing its taps, on notched phones in landscape
+ * only, which is precisely where nobody would notice.
+ *
+ * The two axes are treated differently, on purpose:
+ *   - INLINE keeps the `max(0.5rem, …)` guard from the plan. The 0.5rem floor
+ *     costs nothing visually (this box paints the same surface as the panel
+ *     inside it) and puts a little air between the drag handle and the content.
+ *   - BLOCK takes the raw inset with a 0px fallback. A floor there would eat
+ *     16 px of a 393 px-tall landscape viewport to buy nothing: no cutout is on
+ *     that axis in landscape, and the panel's own header padding already keeps
+ *     content off the edge.
+ */
+.cc-workspace-inset {
+  padding-inline-start: max(0.5rem, env(safe-area-inset-left, 0px));
+  padding-inline-end: max(0.5rem, env(safe-area-inset-right, 0px));
+  padding-block-start: env(safe-area-inset-top, 0px);
+  padding-block-end: env(safe-area-inset-bottom, 0px);
+  background: hsl(var(--surface-container-low));
+}
+
+/* ── document state while an overlay is up ────────────────────────────────
+ *
+ * A NEW class, deliberately not `cc-media-overlay-open`. That one's rule at
+ * `src/index.css:779-787` strips `backdrop-filter` off chat bubbles to stop
+ * aurora's glass from confining MediaFrame's fullscreen — a different problem
+ * with a different lifetime, and sharing the hook would couple two features
+ * that will drift apart.
+ *
+ * `WorkspaceShell` also sets `documentElement.style.overflow = "hidden"`
+ * imperatively (mirroring MediaFrame) and restores the previous value on
+ * cleanup. This rule repeats it for `<body>`, which the inline style cannot
+ * reach, and adds the part that actually matters on a phone: without
+ * `overscroll-behavior: none` a drag that starts on the scrim rubber-bands the
+ * page behind the drawer, and on Android it can trigger pull-to-refresh — i.e.
+ * a full reload, which takes the artifact iframe with it.
+ *
+ * Nothing here neutralises ancestor containing-block triggers, unlike the
+ * media overlay's rule. That is a deliberate choice: the chain is clean and is
+ * kept clean by a source-scan test, and a blanket `!important` override would
+ * hide a regression rather than surface it.
+ */
+html.cc-workspace-overlay-open,
+html.cc-workspace-overlay-open body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}

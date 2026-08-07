@@ -1,0 +1,72 @@
+/* WS-D — viewport plumbing for the workspace viewer.
+ *
+ * Plain CSS on purpose: no @apply, no Tailwind directives, no @import. This
+ * file is pulled in from src/main.tsx after ./index.css, which is also the
+ * source order that lets .h-app win a specificity tie with anything Tailwind
+ * emits at (0,1,0).
+ *
+ * Two things live here and nothing else:
+ *   1. the default values for the custom properties the visual-viewport hook
+ *      publishes, so consumers are correct BEFORE any JS runs — and stay
+ *      correct on every engine where that JS never runs at all;
+ *   2. the app-height utility, which replaces h-screen on the app shell.
+ *
+ * THE UNIT DECISION, once, for both.
+ *
+ * `vh` is defined as equal to the LARGE viewport — the viewport with the
+ * mobile browser's retractable toolbars hidden. That is precisely why
+ * `height: 100vh` bleeds under the address bar on every phone. The
+ * small-viewport unit is the fix: it is the viewport with the toolbars SHOWN,
+ * so a box sized to it is always fully visible, and — unlike the dynamic unit
+ * — it never changes as toolbars retract.
+ *
+ * The dynamic unit is deliberately absent from this file. It is throttled
+ * rather than updated per frame, and it resizes content WHILE THE USER IS
+ * SCROLLING, which for this feature means the artifact iframe reflowing under
+ * the reader's thumb.
+ *
+ * But the small-viewport unit is not universal, and a browser that does not
+ * understand `height: 100svh` DROPS the declaration — collapsing the shell to
+ * `height: auto`, a far worse failure than a slightly-too-tall page. Worse
+ * still for the custom property: a `var()` substitution that yields an
+ * unparseable length is invalid at computed-value time, so
+ * `max-height: var(--cc-vvh)` would compute to `none` — no cap at all. Hence
+ * the shape used twice below: a universally valid base, upgraded only inside
+ * an @supports block that actually parses the upgraded unit.
+ */
+
+:root {
+  /* Consumed by the workspace overlay as `max-height: var(--cc-vvh, 100%)`.
+   * `100%` is the "no opinion" value — it resolves against the overlay's
+   * containing block, i.e. exactly today's behaviour — so a browser with no
+   * window.visualViewport (Safari < 13, jsdom, any headless renderer) loses
+   * nothing. src/hooks/useVisualViewportVars.ts overwrites this with a px
+   * length whenever it has a trustworthy sample, and REMOVES its inline value
+   * (rather than writing `100%` back) whenever it does not — so the upgrade
+   * below is never shadowed by the hook's own fallback. */
+  --cc-vvh: 100%;
+
+  /* How far the visual viewport has scrolled inside the layout viewport.
+   * Zero unless iOS has pushed a focused field up above the keyboard. */
+  --cc-vv-top: 0px;
+}
+
+/* THE APP-HEIGHT UNIT. src/pages/Index.tsx swaps h-screen for this. */
+.h-app {
+  height: 100vh;
+}
+
+@supports (height: 100svh) {
+  /* The overlay's JS-free default. `100%` above means the LARGE viewport for a
+   * position: fixed box, i.e. the toolbar bleed itself; the small viewport is
+   * the conservative value and is what the hook's px samples converge to
+   * anyway, so the JS and no-JS paths now agree instead of disagreeing by the
+   * height of the address bar. */
+  :root {
+    --cc-vvh: 100svh;
+  }
+
+  .h-app {
+    height: 100svh;
+  }
+}

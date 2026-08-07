@@ -17,10 +17,23 @@ import { downloadSheetSvg, downloadSheetPdf } from "@/lib/blueprint/raster";
  * exactly as it behaves today at 100%.
  */
 
-const ZOOM_STEPS = [100, 150, 200, 300];
+/**
+ * Zoom stops. "100%" means "the frame is exactly the panel's width", so zoom
+ * is RELATIVE TO THE PANEL, not to the sheet. That is fine at 360px and
+ * actively hostile once the panel is resizable: at a 900px panel a 1000-unit
+ * turnaround renders 2.5x larger than it used to, and with a floor of 100%
+ * there was no way back out — widening the panel could only ever magnify.
+ * The two stops below 100 are what makes dragging wider a net win for SVG
+ * instead of a forced magnification.
+ */
+export const ZOOM_STEPS = [50, 75, 100, 150, 200, 300];
+
+/** Index of the 100% stop — the default, unchanged from before the floor
+ *  was added. */
+export const ZOOM_DEFAULT_INDEX = 2;
 
 const SvgArtifactViewer: React.FC<{ title: string; content: string }> = ({ title, content }) => {
-  const [zoomIdx, setZoomIdx] = useState(0);
+  const [zoomIdx, setZoomIdx] = useState(ZOOM_DEFAULT_INDEX);
   // PDF export rasterises then lazy-loads jspdf; guard against double-clicks.
   const [exporting, setExporting] = useState(false);
 
@@ -85,8 +98,16 @@ const SvgArtifactViewer: React.FC<{ title: string; content: string }> = ({ title
       </div>
 
       <div className="flex-1 min-h-0 overflow-x-auto bg-white">
-        {/* minWidth keeps the frame filling the panel at 100% on any screen. */}
-        <div className="h-full" style={{ width: `${zoom}%`, minWidth: "100%" }}>
+        {/* minWidth keeps the frame filling the panel at 100% on any screen —
+            but it is applied ONLY at >= 100%. Left unconditional it would
+            clamp every zoom-out back to full width, so the readout would say
+            "50%" while nothing moved. `mx-auto` centres the sheet in the
+            leftover space below 100%; at >= 100% there is none, so it is a
+            no-op and the >= 100% behaviour is exactly what it always was. */}
+        <div
+          className="h-full mx-auto"
+          style={{ width: `${zoom}%`, minWidth: zoom >= 100 ? "100%" : undefined }}
+        >
           <ArtifactFrame
             title={title}
             artifact={{ title, kind: "svg", content } as Artifact}
