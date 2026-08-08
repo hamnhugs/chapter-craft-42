@@ -38,6 +38,11 @@ interface AppState {
   updateBookTags: (bookId: string, category: string | null, tags: string[]) => Promise<void>;
   getActiveBook: () => BookDocument | undefined;
   loadBookFile: (bookId: string) => Promise<string>;
+  /** Fetch one chapter's text on demand (not loaded at startup). */
+  loadChapterText: (chapterId: string) => Promise<string>;
+  /** Fetch every chapter's text for one book on demand. */
+  loadBookChapterText: (bookId: string) => Promise<void>;
+
   refreshWikis: () => Promise<void>;
   setActiveWiki: (wikiId: string) => Promise<void>;
   /** Replace the loaded set. ids[0] becomes the primary; capped at MAX_ACTIVE_NEURONS. */
