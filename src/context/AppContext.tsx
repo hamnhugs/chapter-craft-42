@@ -51,6 +51,26 @@ const AppContext = createContext<AppState | null>(null);
 
 const DEFAULT_STORAGE_EXTENSION = "pdf";
 
+/** Page through a Supabase select so a library bigger than the API's default
+ *  row cap still loads completely. Returns rows gathered so far plus the error
+ *  that stopped it (if any) — a partial library beats none. */
+const PAGE_SIZE = 500;
+async function fetchAllRows(
+  query: (from: number, to: number) => PromiseLike<{ data: any[] | null; error: any }>
+): Promise<{ rows: any[]; error: any }> {
+  const rows: any[] = [];
+  for (let page = 0; page < 40; page++) {
+    const from = page * PAGE_SIZE;
+    const { data, error } = await query(from, from + PAGE_SIZE - 1);
+    if (error) return { rows, error };
+    const batch = data || [];
+    rows.push(...batch);
+    if (batch.length < PAGE_SIZE) break;
+  }
+  return { rows, error: null };
+}
+
+
 const getFileExtension = (fileName: string) => {
   const parts = fileName.toLowerCase().split(".");
   return parts.length > 1 ? parts.pop() || DEFAULT_STORAGE_EXTENSION : DEFAULT_STORAGE_EXTENSION;
