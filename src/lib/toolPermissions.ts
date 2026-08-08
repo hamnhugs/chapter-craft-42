@@ -107,6 +107,7 @@ export const PERMISSION_GROUPS: PermGroup[] = [
       { id: "isolate_chapter", label: "Isolate chapter context", description: "Allow narrowing focus to one chapter." },
       { id: "rename_chapter", label: "Rename chapters", description: "Allow the AI to rename chapters." },
       { id: "delete_chapter", label: "Delete chapters", description: "Allow the AI to remove chapters from a book after you confirm.", danger: true },
+      { id: "rename_book", label: "Rename books", description: "Allow the AI to retitle books in your library (single or bulk cleanups)." },
     ],
   },
   {
