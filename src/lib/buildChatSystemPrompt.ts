@@ -348,14 +348,19 @@ export async function buildChatSystemPrompt({
     parts.push("", DEEP_RESEARCH_SYSTEM_PROMPT, DEEP_RESEARCH_ADVANCED_PROMPT);
   }
 
-  // Library catalog (always)
+  // Library catalog (always). Titles for everything; chapter lines only for
+  // the active book — a 50-book library otherwise spends the whole prompt on
+  // chapter headings the model was never asked about.
   parts.push("", "## Available Library", `The user has ${books.length} book(s) in their library:`);
   books.forEach((book) => {
     parts.push(`- **${book.title}** (id: ${book.id}, ${book.pageCount} pages, ${book.chapters.length} chapter(s))`);
-    book.chapters.forEach((ch) => {
-      parts.push(`  - Chapter: "${ch.name}" (id: ${ch.id}, pages ${ch.startPage}–${ch.endPage})`);
-    });
+    if (selectedBook && book.id === selectedBook.id) {
+      book.chapters.forEach((ch) => {
+        parts.push(`  - Chapter: "${ch.name}" (id: ${ch.id}, pages ${ch.startPage}–${ch.endPage})`);
+      });
+    }
   });
+  parts.push("Chapter ids for any other book come from `get_book`. Chapter text is fetched on demand with `get_chapter_text`.");
 
   if (selectedBook) {
     parts.push("", `## Currently Active Book: "${selectedBook.title}" (id: ${selectedBook.id})`);
@@ -370,10 +375,11 @@ export async function buildChatSystemPrompt({
             const text = ch.textContent.length > chapterCap ? ch.textContent.slice(0, chapterCap) + "\n\n[...truncated]" : ch.textContent;
             parts.push(text);
           } else {
-            parts.push("(No text content extracted for this chapter)");
+            parts.push(`(Text not loaded here — call \`get_chapter_text\` with id ${ch.id} to read it.)`);
           }
           parts.push("");
         });
+
       } else {
         parts.push(
           "",
