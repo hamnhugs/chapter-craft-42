@@ -273,7 +273,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const chapterRows = await fetchAllRows((from, to) =>
         supabase
           .from("chapters")
-          .select("id, book_id, name, start_page, end_page, created_at, text_content")
+          .select("id, book_id, name, start_page, end_page, created_at")
           .eq("user_id", user.id)
           .order("created_at", { ascending: true })
           .range(from, to)
@@ -295,10 +295,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           startPage: chapter.start_page,
           endPage: chapter.end_page,
           textContent: "",
-          hasText: !!chapter.text_content,
         });
         return acc;
       }, {});
+
 
       setBooks((prev) => prev.map((b) => ({ ...b, chapters: chaptersByBookId[b.id] || b.chapters })));
     };
