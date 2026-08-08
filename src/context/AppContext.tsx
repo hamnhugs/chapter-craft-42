@@ -336,7 +336,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const b: any = payload.new;
           const { data: chapterRows } = await supabase
             .from("chapters")
-            .select("id, name, start_page, end_page, text_content")
+            .select("id, name, start_page, end_page")
             .eq("book_id", b.id)
             .eq("user_id", b.user_id)
             .order("created_at", { ascending: true });
@@ -345,8 +345,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             name: c.name,
             startPage: c.start_page,
             endPage: c.end_page,
-            textContent: c.text_content,
+            textContent: "",
           }));
+
           setBooks((prev) => {
             if (prev.some((x) => x.id === b.id)) return prev;
             const newBook: BookDocument = {
