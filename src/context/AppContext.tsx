@@ -230,63 +230,80 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
 
+    let cancelled = false;
+
+    // Books first, chapter METADATA second, chapter TEXT never at startup.
+    // The old single fetch pulled every chapter's full text (megabytes on a
+    // real library) and threw the whole library away if it failed — which is
+    // how the chat ended up reporting "no books" while the Vault had 50.
     const loadBooks = async () => {
-      const [{ data: bookRows, error: booksError }, { data: chapterRows, error: chaptersError }] = await Promise.all([
+      const bookRows = await fetchAllRows((from, to) =>
         supabase
           .from("books")
-          .select("id, title, file_name, page_count, cover_image_url, created_at, category, tags")
+          .select("id, title, file_name, page_count, cover_image_url, created_at, category, tags, folder_id")
           .eq("user_id", user.id)
-          .order("created_at", { ascending: false }),
+          .order("created_at", { ascending: false })
+          .range(from, to)
+      );
+
+      if (cancelled) return;
+
+      if (bookRows.error) {
+        console.error("Failed to load books:", bookRows.error);
+        return;
+      }
+
+      const dbBooks: BookDocument[] = bookRows.rows.map((b: any) => ({
+        id: b.id,
+        title: b.title,
+        fileName: b.file_name,
+        fileData: "",
+        pageCount: b.page_count,
+        coverImageUrl: b.cover_image_url || undefined,
+        chapters: [],
+        addedAt: new Date(b.created_at).getTime(),
+        category: b.category || undefined,
+        tags: Array.isArray(b.tags) ? b.tags : [],
+        folderId: b.folder_id ?? null,
+      }));
+      // The library (and the chat's view of it) is usable from here on, even
+      // if chapters never arrive.
+      setBooks(dbBooks);
+
+      const chapterRows = await fetchAllRows((from, to) =>
         supabase
           .from("chapters")
-          .select("id, book_id, name, start_page, end_page, text_content, created_at")
+          .select("id, book_id, name, start_page, end_page, created_at, text_content")
           .eq("user_id", user.id)
-          .order("created_at", { ascending: true }),
-      ]);
+          .order("created_at", { ascending: true })
+          .range(from, to)
+      );
 
-      if (booksError) {
-        console.error("Failed to load books:", booksError);
+      if (cancelled) return;
+
+      if (chapterRows.error) {
+        // Books stay. A chapter list is an enhancement, not a precondition.
+        console.error("Failed to load chapters:", chapterRows.error);
         return;
       }
 
-      if (chaptersError) {
-        console.error("Failed to load chapters:", chaptersError);
-        return;
-      }
-
-      const chaptersByBookId = (chapterRows || []).reduce<Record<string, Chapter[]>>((acc, chapter: any) => {
-        if (!acc[chapter.book_id]) {
-          acc[chapter.book_id] = [];
-        }
-
+      const chaptersByBookId = chapterRows.rows.reduce<Record<string, Chapter[]>>((acc, chapter: any) => {
+        if (!acc[chapter.book_id]) acc[chapter.book_id] = [];
         acc[chapter.book_id].push({
           id: chapter.id,
           name: chapter.name,
           startPage: chapter.start_page,
           endPage: chapter.end_page,
-          textContent: chapter.text_content,
+          textContent: "",
+          hasText: !!chapter.text_content,
         });
-
         return acc;
       }, {});
 
-      if (bookRows) {
-        const dbBooks: BookDocument[] = bookRows.map((b: any) => ({
-          id: b.id,
-          title: b.title,
-          fileName: b.file_name,
-          fileData: "",
-          pageCount: b.page_count,
-          coverImageUrl: b.cover_image_url || undefined,
-          chapters: chaptersByBookId[b.id] || [],
-          addedAt: new Date(b.created_at).getTime(),
-          category: b.category || undefined,
-          tags: Array.isArray(b.tags) ? b.tags : [],
-        }));
-        setBooks(dbBooks);
-      }
+      setBooks((prev) => prev.map((b) => ({ ...b, chapters: chaptersByBookId[b.id] || b.chapters })));
     };
     loadBooks();
+
 
     // Realtime: auto-refresh library when books are added/removed elsewhere
     // (e.g. video transcript PDFs auto-saved by the edge function, mobile app uploads)
