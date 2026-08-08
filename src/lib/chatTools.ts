@@ -1884,15 +1884,44 @@ export async function executeChatTool(
   try {
     switch (name) {
       case "list_books": {
-        const list = deps.books.map((b) => ({
+        const fromState = deps.books.map((b) => ({
           id: b.id,
           title: b.title,
           page_count: b.pageCount,
           chapter_count: b.chapters.length,
           is_active: b.id === deps.activeBookId,
         }));
-        return { result: list, event: { name, summary: `Listed ${list.length} book(s)`, ok: true } };
+        // Self-healing: if the in-memory library hasn't arrived (slow first
+        // load, a failed fetch, a fresh tab), ask the database directly rather
+        // than telling the user their library is empty when it isn't.
+        if (fromState.length === 0) {
+          const { data: authData } = await supabase.auth.getUser();
+          const uid = authData.user?.id;
+          if (uid) {
+            const { data, error } = await supabase
+              .from("books")
+              .select("id, title, page_count")
+              .eq("user_id", uid)
+              .order("created_at", { ascending: false })
+              .limit(500);
+            if (!error && data && data.length > 0) {
+              const list = data.map((b: any) => ({
+                id: b.id,
+                title: b.title,
+                page_count: b.page_count,
+                chapter_count: null as number | null,
+                is_active: b.id === deps.activeBookId,
+              }));
+              return {
+                result: { books: list, note: "Library still loading in the app; read straight from the account." },
+                event: { name, summary: `Listed ${list.length} book(s)`, ok: true },
+              };
+            }
+          }
+        }
+        return { result: fromState, event: { name, summary: `Listed ${fromState.length} book(s)`, ok: true } };
       }
+
       case "get_book": {
         const book = deps.books.find((b) => b.id === args.book_id);
         if (!book) return { result: { error: "Book not found" }, event: { name, summary: "Book not found", ok: false } };
