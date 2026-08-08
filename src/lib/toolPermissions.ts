@@ -43,6 +43,7 @@ export const TOOL_PERMISSION: Record<string, string> = {
   isolate_chapter: "isolate_chapter",
   rename_chapter: "rename_chapter",
   delete_chapter: "delete_chapter",
+  rename_book: "rename_book",
   // Images
   generate_image: "generate_image",
   edit_image: "edit_image",
