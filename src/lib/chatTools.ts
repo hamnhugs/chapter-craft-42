@@ -1956,7 +1956,7 @@ export async function executeChatTool(
         if (!chapter) {
           return { result: { error: "Chapter not found" }, event: { name, summary: "Chapter not found", ok: false } };
         }
-        const text = chapter.textContent || "";
+        const text = chapter.textContent || (deps.loadChapterText ? await deps.loadChapterText(chapter.id) : "");
         return {
           result: {
             id: chapter.id,
