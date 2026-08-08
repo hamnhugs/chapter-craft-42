@@ -553,6 +553,34 @@ export const CHAT_TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "rename_book",
+      description:
+        "Retitle one or more books in the user's library. Use it for a direct request ('rename this to X') or to clean up placeholder/import titles like 'document (1).pdf' or 'Untitled'. Only the title changes — the file, chapters, tags and folder are untouched. Ids come from list_books; book_id defaults to the active book. For a single rename pass book_id + title. For a cleanup of several books pass renames[] (max 25) in ONE call. Bulk rule: before any multi-book rename, show the user the old -> new list in your own words and only call this after they say yes.",
+      parameters: {
+        type: "object",
+        properties: {
+          book_id: { type: "string", description: "Book to retitle, from list_books. Defaults to the active book." },
+          title: { type: "string", description: "The new title (1-300 characters)." },
+          renames: {
+            type: "array",
+            description: "Batch mode: up to 25 { book_id, title } pairs applied in one call.",
+            items: {
+              type: "object",
+              properties: {
+                book_id: { type: "string" },
+                title: { type: "string" },
+              },
+              required: ["book_id", "title"],
+            },
+          },
+        },
+      },
+    },
+  },
+
+  {
+    type: "function",
+    function: {
       name: "list_wikis",
       description: "List all of the user's knowledge wikis with id, name, description, default/meta flags, and current entry count. Use when the user asks 'what wikis do I have' or before switching.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
