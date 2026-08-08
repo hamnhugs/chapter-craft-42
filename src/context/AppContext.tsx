@@ -379,9 +379,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .subscribe();
 
     return () => {
+      cancelled = true;
       supabase.removeChannel(channel);
     };
   }, [user]);
+
 
   // Allow the once-per-session restore to run again when the account changes.
   useEffect(() => {
