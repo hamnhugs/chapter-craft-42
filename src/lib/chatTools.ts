@@ -110,6 +110,10 @@ export interface ToolDeps {
   removeChapter: (bookId: string, chapterId: string) => Promise<void> | void;
   /** Retitle a book in the library (persists + updates local state). */
   updateBookTitle?: (bookId: string, newTitle: string) => Promise<void> | void;
+  /** Fetch one chapter's text on demand — chapter text is no longer loaded at
+   *  startup, so the reading tools pull it when they actually need it. */
+  loadChapterText?: (chapterId: string) => Promise<string>;
+
 
   burplexityApiToken?: string;
   /** Free web-search backend (Tavily). Used when no Burplexity token is set. */
