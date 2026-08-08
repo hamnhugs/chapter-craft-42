@@ -106,15 +106,18 @@ export async function autoTagBooks(
   for (let i = 0; i < booksToTag.length; i += BATCH_SIZE) {
     const batch = booksToTag.slice(i, i + BATCH_SIZE);
     const payload = {
-      books: batch.map((b) => ({
-        id: b.id,
-        title: b.title,
-        chapterTitles: b.chapters.map((c) => c.name),
-        excerpts: buildExcerpts(b),
-      })),
+      books: await Promise.all(
+        batch.map(async (b) => ({
+          id: b.id,
+          title: b.title,
+          chapterTitles: b.chapters.map((c) => c.name),
+          excerpts: await buildExcerpts(b),
+        })),
+      ),
       existingTags: vocabulary,
       openrouterApiKey: opts?.apiKey || undefined,
     };
+
 
     const { data, error } = await supabase.functions.invoke("auto-tag", { body: payload });
     if (error) throw new Error(error.message || "Auto-tag request failed");
