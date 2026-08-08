@@ -1769,7 +1769,9 @@ function buildLiveCapabilities(deps: ToolDeps): (cap: string, capArgs: unknown) 
         const idx = Math.floor(Number(a.chapter_index));
         const ch = book.chapters[idx];
         if (!ch) throw new Error(`chapter_index out of range (0-${book.chapters.length - 1})`);
-        return { title: ch.name, text: (ch.textContent || "").slice(0, 12000) };
+        const chText = ch.textContent || (deps.loadChapterText ? await deps.loadChapterText(ch.id) : "");
+        return { title: ch.name, text: chText.slice(0, 12000) };
+
       }
       case "images_list": {
         const rows = await searchImages(typeof a.query === "string" ? a.query : undefined, Math.min(20, Math.max(1, Number(a.limit) || 10)));
