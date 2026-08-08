@@ -745,6 +745,61 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [user, books]);
 
+  /** Chapter text on demand. Startup no longer carries it, so anything that
+   *  needs the actual words (the chat's get_chapter_text, auto-tagging) asks
+   *  for it here and the result is cached back into the library. */
+  const loadChapterText = useCallback(async (chapterId: string): Promise<string> => {
+    if (!user || !chapterId) return "";
+    const cached = books.flatMap((b) => b.chapters).find((c) => c.id === chapterId);
+    if (cached?.textContent) return cached.textContent;
+    const { data, error } = await supabase
+      .from("chapters")
+      .select("text_content")
+      .eq("id", chapterId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (error || !data) {
+      if (error) console.error("Failed to load chapter text:", error);
+      return "";
+    }
+    const text = (data as any).text_content || "";
+    if (text) {
+      setBooks((prev) =>
+        prev.map((b) => ({
+          ...b,
+          chapters: b.chapters.map((c) => (c.id === chapterId ? { ...c, textContent: text } : c)),
+        }))
+      );
+    }
+    return text;
+  }, [user, books]);
+
+  /** Hydrate every chapter of one book with its text (auto-tagging needs
+   *  excerpts across the whole book). */
+  const loadBookChapterText = useCallback(async (bookId: string): Promise<void> => {
+    if (!user || !bookId) return;
+    const book = books.find((b) => b.id === bookId);
+    if (book && book.chapters.length > 0 && book.chapters.every((c) => c.textContent)) return;
+    const { data, error } = await supabase
+      .from("chapters")
+      .select("id, text_content")
+      .eq("book_id", bookId)
+      .eq("user_id", user.id);
+    if (error || !data) {
+      if (error) console.error("Failed to load book text:", error);
+      return;
+    }
+    const byId = new Map<string, string>(data.map((r: any) => [r.id, r.text_content || ""]));
+    setBooks((prev) =>
+      prev.map((b) =>
+        b.id === bookId
+          ? { ...b, chapters: b.chapters.map((c) => ({ ...c, textContent: byId.get(c.id) ?? c.textContent })) }
+          : b
+      )
+    );
+  }, [user, books]);
+
+
   const activeWiki = wikis.find((w) => w.id === activeWikiId);
   const activeWikis = activeWikiIds
     .map((id) => wikis.find((w) => w.id === id))
