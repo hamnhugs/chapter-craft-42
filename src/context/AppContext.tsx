@@ -38,6 +38,11 @@ interface AppState {
   updateBookTags: (bookId: string, category: string | null, tags: string[]) => Promise<void>;
   getActiveBook: () => BookDocument | undefined;
   loadBookFile: (bookId: string) => Promise<string>;
+  /** Fetch one chapter's text on demand (not loaded at startup). */
+  loadChapterText: (chapterId: string) => Promise<string>;
+  /** Fetch every chapter's text for one book on demand. */
+  loadBookChapterText: (bookId: string) => Promise<void>;
+
   refreshWikis: () => Promise<void>;
   setActiveWiki: (wikiId: string) => Promise<void>;
   /** Replace the loaded set. ids[0] becomes the primary; capped at MAX_ACTIVE_NEURONS. */
@@ -50,6 +55,26 @@ interface AppState {
 const AppContext = createContext<AppState | null>(null);
 
 const DEFAULT_STORAGE_EXTENSION = "pdf";
+
+/** Page through a Supabase select so a library bigger than the API's default
+ *  row cap still loads completely. Returns rows gathered so far plus the error
+ *  that stopped it (if any) — a partial library beats none. */
+const PAGE_SIZE = 500;
+async function fetchAllRows(
+  query: (from: number, to: number) => PromiseLike<{ data: any[] | null; error: any }>
+): Promise<{ rows: any[]; error: any }> {
+  const rows: any[] = [];
+  for (let page = 0; page < 40; page++) {
+    const from = page * PAGE_SIZE;
+    const { data, error } = await query(from, from + PAGE_SIZE - 1);
+    if (error) return { rows, error };
+    const batch = data || [];
+    rows.push(...batch);
+    if (batch.length < PAGE_SIZE) break;
+  }
+  return { rows, error: null };
+}
+
 
 const getFileExtension = (fileName: string) => {
   const parts = fileName.toLowerCase().split(".");
@@ -230,63 +255,80 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
 
+    let cancelled = false;
+
+    // Books first, chapter METADATA second, chapter TEXT never at startup.
+    // The old single fetch pulled every chapter's full text (megabytes on a
+    // real library) and threw the whole library away if it failed — which is
+    // how the chat ended up reporting "no books" while the Vault had 50.
     const loadBooks = async () => {
-      const [{ data: bookRows, error: booksError }, { data: chapterRows, error: chaptersError }] = await Promise.all([
+      const bookRows = await fetchAllRows((from, to) =>
         supabase
           .from("books")
-          .select("id, title, file_name, page_count, cover_image_url, created_at, category, tags")
+          .select("id, title, file_name, page_count, cover_image_url, created_at, category, tags, folder_id")
           .eq("user_id", user.id)
-          .order("created_at", { ascending: false }),
+          .order("created_at", { ascending: false })
+          .range(from, to)
+      );
+
+      if (cancelled) return;
+
+      if (bookRows.error) {
+        console.error("Failed to load books:", bookRows.error);
+        return;
+      }
+
+      const dbBooks: BookDocument[] = bookRows.rows.map((b: any) => ({
+        id: b.id,
+        title: b.title,
+        fileName: b.file_name,
+        fileData: "",
+        pageCount: b.page_count,
+        coverImageUrl: b.cover_image_url || undefined,
+        chapters: [],
+        addedAt: new Date(b.created_at).getTime(),
+        category: b.category || undefined,
+        tags: Array.isArray(b.tags) ? b.tags : [],
+        folderId: b.folder_id ?? null,
+      }));
+      // The library (and the chat's view of it) is usable from here on, even
+      // if chapters never arrive.
+      setBooks(dbBooks);
+
+      const chapterRows = await fetchAllRows((from, to) =>
         supabase
           .from("chapters")
-          .select("id, book_id, name, start_page, end_page, text_content, created_at")
+          .select("id, book_id, name, start_page, end_page, created_at")
           .eq("user_id", user.id)
-          .order("created_at", { ascending: true }),
-      ]);
+          .order("created_at", { ascending: true })
+          .range(from, to)
+      );
 
-      if (booksError) {
-        console.error("Failed to load books:", booksError);
+      if (cancelled) return;
+
+      if (chapterRows.error) {
+        // Books stay. A chapter list is an enhancement, not a precondition.
+        console.error("Failed to load chapters:", chapterRows.error);
         return;
       }
 
-      if (chaptersError) {
-        console.error("Failed to load chapters:", chaptersError);
-        return;
-      }
-
-      const chaptersByBookId = (chapterRows || []).reduce<Record<string, Chapter[]>>((acc, chapter: any) => {
-        if (!acc[chapter.book_id]) {
-          acc[chapter.book_id] = [];
-        }
-
+      const chaptersByBookId = chapterRows.rows.reduce<Record<string, Chapter[]>>((acc, chapter: any) => {
+        if (!acc[chapter.book_id]) acc[chapter.book_id] = [];
         acc[chapter.book_id].push({
           id: chapter.id,
           name: chapter.name,
           startPage: chapter.start_page,
           endPage: chapter.end_page,
-          textContent: chapter.text_content,
+          textContent: "",
         });
-
         return acc;
       }, {});
 
-      if (bookRows) {
-        const dbBooks: BookDocument[] = bookRows.map((b: any) => ({
-          id: b.id,
-          title: b.title,
-          fileName: b.file_name,
-          fileData: "",
-          pageCount: b.page_count,
-          coverImageUrl: b.cover_image_url || undefined,
-          chapters: chaptersByBookId[b.id] || [],
-          addedAt: new Date(b.created_at).getTime(),
-          category: b.category || undefined,
-          tags: Array.isArray(b.tags) ? b.tags : [],
-        }));
-        setBooks(dbBooks);
-      }
+
+      setBooks((prev) => prev.map((b) => ({ ...b, chapters: chaptersByBookId[b.id] || b.chapters })));
     };
     loadBooks();
+
 
     // Realtime: auto-refresh library when books are added/removed elsewhere
     // (e.g. video transcript PDFs auto-saved by the edge function, mobile app uploads)
@@ -299,7 +341,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const b: any = payload.new;
           const { data: chapterRows } = await supabase
             .from("chapters")
-            .select("id, name, start_page, end_page, text_content")
+            .select("id, name, start_page, end_page")
             .eq("book_id", b.id)
             .eq("user_id", b.user_id)
             .order("created_at", { ascending: true });
@@ -308,8 +350,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             name: c.name,
             startPage: c.start_page,
             endPage: c.end_page,
-            textContent: c.text_content,
+            textContent: "",
           }));
+
           setBooks((prev) => {
             if (prev.some((x) => x.id === b.id)) return prev;
             const newBook: BookDocument = {
@@ -323,7 +366,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               addedAt: new Date(b.created_at).getTime(),
               category: b.category || undefined,
               tags: Array.isArray(b.tags) ? b.tags : [],
+              folderId: b.folder_id ?? null,
             };
+
             return [newBook, ...prev];
           });
         }
@@ -341,9 +386,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .subscribe();
 
     return () => {
+      cancelled = true;
       supabase.removeChannel(channel);
     };
   }, [user]);
+
 
   // Allow the once-per-session restore to run again when the account changes.
   useEffect(() => {
@@ -703,6 +750,61 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [user, books]);
 
+  /** Chapter text on demand. Startup no longer carries it, so anything that
+   *  needs the actual words (the chat's get_chapter_text, auto-tagging) asks
+   *  for it here and the result is cached back into the library. */
+  const loadChapterText = useCallback(async (chapterId: string): Promise<string> => {
+    if (!user || !chapterId) return "";
+    const cached = books.flatMap((b) => b.chapters).find((c) => c.id === chapterId);
+    if (cached?.textContent) return cached.textContent;
+    const { data, error } = await supabase
+      .from("chapters")
+      .select("text_content")
+      .eq("id", chapterId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (error || !data) {
+      if (error) console.error("Failed to load chapter text:", error);
+      return "";
+    }
+    const text = (data as any).text_content || "";
+    if (text) {
+      setBooks((prev) =>
+        prev.map((b) => ({
+          ...b,
+          chapters: b.chapters.map((c) => (c.id === chapterId ? { ...c, textContent: text } : c)),
+        }))
+      );
+    }
+    return text;
+  }, [user, books]);
+
+  /** Hydrate every chapter of one book with its text (auto-tagging needs
+   *  excerpts across the whole book). */
+  const loadBookChapterText = useCallback(async (bookId: string): Promise<void> => {
+    if (!user || !bookId) return;
+    const book = books.find((b) => b.id === bookId);
+    if (book && book.chapters.length > 0 && book.chapters.every((c) => c.textContent)) return;
+    const { data, error } = await supabase
+      .from("chapters")
+      .select("id, text_content")
+      .eq("book_id", bookId)
+      .eq("user_id", user.id);
+    if (error || !data) {
+      if (error) console.error("Failed to load book text:", error);
+      return;
+    }
+    const byId = new Map<string, string>(data.map((r: any) => [r.id, r.text_content || ""]));
+    setBooks((prev) =>
+      prev.map((b) =>
+        b.id === bookId
+          ? { ...b, chapters: b.chapters.map((c) => ({ ...c, textContent: byId.get(c.id) ?? c.textContent })) }
+          : b
+      )
+    );
+  }, [user, books]);
+
+
   const activeWiki = wikis.find((w) => w.id === activeWikiId);
   const activeWikis = activeWikiIds
     .map((id) => wikis.find((w) => w.id === id))
@@ -734,6 +836,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateBookTags,
         getActiveBook,
         loadBookFile,
+        loadChapterText,
+        loadBookChapterText,
+
         refreshWikis,
         setActiveWiki,
         setActiveNeurons,

@@ -110,6 +110,10 @@ export interface ToolDeps {
   removeChapter: (bookId: string, chapterId: string) => Promise<void> | void;
   /** Retitle a book in the library (persists + updates local state). */
   updateBookTitle?: (bookId: string, newTitle: string) => Promise<void> | void;
+  /** Fetch one chapter's text on demand — chapter text is no longer loaded at
+   *  startup, so the reading tools pull it when they actually need it. */
+  loadChapterText?: (chapterId: string) => Promise<string>;
+
 
   burplexityApiToken?: string;
   /** Free web-search backend (Tavily). Used when no Burplexity token is set. */
@@ -1765,7 +1769,9 @@ function buildLiveCapabilities(deps: ToolDeps): (cap: string, capArgs: unknown) 
         const idx = Math.floor(Number(a.chapter_index));
         const ch = book.chapters[idx];
         if (!ch) throw new Error(`chapter_index out of range (0-${book.chapters.length - 1})`);
-        return { title: ch.name, text: (ch.textContent || "").slice(0, 12000) };
+        const chText = ch.textContent || (deps.loadChapterText ? await deps.loadChapterText(ch.id) : "");
+        return { title: ch.name, text: chText.slice(0, 12000) };
+
       }
       case "images_list": {
         const rows = await searchImages(typeof a.query === "string" ? a.query : undefined, Math.min(20, Math.max(1, Number(a.limit) || 10)));
@@ -1880,15 +1886,44 @@ export async function executeChatTool(
   try {
     switch (name) {
       case "list_books": {
-        const list = deps.books.map((b) => ({
+        const fromState = deps.books.map((b) => ({
           id: b.id,
           title: b.title,
           page_count: b.pageCount,
           chapter_count: b.chapters.length,
           is_active: b.id === deps.activeBookId,
         }));
-        return { result: list, event: { name, summary: `Listed ${list.length} book(s)`, ok: true } };
+        // Self-healing: if the in-memory library hasn't arrived (slow first
+        // load, a failed fetch, a fresh tab), ask the database directly rather
+        // than telling the user their library is empty when it isn't.
+        if (fromState.length === 0) {
+          const { data: authData } = await supabase.auth.getUser();
+          const uid = authData.user?.id;
+          if (uid) {
+            const { data, error } = await supabase
+              .from("books")
+              .select("id, title, page_count")
+              .eq("user_id", uid)
+              .order("created_at", { ascending: false })
+              .limit(500);
+            if (!error && data && data.length > 0) {
+              const list = data.map((b: any) => ({
+                id: b.id,
+                title: b.title,
+                page_count: b.page_count,
+                chapter_count: null as number | null,
+                is_active: b.id === deps.activeBookId,
+              }));
+              return {
+                result: { books: list, note: "Library still loading in the app; read straight from the account." },
+                event: { name, summary: `Listed ${list.length} book(s)`, ok: true },
+              };
+            }
+          }
+        }
+        return { result: fromState, event: { name, summary: `Listed ${fromState.length} book(s)`, ok: true } };
       }
+
       case "get_book": {
         const book = deps.books.find((b) => b.id === args.book_id);
         if (!book) return { result: { error: "Book not found" }, event: { name, summary: "Book not found", ok: false } };
@@ -1902,7 +1937,9 @@ export async function executeChatTool(
               name: c.name,
               start_page: c.startPage,
               end_page: c.endPage,
-              has_text: !!c.textContent,
+              // Text is fetched on demand by get_chapter_text, so presence in
+              // memory says nothing about whether the chapter has any.
+
             })),
           },
           event: { name, summary: `Opened "${book.title}"`, ok: true },
@@ -1923,7 +1960,7 @@ export async function executeChatTool(
         if (!chapter) {
           return { result: { error: "Chapter not found" }, event: { name, summary: "Chapter not found", ok: false } };
         }
-        const text = chapter.textContent || "";
+        const text = chapter.textContent || (deps.loadChapterText ? await deps.loadChapterText(chapter.id) : "");
         return {
           result: {
             id: chapter.id,
