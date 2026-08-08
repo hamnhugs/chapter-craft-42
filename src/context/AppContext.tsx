@@ -361,7 +361,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               addedAt: new Date(b.created_at).getTime(),
               category: b.category || undefined,
               tags: Array.isArray(b.tags) ? b.tags : [],
+              folderId: b.folder_id ?? null,
             };
+
             return [newBook, ...prev];
           });
         }
