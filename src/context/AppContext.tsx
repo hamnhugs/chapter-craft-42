@@ -836,6 +836,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateBookTags,
         getActiveBook,
         loadBookFile,
+        loadChapterText,
+        loadBookChapterText,
+
         refreshWikis,
         setActiveWiki,
         setActiveNeurons,
