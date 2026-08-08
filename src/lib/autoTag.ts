@@ -47,17 +47,31 @@ function excerptFrom(text: string): string {
   return clean.slice(0, EXCERPT_CHARS);
 }
 
-/** Start / middle / end excerpts. Books without chapter text get none — the
- *  model still has the title and chapter names to work from. */
-function buildExcerpts(book: BookDocument): string[] {
-  const withText = book.chapters.filter((c) => (c.textContent || "").trim().length > 80);
-  if (withText.length === 0) return [];
-  const picks =
-    withText.length <= 3
-      ? withText
-      : [withText[0], withText[Math.floor(withText.length / 2)], withText[withText.length - 1]];
-  return picks.map((c) => excerptFrom(c.textContent)).filter((e) => e.length > 0);
+/** Start / middle / end excerpts. Chapter text is no longer held in memory at
+ *  startup, so when it is absent the three sampled chapters are fetched here —
+ *  three rows per book instead of the whole library's text. Books with no text
+ *  at all get none; the model still has the title and chapter names. */
+async function buildExcerpts(book: BookDocument): Promise<string[]> {
+  if (book.chapters.length === 0) return [];
+  const inMemory = book.chapters.filter((c) => (c.textContent || "").trim().length > 80);
+  const sample = <T,>(list: T[]): T[] =>
+    list.length <= 3 ? list : [list[0], list[Math.floor(list.length / 2)], list[list.length - 1]];
+
+  if (inMemory.length > 0) {
+    return sample(inMemory).map((c) => excerptFrom(c.textContent || "")).filter((e) => e.length > 0);
+  }
+
+  const ids = sample(book.chapters).map((c) => c.id);
+  const { data, error } = await supabase.from("chapters").select("id, text_content").in("id", ids);
+  if (error || !data) return [];
+  const order = new Map(ids.map((id, i) => [id, i]));
+  return data
+    .slice()
+    .sort((a: any, b: any) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
+    .map((r: any) => excerptFrom(r.text_content || ""))
+    .filter((e) => e.length > 80);
 }
+
 
 /** Every tag already used in the library — injected into the prompt so the
  *  model reuses "science fiction" instead of coining "sci-fi". Sorted by
