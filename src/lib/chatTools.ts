@@ -1937,7 +1937,9 @@ export async function executeChatTool(
               name: c.name,
               start_page: c.startPage,
               end_page: c.endPage,
-              has_text: !!c.textContent,
+              // Text is fetched on demand by get_chapter_text, so presence in
+              // memory says nothing about whether the chapter has any.
+
             })),
           },
           event: { name, summary: `Opened "${book.title}"`, ok: true },
