@@ -339,7 +339,7 @@ export function groupWithheld(gates: Map<string, ToolGate>): Array<{
  *  copy-vocabulary test walks this so a new rule cannot slip past it. */
 export function allGateCopy(): string[] {
   const out: string[] = [AVAILABLE.reason, AVAILABLE.fix, ...Object.values(MODEL_FACT)];
-  const probes = [FORGE_TOOL, RUN_TOOL, "generate_video", "generate_image", "web_search", "delete_chapter", "some_new_tool"];
+  const probes = [FORGE_TOOL, RUN_TOOL, "generate_video", "generate_image", "web_search", "delete_chapter", "rename_book", "some_new_tool"];
   for (const rule of RULES) {
     out.push(rule.groupReason, rule.groupFix);
     for (const tool of probes) out.push(rule.reason(tool), rule.fix(tool));

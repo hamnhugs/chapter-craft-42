@@ -28,7 +28,7 @@ import { CHAT_TOOL_DEFINITIONS } from "@/lib/chatTools";
  * run_tool and never enter the roster, which is why the library can grow
  * without making everything else worse.
  */
-const ROSTER_BUDGET = 66;
+const ROSTER_BUDGET = 67; // +1: rename_book (library retitling, single + batch in one verb)
 
 describe("the tool roster stays within its stated budget", () => {
   it(`ships at most ${ROSTER_BUDGET} tools`, () => {

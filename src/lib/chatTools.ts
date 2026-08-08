@@ -108,6 +108,9 @@ export interface ToolDeps {
   addChapter: (bookId: string, chapter: Chapter) => Promise<void>;
   updateChapter: (bookId: string, chapterId: string, name: string) => Promise<void> | void;
   removeChapter: (bookId: string, chapterId: string) => Promise<void> | void;
+  /** Retitle a book in the library (persists + updates local state). */
+  updateBookTitle?: (bookId: string, newTitle: string) => Promise<void> | void;
+
   burplexityApiToken?: string;
   /** Free web-search backend (Tavily). Used when no Burplexity token is set. */
   tavilyApiKey?: string;
@@ -547,6 +550,34 @@ export const CHAT_TOOL_DEFINITIONS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "rename_book",
+      description:
+        "Retitle one or more books in the user's library. Use it for a direct request ('rename this to X') or to clean up placeholder/import titles like 'document (1).pdf' or 'Untitled'. Only the title changes — the file, chapters, tags and folder are untouched. Ids come from list_books; book_id defaults to the active book. For a single rename pass book_id + title. For a cleanup of several books pass renames[] (max 25) in ONE call. Bulk rule: before any multi-book rename, show the user the old -> new list in your own words and only call this after they say yes.",
+      parameters: {
+        type: "object",
+        properties: {
+          book_id: { type: "string", description: "Book to retitle, from list_books. Defaults to the active book." },
+          title: { type: "string", description: "The new title (1-300 characters)." },
+          renames: {
+            type: "array",
+            description: "Batch mode: up to 25 { book_id, title } pairs applied in one call.",
+            items: {
+              type: "object",
+              properties: {
+                book_id: { type: "string" },
+                title: { type: "string" },
+              },
+              required: ["book_id", "title"],
+            },
+          },
+        },
+      },
+    },
+  },
+
   {
     type: "function",
     function: {
@@ -2586,6 +2617,51 @@ export async function executeChatTool(
           event: { name, summary: `Renamed chapter to "${args.name}"`, ok: true },
         };
       }
+      case "rename_book": {
+        if (!deps.updateBookTitle) {
+          return { result: { error: "Renaming books is not available in this session." }, event: { name, summary: "Rename unavailable", ok: false } };
+        }
+        // One shape for both modes: single -> a one-item batch.
+        const raw: Array<{ book_id?: unknown; title?: unknown }> = Array.isArray(args.renames) && args.renames.length > 0
+          ? args.renames.slice(0, 25)
+          : [{ book_id: args.book_id ?? deps.activeBookId, title: args.title }];
+
+        const applied: Array<{ book_id: string; old_title: string; new_title: string }> = [];
+        const failed: Array<{ book_id: string; reason: string }> = [];
+        const warnings: string[] = [];
+
+        for (const item of raw) {
+          const bookId = String(item?.book_id || "").trim();
+          const title = String(item?.title ?? "").trim().replace(/\s+/g, " ");
+          if (!bookId) { failed.push({ book_id: "", reason: "book_id missing — use list_books for ids" }); continue; }
+          if (!title) { failed.push({ book_id: bookId, reason: "title cannot be empty" }); continue; }
+          if (title.length > 300) { failed.push({ book_id: bookId, reason: "title must be 300 characters or fewer" }); continue; }
+          const book = deps.books.find((b) => b.id === bookId);
+          if (!book) { failed.push({ book_id: bookId, reason: "book not found in this library" }); continue; }
+          if (book.title === title) { failed.push({ book_id: bookId, reason: "title is already set to that value" }); continue; }
+          if (deps.books.some((b) => b.id !== bookId && b.title === title)) {
+            warnings.push(`Another book is already titled "${title}"`);
+          }
+          try {
+            await deps.updateBookTitle(bookId, title);
+            applied.push({ book_id: bookId, old_title: book.title, new_title: title });
+          } catch (e: any) {
+            failed.push({ book_id: bookId, reason: e?.message || "save failed" });
+          }
+        }
+
+        const ok = applied.length > 0;
+        const summary = applied.length === 1
+          ? `Renamed "${applied[0].old_title}" to "${applied[0].new_title}"`
+          : ok
+            ? `Renamed ${applied.length} books${failed.length ? ` (${failed.length} skipped)` : ""}`
+            : failed[0]?.reason || "No books renamed";
+        return {
+          result: { ok, renamed: applied, failed, warnings },
+          event: { name, summary, ok },
+        };
+      }
+
       case "delete_chapter": {
         await deps.removeChapter(String(args.book_id), String(args.chapter_id));
         return { result: { ok: true }, event: { name, summary: `Deleted chapter`, ok: true } };
