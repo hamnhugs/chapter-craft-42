@@ -1,0 +1,422 @@
+import { describe, it, expect, vi, afterEach } from "vitest";
+
+/**
+ * THE PROMPT MAY NEVER NAME A TOOL THAT IS NOT ON THE WIRE.
+ *
+ * Roster removal (toolAvailability.ts) stops a withheld tool from being CALLED.
+ * It does nothing about the system prompt, which used to describe the whole
+ * capability surface from string literals — so a turn that carried no
+ * `run_tool` still handed the model a named list of the user's approved tools
+ * and told it `run_tool` runs any of them. A described-but-absent tool is the
+ * single highest-fabrication shape known, and that is the mechanism behind the
+ * original report: "it keeps lying about being able to use them."
+ *
+ * The centrepiece below is therefore a PROPERTY, not a handful of examples:
+ * whatever the offered set, every registered tool name that survives into the
+ * prompt text must be in it. Examples rot as prose is edited; the property
+ * holds for sentences nobody has written yet.
+ */
+
+// Hermetic by construction. Every async lookup the builder makes is replaced,
+// so the prompt is a pure function of its arguments and can be compared byte
+// for byte. `importOriginal` on toolFoundry keeps the rest of that module real
+// — chatTools reaches it through foundryTools for the roster definitions.
+// Retrieval is empty by DEFAULT so the byte-for-byte baseline below stays a
+// pure function of the builder's arguments; the two tests that need a
+// retrieved node set it and reset it in afterEach. The factory closes over the
+// binding and only reads it at call time, well after module init.
+let retrievalPayload: { nodes: any[]; edges: any[] } = { nodes: [], edges: [] };
+vi.mock("@/lib/knowledgeApi", () => ({
+  fetchKnowledgeEntries: async () => [],
+  fetchConversationMemory: async () => null,
+  retrieveKnowledge: async () => retrievalPayload,
+  filterSupersededNodes: async (nodes: unknown[]) => nodes,
+}));
+afterEach(() => { retrievalPayload = { nodes: [], edges: [] }; });
+vi.mock("@/lib/imageGen", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/imageGen")>()),
+  fetchImagesForEntries: async () => [],
+}));
+vi.mock("@/lib/memoryLens", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/memoryLens")>()),
+  getRecallStates: async () => new Map(),
+}));
+
+// Names deliberately unlike any registered tool: a forged tool's name is
+// printed bare in the roster, and one colliding with a real tool name would
+// make the property test pass or fail for the wrong reason.
+const APPROVED = [
+  { id: "t1", root_id: null, name: "word_tally", description: "Counts words per chapter.", version: 1, superseded_by: null, fail_count: 0, last_run_at: null },
+  { id: "t2", root_id: null, name: "page_spans", description: "Maps chapters onto page ranges.", version: 2, superseded_by: null, fail_count: 0, last_run_at: null },
+  { id: "t3", root_id: null, name: "quote_finder", description: "Finds quotations by phrase.", version: 1, superseded_by: null, fail_count: 0, last_run_at: null },
+  { id: "t4", root_id: null, name: "term_index", description: "Builds a term index for a book.", version: 1, superseded_by: null, fail_count: 0, last_run_at: null },
+];
+vi.mock("@/lib/toolFoundry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/toolFoundry")>()),
+  listTools: async () => APPROVED,
+}));
+
+const { buildChatSystemPrompt } = await import("@/lib/buildChatSystemPrompt");
+const { CHAT_TOOL_DEFINITIONS } = await import("@/lib/chatTools");
+
+const ALL_TOOLS: string[] = (CHAT_TOOL_DEFINITIONS as ReadonlyArray<any>).map((d) => d.function.name as string);
+const TOOL_NAMES = new Set(ALL_TOOLS);
+
+type Opts = Parameters<typeof buildChatSystemPrompt>[0];
+const build = (extra: Partial<Opts> = {}) =>
+  buildChatSystemPrompt({ books: [], selectedBook: undefined, deepResearch: false, ...extra });
+
+const book: any = {
+  id: "b1", title: "Tidepools", fileName: "tidepools.pdf", pageCount: 120,
+  chapters: [{ id: "c1", name: "Shore", startPage: 1, endPage: 10, textContent: "waves" }],
+};
+const bookNoText: any = { ...book, chapters: [{ ...book.chapters[0], textContent: "" }] };
+
+// Every branch that emits prose: the three mutually exclusive neuron-scope
+// sentences, voice vs text, both chapter-text branches, and the Foundry.
+const SCENARIOS: Array<[string, Partial<Opts>]> = [
+  ["defaults", {}],
+  ["one named neuron", { activeNeurons: [{ id: "n1", name: "Marine" }] }],
+  ["all neurons + voice", { voiceMode: true, allNeurons: true, activeNeurons: [{ id: "n1", name: "Marine" }], reflex: false, maxReplySentences: 3 }],
+  ["two neurons + deep research", { books: [book], selectedBook: book, deepResearch: true, activeNeurons: [{ id: "n1", name: "Marine" }, { id: "n2", name: "Botany" }] }],
+  ["chapter text not loaded", { books: [bookNoText], selectedBook: bookNoText }],
+  ["question does not touch the book", { books: [book], selectedBook: book, latestUserQuery: "vvv qqq zzz" }],
+  ["foundry on", { foundryTools: true }],
+  ["foundry on + voice", { foundryTools: true, voiceMode: true }],
+  // Lean Mode was never varied here, and that blind spot cost us: its block is
+  // appended LAST — the position the model recalls best — and it named ten
+  // tools from a string literal. Two live triggers made it lie: Lean Mode with
+  // "Create artifacts" switched off (the artifact sentence 390 lines earlier is
+  // correctly dropped, then re-asserted here), and Lean Mode on a model whose
+  // caps.tools is false (nothing goes out at all, and the last section names
+  // eight tools).
+  ["lean mode", { leanMode: "lean" }],
+  ["chat-only + a book", { leanMode: "chat_only", books: [book], selectedBook: book }],
+];
+
+const OFFERED_SETS: Array<[string, string[]]> = [
+  ["every tool", ALL_TOOLS],
+  ["no tools at all", []],
+  ["forge only", ["forge_tool"]],
+  ["run only", ["run_tool"]],
+  ["a middle subset", ALL_TOOLS.filter((_, i) => i % 3 === 0)],
+  ["a second middle subset", ALL_TOOLS.filter((_, i) => i % 5 === 1).concat("run_tool")],
+];
+
+// Two extractors on purpose. Backticks are how the prompt marks a callable, and
+// a bare snake_case token is how it used to list them — the sentence that
+// started this whole bug named eighteen tools with no backticks at all.
+const BACKTICKED = /`([^`\n]+)`/g;
+const SNAKE = /\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g;
+
+function toolsNamedIn(prompt: string): string[] {
+  const found = new Set<string>();
+  for (const m of prompt.matchAll(BACKTICKED)) {
+    const id = m[1].trim();
+    if (TOOL_NAMES.has(id)) found.add(id);
+  }
+  for (const m of prompt.matchAll(SNAKE)) if (TOOL_NAMES.has(m[0])) found.add(m[0]);
+  return Array.from(found).sort();
+}
+
+/** Fence nonces are random per build, so byte comparisons normalize them. */
+const stableNonces = (s: string) => s.replace(/<<<(tools|end|data|memory):[^>]*>>>/g, "<<<$1:N>>>");
+
+describe("property: the prompt only ever names tools that are on the wire", () => {
+  for (const [setName, offeredTools] of OFFERED_SETS) {
+    for (const [scenarioName, opts] of SCENARIOS) {
+      it(`${setName} · ${scenarioName}`, async () => {
+        const { prompt } = await build({ ...opts, offeredTools });
+        const offeredSet = new Set(offeredTools);
+        const named = toolsNamedIn(prompt);
+        const strays = named.filter((n) => !offeredSet.has(n));
+        expect(strays, `named but not offered: ${strays.join(", ")}`).toEqual([]);
+      });
+    }
+  }
+
+  it("still names the tools it does have — gating is not a mute button", async () => {
+    // The converse failure would pass every assertion above: strip everything
+    // and nothing is ever misnamed. A full roster must still be described.
+    const { prompt } = await build({ foundryTools: true, offeredTools: ALL_TOOLS });
+    expect(toolsNamedIn(prompt).length).toBeGreaterThan(40);
+  });
+
+  it("drops the roster sentence rather than leaving it dangling", async () => {
+    const { prompt } = await build({ offeredTools: [] });
+    expect(prompt).not.toContain("You have these tools:");
+    expect(prompt).not.toContain("search tools:");
+  });
+
+  it("rebuilds the roster sentence from what is actually offered", async () => {
+    const { prompt } = await build({ offeredTools: ["list_books", "get_book", "search_wiki"] });
+    expect(prompt).toContain("You have these tools: list_books, get_book, and one search tool:");
+    expect(prompt).not.toContain("get_chapter_text");
+  });
+});
+
+describe("the Tool Foundry block is truthful per switch", () => {
+  it("emits no approved-tool roster when run_tool is off the wire", async () => {
+    const { prompt } = await build({ foundryTools: true, offeredTools: ["forge_tool"] });
+    // The fence markers ARE the roster; a menu the model cannot order from is
+    // precisely what makes it report having run something.
+    expect(prompt).not.toContain("<<<tools:");
+    for (const t of APPROVED) expect(prompt, t.name).not.toContain(t.name);
+    expect(prompt).not.toContain("run_tool");
+    // …and it names the on-screen control once, without telling it to try.
+    expect(prompt).toContain("Run approved tools");
+    expect(prompt).toContain("Settings → Tool Foundry");
+  });
+
+  it("still describes forging when only forge_tool is offered", async () => {
+    const { prompt } = await build({ foundryTools: true, offeredTools: ["forge_tool"] });
+    expect(prompt).toContain("## Tool Foundry — your self-built tools");
+    expect(prompt).toContain("forge reusable tools for yourself (`forge_tool`)");
+    expect(prompt).toContain("waits for the user's explicit approval");
+  });
+
+  it("emits the roster, and no forging prose, when only run_tool is offered", async () => {
+    const { prompt } = await build({ foundryTools: true, offeredTools: ["run_tool"] });
+    expect(prompt).toContain("You can run approved ones (`run_tool`).");
+    expect(prompt).toContain("<<<tools:");
+    expect(prompt).toContain("page_spans (v2): Maps chapters onto page ranges.");
+    expect(prompt).not.toContain("forge_tool");
+    expect(prompt).not.toContain("Forge when a reusable");
+    // search_wiki is not offered here, so the Toolshed pointer must not claim it.
+    expect(prompt).not.toContain("search_wiki");
+    expect(prompt).toContain("`run_tool` runs any approved tool by name:");
+  });
+
+  it("emits no Tool Foundry section when neither foundry tool is offered", async () => {
+    const { prompt } = await build({ foundryTools: true, offeredTools: [] });
+    expect(prompt).not.toContain("Tool Foundry");
+    for (const t of APPROVED) expect(prompt, t.name).not.toContain(t.name);
+  });
+
+  it("keeps the nonce fence and the sanitizer on the roster", async () => {
+    const { prompt } = await build({ foundryTools: true, offeredTools: ALL_TOOLS });
+    const open = prompt.match(/<<<tools:([0-9a-z]+)>>>/);
+    expect(open, "roster must still be fenced").toBeTruthy();
+    expect(prompt).toContain(`<<<end:${open![1]}>>>`);
+    // Ranked and capped, not dumped: four approved tools, three slots.
+    expect(prompt).toContain("of your 4 approved tools closest to this request");
+  });
+});
+
+describe("Lean Mode's block is gated too — and it is the LAST thing in the prompt", () => {
+  it("names nothing when the turn carries no tools at all", async () => {
+    // The live trigger: a model whose caps.tools is false (gemini-3-pro-image-
+    // preview declares exactly that). Zero tools go out and the final section
+    // used to name eight of them.
+    const { prompt } = await build({ leanMode: "lean", offeredTools: [] });
+    expect(prompt).toContain("Lean Mode is ON");
+    expect(toolsNamedIn(prompt)).toEqual([]);
+    // Gating is not a mute button: the block still has to do its job.
+    expect(prompt).toContain("Everything free is untouched:");
+    expect(prompt).toContain("a Lean Mode reply must never be thinner than a normal one");
+  });
+
+  it("drops the create_artifact fallback when 'Create artifacts' is off", async () => {
+    // The other live trigger: the richOutputLines block 390 lines earlier
+    // correctly drops its create_artifact sentence, and the lean block used to
+    // re-assert it — one prompt, two contradicting claims, the false one last.
+    const { prompt } = await build({
+      leanMode: "lean",
+      offeredTools: ALL_TOOLS.filter((t) => t !== "create_artifact"),
+    });
+    expect(prompt).not.toContain("create_artifact");
+    // …and the block stops listing artifacts among the free things too. (The
+    // Workspace sentence's "rendered HTML/SVG artifacts" describes what the
+    // store HOLDS, not a capability this turn has, so it legitimately stays.)
+    expect(prompt).toContain("Everything free is untouched: memory and neurons, books, structured blocks, and");
+    // The rest of the step survives, including the sheet it should reach for first.
+    expect(prompt).toContain("reach for create_blueprint_sheet FIRST");
+    expect(prompt).toContain("describe the shot concretely, or find something already in their library that fits.");
+  });
+
+  it("inherits the lead-in when the blueprint sheet itself is off the wire", async () => {
+    const { prompt } = await build({
+      leanMode: "lean",
+      offeredTools: ALL_TOOLS.filter((t) => t !== "create_blueprint_sheet"),
+    });
+    expect(prompt).not.toContain("create_blueprint_sheet");
+    // No dangling "Otherwise:" with nothing before it.
+    expect(prompt).not.toContain("best free version. Otherwise:");
+    expect(prompt).toContain("best free version. For anything visual: write out the finished image prompt");
+  });
+
+  it("keeps every word when the whole roster is on the wire", async () => {
+    const { prompt } = await build({ leanMode: "lean", offeredTools: ALL_TOOLS });
+    expect(prompt).toContain(
+      "re-displaying anything already made (show_image, show_video, show_splat, list_images, list_videos, list_splats, view_image, recall_image_memories). They already paid for those — show them freely.",
+    );
+  });
+});
+
+describe("a retrieved Toolshed card cannot smuggle run_tool into the prompt", () => {
+  // Verbatim shape of toolshed.ts `buildToolCard` — the entry that chatTools
+  // upserts into knowledge_entries with entry_type "tool".
+  const toolCard = [
+    "What it does: Counts words per chapter.",
+    "When to reach for it: when the request turns on word tally — running this beats re-deriving the same steps by hand.",
+    'Signature: run_tool("word_tally", { chapter_id }) — one object argument; pass the keys shown.',
+    "Limitations: pure computation over the arguments you pass. It cannot reach the network.",
+    "Tags: tool, foundry, word, tally",
+    "Version and health: v1 — never run yet.",
+  ].join("\n");
+  const toolNode = { id: "k1", title: "Tool: word_tally", entry_type: "tool", content: toolCard, hop: 0, score: 0.9 };
+
+  it("strips the callable signature when run_tool is off the wire", async () => {
+    // The reported bug surviving the roster fix: the user has forged and
+    // approved a tool, "Run approved tools" is off (the default), and the card
+    // arrives LOWER in the prompt — closer to the question — than the Foundry
+    // section that just said running is switched off.
+    retrievalPayload = { nodes: [toolNode], edges: [] };
+    const { prompt } = await build({
+      latestUserQuery: "count the words in chapter one",
+      offeredTools: ALL_TOOLS.filter((t) => t !== "run_tool"),
+    });
+    expect(prompt).toContain("### Tool: word_tally");
+    expect(prompt).not.toContain("run_tool");
+    // Only the callable line goes — the rest is real context about what the
+    // user has built, and the fencing that makes it safe stays exactly as-is.
+    expect(prompt).toContain("What it does: Counts words per chapter.");
+    expect(prompt).toContain("Version and health: v1");
+    expect(prompt).toContain("_(a self-built tool, not a journal memory)_");
+    const open = prompt.match(/<<<memory:([0-9a-z]+)>>>/);
+    expect(open, "retrieved entries must still be fenced").toBeTruthy();
+    expect(prompt).toContain(`<<<end:${open![1]}>>>`);
+  });
+
+  it("keeps the signature when run_tool IS on the wire", async () => {
+    retrievalPayload = { nodes: [toolNode], edges: [] };
+    const { prompt } = await build({ latestUserQuery: "count the words", offeredTools: ALL_TOOLS });
+    expect(prompt).toContain('Signature: run_tool("word_tally", { chapter_id })');
+  });
+
+  it("leaves a non-tool entry's content untouched", async () => {
+    // The user's own journal text must reach the model verbatim; the strip is
+    // scoped to entry_type "tool" and to the callable line, nothing else.
+    const journal = "Signature: she signed every letter with a single looping S.\nShe kept them in a tin.";
+    retrievalPayload = { nodes: [{ id: "k2", title: "Letters", entry_type: "note", content: journal, hop: 0 }], edges: [] };
+    const { prompt } = await build({
+      latestUserQuery: "the letters",
+      offeredTools: ALL_TOOLS.filter((t) => t !== "run_tool"),
+    });
+    expect(prompt).toContain(journal);
+    expect(prompt).not.toContain("_(a self-built tool");
+  });
+});
+
+describe("under-sell: a conjunction must not delete a tool that IS on the wire", () => {
+  it("keeps the lock-a-master instruction when only DELETING masters is off", async () => {
+    // delete_master_asset is a danger:true toggle — exactly the kind users
+    // switch off — and it used to take lock_master_asset's instruction with it.
+    const { prompt } = await build({ offeredTools: ALL_TOOLS.filter((t) => t !== "delete_master_asset") });
+    expect(prompt).not.toContain("delete_master_asset");
+    expect(prompt).toContain("`lock_master_asset` manages masters.");
+    expect(prompt).toContain("offer to lock it as a master with a short assembly tag");
+  });
+
+  it("keeps the image/splat step of the video SOP when master-locking is off", async () => {
+    // All three of list_images, list_splats and generate_video are offered
+    // here; the four-way conjunction deleted their step anyway, and the SOP
+    // then generated a character clip from pure text.
+    const { prompt } = await build({ offeredTools: ALL_TOOLS.filter((t) => t !== "lock_master_asset") });
+    expect(prompt).not.toContain("lock_master_asset");
+    expect(prompt).toContain(
+      "NO MASTER BUT AN IMAGE/SPLAT EXISTS: pass image_id (from `list_images`) or splat_id (from `list_splats`) to `generate_video`.",
+    );
+    expect(prompt).toContain("`delete_master_asset` manages masters.");
+  });
+
+  it("narrows the step to the identity sources that actually survive", async () => {
+    const { prompt } = await build({
+      offeredTools: ALL_TOOLS.filter((t) => t !== "list_splats" && t !== "lock_master_asset"),
+    });
+    expect(prompt).toContain("NO MASTER BUT AN IMAGE EXISTS: pass image_id (from `list_images`) to `generate_video`.");
+  });
+
+  it("still deletes a step that is genuinely meaningless without both tools", async () => {
+    // The converse guard: splitting must not turn every conjunction into a
+    // disjunction. "pass its master_id to generate_video" says nothing at all
+    // with no generate_video to pass it to.
+    const { prompt } = await build({ offeredTools: ALL_TOOLS.filter((t) => t !== "generate_video") });
+    expect(prompt).not.toContain("CHECK FOR A MASTER FIRST");
+    expect(prompt).not.toContain("NO MASTER BUT");
+  });
+});
+
+describe("the additive contract: omitting offeredTools changes nothing", () => {
+  // Captured from the builder BEFORE this change and re-verified byte for byte
+  // afterwards. If you deliberately edit the prompt's wording, re-capture both
+  // numbers — a mismatch here means default behaviour moved, which is the one
+  // thing this option was designed never to do.
+  const BASELINE_LENGTH = 23794;
+  const BASELINE_DIGEST = "8202213c";
+  const fnv1a = (s: string) => {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return h.toString(16).padStart(8, "0");
+  };
+
+  it("reproduces the pre-change prompt for a fixed input", async () => {
+    const { prompt } = await build({});
+    expect(prompt.length).toBe(BASELINE_LENGTH);
+    expect(fnv1a(prompt)).toBe(BASELINE_DIGEST);
+  });
+
+  it("reads 'not told' as 'allow' in every branch", async () => {
+    for (const [name, opts] of SCENARIOS) {
+      const silent = stableNonces((await build({ ...opts })).prompt);
+      const full = stableNonces((await build({ ...opts, offeredTools: ALL_TOOLS })).prompt);
+      expect(full, name).toBe(silent);
+    }
+  });
+});
+
+describe("copy invariant: the gating introduces no permission or safety vocabulary", () => {
+  // Same word list the gate-copy test walks. Standard safety framing in a
+  // system prompt raised unfaithful refusals on benign requests 15.6x, which is
+  // the failure mode this whole ship is removing — so the fix must not
+  // reintroduce it in the sentences it rewrites.
+  const FORBIDDEN = [
+    "not permitted", "not allowed", "for safety", "unsafe", "blocked", "block ",
+    "denied", "deny", "forbidden", "prohibited", "disallowed", "unauthorized",
+    "restricted", "violation", "security", "harmful", "dangerous", "abuse",
+    "you cannot", "you can't", "you may not", "you must not", "misuse",
+  ];
+
+  /** Clause-level, so carried text is not re-litigated as if it were new. A
+   *  gated sentence is a rearrangement of clauses that already shipped; only
+   *  the clauses that appear nowhere in the ungated corpus are this change's. */
+  const clausesOf = (text: string) =>
+    text.split(/[.;:—\n]/).map((c) => c.trim()).filter((c) => c.length > 0);
+
+  it("holds for every clause the gated builds introduce", async () => {
+    const corpus = new Set<string>();
+    for (const [, opts] of SCENARIOS) {
+      for (const c of clausesOf((await build({ ...opts })).prompt)) corpus.add(c);
+    }
+    const gated: string[] = [];
+    for (const [, offeredTools] of OFFERED_SETS) {
+      for (const [, opts] of SCENARIOS) gated.push((await build({ ...opts, offeredTools })).prompt);
+    }
+    let checked = 0;
+    for (const prompt of gated) {
+      for (const c of clausesOf(prompt)) {
+        if (corpus.has(c)) continue;
+        checked++;
+        const lower = c.toLowerCase();
+        for (const word of FORBIDDEN) {
+          expect(lower.includes(word), `"${word}" in new clause: ${c}`).toBe(false);
+        }
+      }
+    }
+    // The gating really does author new clauses — otherwise this passes vacuously.
+    expect(checked).toBeGreaterThan(5);
+  });
+});

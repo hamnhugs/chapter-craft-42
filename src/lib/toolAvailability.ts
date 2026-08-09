@@ -116,13 +116,44 @@ export function permissionIdFor(tool: string): string | undefined {
 
 const permissionLabelFor = toolDisplayLabel;
 
+/**
+ * tool → the OTHER permission id its executor also requires.
+ *
+ * `supersede_memory_entry` has its own switch, and its executor additionally
+ * refuses every call when "Edit memory entries" is off — supersession is an
+ * update-class edit, so the same toggle governs both paths. Until this map
+ * existed the roster carried the verb and the prompt actively instructed its
+ * use, so each attempt cost a round trip to reach a hard refusal: a prompt, a
+ * roster and an executor disagreeing about one tool.
+ *
+ * Only add an entry when the executor refuses 100% of calls on that switch. A
+ * dependency that merely narrows what a tool can do belongs in the tool's own
+ * result, not here — withholding it would be the over-filtering failure.
+ */
+const DEPENDS_ON: Record<string, string> = {
+  supersede_memory_entry: "update_memory_entry",
+};
+
+/** The permission id that actually fired for `tool`, own switch first. */
+function firedPermissionId(tool: string, permissions: Record<string, boolean>): string | undefined {
+  const own = TOOL_PERMISSION[tool];
+  if (own && permissions[own] === false) return own;
+  const dep = DEPENDS_ON[tool];
+  return dep && permissions[dep] === false ? dep : undefined;
+}
+
+const permissionIdLabel = (id: string) => PERMISSION_LABEL[id] || id;
+
 interface GateRule {
   code: ToolGateCode;
   fixTarget: ToolGate["fixTarget"];
   /** Does this rule withhold `tool` on this turn? */
   applies: (tool: string, input: ToolGateInput) => boolean;
-  reason: (tool: string) => string;
-  fix: (tool: string) => string;
+  // Both take the input so a rule that can fire for more than one reason names
+  // the switch that ACTUALLY fired. Sending someone to a control that is
+  // already on is the same failure as saying nothing.
+  reason: (tool: string, input: ToolGateInput) => string;
+  fix: (tool: string, input: ToolGateInput) => string;
   /** Copy for the grouped UI row, where one line covers several tools. */
   groupReason: string;
   groupFix: string;
@@ -223,10 +254,26 @@ const RULES: GateRule[] = [
     fixTarget: "settings_permissions",
     applies: (tool, input) => {
       const permId = TOOL_PERMISSION[tool];
-      return !!permId && input.permissions[permId] === false;
+      if (!!permId && input.permissions[permId] === false) return true;
+      // A tool whose EXECUTOR refuses 100% of calls on someone else's switch has
+      // to leave the roster on that switch too. Offering it was the mildest form
+      // of the bug this file exists to fix: the roster carried the verb, the
+      // prompt actively instructed its use, and every call came back a hard
+      // refusal — one wasted round trip per attempt, and a prompt, a roster and
+      // an executor that disagreed about the same tool.
+      const dependsOn = DEPENDS_ON[tool];
+      return !!dependsOn && input.permissions[dependsOn] === false;
     },
-    reason: (tool) => `“${permissionLabelFor(tool)}” is switched off in your AI permissions.`,
-    fix: (tool) => `Turn “${permissionLabelFor(tool)}” back on in Settings → AI Permissions.`,
+    reason: (tool, input) => {
+      const fired = firedPermissionId(tool, input.permissions);
+      return fired && fired !== TOOL_PERMISSION[tool]
+        ? `“${permissionLabelFor(tool)}” also needs “${permissionIdLabel(fired)}”, which is switched off in your AI permissions.`
+        : `“${permissionLabelFor(tool)}” is switched off in your AI permissions.`;
+    },
+    fix: (tool, input) => {
+      const fired = firedPermissionId(tool, input.permissions);
+      return `Turn “${fired ? permissionIdLabel(fired) : permissionLabelFor(tool)}” back on in Settings → AI Permissions.`;
+    },
     groupReason: "These are switched off in your AI permissions.",
     groupFix: "Turn the ones you want back on in Settings → AI Permissions.",
   },
@@ -248,7 +295,7 @@ export function computeToolGates(input: ToolGateInput): Map<string, ToolGate> {
     gates.set(
       tool,
       rule
-        ? { tool, code: rule.code, reason: rule.reason(tool), fix: rule.fix(tool), fixTarget: rule.fixTarget }
+        ? { tool, code: rule.code, reason: rule.reason(tool, input), fix: rule.fix(tool, input), fixTarget: rule.fixTarget }
         : { tool, ...AVAILABLE },
     );
   }
@@ -339,10 +386,28 @@ export function groupWithheld(gates: Map<string, ToolGate>): Array<{
  *  copy-vocabulary test walks this so a new rule cannot slip past it. */
 export function allGateCopy(): string[] {
   const out: string[] = [AVAILABLE.reason, AVAILABLE.fix, ...Object.values(MODEL_FACT)];
-  const probes = [FORGE_TOOL, RUN_TOOL, "generate_video", "generate_image", "web_search", "delete_chapter", "rename_book", "some_new_tool"];
-  for (const rule of RULES) {
-    out.push(rule.groupReason, rule.groupFix);
-    for (const tool of probes) out.push(rule.reason(tool), rule.fix(tool));
+  const probes = [
+    FORGE_TOOL, RUN_TOOL, "generate_video", "generate_image", "web_search",
+    "delete_chapter", "rename_book", "supersede_memory_entry", "some_new_tool",
+  ];
+  // Two permission states, because off_permission now has two branches: the
+  // tool's own switch, and a DEPENDS_ON switch its executor also requires.
+  // Walking only one state would leave half the copy unchecked — and the
+  // unchecked half is the newer, less-read half.
+  const states: Array<Record<string, boolean>> = [
+    Object.fromEntries(Object.values(TOOL_PERMISSION).map((id) => [id, false])),
+    Object.fromEntries(Object.entries(DEPENDS_ON).map(([, dep]) => [dep, false])),
+  ];
+  for (const permissions of states) {
+    const input = {
+      toolNames: probes, leanMode: "full", permissions,
+      forgeOptIn: false, runOptIn: false, foundryReady: false,
+      providerSupportsTools: false, imageTurnDisablesTools: false,
+    } as unknown as ToolGateInput;
+    for (const rule of RULES) {
+      out.push(rule.groupReason, rule.groupFix);
+      for (const tool of probes) out.push(rule.reason(tool, input), rule.fix(tool, input));
+    }
   }
   return out;
 }

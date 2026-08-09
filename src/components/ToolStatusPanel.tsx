@@ -7,6 +7,7 @@ import {
   groupWithheld,
   permissionIdFor,
   toolDisplayLabel,
+  RUN_TOOL,
   type ToolGate,
   type ToolGateCode,
 } from "@/lib/toolAvailability";
@@ -35,6 +36,17 @@ import {
  * either foundry switch, any per-tool permission, Lean Mode — the switch is
  * rendered right here. Only "pick a different model" sends the user to
  * Settings, because that is a choice this panel has no business making.
+ *
+ * ONE STATE OUTRANKS ITS OWN ARITHMETIC. "66 tools · 1 off" is calm, true, and
+ * useless when the one tool that is off is run_tool: that single switch governs
+ * the entire library the user has already reviewed and approved, so the count
+ * is at its most reassuring exactly when the loss is largest. A user spent a
+ * day unable to read that off this chip. So when the host tells us the library
+ * is not empty (`approvedToolCount`), the chip stops reporting the subtraction
+ * and reports the consequence, and the row carrying that switch sorts to the
+ * top of the sheet. Primary accent, never destructive — this is a switch that
+ * is off, not damage. With no count passed the panel behaves exactly as before:
+ * a library we have not been told about is one we must not describe.
  */
 
 /** Section label per code — the small uppercase eyebrow, matching the rest of
@@ -79,27 +91,87 @@ const ToolStatusPanel: React.FC<{
    *  time rather than inferred — it is the only way "we never offered it" is
    *  distinguishable from "we offered it and it declined". Absent for restored
    *  history, which reads as unknown rather than as a false claim. */
-  lastTurn?: { offered: number; withheld: number };
-}> = ({ gates, onOpenSettings, lastTurn }) => {
+  lastTurn?: {
+    offered: number;
+    withheld: number;
+    /** Calls the last reply wrote into its own prose instead of sending as
+     *  calls, which the app salvaged and ran. Worth a line because the
+     *  alternative — the historical behaviour — was a paragraph describing an
+     *  action that never happened, and a user who has read that paragraph
+     *  deserves to know which turns needed rescuing. Absent on the ordinary
+     *  turn, where the structured path carried everything. */
+    recovered?: number;
+    /** Calls the last reply wrote into its prose that were NOT run — anything
+     *  outside the small read-only set the app will run off text, because text
+     *  in a reply may have been quoted into it from a file or a search result
+     *  rather than chosen by the AI.
+     *
+     *  RENAMED, along with the behaviour it described: nothing is returned to
+     *  the AI any more. The app does not run the call and does not repeat what
+     *  it said, which is why the line below no longer promises the AI will
+     *  send it again. Counted apart from `recovered` because "we ran it" and
+     *  "we did not run it" are opposite answers to the only question this
+     *  panel exists to answer truthfully. */
+    recoveredNotRun?: number;
+  };
+  /** How many tools the user has approved in the Tool Foundry, when the host
+   *  knows. Undefined means unknown — settings still loading, foundry setup not
+   *  run, no library — and unknown must read exactly like this panel always
+   *  did. A count is the only thing that turns "one tool is off" into "your
+   *  whole library is idle", so without one we do not make that claim. */
+  approvedToolCount?: number;
+}> = ({ gates, onOpenSettings, lastTurn, approvedToolCount }) => {
   const [open, setOpen] = useState(false);
   const { leanMode, setLeanMode, chatToolPermissions, setChatToolPermission } = useChatSettings();
 
-  const { offered, withheld, groups } = useMemo(() => {
+  const { offered, withheld, groups, stranded } = useMemo(() => {
     const on = availableToolNames(gates);
     const g = groupWithheld(gates);
-    return { offered: on.length, withheld: g.reduce((n, x) => n + x.tools.length, 0), groups: g };
-  }, [gates]);
+    // Scoped to off_foundry_optin on purpose. That code means the "Run approved
+    // tools" switch is off, which is the one case where flipping it here fixes
+    // everything. run_tool can also be missing because the model does no tool
+    // calls or because the foundry's one-time setup hasn't run — naming the
+    // switch then would send the user to flip a control that changes nothing,
+    // and those two already have their own groups with the right fix.
+    const stranded = (approvedToolCount ?? 0) > 0 && gates.get(RUN_TOOL)?.code === "off_foundry_optin";
+    const lead = stranded ? g.filter((x) => x.code === "off_foundry_optin") : [];
+    const groups = lead.length ? [...lead, ...g.filter((x) => x.code !== "off_foundry_optin")] : g;
+    return { offered: on.length, withheld: g.reduce((n, x) => n + x.tools.length, 0), groups, stranded };
+  }, [gates, approvedToolCount]);
 
   // Never an alarm for a normal configuration. A few tools deliberately off is
   // the ordinary state of a well-configured app, so that reads as "on" accent,
   // not as damage. Zero tools is different in kind — the assistant has no
   // hands at all, and that is exactly the state that produced the bug report.
+  // A stranded library is the third kind: not damage, but not ordinary either,
+  // so it takes the primary accent and a filled pill — colour alone can't do
+  // it, since "n off" already wears a colour in this same row of chips.
   const tone =
     offered === 0 ? "text-destructive"
-      : withheld > 0 ? "text-primary-container"
-        : "text-on-surface-variant hover:text-primary";
+      : stranded ? "text-primary"
+        : withheld > 0 ? "text-primary-container"
+          : "text-on-surface-variant hover:text-primary";
 
-  const label = withheld > 0 ? `${offered} tools · ${withheld} off` : `${offered} tools`;
+  // Named by the label Settings → Tool Foundry actually prints, so the control
+  // the user goes looking for is the control they read about here.
+  const strandedLine = stranded
+    ? `The AI can't run the ${approvedToolCount === 1 ? "tool" : `${approvedToolCount} tools`} you've approved — turn on “Run approved tools”.`
+    : "";
+
+  const label = stranded
+    ? `${offered} tools · can't run yours`
+    : withheld > 0 ? `${offered} tools · ${withheld} off` : `${offered} tools`;
+
+  /** The hoisted section — same renderer and the same inline switch as always,
+   *  wearing the accent so the first thing in the sheet is the fix. */
+  const isLead = (code: ToolGateCode) => stranded && code === "off_foundry_optin";
+
+  /** The Foundry group's switch rows, run_tool first when the approved library
+   *  is what's waiting on it. filter() copies, so sorting here reorders nothing
+   *  the gate map owns. */
+  const foundrySwitchRows = (tools: string[]) =>
+    tools.filter((t) => t in FOUNDRY_SWITCH_LABEL)
+      .sort((a, b) => (stranded ? (a === RUN_TOOL ? -1 : b === RUN_TOOL ? 1 : 0) : 0));
 
   return (
     <>
@@ -108,15 +180,21 @@ const ToolStatusPanel: React.FC<{
         onClick={() => setOpen(true)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label={`AI tools: ${label}. Open the tool status panel.`}
-        title={
-          withheld > 0
-            ? `${withheld} tool${withheld === 1 ? " is" : "s are"} switched off — tap to see which, and turn them back on`
-            : "Every tool goes out with your messages — tap for the list"
+        aria-label={
+          stranded
+            ? `AI tools: ${strandedLine} Open the tool status panel.`
+            : `AI tools: ${label}. Open the tool status panel.`
         }
-        className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${tone}`}
+        title={
+          stranded
+            ? `${strandedLine} Tap to turn it on.`
+            : withheld > 0
+              ? `${withheld} tool${withheld === 1 ? " is" : "s are"} switched off — tap to see which, and turn them back on`
+              : "Every tool goes out with your messages — tap for the list"
+        }
+        className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${tone}${stranded ? " rounded-full bg-primary/10 ring-1 ring-primary/30 px-2 py-0.5" : ""}`}
       >
-        <span className="material-symbols-outlined text-sm" aria-hidden>handyman</span>
+        <span className="material-symbols-outlined text-sm" aria-hidden>{stranded ? "toggle_off" : "handyman"}</span>
         <span className="whitespace-nowrap">{label}</span>
       </button>
 
@@ -133,10 +211,14 @@ const ToolStatusPanel: React.FC<{
               <span className="material-symbols-outlined text-primary-container text-xl" aria-hidden>handyman</span>
               AI tools
             </SheetTitle>
-            <SheetDescription className="text-xs text-on-surface-variant mt-1">
-              {withheld === 0
-                ? `All ${offered} tools go out with your next message.`
-                : `${offered} of ${offered + withheld} tools go out with your next message. Here's what's missing and where the switch is.`}
+            {/* Stranded replaces the count rather than sitting under it: the
+                count is the sentence that read as fine all day. */}
+            <SheetDescription className={`text-xs mt-1 ${stranded ? "text-foreground font-semibold" : "text-on-surface-variant"}`}>
+              {stranded
+                ? strandedLine
+                : withheld === 0
+                  ? `All ${offered} tools go out with your next message.`
+                  : `${offered} of ${offered + withheld} tools go out with your next message. Here's what's missing and where the switch is.`}
             </SheetDescription>
             {lastTurn && (
               <p className="text-[11px] text-on-surface-variant mt-2">
@@ -149,6 +231,35 @@ const ToolStatusPanel: React.FC<{
                   : lastTurn.withheld > 0
                     ? `, with ${lastTurn.withheld} left out.`
                     : "."}
+                {!!lastTurn.recovered && lastTurn.recovered > 0 && (
+                  <>
+                    {" "}
+                    {lastTurn.recovered === 1
+                      ? "One call arrived written into the reply as text; it was picked up and run."
+                      : `${lastTurn.recovered} calls arrived written into the reply as text; they were picked up and run.`}
+                  </>
+                )}
+                {/* NO CLAIM ABOUT WHAT THE CALL WOULD HAVE DONE. This used to
+                    read "One call that changes your work…", and the app never
+                    checked that. recoveredNotRun means "outside the read-class
+                    allow-list", which is not the same as destructive:
+                    web_search is out because it is third-party and metered,
+                    and show_image / show_video / show_splat / view_image /
+                    recall_image_memories / test_tool / render_blocks each have
+                    their own reason — none of them change the user's work. So
+                    a skipped web search was being reported as a near miss on
+                    the user's chapters, on the one surface whose entire job is
+                    telling the truth about tool activity. The count and "it
+                    did not run" are both facts the app holds; the severity was
+                    not. */}
+                {!!lastTurn.recoveredNotRun && lastTurn.recoveredNotRun > 0 && (
+                  <>
+                    {" "}
+                    {lastTurn.recoveredNotRun === 1
+                      ? "One call arrived written into the reply as text; it did not run."
+                      : `${lastTurn.recoveredNotRun} calls arrived written into the reply as text; they did not run.`}
+                  </>
+                )}
               </p>
             )}
           </div>
@@ -167,9 +278,9 @@ const ToolStatusPanel: React.FC<{
             {groups.map((group) => (
               <section
                 key={group.code}
-                className="rounded-lg bg-surface-container-high/50 border border-outline-variant/15 px-3 py-3 min-w-0"
+                className={`rounded-lg border px-3 py-3 min-w-0 ${isLead(group.code) ? "bg-primary/10 border-primary/40" : "bg-surface-container-high/50 border-outline-variant/15"}`}
               >
-                <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-1.5">
+                <p className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1.5 ${isLead(group.code) ? "text-primary" : "text-on-surface-variant"}`}>
                   <span className="material-symbols-outlined text-sm" aria-hidden>{GROUP_ICON[group.code]}</span>
                   {GROUP_LABEL[group.code]}
                 </p>
@@ -209,7 +320,7 @@ const ToolStatusPanel: React.FC<{
                       toggle latched ON forever inside a panel that went on
                       saying the tool was off. They appear in the chip row
                       above, which is the honest place for them. */}
-                  {group.code === "off_foundry_optin" && group.tools.filter((t) => t in FOUNDRY_SWITCH_LABEL).map((tool) => (
+                  {group.code === "off_foundry_optin" && foundrySwitchRows(group.tools).map((tool) => (
                     <div key={tool} className="flex items-center justify-between gap-3 min-w-0">
                       <p className="text-xs text-foreground min-w-0 truncate">
                         {FOUNDRY_SWITCH_LABEL[tool] || toolDisplayLabel(tool)}

@@ -126,36 +126,91 @@ export function leanModeFromPhrase(text: string): LeanMode | null {
   return "lean";
 }
 
+/** The free capabilities this block points at by name. Data, not a literal,
+ *  so the sentence can be rebuilt from whatever actually reached the wire. */
+const FREE_DISPLAY_TOOLS = [
+  "show_image", "show_video", "show_splat", "list_images",
+  "list_videos", "list_splats", "view_image", "recall_image_memories",
+];
+
+/** "a" · "a, and b" · "a, b, and c" — one rule for every length, so a full
+ *  list re-serializes byte-for-byte as the literal this replaced. */
+function listWithAnd(items: string[]): string {
+  if (items.length < 2) return items[0] || "";
+  return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
+}
+
 /** The system-prompt block. Written to be spoken from, not read as policy:
  *  one sentence of fact, then the model's real job — deliver the best free
- *  version rather than apologising. */
-export function leanModePromptBlock(mode: LeanMode): string {
+ *  version rather than apologising.
+ *
+ *  `isOffered` is the prompt builder's own roster predicate, passed IN rather
+ *  than imported, so this file stays a pure policy module with no knowledge of
+ *  how a turn's roster is computed. It matters because this block is appended
+ *  LAST, which is the position a model recalls best: with it ungated, a turn
+ *  that carried no `create_artifact` (the "Create artifacts" permission off)
+ *  had the artifact sentence correctly dropped 390 lines earlier and then
+ *  re-asserted here — one prompt, two contradicting claims, the false one
+ *  last. On a model whose caps.tools is false, zero tools go out and this
+ *  section named eight of them. Naming a tool the request does not carry is
+ *  the highest-fabrication shape there is: the model narrates using it.
+ *
+ *  Default is "everything is offered" so the single-argument callers (and the
+ *  no-`offeredTools` prompt build) emit exactly the text they always did. */
+export function leanModePromptBlock(
+  mode: LeanMode,
+  isOffered: (tool: string) => boolean = () => true,
+): string {
   if (mode === "full") return "";
   const blocked = blockedTools(mode).map(capabilityName);
   const unique = Array.from(new Set(blocked));
   const list = unique.length > 1
     ? `${unique.slice(0, -1).join(", ")} and ${unique[unique.length - 1]}`
     : unique[0];
+  // Each named tool is filtered out of its own clause, and a clause whose
+  // tools are ALL withheld drops out entirely — never the whole block, which
+  // still has to say what is off and how to answer well without it.
+  const displayable = FREE_DISPLAY_TOOLS.filter(isOffered);
+  const freeThings = [
+    "memory and neurons",
+    "books",
+    ...(isOffered("create_artifact") ? ["artifacts"] : []),
+    ...(isOffered("render_blocks") ? ["structured blocks"] : []),
+    ...(displayable.length > 0
+      ? [`re-displaying anything already made (${displayable.join(", ")})`]
+      : []),
+  ];
+  // The sheet is the FIRST thing to reach for, so when it is off the wire the
+  // fallbacks have to inherit its lead-in rather than dangle after "Otherwise:".
+  const sheetFirst = isOffered("create_blueprint_sheet")
+    ? `For anything visual, reach for create_blueprint_sheet FIRST — it draws a real production ` +
+      `sheet (turnaround, palette swatches, head-unit scale, construction notes) entirely on this ` +
+      `machine, and it is genuinely useful work rather than a description of work. `
+    : "";
+  const fallbacks = [
+    `write out the finished image prompt so it's ready to run later`,
+    `describe the shot concretely`,
+    ...(isOffered("create_artifact") ? [`draft it with create_artifact as SVG or HTML`] : []),
+    `find something already in their library that fits`,
+  ];
+  const fallbackList = fallbacks.length < 2
+    ? fallbacks[0]
+    : `${fallbacks.slice(0, -1).join(", ")}, or ${fallbacks[fallbacks.length - 1]}`;
   return [
     `## Lean Mode is ON (${LEAN_MODE_INFO[mode].label})`,
     `The user has switched on Lean Mode: ${list} ${unique.length > 1 ? "are" : "is"} off for now. ` +
     `Those tools are NOT in your list this turn. Nothing is broken and no key is missing — the user ` +
     `deliberately turned spending off, and only they can turn it back on.`,
     ``,
-    `Everything free is untouched: memory and neurons, books, artifacts, structured blocks, and ` +
-    `re-displaying anything already made (show_image, show_video, show_splat, list_images, ` +
-    `list_videos, list_splats, view_image, recall_image_memories). They already paid for those — ` +
-    `show them freely.`,
+    `Everything free is untouched: ${listWithAnd(freeThings)}.` +
+    (displayable.length > 0 ? ` They already paid for those — show them freely.` : ``),
     ``,
     `When the user asks for something Lean Mode covers, answer in ONE message, in this order:`,
     `1. Say it plainly in a single sentence — "Image generation is off while Lean Mode is on." ` +
     `No apology, no comment about their money, and don't mention it again later in the turn.`,
-    `2. Then actually deliver the best free version. For anything visual, reach for ` +
-    `create_blueprint_sheet FIRST — it draws a real production sheet (turnaround, palette swatches, ` +
-    `head-unit scale, construction notes) entirely on this machine, and it is genuinely useful work ` +
-    `rather than a description of work. Otherwise: write out the finished image prompt so it's ready ` +
-    `to run later, describe the shot concretely, draft it with create_artifact as SVG or HTML, or ` +
-    `find something already in their library that fits. Give it as a real answer, not a consolation ` +
+    `2. Then actually deliver the best free version. ${sheetFirst}` +
+    `${sheetFirst ? "Otherwise: " : "For anything visual: "}${fallbackList}. ` +
+    `Give it as a real answer, not a consolation ` +
     `prize — a Lean Mode reply must never be thinner than a normal one.`,
     ``,
     `Never say or imply you generated an image, video or 3D model while Lean Mode is on, and never ` +

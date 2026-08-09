@@ -164,6 +164,129 @@ describe("buildFocusBlock", () => {
   });
 });
 
+// ── The excerpt pointer is a promise, so it is gated like one ───────────────
+// The "EXCERPT" label sits directly against content the model can SEE is cut
+// off, which is the strongest invitation to call there is. Naming
+// read_workspace_item on a turn whose request does not carry it (its permission
+// off, Lean Mode, or a model that cannot call functions at all) is how the
+// model ends up narrating having fetched the remainder. So: the truncation is a
+// fact about these bytes and always ships; the retrieval promise ships only
+// while the tool does.
+describe("buildFocusBlock gates the excerpt's read_workspace_item pointer", () => {
+  const READ = "read_workspace_item";
+  const OVER = FOCUS_ITEM_CHAR_BUDGET + 10;
+  const CLIPPED = `first ${FOCUS_ITEM_CHAR_BUDGET} of ${OVER} chars`;
+  // A roster that is real but does not carry the tool — the shape produced by a
+  // permission toggle or a Lean tier, not by an empty request.
+  const WITHOUT_READ = ["save_file", "list_workspace_items"];
+
+  function big(kind: WorkspaceItem["kind"]): WorkspaceItem {
+    return item({
+      id: `big-${kind}`,
+      title: "Big",
+      kind,
+      content: "z".repeat(OVER),
+      meta: { focused: true, language: "py" },
+    });
+  }
+
+  // `offered` is the EXACT note this block emitted before the gate existed —
+  // written out rather than recomputed, because provider prefix caching keys on
+  // exactly these bytes. `withheld` is the same label with only the promise
+  // rewritten: a whole sentence, not the offered one with a clause cut out.
+  const CASES: Array<{ kind: WorkspaceItem["kind"]; offered: string; withheld: string }> = [
+    {
+      kind: "research",
+      offered: ` — EXCERPT (${CLIPPED}; ${READ} with this item_id and an offset returns the rest)`,
+      withheld: ` — EXCERPT (${CLIPPED}; the rest of the file is not in this message)`,
+    },
+    {
+      kind: "code",
+      offered: ` — EXCERPT (${CLIPPED} of the py source; ${READ} with this item_id and an offset returns the rest)`,
+      withheld: ` — EXCERPT (${CLIPPED} of the py source; the rest of it is not in this message)`,
+    },
+    {
+      kind: "text",
+      offered: ` — EXCERPT (${CLIPPED} of the file text; ${READ} with this item_id and an offset returns the rest)`,
+      withheld: ` — EXCERPT (${CLIPPED} of the file text; the rest of it is not in this message)`,
+    },
+    {
+      kind: "html",
+      offered: ` — EXCERPT (${CLIPPED} of the artifact's extracted text; ${READ} returns the raw HTML source, paged by offset)`,
+      withheld: ` — EXCERPT (${CLIPPED} of the artifact's extracted text; the rest of it is not in this message)`,
+    },
+  ];
+
+  it("keeps the pointer verbatim when the tool rides on this turn's request", () => {
+    for (const c of CASES) {
+      const r = buildFocusBlock([big(c.kind)], { offeredTools: [READ, "save_file"] }, NONCE)!;
+      expect(r.used[0].state, c.kind).toBe("excerpt");
+      expect(r.message, c.kind).toContain(c.offered);
+    }
+  });
+
+  // The whole point of the optional parameter: the tree keeps typechecking and
+  // the wire keeps caching until the integrator wires the roster through.
+  it("omitting offeredTools is byte-identical to today, and to naming the tool", () => {
+    for (const c of CASES) {
+      const unfiltered = buildFocusBlock([big(c.kind)], {}, NONCE)!;
+      expect(unfiltered.message, c.kind).toContain(c.offered);
+      expect(buildFocusBlock([big(c.kind)], { offeredTools: [READ] }, NONCE)!.message, c.kind).toBe(
+        unfiltered.message
+      );
+    }
+  });
+
+  it("drops only the promise when the tool is withheld — the truncation still ships", () => {
+    for (const c of CASES) {
+      const r = buildFocusBlock([big(c.kind)], { offeredTools: WITHOUT_READ }, NONCE)!;
+      expect(r.used[0].state, c.kind).toBe("excerpt");
+      // The label the model needs in order to know it is holding part of a file.
+      expect(r.message, c.kind).toContain(`EXCERPT (${CLIPPED}`);
+      expect(r.message, c.kind).toContain(c.withheld);
+      // …and no call it has no function for.
+      expect(r.message.includes(READ), c.kind).toBe(false);
+    }
+  });
+
+  // An empty roster is a REAL roster (a chat-only tier, or a model that cannot
+  // call functions): it must gate, not fall through to "not told = allow".
+  it("treats an empty offered set as a roster, not as 'unfiltered'", () => {
+    const r = buildFocusBlock([big("research")], { offeredTools: [] }, NONCE)!;
+    expect(r.message).not.toContain(READ);
+    expect(r.message).toContain(`EXCERPT (${CLIPPED}`);
+  });
+
+  it("leaves a fully-included item untouched by the roster", () => {
+    const small = [item({ id: "s1", title: "Small", content: "hello" })];
+    const withTool = buildFocusBlock(small, { offeredTools: [READ] }, NONCE)!;
+    const without = buildFocusBlock(small, { offeredTools: [] }, NONCE)!;
+    expect(without.message).toBe(withTool.message);
+    expect(without.message).toBe(buildFocusBlock(small, {}, NONCE)!.message);
+    expect(without.message).not.toContain("EXCERPT");
+  });
+
+  // Same structural pin as toolAvailability.test.ts: safety framing in a system
+  // prompt is what suppresses tool use and reads as blame. A withheld tool must
+  // change what the block CLAIMS, never the register it says it in.
+  it("says nothing in the safety/blame register on either path", () => {
+    const FORBIDDEN = [
+      "not permitted", "not allowed", "for safety", "unsafe", "blocked", "block ",
+      "denied", "deny", "forbidden", "prohibited", "disallowed", "unauthorized",
+      "restricted", "violation", "security", "harmful", "dangerous", "abuse",
+      "you cannot", "you can't", "you may not", "you must not", "misuse",
+    ];
+    for (const c of CASES) {
+      for (const offeredTools of [[READ], WITHOUT_READ, []]) {
+        const lower = buildFocusBlock([big(c.kind)], { offeredTools }, NONCE)!.message.toLowerCase();
+        for (const word of FORBIDDEN) {
+          expect(lower.includes(word), `"${word}" appears for ${c.kind} with [${offeredTools}]`).toBe(false);
+        }
+      }
+    }
+  });
+});
+
 describe("focusStatesForPinned", () => {
   it("reports full/excerpt from the real serialized size", () => {
     const states = focusStatesForPinned([

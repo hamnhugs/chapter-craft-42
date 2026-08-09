@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { toast } from "sonner";
 import { approveTool, toolFingerprint } from "@/lib/toolFoundry";
+import { useChatSettings } from "@/hooks/useChatSettings";
+import { RUN_TOOL } from "@/lib/toolAvailability";
 import { supabase } from "@/integrations/supabase/client";
 import type { ToolProposal } from "@/lib/chatTools";
 import type { ConformanceCheck, ConformanceReport } from "@/lib/toolConformance";
@@ -19,6 +21,20 @@ import type { ConformanceCheck, ConformanceReport } from "@/lib/toolConformance"
  * tools score zero on held-out inputs while their in-session verifier stays
  * green — so this renders the honest ConformanceReport summary, splits the
  * layers, and says plainly when a layer was never run.
+ *
+ * APPROVE GRANTS `run_tool`, AND IT HAS TO. approve_tool() only flips the
+ * row's status; whether `run_tool` reaches the model at all is a SEPARATE,
+ * inverted opt-in (`chatToolPermissions.run_tool === true`, off by default)
+ * that toolAvailability strips from the roster when it is unset. So a card
+ * whose button says "let the AI run this" and only called the RPC was making
+ * a promise the app then broke in silence: the tool showed as Approved, the
+ * verb the model needed to reach it was never in the request, and the model —
+ * still shown the approved tool by name in its prompt — narrated running it.
+ * Clicking a button that says "let the AI run this" IS consent to run it, so
+ * the click grants both. Only `run_tool`, only on an explicit click, and
+ * never `forge_tool`: writing new tools is a different decision with its own
+ * switch, and inferring it from an approval would be the same broken promise
+ * pointing the other way.
  */
 
 /** Forge-time extras the executor may attach; optional so an older proposal
@@ -58,6 +74,12 @@ const ToolApprovalCard: React.FC<{ proposal: ToolProposal }> = ({ proposal }) =>
   );
   const [showCode, setShowCode] = useState(false);
   const [showChecks, setShowChecks] = useState(false);
+  const { chatToolPermissions, setChatToolPermission, loaded: settingsLoaded } = useChatSettings();
+
+  // Same inverted read the roster uses: anything other than an explicit `true`
+  // means the verb never ships. Read it here so the card can only ever claim
+  // what the request will actually carry.
+  const runOn = chatToolPermissions?.[RUN_TOOL] === true;
 
   const extras = proposal as ToolProposal & ProposalExtras;
   const report = extras.conformance;
@@ -73,7 +95,39 @@ const ToolApprovalCard: React.FC<{ proposal: ToolProposal }> = ({ proposal }) =>
       }
       await approveTool(proposal.tool_id, fp);
       setState("approved");
-      toast.success(`Tool "${proposal.name}" approved — the AI can now run it.`);
+
+      // The approval has ALREADY succeeded on the server by this line. Nothing
+      // below may roll it back or report failure, so the permission write gets
+      // its own try — letting it fall into the outer catch would reset the card
+      // to "pending" and tell the user an approval that is live in the database
+      // didn't happen, which is a worse lie than the one being fixed.
+      //
+      // The `settingsLoaded` guard is not cosmetic: until the row arrives the
+      // shared store still holds `defaults`, and setChatToolPermission triggers
+      // a debounced FULL-ROW upsert built from that snapshot — writing it would
+      // blank the user's keys and saved models to grant one switch. Unreachable
+      // in practice (a proposal only exists after a chat turn, which needs a
+      // loaded key), so the fallback is simply to name the switch instead.
+      let granted = false;
+      if (!runOn && settingsLoaded) {
+        try {
+          setChatToolPermission(RUN_TOOL, true);
+          granted = true;
+        } catch {
+          granted = false;
+        }
+      }
+
+      const approved = `Tool "${proposal.name}" approved`;
+      if (granted) {
+        // Say what else changed on the user's behalf — a switch that flips
+        // itself and says nothing is how a control stops being trustworthy.
+        toast.success(`${approved} — the AI can run it now. (“Run approved tools” is on in Settings → Tool Foundry.)`);
+      } else if (runOn) {
+        toast.success(`${approved} — the AI can run it now.`);
+      } else {
+        toast.success(`${approved}. Turn on “Run approved tools” in Settings → Tool Foundry and the AI can run it.`);
+      }
     } catch (e) {
       setState("pending");
       toast.error(String((e as Error)?.message || e));
@@ -126,6 +180,17 @@ const ToolApprovalCard: React.FC<{ proposal: ToolProposal }> = ({ proposal }) =>
       {extras.descriptionPinned === false && (
         <p className="text-[11px] text-on-surface-variant">
           Note: this draft's wording is not hashed into the approval, so approving it does not lock the description.
+        </p>
+      )}
+      {/* Approved, but the verb that reaches it is still off. Reachable two
+          ways, and the card must say so in BOTH: an auto-approved update lands
+          here with no button to click, and a manual approve whose permission
+          write didn't stick lands here too. Gated on `settingsLoaded` so the
+          first paint — where the shared store still holds defaults — can't
+          announce a switch the user actually has on. */}
+      {state === "approved" && settingsLoaded && !runOn && (
+        <p className="text-[11px] text-on-surface-variant">
+          The AI needs “Run approved tools” turned on in Settings → Tool Foundry before it can run this.
         </p>
       )}
       <div className="flex items-center gap-3 flex-wrap">

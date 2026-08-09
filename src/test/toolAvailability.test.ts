@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   computeToolGates,
   availableToolNames,
@@ -390,5 +392,71 @@ describe("copy invariant: no safety or blame vocabulary anywhere", () => {
       expect(line.trim().length).toBeGreaterThan(10);
       expect(line.trim().endsWith("."), line).toBe(true);
     }
+  });
+});
+
+describe("a tool whose executor needs someone else's switch leaves the roster with it", () => {
+  // supersede_memory_entry has its own permission AND its executor refuses
+  // 100% of calls when "Edit memory entries" is off (chatTools.ts, the
+  // memory-write case). Before DEPENDS_ON the roster carried the verb and the
+  // prompt actively instructed its use, so every attempt spent a round trip to
+  // reach a hard refusal — the prompt, the roster and the executor disagreeing
+  // about one tool. This is the pin for that agreement.
+  const DEP_TOOL = "supersede_memory_entry";
+  const DEP_ON = "update_memory_entry";
+
+  it("withholds supersede when memory editing is off, even with its own switch on", () => {
+    const input = withInput({ permissions: { [DEP_ON]: false, [DEP_TOOL]: true } });
+    expect(codeOf(input, DEP_TOOL)).toBe("off_permission");
+    expect(availableToolNames(computeToolGates(input))).not.toContain(DEP_TOOL);
+  });
+
+  it("offers it when both switches are on — the mirror, so this never over-filters", () => {
+    expect(codeOf(withInput({ permissions: {} }), DEP_TOOL)).toBe("available");
+    expect(codeOf(withInput({ permissions: { [DEP_ON]: true } }), DEP_TOOL)).toBe("available");
+  });
+
+  it("names the switch that actually fired, never one that is already on", () => {
+    const viaDep = computeToolGates(withInput({ permissions: { [DEP_ON]: false } })).get(DEP_TOOL)!;
+    expect(viaDep.fix).toContain("Edit memory entries");
+    const viaOwn = computeToolGates(withInput({ permissions: { [DEP_TOOL]: false } })).get(DEP_TOOL)!;
+    expect(viaOwn.fix).not.toContain("Edit memory entries");
+  });
+
+  it("only depends on a switch that really is total — default-allow still holds", () => {
+    // An absent value is ON. Reading `undefined` as off here would withhold the
+    // tool from every user who has never opened the permissions screen.
+    expect(codeOf(withInput({ permissions: { unrelated: false } }), DEP_TOOL)).toBe("available");
+  });
+});
+
+describe("copy invariant: the chips under a reply follow the same rule as the panel", () => {
+  // event.summary renders as a chip beneath the assistant bubble, so it is
+  // user-facing copy — but allGateCopy() cannot reach it, and it drifted:
+  // six summaries read "blocked by user settings" / "Blocked by free plan".
+  // Same register, same harm, different file, and nothing was watching.
+  const SRC = readFileSync(resolve(process.cwd(), "src", "lib", "chatTools.ts"), "utf8");
+  const BLAME = ["blocked", "denied", "forbidden", "prohibited", "not permitted", "not allowed", "unauthorized"];
+
+  it("has no blame vocabulary in any event summary", () => {
+    const offenders: string[] = [];
+    // One simple pattern per quote style rather than one clever one. A summary
+    // containing an escaped quote of its own kind would end the match early —
+    // that costs coverage of the tail, never a false pass on the head, and a
+    // matcher nobody can read is the thing that rots.
+    const patterns = [/summary:\s*"([^"]*)"/g, /summary:\s*'([^']*)'/g, /summary:\s*`([^`]*)`/g];
+    const matches = patterns.flatMap((re) => [...SRC.matchAll(re)]);
+    for (const m of matches) {
+      const text = m[1].toLowerCase();
+      // ${...} holes are identifiers, not copy — strip before judging.
+      const rendered = text.replace(/\$\{[^}]*\}/g, "");
+      for (const word of BLAME) if (rendered.includes(word)) offenders.push(`${word} :: ${m[1]}`);
+    }
+    expect(offenders, `blame vocabulary in event.summary:\n${offenders.join("\n")}`).toEqual([]);
+  });
+
+  it("actually reads the summaries (guard against a regex that matches nothing)", () => {
+    const count = [...SRC.matchAll(/summary:\s*(["'`])/g)].length;
+    expect(count).toBeGreaterThan(60);
   });
 });

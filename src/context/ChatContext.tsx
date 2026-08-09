@@ -15,7 +15,9 @@ import {
   computeToolGates, availableToolNames, groupWithheld,
   type ToolGate, type ToolGateCode,
 } from "@/lib/toolAvailability";
-import { foundryAvailable } from "@/lib/toolFoundry";
+import { foundryAvailable, countApprovedTools } from "@/lib/toolFoundry";
+import { modelToolSupport } from "@/lib/modelCapabilities";
+import { scanTextForToolCalls, hasUnclosedCallOpener, type RecoveredToolCall } from "@/lib/providers/textToolCalls";
 import type { ChatImageRef } from "@/lib/imageGen";
 import type { ChatVideoRef } from "@/lib/videoGen";
 import type { ChatSplatRef } from "@/lib/splatGen";
@@ -103,7 +105,38 @@ export interface ChatMessage {
    *  question it answers ("why did this turn have no tools?") is a live one.
    *  Restored history simply has no toolAccess, which reads as "unknown"
    *  rather than as a false claim. */
-  toolAccess?: { offered: number; withheld: number; codes: ToolGateCode[] };
+  toolAccess?: {
+    offered: number;
+    withheld: number;
+    codes: ToolGateCode[];
+    /** How many calls this turn had to be RECOVERED from the reply's prose
+     *  because the provider put them there instead of in `tool_calls` (NVIDIA
+     *  documents that its API does not guarantee otherwise) AND then actually
+     *  ran. Absent means the structured path carried everything, which is the
+     *  ordinary case. It is recorded because the alternative — a call silently
+     *  dropped and narrated — is precisely the failure this turn's machinery
+     *  exists to catch, and a receipt nobody can read is not a receipt. */
+    recovered?: number;
+    /** Of the calls found in the prose, how many were NOT run — everything
+     *  outside textToolCalls' read-class allow-list (barrier (c)).
+     *
+     *  RENAMED from `recoveredRefused`, and the old name was describing
+     *  behaviour that no longer exists: those calls used to be pushed into the
+     *  turn's tool_calls and answered with a result telling the model to send
+     *  them again. Nothing is handed back now — the app records that a call
+     *  was found in the text, does not run it, and never restates its name or
+     *  its arguments. "Not run" is the whole of the fact.
+     *
+     *  SEPARATE FROM `recovered` on purpose. "We salvaged your call and ran it"
+     *  and "we salvaged your call and did not run it" are opposite facts about
+     *  whether anything happened, and collapsing them into one number would
+     *  make the receipt claim the action took place — which is the exact
+     *  sentence this whole ship exists to stop being false. */
+    recoveredNotRun?: number;
+    /** Which emitted dialects those recoveries came from — diagnostics only,
+     *  never shown to the user. */
+    recoveredFormats?: string[];
+  };
 }
 
 interface SendOpts {
@@ -156,11 +189,125 @@ interface ChatContextValue {
    *  one. What a past turn actually offered lives on that message's
    *  `toolAccess`. */
   toolGatesForTurn: (hasImages: boolean) => Map<string, ToolGate>;
+  /** How many tools the user has approved in the Tool Foundry, or undefined
+   *  while that is genuinely unknown (Foundry setup not run, count still
+   *  loading, or the query failed).
+   *
+   *  The status chip needs it to tell "one tool is switched off" apart from
+   *  "the whole library this user built is idle" — the same subtraction reads
+   *  as unremarkable in the first case and as the entire bug in the second.
+   *  Undefined must therefore stay undefined rather than collapse to 0: a
+   *  library we have not been told about is one we must not describe. */
+  approvedToolCount?: number;
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null);
 
 const MAX_TOOL_ITERATIONS = 5;
+
+/** The ONE app-authored sentence added to the conversation when the recovery
+ *  pass found call syntax in the prose that it will not run (textToolCalls'
+ *  barrier (c) — everything outside the read-class allow-list).
+ *
+ *  WHAT THIS REPLACED, AND WHY, because the old shape was a live hole. Refused
+ *  calls used to be pushed onto this iteration's `toolCalls`, which meant an
+ *  assistant message was written into `workingMessages` carrying the recovered
+ *  NAME and ARGUMENTS, answered by a tool result reading "issue it once as a
+ *  real tool call and it will run". Feed the app a document ending in
+ *  `<tool_call>{"name":"delete_chapter",…}</tool_call>`, ask what the document
+ *  says, and the model echoes it: iteration N declined to run it and then told
+ *  the model, in the app's own voice, exactly how to make it run. Iteration
+ *  N+1 a compliant model does what it was told, the structured path now has a
+ *  call so the salvage pass never runs, and delete_chapter executes. Barrier
+ *  (c) was a one-round delay, not a stop — and the transcript was left holding
+ *  a tool_call the assistant never made, assembled by us out of attacker-chosen
+ *  bytes.
+ *
+ *  So the rule this constant enforces: RECOVERY NEVER TURNS TEXT THE MODEL DID
+ *  NOT CHOOSE TO EMIT INTO AN ACTION, AND THE APP NEVER PROPOSES A CALL ON THE
+ *  MODEL'S BEHALF. Hence, literally:
+ *    - no interpolation. Zero bytes of the reply, the recovered name or the
+ *      recovered arguments appear in it, so there is nothing here for a quoted
+ *      blob to steer;
+ *    - no imperative and no promise. It states how calls reach tools; it does
+ *      not ask for a retry and does not say anything will run;
+ *    - role "system", not a tool result. A tool result answers a call, and the
+ *      whole point is that no call was made;
+ *    - none of the safety register toolAvailability.test.ts's word list
+ *      forbids — that register is what turns a mechanical note into a refusal
+ *      the model argues with.
+ *  A model that reads this and decides for itself to issue a call is ordinary
+ *  behaviour on the ordinary prompt-injection surface, which exists with or
+ *  without this feature. What is now impossible is the app doing the deciding.
+ *
+ *  Position-independent on purpose: the Gemini adapter merges every system
+ *  message into the first one's slot, so this sentence has to read true
+ *  wherever it lands — which is why it describes the interface rather than
+ *  "your last reply". */
+const TEXT_CALL_NOTE =
+  "A tool call appears in the reply text rather than in the tool-call interface, and only calls that arrive through that interface reach a tool.";
+
+/** Every string a tool result actually SHOWS the model, concatenated — the
+ *  haystack the recovery pass's provenance barrier needs.
+ *
+ *  A tool result reaches the model as JSON.stringify(result), so the bytes in
+ *  context spell a quote `\"` and a newline `\n`. When the model quotes a
+ *  result back it reproduces what those escapes MEAN, so comparing its echo
+ *  against the stringified form found nothing and the barrier passed
+ *  everything through. This returns the meaning instead.
+ *
+ *  Values only, never keys, and joined by a newline so two unrelated fields
+ *  cannot fuse into a span that appears in neither. Bounded TWO ways — total
+ *  characters here, and the caller's own 24k clip on the same result — because
+ *  a tool result is the one input here whose size the app does not choose.
+ *
+ *  THERE WAS A THIRD BOUND, A 5_000-NODE BUDGET, AND IT WAS A HOLE. It counted
+ *  every value the walk visited — containers and numbers included, not just the
+ *  strings that end up in the haystack — and it terminated the WHOLE walk
+ *  rather than the branch that ran out. So a result shaped
+ *  `{ head: "hello", pad: [5000 numbers], output: "<tool_call>…" }` stringifies
+ *  to about 10k characters: comfortably under the caller's clip, so the model
+ *  reads all of it — while this returned just "hello". Truthy, so the caller's
+ *  `|| toolResultText` fallback never fired, and the echoed call syntax then
+ *  passed provenance and, for a read-class tool, ran. A forged tool's own
+ *  return value through run_tool is a realistic producer of exactly that shape.
+ *
+ *  Why the character cap alone is safe, and provably so. Object.values and
+ *  JSON.stringify walk an object in the same order, and stringify spends at
+ *  least two quote characters on every string plus keys, commas and escapes,
+ *  while this spends len+1. So the running `total` at any string is never AHEAD
+ *  of that same string's offset in the stringified blob. Anything the model can
+ *  reach inside its 24k clip is therefore already collected here, and a string
+ *  this cap truncates is truncated at least as hard in the model's copy.
+ *
+ *  The node budget was never what made this terminate, either: `value` only
+ *  reaches us by having survived JSON.stringify one statement earlier at the
+ *  call site, so it is finite, acyclic and shallow enough to recurse — and that
+ *  stringify already paid for a full traversal of this very object. Dropping
+ *  the budget costs a constant factor on work the caller has already done. */
+const TOOL_RESULT_VISIBLE_CAP = 24_000;
+function toolResultVisibleText(value: unknown): string {
+  const out: string[] = [];
+  let total = 0;
+  const walk = (v: unknown): void => {
+    if (total >= TOOL_RESULT_VISIBLE_CAP) return;
+    if (typeof v === "string") {
+      if (v.length === 0) return;
+      out.push(v);
+      total += v.length + 1;
+      return;
+    }
+    if (Array.isArray(v)) {
+      for (const x of v) walk(x);
+      return;
+    }
+    if (v && typeof v === "object") {
+      for (const x of Object.values(v as Record<string, unknown>)) walk(x);
+    }
+  };
+  walk(value);
+  return out.join("\n").slice(0, TOOL_RESULT_VISIBLE_CAP);
+}
 
 // ── Sliding-window history ───────────────────────────────────────────────
 // Long-context research (LongMemEval, "context rot") shows models get WORSE
@@ -304,6 +451,43 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     foundryAvailable().then((ok) => { if (alive) setFoundryReady(ok); });
     return () => { alive = false; };
   }, [foundryOptIn, user?.id]);
+  // How many tools this user has already approved. The status chip cannot say
+  // "the AI can't run the tools you approved" without it, and that sentence is
+  // the whole point: with "Run approved tools" off, every other surface reports
+  // a calm "one tool off" while an entire library the user built and reviewed
+  // sits idle.
+  //
+  // A COUNT, not a listing: countApprovedTools issues a head-only query that
+  // transfers no rows, where listTools() would pull up to 100 full records
+  // including every tool's source code. Once per session, gated on the schema
+  // actually existing, alongside the availability probe above — never per
+  // render, and never on the send path.
+  //
+  // Stays UNDEFINED on failure or before it lands, which the panel reads as
+  // "say nothing". Deliberately not refreshed when a tool is approved
+  // mid-session: approving through the card now turns "Run approved tools" on
+  // in the same click, so the count only matters in the state that click leaves
+  // behind, and a stale-by-one count there would still be > 0.
+  const [approvedToolCount, setApprovedToolCount] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    // CLEARED FIRST, UNCONDITIONALLY — not only on the !foundryReady arm.
+    // This effect also re-runs on user?.id, and the count is per-account. The
+    // clear used to be inside the early return, so on a sign-out/sign-in the
+    // refetch started while the PREVIOUS user's number stayed on screen; and
+    // because the resolve arm is `n !== null`, a failed or refused query never
+    // overwrote it. foundryReady does not save us: foundryAvailable() caches
+    // process-wide (a schema probe, not a user fact) so it stays true straight
+    // through the account change, and ChatProvider is mounted unkeyed in
+    // App.tsx, so it never remounts to reset the state either. Result was user
+    // A's library size labelling user B's chip for the rest of the session.
+    // Clearing here costs nothing: React bails out when the value is already
+    // undefined, which is every run that isn't an account or readiness change.
+    setApprovedToolCount(undefined);
+    if (!foundryReady) return;
+    let alive = true;
+    countApprovedTools().then((n) => { if (alive && n !== null) setApprovedToolCount(n); }).catch(() => {});
+    return () => { alive = false; };
+  }, [foundryReady, user?.id]);
   // Gate PER TOOL: with a single combined flag, enabling only "forge" would
   // still advertise run_tool to the model, which then calls it and gets a
   // "not enabled" refusal — exactly the mid-chat nagging this design avoids.
@@ -748,6 +932,89 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const activeNeurons = (activeWikis.length > 0 ? activeWikis : activeWiki ? [activeWiki] : [])
         .map((w) => ({ id: w.id, name: lockedIds.has(w.id) ? "" : w.name }));
 
+      // ── Model + tool roster: computed ONCE, frozen for the whole turn ────
+      //
+      // ORDERING CONSTRAINT — this block has to sit ABOVE the prompt build.
+      // The system prompt NAMES tools ("You have these tools: …", the approved
+      // Foundry roster), and a tool named in the prompt but absent from the
+      // request is the highest-fabrication shape there is: shown a menu it has
+      // no function to order from, the model narrates having used the item
+      // instead of reporting that nothing ran. So the prompt builder takes the
+      // frozen roster (`offeredTools`) and gates every tool-naming sentence on
+      // it, which means the roster must exist first. It used to be computed
+      // ~150 lines below, next to the request it configures.
+      //
+      // And there is exactly ONE computeToolGates call on this path, feeding
+      // BOTH the prompt and the wire `tools` array. Computing it twice — once
+      // for what we say, once for what we send — is precisely how the two
+      // drift apart, which is the entire bug class this ship closes.
+      //
+      // The roster must also not change BETWEEN tool iterations: the
+      // transcript accumulates assistant tool_calls and role:"tool" replies as
+      // the loop runs, and a request whose `tools` no longer declares a
+      // function still referenced in `messages` is rejected outright by some
+      // providers (Gemini) and confuses the rest — the "context-dangling tool"
+      // failure. Decided from the turn's opening state, then held.
+      const model = opts?.modelOverride
+        || (hasUploads && visionModel ? visionModel : (deepResearch ? deepResearchModel : selectedModel));
+      const { provider: turnProviderId, localId: turnLocalId } = resolveModel(model);
+      const nvInfo = turnProviderId === "nvidia" ? nvidiaModelInfo(turnLocalId) : null;
+      // Read off baseHistory rather than the assembled request, which does not
+      // exist yet at this point. Same answer: pixels are only ever serialized
+      // for the CURRENT user message (older images ride as text notes), and
+      // that message is the last one in the window, so no slice can drop it.
+      const turnOpensWithImages = baseHistory.some((m: any) =>
+        Array.isArray(m?.content) && m.content.some((p: any) => p?.type === "image_url"));
+      // Can the model call functions AT ALL — asked for EVERY provider now,
+      // not just NVIDIA. The old test only consulted the NVIDIA catalog, so
+      // every OpenRouter and Gemini model was assumed capable; a model that
+      // cannot call functions was handed a full roster and answered with prose
+      // describing work nobody did. modelToolSupport fails OPEN when no
+      // catalog knows the model, so an unlisted model still gets its tools.
+      const providerSupportsTools = modelToolSupport(model).supportsTools;
+      // Separate, narrower NVIDIA rule and still correct: its VL models drop
+      // tools on any turn that carries a picture.
+      const imageTurnDisablesTools = !!nvInfo && nvInfo.imagesDisableTools === true && turnOpensWithImages;
+      const sendTools = providerSupportsTools && !imageTurnDisablesTools;
+      // ONE choke point for every gate. Every reason a tool can be missing —
+      // the model can't call functions, the model drops tools on picture
+      // turns, the Tool Foundry is opt-in, Lean Mode, a per-tool permission —
+      // is decided by lib/toolAvailability.ts, which is also what the status
+      // chip near the composer reads. Enforcement is still omission: a
+      // capability the model cannot see is one it cannot pretend to use, and
+      // prompt steering alone gets about half compliance while failing by
+      // narrating media it never made. What changed is that the omission is
+      // now EXPLAINED — to the user by the panel, to the model by a typed
+      // terminal refusal when a gated call is replayed from earlier history,
+      // and, since this ship, by the prompt simply not claiming the tool.
+      const turnGates = computeToolGates({
+        toolNames: ALL_TOOL_NAMES,
+        leanMode,
+        // The turn-start snapshot, frozen with the rest of the roster — NOT
+        // permissionsRef. The roster must not change between tool iterations
+        // (a request whose `tools` no longer declares a function still named
+        // in `messages` is rejected outright by some providers), so the live
+        // ref belongs only in ToolDeps, where the executor backstop reads it.
+        permissions: chatToolPermissions || {},
+        forgeOptIn,
+        runOptIn,
+        foundryReady,
+        providerSupportsTools,
+        imageTurnDisablesTools,
+      });
+      // Both model-level gates are INPUTS to computeToolGates above, so when
+      // sendTools is false every gate reads off_model_* and this set is empty.
+      // One set, therefore, is the honest answer to all three questions: what
+      // the prompt may name, what goes on the wire, and what a recovered
+      // text-emitted call is allowed to be.
+      const offeredNames = new Set(availableToolNames(turnGates));
+      // `tools` stays UNDEFINED — never an empty array — when a model-level
+      // gate fires: some providers reject `tools: []` outright. The gate map
+      // explains the omission; the wire format is unchanged.
+      const toolDefs = sendTools
+        ? CHAT_TOOL_DEFINITIONS.filter((t: any) => offeredNames.has(t.function.name))
+        : undefined;
+
       const { prompt: systemPrompt, usedMemories, memoryImages } = await buildChatSystemPrompt({
         books,
         selectedBook,
@@ -760,7 +1027,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         reflex: isReflexEnabled(),
         maxReplySentences: sentenceCap,
         leanMode,
+        // Still the outer switch for the whole Foundry section — the builder
+        // reads it before it reads the roster, and with it false the section
+        // is absent entirely. `offeredTools` then decides, per verb, what that
+        // section is allowed to SAY: forge and run are gated independently, so
+        // "run approved tools" off no longer prints a named menu of the user's
+        // approved tools with no `run_tool` to order from.
         foundryTools: foundryEnabled,
+        offeredTools: [...offeredNames],
       });
 
       // Sliding window: replace messages older than the window with the
@@ -797,7 +1071,19 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // separate byte-stable block is the only cache-friendly placement, and
       // the summaryNote message below proves multi-system payloads work on
       // all three providers.
-      const focusBlock = buildFocusBlock(workspaceStore.getFocused(userIdRef.current), { voiceMode: isVoice });
+      // The SAME frozen roster the prompt and the wire got, for the same
+      // reason. This block is the sharpest place in the whole payload to name
+      // a tool that isn't there: its excerpt labels sit directly against
+      // content the model can SEE is cut off, which is the strongest possible
+      // invitation to call something — and if `read_workspace_item` is not on
+      // this turn's wire, what comes back is a narrated read of a remainder
+      // nobody fetched. Ordering is already correct: `offeredNames` is
+      // computed with the rest of the roster above the prompt build, ~60 lines
+      // up, so this is a pass-through and needs no further hoisting.
+      const focusBlock = buildFocusBlock(
+        workspaceStore.getFocused(userIdRef.current),
+        { voiceMode: isVoice, offeredTools: [...offeredNames] },
+      );
 
       const assistantEvents: ToolEvent[] = [];
       // Raw web_search answers captured this turn, surfaced as a "full answer"
@@ -860,8 +1146,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
       };
 
-      const model = opts?.modelOverride
-        || (hasUploads && visionModel ? visionModel : (deepResearch ? deepResearchModel : selectedModel));
+      // `model` and the whole tool roster were resolved above the prompt build
+      // — see the ordering note there. These two pre-flight gates stay HERE,
+      // below the streaming bubble, because both report their refusal by
+      // writing into it.
       if (isEmbeddingModel(model)) {
         const msg = `"${model}" is an embedding model — pick a chat model in Settings (it's only valid for Wiki reindex).`;
         toast.error(msg);
@@ -897,54 +1185,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       abortRef.current = new AbortController();
 
-      // ── Tool roster: computed ONCE, frozen for the whole turn ───────────
-      // It must not change between iterations. The transcript accumulates
-      // assistant tool_calls and role:"tool" replies as the loop runs, and a
-      // request whose `tools` no longer declares a function still referenced
-      // in `messages` is rejected outright by some providers (Gemini) and
-      // confuses the rest — the "context-dangling tool" failure. So the
-      // roster is decided from the turn's opening state and held.
-      const { provider: turnProviderId, localId: turnLocalId } = resolveModel(model);
-      const nvInfo = turnProviderId === "nvidia" ? nvidiaModelInfo(turnLocalId) : null;
-      // NVIDIA 400s when tools reach a model without function calling, and
-      // its VL models disable tools on image turns.
-      const turnOpensWithImages = workingMessages.some((m: any) =>
-        Array.isArray(m?.content) && m.content.some((p: any) => p?.type === "image_url"));
-      const providerSupportsTools = !nvInfo || nvInfo.caps.tools === true;
-      const imageTurnDisablesTools = !!nvInfo && nvInfo.imagesDisableTools === true && turnOpensWithImages;
-      const sendTools = providerSupportsTools && !imageTurnDisablesTools;
-      // ONE choke point for every gate. Every reason a tool can be missing —
-      // the model can't call functions, the model drops tools on picture
-      // turns, the Tool Foundry is opt-in, Lean Mode, a per-tool permission —
-      // is decided by lib/toolAvailability.ts, which is also what the status
-      // chip near the composer reads. Enforcement is still omission: a
-      // capability the model cannot see is one it cannot pretend to use, and
-      // prompt steering alone gets about half compliance while failing by
-      // narrating media it never made. What changed is that the omission is
-      // now EXPLAINED — to the user by the panel, and to the model by a typed
-      // terminal refusal when a gated call is replayed from earlier history.
-      const turnGates = computeToolGates({
-        toolNames: ALL_TOOL_NAMES,
-        leanMode,
-        // The turn-start snapshot, frozen with the rest of the roster — NOT
-        // permissionsRef. The roster must not change between tool iterations
-        // (a request whose `tools` no longer declares a function still named
-        // in `messages` is rejected outright by some providers), so the live
-        // ref belongs only in ToolDeps, where the executor backstop reads it.
-        permissions: chatToolPermissions || {},
-        forgeOptIn,
-        runOptIn,
-        foundryReady,
-        providerSupportsTools,
-        imageTurnDisablesTools,
-      });
-      const offeredNames = new Set(availableToolNames(turnGates));
-      // `tools` stays UNDEFINED — never an empty array — when a model-level
-      // gate fires: some providers reject `tools: []` outright. The gate map
-      // explains the omission; the wire format is unchanged.
-      const toolDefs = sendTools
-        ? CHAT_TOOL_DEFINITIONS.filter((t: any) => offeredNames.has(t.function.name))
-        : undefined;
       // Ground truth for this turn: how many tools this request actually put
       // on the wire. "We never offered it" and "we offered it and the model
       // declined" are indistinguishable from a response alone — a provider
@@ -957,7 +1197,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // roster time would have let a DNS failure or a refused connection leave
       // an error bubble asserting "this reply went out with 58 tools" when
       // nothing went out at all.
-      const turnToolAccess = {
+      let turnToolAccess: NonNullable<ChatMessage["toolAccess"]> = {
         offered: toolDefs?.length ?? 0,
         withheld: ALL_TOOL_NAMES.length - (toolDefs?.length ?? 0),
         codes: groupWithheld(turnGates).map((g) => g.code),
@@ -968,6 +1208,46 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         toolAccessStamped = true;
         setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, toolAccess: turnToolAccess } : m)));
       };
+      /** Re-stamp after calls had to be salvaged out of the reply's prose.
+       *  A NEW object every time, never a mutation of the stamped one: the
+       *  bubble holds it by reference, so mutating in place would update the
+       *  receipt everywhere except on screen.
+       *
+       *  `ran` were executed; `notRun` were found in the text and left alone —
+       *  nothing was proposed to the model and nothing happened. They are
+       *  counted apart because a receipt that merges them says the action took
+       *  place, which is the one thing it must never say falsely. */
+      const noteRecoveredCalls = (ran: RecoveredToolCall[], notRun: RecoveredToolCall[]) => {
+        turnToolAccess = {
+          ...turnToolAccess,
+          recovered: (turnToolAccess.recovered ?? 0) + ran.length,
+          recoveredNotRun: (turnToolAccess.recoveredNotRun ?? 0) + notRun.length,
+          recoveredFormats: [...new Set([...(turnToolAccess.recoveredFormats ?? []), ...ran.map((c) => c.format), ...notRun.map((c) => c.format)])],
+        };
+        toolAccessStamped = true;
+        setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, toolAccess: turnToolAccess } : m)));
+      };
+
+      // Text that reached this turn from OUTSIDE the model, kept for the
+      // recovery pass's provenance barrier. A tool result is the likeliest
+      // place a `<tool_call>`-shaped blob enters a conversation at all — a
+      // forged tool's own return value, a read file, a search snippet — and
+      // the moment the model echoes one back, text that merely LOOKS like a
+      // call would otherwise execute. Newest first at scan time, because the
+      // result the model just read is the one it is quoting.
+      //
+      // References to strings that already exist in workingMessages, never
+      // copies, and never the whole transcript: this is one turn's results
+      // only, and the scanner spends a fixed character budget across them.
+      const turnToolResultText: string[] = [];
+      // Whether TEXT_CALL_NOTE has already been added to THIS send. Once said,
+      // it is in context and stays there, so repeating it on every iteration
+      // would be N identical system lines — and on the Gemini adapter, which
+      // merges system messages into one, N copies of the same sentence stacked
+      // inside the main prompt. It also stops a model that keeps re-emitting
+      // the same prose call from buying five round trips to be told the same
+      // thing five times.
+      let textCallNoteSent = false;
 
       try {
         for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
@@ -975,6 +1255,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const { adapter, localId } = resolveModel(model);
 
           let iterText = "";
+          // The SCAN's copy of this iteration's prose, which the sentence cap
+          // never freezes — see the recovery block below for why the visible
+          // string cannot double as the scanned one.
+          let rawIterText = "";
           const toolCallAcc: Record<number, { id?: string; name?: string; args: string }> = {};
           // Cap state for THIS iteration: once the cut lands the prose is
           // frozen but the stream keeps draining — models narrate BEFORE
@@ -1010,18 +1294,44 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               turnReasoning += ev.delta;
               updateAssistant();
             } else if (ev.type === "text") {
+              // ALWAYS, before the cap gets a say. Everything below this line
+              // is about what the USER sees; the recovery scan needs what the
+              // MODEL sent, and those stopped being the same string the moment
+              // a cap existed. A provider that writes its call into the prose
+              // writes it AFTER the narration — i.e. after the cut — so with
+              // only `iterText` to scan, a sentence cap silently switched the
+              // whole salvage path off for everyone who had set one.
+              rawIterText += ev.delta;
               if (iterCapped) {
                 // Past the cut: discard beyond-cap prose but keep draining
                 // so any tool calls behind the narration still arrive.
-                if (valveArmed && Object.keys(toolCallAcc).length === 0) {
-                  cappedProseOnly = true;
-                  break;
-                }
-                capDrops++;
-                // Cost valve: ~40 dropped prose deltas after the cut with
-                // ZERO tool activity ⇒ provably a prose-only reply — stop
-                // paying for it. (Any tool delta ⇒ drain to the natural end.)
-                if (capDrops >= 40 && Object.keys(toolCallAcc).length === 0) {
+                //
+                // `toolCallAcc` is the STRUCTURED path's guard and it is blind
+                // to the case this whole salvage pass exists for: a provider
+                // writing its call into message.content leaves that accumulator
+                // empty the entire time. Cancelling then severs the blob
+                // mid-write, the truncated JSON fails to parse, nothing is
+                // recovered, and the user reads a paragraph about an action
+                // that never ran — the original report, reproduced for exactly
+                // the capped population this pass was built for.
+                // hasUnclosedCallOpener is that guard's text-path twin, and it
+                // is consulted at the only two moments it can change the
+                // outcome — arming and firing. Each happens about once per
+                // iteration, so a 32k tail scan is not paid on every dropped
+                // delta; while a call IS mid-write it runs once per delta,
+                // which is bounded by the length of that one blob.
+                const structuredIdle = Object.keys(toolCallAcc).length === 0;
+                if (valveArmed) {
+                  if (structuredIdle && !hasUnclosedCallOpener(rawIterText)) {
+                    cappedProseOnly = true;
+                    break;
+                  }
+                } else if (++capDrops >= 40 && structuredIdle && !hasUnclosedCallOpener(rawIterText)) {
+                  // Cost valve: ~40 dropped prose deltas after the cut with
+                  // ZERO tool activity — structured OR written into the prose —
+                  // ⇒ provably a prose-only reply, so stop paying for it. (Any
+                  // tool delta, or an unfinished call in the text, ⇒ drain to
+                  // the natural end.)
                   valveArmed = true;
                 }
               } else {
@@ -1054,34 +1364,168 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           if (cappedProseOnly) {
             // Capped prose-only reply: cancel the stream (generator return
-            // cascades into a reader cancel), then fall through to the
-            // normal persistence/summary path with the frozen text.
+            // cascades into a reader cancel). It does NOT break out of the
+            // iteration loop here any more — that break sat above the salvage
+            // pass, so a capped reply whose call was written as text had the
+            // one thing that could have rescued it skipped entirely. Cancelling
+            // is only resource cleanup; `rawIterText` already holds everything
+            // that arrived, and the ordinary `toolCalls.length === 0` break
+            // below ends the turn identically when nothing is recovered.
+            //
+            // Salvaging from a stream we deliberately stopped reading is safe
+            // by construction, not by luck: a call blob cut off mid-write fails
+            // JSON.parse and is never recovered. Only a complete one survives.
             try { void stream.return(undefined); } catch { /* already closed */ }
-            break;
           }
 
           const toolCalls = Object.values(toolCallAcc).filter((t) => t.name);
+          // Set when the salvage pass found call syntax it will not run. It is
+          // a BOOLEAN, deliberately: the only thing that travels out of that
+          // branch is the fact that it happened. The name and the arguments go
+          // nowhere — see TEXT_CALL_NOTE for the round trip that made carrying
+          // them a working exploit.
+          let textCallNoted = false;
+          // A stream cut by the token limit or a filter leaves the LAST call's
+          // arguments half-written: executing that would either fail
+          // JSON.parse and burn another iteration against an already-
+          // overflowing context, or (worse) run a destructive tool on a
+          // truncated-but-parseable prefix. It also means any call sitting in
+          // the prose is itself probably truncated, so nothing is salvaged
+          // from a reply that ended this way.
+          const streamCutShort = finishNative === "length" || finishNative === "content_filter";
+
+          // ── Calls the provider wrote as PROSE ──────────────────────────────
+          // NVIDIA's NIM docs state the API "does not guarantee that
+          // <tool_call> or other tool-related text does not appear in
+          // message.content". When that happens the structured path sees
+          // nothing, the turn ends with "stop", and the user reads a paragraph
+          // describing an action that never ran — the report this whole ship
+          // answers. So when NOTHING arrived structurally, the reply's own text
+          // gets one salvage pass against the roster this request actually
+          // carried (`toolDefs` present ⇒ tools went out; `offeredNames` is
+          // that roster, and a name outside it stays prose forever).
+          //
+          // Calls the module CLEARS TO RUN (`scan.calls`, its read-class
+          // allow-list — see RECOVERY_EXECUTABLE) are pushed into `toolCalls`
+          // itself rather than handled beside it: everything downstream — the
+          // assistant tool_calls message, the executor, the permission
+          // backstop, the events — must treat them identically, and a second
+          // path is a second set of rules to drift. Everything else
+          // (`scan.refused`) goes nowhere near that array; the only thing that
+          // leaves this block for it is one boolean.
+          //
+          // Fires at most once per iteration by construction (one pass, here),
+          // and cannot re-scan converted text: both accumulators are rebuilt
+          // from empty on the next iteration.
+          //
+          // SCANS `rawIterText`, NOT `iterText`. They diverge exactly when a
+          // sentence cap is set: past the cut `iterText` is frozen and later
+          // deltas are dropped, so the blob a provider writes AFTER its
+          // narration — which is where every provider writes it — never entered
+          // the string being scanned. A cap therefore switched recovery off
+          // completely for anyone who had one, which is a large share of the
+          // users who reported this bug in the first place.
+          //
+          // Two barriers are opted into here, both of them about text that
+          // reached the reply from somewhere other than the model:
+          //   requireTerminal — a real emitted call is the last thing in the
+          //     message; a candidate with prose after it is being quoted.
+          //   inbound — this turn's outside-the-model text. A span that appears
+          //     verbatim in a tool result, in the user's own message or in a
+          //     pinned file was transcribed, not authored, and a transcribed
+          //     blob can carry its own `confirm: true`.
+          if (toolDefs && !streamCutShort && toolCalls.length === 0 && rawIterText) {
+            const scan = scanTextForToolCalls(rawIterText, offeredNames, {
+              requireTerminal: true,
+              // Newest tool result last, because the result the model just read
+              // is the one it echoes. Each entry is compared SEPARATELY and gets
+              // an equal share of the module's comparison budget, so the order
+              // no longer decides who gets compared at all — but the count does,
+              // which is why every tool result contributes exactly one string
+              // (see toolResultVisibleText at the push site).
+              inbound: [
+                trimmed,
+                ...(focusBlock ? [focusBlock.message] : []),
+                ...turnToolResultText.slice().reverse(),
+              ],
+            });
+            if (scan.calls.length > 0 || scan.refused.length > 0) {
+              // WHAT THE VISIBLE REPLY BECOMES, and why it is not just
+              // `scan.cleanedText`. The scan read the UNCAPPED segment, so its
+              // cleaned copy is in general longer than what the user has been
+              // shown — assigning it straight through would let a salvaged call
+              // quietly un-cap the reply. The cap is a promise about how much
+              // the assistant says, and rescuing a tool call is no reason to
+              // break it. So the cleaned text goes back through the same cap
+              // the stream applied. Two things fall out: the call syntax is
+              // gone from the bubble wherever it landed (before OR after the
+              // cut), and the segment can never exceed `sentenceCap` sentences.
+              // It may GROW up to the cap — the streaming freeze is deliberately
+              // conservative and can cut early — which is the cap being honoured
+              // more exactly, not less. With no cap set, rawIterText and
+              // iterText are the same string and this is the old behaviour.
+              const cleaned = scan.cleanedText;
+              iterText = sentenceCap > 0 ? truncateAtSentenceCap(cleaned, sentenceCap) : cleaned;
+              // assistantText was accumulated delta-by-delta, so it is repaired
+              // by splicing this iteration's segment the same way the cap does.
+              assistantText = assistantText.slice(0, capSegStart) + iterText;
+              updateAssistant();
+              // `iterText` is also what goes into workingMessages below, so the
+              // provider's raw call syntax never re-enters model context.
+              noteRecoveredCalls(scan.calls, scan.refused);
+              scan.calls.forEach((c, i) => {
+                toolCalls.push({ id: `call_${iteration}_r${i}`, name: c.name, args: c.args });
+              });
+              // Everything the module would not clear. ONE BOOLEAN LEAVES THIS
+              // LINE. The name and the arguments are read for the receipt's
+              // counts and then dropped on the floor — they are not pushed onto
+              // `toolCalls`, not written into a tool_calls message, not put in
+              // a tool result, not interpolated into any string. Those bytes
+              // can be attacker-chosen (a document quoted back at the user's
+              // request), and the moment the app restates them as something the
+              // assistant said, it has laundered them into the transcript and
+              // handed the next iteration a call to make. See TEXT_CALL_NOTE.
+              textCallNoted = scan.refused.length > 0;
+            }
+          }
+
           // Run accumulated tool calls even when finish_reason isn't the
           // OpenAI-canonical "tool_calls" — some NVIDIA backends finish with
           // "stop" after emitting calls, and discarding them silently kills
-          // the very action the model narrated. But a stream cut by the token
-          // limit or a filter leaves the LAST call's arguments half-written:
-          // executing that would either fail JSON.parse and burn another
-          // iteration against an already-overflowing context, or (worse) run
-          // a destructive tool on a truncated-but-parseable prefix.
-          if (toolCalls.length === 0 || finishNative === "length" || finishNative === "content_filter") {
+          // the very action the model narrated.
+          //
+          // `textCallNoted` keeps the loop alive for one more round with no
+          // calls in it. That round exists so the note below actually reaches
+          // the model — pushing it and then breaking would append a sentence to
+          // a conversation nobody sends. It costs the same round trip the old
+          // refusal-as-tool-result cost, and MAX_TOOL_ITERATIONS bounds it the
+          // same way. `textCallNoteSent` bounds it harder: the note is worth
+          // one extra round, not five, and a model that keeps writing the same
+          // prose call has already been told.
+          if ((toolCalls.length === 0 && (!textCallNoted || textCallNoteSent)) || streamCutShort) {
             break;
           }
 
-          workingMessages.push({
-            role: "assistant",
-            content: iterText || null,
-            tool_calls: toolCalls.map((t, i) => ({
-              id: t.id || `call_${iteration}_${i}`,
-              type: "function",
-              function: { name: t.name, arguments: t.args || "{}" },
-            })),
-          });
+          if (toolCalls.length > 0) {
+            workingMessages.push({
+              role: "assistant",
+              content: iterText || null,
+              tool_calls: toolCalls.map((t, i) => ({
+                id: t.id || `call_${iteration}_${i}`,
+                type: "function",
+                function: { name: t.name, arguments: t.args || "{}" },
+              })),
+            });
+          } else if (iterText) {
+            // Note-only round: no call was made, so there is no tool_calls
+            // message to write — an assistant message carrying an empty
+            // tool_calls array is malformed, and one carrying a fabricated
+            // entry is the exploit this ship closed. What goes back is the
+            // model's OWN prose with the recovered spans already removed, which
+            // is the context the note refers to. When even that is empty
+            // (the whole reply was one call blob) nothing is pushed at all.
+            workingMessages.push({ role: "assistant", content: iterText });
+          }
 
           // Vision payloads requested via view_image this round — injected as a
           // user message AFTER the tool results (tool messages are text-only).
@@ -1089,6 +1533,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           for (let i = 0; i < toolCalls.length; i++) {
             const t = toolCalls[i];
+            const callId = t.id || `call_${iteration}_${i}`;
             // `permissionsSnapshot` is the AUTHORITATIVE in-memory permission
             // state (see permissionsRef) — the same values that decided which
             // tools the model was offered. Every executor reads it through
@@ -1192,12 +1637,64 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 toast.error("An artifact could not be displayed (too large or malformed).");
               }
             }
+            const toolResultText = JSON.stringify(modelResult).slice(0, 24000);
             workingMessages.push({
               role: "tool",
-              tool_call_id: t.id || `call_${iteration}_${i}`,
+              tool_call_id: callId,
               name: t.name,
-              content: JSON.stringify(modelResult).slice(0, 24000),
+              content: toolResultText,
             });
+            // Kept for the recovery pass's provenance barrier: this result is
+            // now inside the model's context, so anything it echoes back that
+            // matches it was transcribed, not authored.
+            //
+            // WHAT IS HANDED OVER IS THE MODEL-VISIBLE TEXT, NOT THE STRINGIFIED
+            // BLOB, and the difference is the whole barrier. `toolResultText` is
+            // JSON: a quote inside a result is `\"` there, a newline is the two
+            // characters `\n`. The model does not echo THAT — it echoes what the
+            // string says. Handing over the blob made the comparison a no-op on
+            // the exact channel this barrier was written for: a search snippet, a
+            // read file, a forged tool's own return value.
+            //
+            // Why REPLACING the blob rather than adding to it. A span echoed in
+            // its still-escaped form cannot become a call at all — `{\"name\":…}`
+            // fails JSON.parse, so it is never a candidate — which leaves the
+            // decoded reading as the only one that can matter. And textToolCalls
+            // decodes ONE level of each source it is given, so passing the
+            // visible text also covers the doubly-escaped case (a result
+            // carrying an already-JSON payload), where passing the blob spends
+            // that one level just getting back to visible. It also keeps the
+            // source COUNT unchanged, and the module divides its comparison
+            // budget equally per source — a second entry per result would halve
+            // how much of each long result is compared at all.
+            //
+            // THAT IS NOT FREE, and this comment used to claim it was. Replacing
+            // makes the haystack exactly as complete as toolResultVisibleText:
+            // every string the walk fails to reach is a string the model can
+            // read and provenance cannot see, and a truthy `visible` hides the
+            // shortfall instead of falling back to the blob. A node budget in
+            // that walk bought the free-looking version its counterexample —
+            // padding ahead of the readable string returned a short, truthy
+            // haystack while the model read the whole result. The budget is gone
+            // for that reason (see toolResultVisibleText), and what remains is
+            // the same 24_000 character ceiling applied to toolResultText on the
+            // line above, so the two now cover the same text by construction.
+            //
+            // Values only, never keys: a key is app vocabulary, and the barrier
+            // must not learn to reject a span because it contains "name".
+            const visible = toolResultVisibleText(modelResult);
+            turnToolResultText.push(visible || toolResultText);
+          }
+
+          // The one sentence the app contributes when the salvage pass found
+          // call syntax it will not run. AFTER the tool results, never between
+          // an assistant tool_calls message and the results that answer it —
+          // that ordering is a hard requirement of the chat-completions shape.
+          // Zero interpolation: see TEXT_CALL_NOTE for why a note that names
+          // the tool is a working exploit rather than a nicety.
+          if (textCallNoted && !textCallNoteSent) {
+            workingMessages.push({ role: "system", content: TEXT_CALL_NOTE });
+            textCallNoteSent = true;
           }
 
           if (visionPayloads.length > 0) {
@@ -1485,7 +1982,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       forgeOptIn,
       runOptIn,
       foundryReady,
-      providerSupportsTools: !nv || nv.caps.tools === true,
+      // The SAME capability call the send path makes, for the same reason it
+      // is a shared function and not two expressions: the chip and the wire
+      // must be one computation, or the chip eventually claims a tool was
+      // offered when it was not — the one failure that would make this
+      // surface worse than nothing.
+      providerSupportsTools: modelToolSupport(model).supportsTools,
+      // Still NVIDIA-specific and still correct: only its VL models drop
+      // tools on a picture turn.
       imageTurnDisablesTools: !!nv && nv.imagesDisableTools === true && hasImages,
     });
   }, [visionModel, chatDeepResearch, isPaid, deepResearchModel, selectedModel, leanMode, chatToolPermissions, forgeOptIn, runOptIn, foundryReady]);
@@ -1520,8 +2024,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       hasEarlier,
       loadingEarlier,
       toolGatesForTurn,
+      approvedToolCount,
     }),
-    [messages, isLoading, chatDeepResearch, voiceDeepResearch, setChatDeepResearch, setVoiceDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort, loadEarlier, hasEarlier, loadingEarlier, toolGatesForTurn],
+    [messages, isLoading, chatDeepResearch, voiceDeepResearch, setChatDeepResearch, setVoiceDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort, loadEarlier, hasEarlier, loadingEarlier, toolGatesForTurn, approvedToolCount],
   );
 
   return (

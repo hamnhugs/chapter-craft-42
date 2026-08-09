@@ -21,8 +21,13 @@ import { FOCUS_MAX_ITEMS, type WorkspaceItem } from "@/lib/workspaceStore";
  *    halves — see stripNonce in buildChatSystemPrompt.ts) plus their
  *    fence-marker defang; never weaken either without revisiting this.
  *  - BUDGETED, NEVER SILENTLY TRUNCATED: oversized items become labelled
- *    excerpts pointing at read_workspace_item — opaque truncation is the
- *    documented trust-killer (Claude Projects' visible RAG-switch precedent).
+ *    excerpts — opaque truncation is the documented trust-killer (Claude
+ *    Projects' visible RAG-switch precedent). The label points at
+ *    read_workspace_item only on turns whose request actually carries it
+ *    (buildFocusBlock's `offeredTools`): the label sits directly against
+ *    visibly incomplete content, which is the strongest invitation to call
+ *    there is, so naming a function this turn does not have is how the model
+ *    ends up narrating having fetched the remainder.
  *  - FENCED AS UNTRUSTED: artifact content is model-authored and research
  *    content is web-derived — both are indirect-injection surfaces (OWASP
  *    LLM01) and get the app's standard nonce fence + never-obey framing.
@@ -36,13 +41,20 @@ export interface UsedFocusItem {
   title: string;
   kind: WorkspaceItem["kind"];
   /** "full" = entire item text included; "excerpt" = budget-clipped with a
-   *  visible label and a tool path to the rest; "omitted" = not in the block
-   *  at all (total budget exhausted, or beyond the item cap) — surfaced so
-   *  no chip or receipt ever claims an unsent item was sent. */
+   *  visible label (plus a tool path to the rest on turns that carry one);
+   *  "omitted" = not in the block at all (total budget exhausted, or beyond
+   *  the item cap) — surfaced so no chip or receipt ever claims an unsent
+   *  item was sent. */
   state: "full" | "excerpt" | "omitted";
 }
 
 const SESSION_FOCUS_NONCE = buildFenceNonce();
+
+/** The ONE tool name this block is ever allowed to say out loud. Kept as a
+ *  constant so the sentence that names it and the gate that decides whether
+ *  the sentence exists cannot drift apart — a rename that updates only the
+ *  string would silently re-open the fabrication path this gate closes. */
+const READ_TOOL = "read_workspace_item";
 
 /** Strip HTML/SVG markup down to its human-readable text. Raw markup is
  *  mostly token noise to a chat model; the text is what grounds answers. */
@@ -124,12 +136,26 @@ export function focusStatesForPinned(
 /**
  * Build the "## Pinned focus" system message. Returns null when nothing is
  * pinned. `nonce` is injectable for tests only.
+ *
+ * `opts.offeredTools` is the exact tool-name set this turn's request will
+ * carry — same option name and the same "omitted means do not filter"
+ * semantics as buildChatSystemPrompt's, and ideally the same
+ * computeToolGates() result, so prompt and block can never disagree about
+ * what exists. It matters here more than anywhere else in the prompt: the
+ * excerpt label sits adjacent to content the model can SEE is cut off, so a
+ * pointer at a function this turn does not carry reads as an instruction to
+ * call it, and what comes back is a narrated read of the remainder.
  */
 export function buildFocusBlock(
   pinned: WorkspaceItem[],
-  opts: { voiceMode?: boolean } = {},
+  opts: { voiceMode?: boolean; offeredTools?: readonly string[] } = {},
   nonce: string = SESSION_FOCUS_NONCE
 ): { message: string; used: UsedFocusItem[] } | null {
+  // "Not told" means "allow": with `offeredTools` omitted the block serializes
+  // byte-for-byte what it always did, so a caller can be wired up on its own
+  // schedule without a flag day — and without invalidating a cached prefix.
+  const offered = opts.offeredTools ? new Set(opts.offeredTools) : null;
+  const has = (t: string) => !offered || offered.has(t);
   // Voice turns halve every budget, same policy as the chapter/memory caps.
   const scale = opts.voiceMode ? 0.5 : 1;
   const itemBudget = Math.floor(FOCUS_ITEM_CHAR_BUDGET * scale);
@@ -165,14 +191,27 @@ export function buildFocusBlock(
     const isActive = item.kind === "html" || item.kind === "svg";
     const lang = focusLanguage(item);
     const bodyNoun = item.kind === "text" ? "file text" : `${lang ? `${lang} ` : ""}source`;
-    const excerptNote =
-      state !== "excerpt"
-        ? ""
-        : isActive
-          ? ` — EXCERPT (first ${body.length} of ${text.length} chars of the artifact's extracted text; read_workspace_item returns the raw ${item.kind.toUpperCase()} source, paged by offset)`
-          : item.kind === "research"
-            ? ` — EXCERPT (first ${body.length} of ${text.length} chars; read_workspace_item with this item_id and an offset returns the rest)`
-            : ` — EXCERPT (first ${body.length} of ${text.length} chars of the ${bodyNoun}; read_workspace_item with this item_id and an offset returns the rest)`;
+    // WHAT was clipped and HOW MUCH is a fact about the bytes in this message,
+    // so it is stated on every turn — hiding the truncation to avoid mentioning
+    // a withheld tool would trade a fabricated tool call for a fabricated
+    // "complete file", which is the worse of the two.
+    const excerptHead = isActive
+      ? `first ${body.length} of ${text.length} chars of the artifact's extracted text`
+      : item.kind === "research"
+        ? `first ${body.length} of ${text.length} chars`
+        : `first ${body.length} of ${text.length} chars of the ${bodyNoun}`;
+    // Only the RETRIEVAL PROMISE is gated. Without the tool the clause is
+    // rewritten, not amputated: the sentence closes on where the remainder
+    // stands rather than trailing off, because a half-sentence next to visibly
+    // cut content invites the model to supply the missing half itself.
+    const excerptTail = has(READ_TOOL)
+      ? isActive
+        ? `; ${READ_TOOL} returns the raw ${item.kind.toUpperCase()} source, paged by offset`
+        : `; ${READ_TOOL} with this item_id and an offset returns the rest`
+      : item.kind === "research"
+        ? "; the rest of the file is not in this message"
+        : "; the rest of it is not in this message";
+    const excerptNote = state !== "excerpt" ? "" : ` — EXCERPT (${excerptHead}${excerptTail})`;
     // Name the language where there is one: "the SQL file" and "the Python
     // file" are different reading instructions, and the model cannot infer it
     // from a fenced body reliably.

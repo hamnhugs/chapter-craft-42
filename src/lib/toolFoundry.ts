@@ -354,6 +354,30 @@ export async function listTools(opts: { status?: string } = {}): Promise<AgentTo
   return (data as AgentToolRow[]) || [];
 }
 
+/** How many tools this user has approved and not yet superseded — the same set
+ *  listTools({status:"approved"}) filters to, counted without transferring it.
+ *
+ *  A head-only count (`head: true` sends no rows at all) because the caller is
+ *  the chat status chip, which needs the number every session and none of the
+ *  data: listTools would pull up to 100 rows carrying each tool's full source
+ *  code to compute a single integer.
+ *
+ *  `null` means "we do not know" — the pre-migration schema, an RLS refusal, or
+ *  a network failure — and callers must render that as silence, not as zero. A
+ *  count of 0 is a fact about an empty library; null is the absence of one. */
+export async function countApprovedTools(): Promise<number | null> {
+  try {
+    const { count, error } = await (supabase.from("agent_tools" as any) as any)
+      .select("id", { count: "exact", head: true })
+      .eq("status", "approved")
+      .is("superseded_by", null);
+    if (error) return null;
+    return typeof count === "number" ? count : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The single approved, non-superseded row for a name — or a precise error. */
 export async function resolveApprovedTool(name: string): Promise<AgentToolRow> {
   const { data, error } = await (supabase.from("agent_tools" as any) as any)

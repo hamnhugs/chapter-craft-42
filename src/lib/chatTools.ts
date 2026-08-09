@@ -15,7 +15,8 @@ import {
   fetchImagesForEntries, IMAGE_ASPECT_RATIOS, type ChatImageRef,
 } from "@/lib/imageGen";
 import { getRecallStates } from "@/lib/memoryLens";
-import { buildFenceNonce as fenceNonce, fenced, sanitizeInline, sanitizeBlock } from "@/lib/buildChatSystemPrompt";
+import { buildFenceNonce as fenceNonce, fenced, sanitizeInline, sanitizeBlock, stripRunToolSignature } from "@/lib/buildChatSystemPrompt";
+import { isFoundryTool, FORGE_TOOL, RUN_TOOL, FOUNDRY_SURVEY_TOOL } from "@/lib/toolAvailability";
 import {
   analyzeToolCode, sanitizeToolDescription, TOOL_NAME_RE, foundryAvailable,
   resolveApprovedTool, toolFingerprint, approveTool, latestApprovalSha,
@@ -280,6 +281,60 @@ async function readToolPermissions(deps?: Partial<ToolDeps>): Promise<Record<str
     .select("chat_tool_permissions" as any)
     .maybeSingle();
   return (((data as any)?.chat_tool_permissions) || {}) as Record<string, boolean>;
+}
+
+/** Is `tool` on THIS turn's wire?
+ *
+ *  WHY THIS EXISTS. A tool RESULT that names a verb the request does not carry
+ *  is the same defect as a system prompt that does — only worse. A result
+ *  arrives after every prompt section, so it is the freshest thing in context,
+ *  and it carries the authority of something that just happened. The model
+ *  cannot emit the named call, so it narrates having made it. That is verbatim
+ *  the reported bug, and the prompt-side gate (buildChatSystemPrompt's `has`)
+ *  never covered this door.
+ *
+ *  It mirrors computeToolGates' DATA-DRIVEN rules — the Lean tier, the
+ *  default-allow TOOL_PERMISSION map, and the Foundry's inverted opt-in — so a
+ *  newly registered tool is covered the day it gets a permission, not the day
+ *  someone remembers this function. It deliberately omits the two model-
+ *  capability gates: those withhold the ENTIRE roster, and a turn with no
+ *  roster produces no tool result for a stray name to appear in.
+ *
+ *  Use it for the OPTIONAL clause of a result, never for the result itself.
+ *  Suppressing the whole sentence would trade one lie for another (the tool
+ *  that ran still has to report what it did); only the "…now call X" tail goes.
+ *
+ *  Exported for src/test/toolOnWire.test.ts. It has eleven call sites across
+ *  two files and the source-level lint (toolResultToolTruth.test.ts) only pins
+ *  WHERE it is used — this is the door through which what it MEANS is pinned. */
+export async function toolOnWire(tool: string, deps?: Partial<ToolDeps>): Promise<boolean> {
+  if (isToolBlocked(deps?.leanMode || "full", tool)) return false;
+  const perms = await readToolPermissions(deps);
+  if (isFoundryTool(tool)) {
+    // Inverted semantics: an explicit `true` grants, and the one-time database
+    // setup gates every Foundry verb after that — the same order run_tool's own
+    // executor checks them in. A transient probe failure reads as "off", which
+    // is the safe direction: the cost of withholding a clause is one less hint,
+    // the cost of granting a phantom one is a fabricated tool run.
+    const optIn = tool === RUN_TOOL
+      ? perms[RUN_TOOL] === true
+      : tool === FOUNDRY_SURVEY_TOOL
+        ? perms[FORGE_TOOL] === true || perms[RUN_TOOL] === true
+        : perms[FORGE_TOOL] === true;
+    // …EXCEPT test_tool, which computeToolGates deliberately exempts from the
+    // migration gate (off_foundry_unavailable skips it, and executeFoundryTool
+    // routes it around the probe) because it is a pure sandbox scratchpad that
+    // touches no Foundry table. This function claims to mirror those rules and
+    // did not: on the very common account where forging is on but the one-time
+    // setup has not run, the roster CARRIES test_tool while this said it did
+    // not. That is the mirror failure — withholding a clause for a tool that IS
+    // on the wire suppresses legitimate use — and it is the direction that
+    // hides, because nothing looks wrong on screen.
+    if (tool === "test_tool") return optIn;
+    return optIn && (await foundryAvailable());
+  }
+  const permissionId = TOOL_PERMISSION[tool];
+  return !permissionId || perms[permissionId] !== false;
 }
 
 // The Toolshed's wiki id, resolved once per session. getNeuronScope runs on
@@ -719,7 +774,15 @@ export const CHAT_TOOL_DEFINITIONS = [
       parameters: {
         type: "object",
         properties: {
-          image_id: { type: "string", description: "Id of the source image (from generate_image, list_images, an '[Attached image …]' note, or recall_image_memories)." },
+          // PROVENANCE LISTS, not next-step instructions — but they still put
+          // "generate_image" in front of a model on turns that carry no
+          // generate_image ("Generate images" off while "Edit images" is on;
+          // chat_only leaves neither, but the permissions are independent). The
+          // same one-phrase substitution is applied to the sibling id
+          // parameters on save_image_to_memory, generate_video, generate_splat
+          // and lock_master_asset: the other sources are ungoverned and stay
+          // named, so nothing about where an id comes from is lost.
+          image_id: { type: "string", description: "Id of the source image (an image you just created, from list_images, an '[Attached image …]' note, or recall_image_memories)." },
           instruction: { type: "string", description: "What to change." },
           aspect_ratio: { type: "string", enum: [...IMAGE_ASPECT_RATIOS] },
         },
@@ -773,7 +836,14 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "recall_image_memories",
       description:
-        "Search the user's stored image memories (images they previously uploaded into chat). Returns up to N matches with memory_id, caption, OCR text, tags, a short-lived URL that you can embed in your reply via standard markdown image syntax (![alt](url)) to show the image to the user, and — when the picture is also registered in the image library — an image_id that works with every image tool (edit_image, view_image, show_image, generate_video, save_image_to_memory, delete_image). Use whenever the user references a picture they uploaded earlier ('that diagram I shared', 'the screenshot from yesterday').",
+        // The old parenthesis listed six verbs, four of which are governed
+        // independently (edit_image, generate_video, save_image_to_memory,
+        // delete_image) while recall_image_memories itself is free and ungoverned
+        // — so on a chat_only turn this description enumerated four tools the
+        // request did not carry. show_image and view_image are kept because
+        // neither has a TOOL_PERMISSION entry nor appears in any Lean tier, so
+        // they cannot be withheld on their own; the rest became the capability.
+        "Search the user's stored image memories (images they previously uploaded into chat). Returns up to N matches with memory_id, caption, OCR text, tags, a short-lived URL that you can embed in your reply via standard markdown image syntax (![alt](url)) to show the image to the user, and — when the picture is also registered in the image library — an image_id, the same id the image tools take (show_image and view_image among them), so the picture can be displayed, edited, filed to memory or used as a reference wherever an image_id is accepted. Use whenever the user references a picture they uploaded earlier ('that diagram I shared', 'the screenshot from yesterday').",
       parameters: {
         type: "object",
         properties: {
@@ -804,7 +874,12 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "delete_image_memory",
       description:
-        "Permanently delete an uploaded image MEMORY RECORD (the caption/OCR/search entry for a picture the user shared earlier). If the picture is ALSO in the image library (it has an image_id), the picture itself is kept — to remove the picture use `delete_image` instead; the result tells you which happened. Use `recall_image_memories` first to find the memory_id. DESTRUCTIVE: only call after the user has explicitly approved this specific deletion in the current turn (paraphrase caption/date, get 'yes'). Honors per-tool permissions in Settings.",
+        // "Delete images" and "Delete uploaded image memories" are two separate
+        // toggles, so this tool routinely ships on a turn that carries no
+        // delete_image — and the RESULT form of this same sentence is already
+        // gated (see the delete_image_memory case). This is that gate's static
+        // mirror: the boundary is stated, the verb is not named.
+        "Permanently delete an uploaded image MEMORY RECORD (the caption/OCR/search entry for a picture the user shared earlier). If the picture is ALSO in the image library (it has an image_id), the picture itself is kept and would have to be deleted separately; the result tells you which happened. Use `recall_image_memories` first to find the memory_id. DESTRUCTIVE: only call after the user has explicitly approved this specific deletion in the current turn (paraphrase caption/date, get 'yes'). Honors per-tool permissions in Settings.",
       parameters: {
         type: "object",
         properties: {
@@ -824,7 +899,7 @@ export const CHAT_TOOL_DEFINITIONS = [
       parameters: {
         type: "object",
         properties: {
-          image_id: { type: "string", description: "The image to save (from an '[Attached image — image_id: …]' note, generate_image, list_images, or recall_image_memories)." },
+          image_id: { type: "string", description: "The image to save (from an '[Attached image — image_id: …]' note, an image you just created, list_images, or recall_image_memories)." },
           title: { type: "string", description: "Optional neuron title. Defaults to a title derived from the description or filename." },
           description: { type: "string", description: "1–3 sentences on what the image shows — becomes the searchable memory text. Strongly recommended for uploads." },
           entry_id: { type: "string", description: "Optional: attach the image to this EXISTING knowledge entry instead of creating a new one." },
@@ -844,7 +919,7 @@ export const CHAT_TOOL_DEFINITIONS = [
         properties: {
           prompt: { type: "string", description: "With identity inputs: MOTION + CAMERA only, one motion verb ('turns slowly to the right, camera orbits'). Without identity inputs: full scene description." },
           master_id: { type: "string", description: "PREFERRED. Master asset id or @name (from list_master_assets). Auto-loads its hero image, multi-view pack, assembly tag, negative constraints, and palette." },
-          image_id: { type: "string", description: "Identity/first-frame source image (from generate_image, list_images, or a user-uploaded image's '[Attached image …]' note). Use when no master exists." },
+          image_id: { type: "string", description: "Identity/first-frame source image (an image you just created, from list_images, or a user-uploaded image's '[Attached image …]' note). Use when no master exists." },
           image_url: { type: "string", description: "Public http(s) image URL as the identity source, if the user supplied one directly." },
           reference_image_ids: { type: "array", items: { type: "string" }, description: "Up to 7 image ids forming a multi-view identity pack (front, 3/4, side, back — Vidu Q2 takes all 7 slots; other models use fewer). Re-send the SAME pack for every shot: per-shot re-anchoring is what prevents cross-shot drift. Requires a reference-capable model. With references attached, the prompt must describe only ACTION and CAMERA — never the character's appearance." },
           splat_id: { type: "string", description: "A 3D splat as the identity source: consistent multi-view stills are rendered from it automatically and used as the reference pack (honest path — the splat itself is not animated)." },
@@ -916,11 +991,16 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "generate_splat",
       description:
-        "Turn an IMAGE into an interactive 3D Gaussian splat and show it to the user inline (they can orbit it in the chat). Takes about 5-20 seconds and costs about $0.05, billed to the user's fal.ai key. IMPORTANT: there is NO text-to-3D — this tool needs an image. If the user asks for a 3D version of something that doesn't exist yet, call generate_image FIRST, then pass that image's id here. If they refer to an image already in the chat or their library, use list_images to find its id. The result is saved to memory as a 3D neuron by default. Use when the user asks for a 3D model, a 3D version, a splat, or something they can rotate/spin/look around.",
+        // "Generate images" and "Generate 3D models" are independent toggles, so
+        // this description ships on turns without generate_image. The RESULT
+        // form of this same instruction is already gated (the no-source-image
+        // branch of generate_splat); this is its static mirror. list_images
+        // stays: it is free and ungoverned.
+        "Turn an IMAGE into an interactive 3D Gaussian splat and show it to the user inline (they can orbit it in the chat). Takes about 5-20 seconds and costs about $0.05, billed to the user's fal.ai key. IMPORTANT: there is NO text-to-3D — this tool needs an image. If the user asks for a 3D version of something that doesn't exist yet, you need a picture of it first: make or find one, then pass that image's id here. If they refer to an image already in the chat or their library, use list_images to find its id. The result is saved to memory as a 3D neuron by default. Use when the user asks for a 3D model, a 3D version, a splat, or something they can rotate/spin/look around.",
       parameters: {
         type: "object",
         properties: {
-          image_id: { type: "string", description: "Id of the source image (from generate_image, list_images, or a user-uploaded image's '[Attached image …]' note). Preferred." },
+          image_id: { type: "string", description: "Id of the source image (an image you just created, from list_images, or a user-uploaded image's '[Attached image …]' note). Preferred." },
           image_url: { type: "string", description: "Public http(s) image URL, if the user supplied one directly instead of an image_id." },
           prompt: { type: "string", description: "Short description of the subject — used as the caption, the alt text and the memory title." },
           quality: { type: "string", enum: ["fast", "standard", "high"], description: "fast = 65k gaussians (2.1 MB), standard = 131k (4.2 MB, default), high = 262k PLY (much larger file, may be refused by the size limit)." },
@@ -980,7 +1060,10 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "render_splat_views",
       description:
-        "Render consistent multi-view stills (turntable) from a generated 3D splat — FREE, runs on the user's GPU in ~5-15s, no API spend. Each view is saved as an image with an image_id, so the set works as a multi-view identity pack for generate_video (reference_image_ids) or as a master asset's view pack. Default set: front, three_quarter, side, back — the back view matters most (video models hallucinate turnarounds without one). This is the honest splat→video path: the splat itself is never animated; it contributes geometry-consistent reference stills.",
+        // The parameter name (`reference_image_ids`) survives where the verb
+        // cannot: this tool is free and stays on the wire in Lean Mode's middle
+        // tier, which is precisely the tier that removes generate_video.
+        "Render consistent multi-view stills (turntable) from a generated 3D splat — FREE, runs on the user's GPU in ~5-15s, no API spend. Each view is saved as an image with an image_id, so the set works as a multi-view identity pack — pass the ids into a `reference_image_ids` slot, or attach them as a master asset's view pack. Default set: front, three_quarter, side, back — the back view matters most (video models hallucinate turnarounds without one). This is the honest splat→video path: the splat itself is never animated; it contributes geometry-consistent reference stills.",
       parameters: {
         type: "object",
         properties: {
@@ -998,12 +1081,16 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "lock_master_asset",
       description:
-        "Lock an image and/or splat as a named MASTER ASSET — the single source of truth for a character/asset's identity. Use when the user says 'lock this as the master', 'save this character', or approves a design. Once locked, generate_video takes master_id (or @name) and auto-loads the hero image, multi-view pack, assembly tag, negative constraints, and palette — the user never has to re-describe the character. Free (writes a record + an Asset Factory neuron; if a splat is given without views, a 4-view pack is rendered from it on the user's GPU). Keep assembly_tag SHORT ('the teal-and-white cartoon robot') — it goes into prompts, and long appearance text fights image conditioning; put full construction details in tech_pack instead.",
+        // Free and unblocked by every Lean tier, so it outlives generate_video
+        // on exactly the turns Lean Mode is designed for. The payoff sentence
+        // survives as the capability — what master_id buys you — without naming
+        // the verb that consumes it.
+        "Lock an image and/or splat as a named MASTER ASSET — the single source of truth for a character/asset's identity. Use when the user says 'lock this as the master', 'save this character', or approves a design. Once locked, master_id (or @name) is all a tool needs: it auto-loads the hero image, multi-view pack, assembly tag, negative constraints, and palette — the user never has to re-describe the character. Free (writes a record + an Asset Factory neuron; if a splat is given without views, a 4-view pack is rendered from it on the user's GPU). Keep assembly_tag SHORT ('the teal-and-white cartoon robot') — it goes into prompts, and long appearance text fights image conditioning; put full construction details in tech_pack instead.",
       parameters: {
         type: "object",
         properties: {
           name: { type: "string", description: "Handle for @name references (2-40 chars: letters, digits, - or _). E.g. 'robby'." },
-          hero_image_id: { type: "string", description: "The canonical hero image (from generate_image, list_images, or a user-uploaded image's id). Required unless splat_id is given." },
+          hero_image_id: { type: "string", description: "The canonical hero image (an image you just created, from list_images, or a user-uploaded image's id). Required unless splat_id is given." },
           splat_id: { type: "string", description: "Optional 3D splat. A 4-view reference pack is auto-rendered from it unless view_image_ids are supplied." },
           view_image_ids: { type: "array", items: { type: "string" }, description: "Optional multi-view pack image ids (front, 3/4, side, back)." },
           assembly_tag: { type: "string", description: "ONE short discriminative identity tag used in prompts. Keep under ~15 words." },
@@ -1022,7 +1109,11 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "list_master_assets",
       description:
-        "List the user's locked master assets: master_id, @name, assembly tag, whether each has a hero image / view pack / splat, palette and negative constraints. ALWAYS check this before generating character video — if a master exists for the subject, pass its master_id to generate_video instead of describing the character in text.",
+        // list_master_assets is free and ungoverned; generate_video is removed
+        // by Lean Mode's middle tier and by its own permission. The rule the
+        // sentence teaches (use the id, never re-describe) is what matters, and
+        // it holds without naming the verb that consumes it.
+        "List the user's locked master assets: master_id, @name, assembly tag, whether each has a hero image / view pack / splat, palette and negative constraints. ALWAYS check this before generating character video — if a master exists for the subject, use its master_id instead of describing the character in text.",
       parameters: { type: "object", properties: {} },
     },
   },
@@ -1123,7 +1214,12 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "save_file",
       description:
-        "Save a file to the user's Workspace — any code, document, outline, dataset or tool source they will want to keep, open on another device, or download. FREE: local, no API call, works in every Lean Mode tier. Use this INSTEAD of pasting a long file into your reply: a fenced block in chat is lost on reload, a Workspace file is not. Save it, then tell the user it's there and summarise what's in it. For a rendered, interactive HTML/SVG document use create_artifact instead — save_file stores text, it does not run anything.",
+        // save_file has no permission of its own; create_artifact does ("Create
+        // artifacts"), so this description shipped a pointer to an absent verb
+        // whenever that toggle was off. The routing advice is not lost — it
+        // lives on create_artifact's OWN description, which is only in context
+        // when the tool is.
+        "Save a file to the user's Workspace — any code, document, outline, dataset or tool source they will want to keep, open on another device, or download. FREE: local, no API call, works in every Lean Mode tier. Use this INSTEAD of pasting a long file into your reply: a fenced block in chat is lost on reload, a Workspace file is not. Save it, then tell the user it's there and summarise what's in it. save_file stores TEXT — it does not render or run anything.",
       parameters: {
         type: "object",
         properties: {
@@ -1259,7 +1355,11 @@ export const CHAT_TOOL_DEFINITIONS = [
           save_to_master: { type: "string", description: "Master asset id or @name to save this blueprint onto, making it that character's authoritative definition. Saving also runs a consistency check against that master's locked palette and forbidden traits. Needs the 'Save blueprints to masters' permission." },
           confirm_replace: { type: "boolean", description: "Required true when save_to_master would REPLACE an existing blueprint — replacement is permanent, so tell the user what changes and get their go-ahead first." },
           chapter_index: { type: "number", description: "Chapter being written. Checked against the blueprint's validity range so you don't draw the wrong revision of a character." },
-          save_as_reference: { type: "boolean", description: "Also save the sheet into the image library and return its image_id, so it can be passed to generate_image as a reference. Do this whenever the user is about to generate art of this subject — the drawn palette and proportions carry far better as a picture than as words." },
+          // Named the capability, not the verb: create_blueprint_sheet has no
+          // permission of its own and no Lean tier blocks it, so this static
+          // text ships on turns where generate_image does not — and a
+          // description is the one layer that cannot be gated per turn.
+          save_as_reference: { type: "boolean", description: "Also save the sheet into the image library and return its image_id, so the drawing can ride as a reference image. Do this whenever the user is about to generate art of this subject — the drawn palette and proportions carry far better as a picture than as words." },
           save_views_as_references: { type: "boolean", description: "Additionally save EACH VIEW as its own reference image (up to 4). Per-view references fill the generator's typed reference slots one view each, which measurably beats a single composite sheet." },
           title: { type: "string", description: "Title for the sheet in the Workspace. Defaults to the blueprint name." },
         },
@@ -1545,7 +1645,14 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "supersede_memory_entry",
       description:
-        "Replace an outdated or incorrect memory entry with a corrected one WITHOUT losing history: the corrected entry is created, and the old one is retired (its belief window closes and it links to its replacement — it stops appearing in retrieval but stays auditable). USE THIS instead of update_memory_entry whenever a FACT CHANGED or was wrong; update_memory_entry is only for typo/phrasing fixes that don't change meaning. Honors the update_memory_entry permission.",
+        // "Supersede memory entries" and "Edit memory entries" are separate
+        // toggles, so supersede reaches the roster on turns that carry no
+        // update_memory_entry — and this text named it three times. The
+        // discrimination the model actually needs (fact changed vs. typo) is
+        // kept in capability terms; update_memory_entry's own description
+        // already says it is for edits, and it is only in context when it is on
+        // the wire.
+        "Replace an outdated or incorrect memory entry with a corrected one WITHOUT losing history: the corrected entry is created, and the old one is retired (its belief window closes and it links to its replacement — it stops appearing in retrieval but stays auditable). USE THIS, not a plain edit, whenever a FACT CHANGED or was wrong; a plain edit is only for typo/phrasing fixes that don't change meaning. Rides with the user's memory-editing permission as well as its own.",
       parameters: {
         type: "object",
         properties: {
@@ -1840,7 +1947,7 @@ export async function executeChatTool(
     if (perms[permissionId] === false) {
       return {
         result: permissionRefusal(name, permissionId),
-        event: { name, summary: `${name} blocked by user settings`, ok: false },
+        event: { name, summary: `${name} is off in your AI permissions`, ok: false },
       };
     }
   }
@@ -1879,7 +1986,18 @@ export async function executeChatTool(
         event: { name, summary: `${name} requires opt-in`, ok: false },
       };
     }
-    const handled = await executeFoundryTool(name, args, { runSandboxed: runToolSandboxed });
+    // `forgeOnWire` is the SAME predicate the roster used, not a second opinion:
+    // test_tool is the one Foundry verb that survives an unapplied migration, so
+    // it routinely runs on a turn that carries no forge_tool, and its "now call
+    // forge_tool" tail would then be the only mention of that verb anywhere in
+    // context (the Foundry prompt section is absent when the Foundry is not
+    // available). toolOnWire folds in both halves the roster checks — the
+    // explicit opt-in and foundryAvailable() — so the tail tracks the wire
+    // instead of tracking a guess.
+    const handled = await executeFoundryTool(name, args, {
+      runSandboxed: runToolSandboxed,
+      forgeOnWire: await toolOnWire(FORGE_TOOL, deps),
+    });
     if (handled) return handled;
   }
 
@@ -2024,12 +2142,40 @@ export async function executeChatTool(
         // and the prompt's fencing doesn't cover this path. Fence it the same
         // way, or the model can be steered by simply calling search_wiki.
         const swNonce = fenceNonce();
+        // THE THIRD DOOR. Every forged tool files a Toolshed card as an ordinary
+        // knowledge_entries row (entry_type "tool") whose body carries a literal,
+        // callable `Signature: run_tool("name", { … })` at roughly character 154
+        // — comfortably inside the 400-char snippet, and with no roster check on
+        // this path. The prompt's two doors were closed in the previous round;
+        // this one is worse than either, because a TOOL RESULT lands later than
+        // every prompt section and therefore outranks the Foundry paragraph that
+        // just said running is switched off. Trigger: a forged and approved tool,
+        // "Run approved tools" off (the default), "Search wiki" on, and a query
+        // that matches the card.
+        //
+        // Read the permission ONCE per call, and only when a tool card is
+        // actually in the results — the common search must not pay for a probe
+        // it will never use. Strip BEFORE the slice: a cut signature no longer
+        // matches the line pattern, so slicing first destroys the evidence and
+        // leaves the callable fragment in place.
+        const stripSignatures = (data || []).some((e: any) => e.entry_type === "tool")
+          ? !(await toolOnWire("run_tool", deps))
+          : false;
         const entries = (data || []).map((e: any) => ({
           id: e.id,
           title: fenced(sanitizeInline(e.title, swNonce, 160), swNonce),
           entry_type: e.entry_type,
           confidence: e.confidence,
-          snippet: fenced(sanitizeBlock((e.content || "").slice(0, 400), swNonce), swNonce),
+          snippet: fenced(
+            sanitizeBlock(
+              (stripSignatures && e.entry_type === "tool"
+                ? stripRunToolSignature(e.content || "")
+                : e.content || ""
+              ).slice(0, 400),
+              swNonce,
+            ),
+            swNonce,
+          ),
           untrusted: true,
           ...(imagesByEntryId.has(e.id)
             ? { images: imagesByEntryId.get(e.id), image_note: "This memory has attached image(s). If the user has never seen one (seen:false), call show_image with its image_id when you use this memory." }
@@ -2200,7 +2346,7 @@ export async function executeChatTool(
         if (neededPerm && confPerms[neededPerm] === false) {
           return {
             result: permissionRefusal(`resolve_conflict (${action})`, neededPerm),
-            event: { name, summary: `resolve_conflict ${action} blocked by user settings`, ok: false },
+            event: { name, summary: `resolve_conflict ${action} is off in your AI permissions`, ok: false },
           };
         }
 
@@ -2463,7 +2609,7 @@ export async function executeChatTool(
           return { result: { error: `Unknown wiki id(s): ${missing.join(", ")}. Use list_wikis to get valid ids.` }, event: { name, summary: "Unknown wiki id(s)", ok: false } };
         }
         const gateError = await checkNeuronPlanGate(ids);
-        if (gateError) return { result: { error: gateError }, event: { name, summary: "Blocked by free plan", ok: false } };
+        if (gateError) return { result: { error: gateError }, event: { name, summary: "More neurons than the free plan loads", ok: false } };
         const { degraded } = await persistActiveSet(uid, ids);
         const names = ids.map((id) => (byId.get(id) as any).name);
         return {
@@ -2533,7 +2679,7 @@ export async function executeChatTool(
         const liveIds = ids.filter((id) => byId.has(id));
         if (liveIds.length === 0) return { result: { error: `All neurons in chain "${chain.name}" have been deleted.` }, event: { name, summary: "Chain members deleted", ok: false } };
         const gateError = await checkNeuronPlanGate(liveIds);
-        if (gateError) return { result: { error: gateError }, event: { name, summary: "Blocked by free plan", ok: false } };
+        if (gateError) return { result: { error: gateError }, event: { name, summary: "More neurons than the free plan loads", ok: false } };
         const { degraded } = await persistActiveSet(uid, liveIds);
         touchChainUsed(chain.id);
         const names = liveIds.map((id) => (byId.get(id) as any).name);
@@ -2820,7 +2966,13 @@ export async function executeChatTool(
             })),
             failures: failures.length ? failures : undefined,
             ledger_note: successes.some((s) => s.ledgerNote) ? successes.find((s) => s.ledgerNote)?.ledgerNote : undefined,
-            note: "All images above are ALREADY displayed to the user inline — do NOT output markdown image links. Briefly describe what you created. When the user keeps or discards a result, record it with accept_generation / reject_generation.",
+            // "Accept / reject takes" is its own permission ("production_ledger")
+            // and switches independently of image generation, so this closing
+            // instruction routinely named two verbs the turn did not carry.
+            note: "All images above are ALREADY displayed to the user inline — do NOT output markdown image links. Briefly describe what you created." +
+              (await toolOnWire("accept_generation", deps)
+                ? " When the user keeps or discards a result, record it with accept_generation / reject_generation."
+                : ""),
             __images: refs,
           },
           event: { name, summary, ok: true },
@@ -3030,9 +3182,15 @@ export async function executeChatTool(
               deleted_id: (mem as any).id,
               caption: ((mem as any).caption || "").slice(0, 80),
               picture_removed: pictureRemoved,
+              // "Delete images" and "Delete uploaded image memories" are two
+              // separate danger toggles, so the picture-removal verb this points
+              // at is exactly the one a user who kept only the second is missing.
               note: pictureRemoved
                 ? "The memory record and the picture file were both removed."
-                : "The memory record was removed, but the PICTURE still exists in the image library — tell the user, and use list_images + delete_image (with fresh confirmation) if they want the picture gone too.",
+                : "The memory record was removed, but the PICTURE still exists in the image library — tell the user" +
+                  (await toolOnWire("delete_image", deps)
+                    ? ", and use list_images + delete_image (with fresh confirmation) if they want the picture gone too."
+                    : "; removing the picture itself is something they do from the image library."),
             },
             event: { name, summary: `Deleted image memory${(mem as any).caption ? `: "${(mem as any).caption.slice(0, 60)}"` : ""}${pictureRemoved ? "" : " (picture kept in library)"}`, ok: true },
           };
@@ -3124,7 +3282,10 @@ export async function executeChatTool(
           master = await resolveMaster(String(args.master_id));
           if (!master) {
             return {
-              result: { error: `No master asset "${String(args.master_id)}" found. Use list_master_assets to see what exists, or lock_master_asset to create one.` },
+              // `list_master_assets` is free and ungated; "Create master assets"
+              // (lock_master_asset) is a permission of its own, so the second
+              // half of this sentence is the half that can be missing.
+              result: { error: `No master asset "${String(args.master_id)}" found. Use list_master_assets to see what exists${await toolOnWire("lock_master_asset", deps) ? ", or lock_master_asset to create one" : ""}.` },
               event: { name, summary: "Master asset not found", ok: false },
             };
           }
@@ -3974,7 +4135,10 @@ export async function executeChatTool(
           source = await resolveSourceImageUrl({ imageId: args.image_id, imageUrl: args.image_url });
         } catch (e: any) {
           return {
-            result: { error: `${e?.message || "No source image."} 3D generation always starts from an image — call generate_image first if one doesn't exist yet, then pass its id as image_id.` },
+            // Image generation has its own permission and is off in the
+            // chat-only tier while 3D generation can still be on, so "call
+            // generate_image first" is reachable with no generate_image to call.
+            result: { error: `${e?.message || "No source image."} 3D generation always starts from an image — ${await toolOnWire("generate_image", deps) ? "call generate_image first if one doesn't exist yet, then pass its id as image_id" : "the picture has to exist already; find one with list_images and pass its id as image_id"}.` },
             event: { name, summary: "No usable source image", ok: false },
           };
         }
@@ -4141,7 +4305,16 @@ export async function executeChatTool(
             ok: true,
             views: rendered.map((r) => ({ view: r.view, azimuth_deg: r.azimuthDeg, image_id: r.image.id })),
             ...(attachMaster ? { attached_to_master: attachMaster.name } : {}),
-            note: "The rendered views are shown to the user inline. Use their image_ids as reference_image_ids in generate_video (or they're already on the master if attached).",
+            // Lean Mode's MIDDLE tier is exactly "video and 3D off, everything
+            // else stays" — and render_splat_views stays, because re-rendering
+            // stills from a splat the user already paid for is free. So the
+            // one turn where this note is most likely to fire is a turn that
+            // carries no generate_video. Only the pointer is conditional; what
+            // the tool actually did is reported either way.
+            note: "The rendered views are shown to the user inline." +
+              (await toolOnWire("generate_video", deps)
+                ? " Use their image_ids as reference_image_ids in generate_video (or they're already on the master if attached)."
+                : " Their image_ids are library references — hand them to any `reference_image_ids` slot to hold identity across a set (or they're already on the master if attached)."),
             __images: rendered.map((r) => r.image),
           },
           event: { name, summary: `Rendered ${rendered.length} splat view(s)${attachMaster ? ` → @${attachMaster.name}` : ""}`, ok: true },
@@ -4196,7 +4369,15 @@ export async function executeChatTool(
             splat_id: created.splat_id, palette: created.palette,
             negative_constraints: created.negative_constraints, banned_traits: created.banned_traits,
             ...(autoRendered > 0 ? { auto_rendered_views: autoRendered } : {}),
-            note: `Master locked. From now on, animate this asset by passing master_id "${created.id}" (or "@${created.name}") to generate_video — never re-describe its appearance in text.`,
+            // Same Lean tier, same shape: locking a master is free and stays
+            // on in "lean", generate_video does not. The instruction that
+            // matters — refer to the asset by id, never re-describe it — is
+            // true whatever the turn can generate, so it survives in both
+            // branches; only the verb it points at is conditional.
+            note: `Master locked. ` +
+              (await toolOnWire("generate_video", deps)
+                ? `From now on, animate this asset by passing master_id "${created.id}" (or "@${created.name}") to generate_video — never re-describe its appearance in text.`
+                : `From now on, refer to this asset by master_id "${created.id}" (or "@${created.name}") wherever a tool takes one — never re-describe its appearance in text.`),
           },
           event: { name, summary: `Locked master asset @${created.name}`, ok: true },
         };
@@ -4496,7 +4677,7 @@ export async function executeChatTool(
                 error: "Saving blueprints to masters is disabled in the user's AI permissions. The sheet itself IS on screen — tell the user, and ask them to enable 'Save blueprints to masters' in Settings if they want it attached.",
                 __artifact: artifact,
               },
-              event: { name, summary: "Sheet drawn; save blocked by user settings", ok: false },
+              event: { name, summary: "Sheet drawn; saving it to the library is off in your AI permissions", ok: false },
             };
           }
           // Replacing an existing blueprint is destructive — there is no
@@ -4596,8 +4777,23 @@ export async function executeChatTool(
             title,
             reference_image_id: referenceImageId,
             view_reference_ids: viewReferenceIds.length ? viewReferenceIds : undefined,
+            // THE EXACT PAIR THE PROMPT ALREADY GATES (buildChatSystemPrompt).
+            // Drawing a sheet is pure local rasterisation with no permission of
+            // its own and no Lean tier blocks it — and Lean Mode's own block
+            // actively steers the model to "reach for create_blueprint_sheet
+            // FIRST". So on a chat_only turn (or with "Generate images" off)
+            // this result fires while generate_image is off the wire: the
+            // prompt correctly went quiet about generation and then the
+            // freshest thing in context told the model to generate. The
+            // fallback keeps every word of the guidance that survives — the
+            // sheet IS a real library image either way — and names a parameter
+            // rather than a verb.
             ...(referenceImageId || viewReferenceIds.length
-              ? { reference_note: "Pass these image_ids to generate_image as `reference_image_ids` (per-view ids beat the composite when both exist) and keep the prompt to pose, action and setting — the references carry the appearance. Re-anchor from them every time; never edit your previous result forward." }
+              ? {
+                  reference_note: (await toolOnWire("generate_image", deps))
+                    ? "Pass these image_ids to generate_image as `reference_image_ids` (per-view ids beat the composite when both exist) and keep the prompt to pose, action and setting — the references carry the appearance. Re-anchor from them every time; never edit your previous result forward."
+                    : "These image_ids are real library images now (per-view ids beat the composite when both exist), so the drawing rides as a reference wherever a `reference_image_ids` slot is offered — and the user keeps it in their library regardless. The sheet carries the appearance far better than any words you could write about it.",
+                }
               : {}),
             ...(turnImages.length ? { __images: turnImages } : {}),
             // Deliberately NOT the SVG. A sheet is tens of kilobytes of markup
@@ -4908,9 +5104,18 @@ export async function executeChatTool(
           return {
             result: {
               models: stats,
+              // get_production_stats is free and read-only with no permission
+              // of its own, while accept/reject share the "production_ledger"
+              // toggle — so reading the scorecard with verdicts switched off is
+              // an ordinary turn, not an edge case. Same sentence shape already
+              // fixed on generate_image's closing note. The half that stays is
+              // the half that is always true: candidates record themselves.
               note: stats.length
                 ? "est_cost_per_accepted is the number that matters — a cheap model with a low acceptance rate is usually more expensive per finished shot than a strong one. Null means no acceptances yet OR no cost data for that model (image costs are rough estimates; video/splat use real quotes) — check the accepted count before concluding nothing was kept."
-                : "The ledger is empty — generations record themselves as candidates automatically; accept_generation / reject_generation record verdicts.",
+                : "The ledger is empty — generations record themselves as candidates automatically" +
+                  (await toolOnWire("accept_generation", deps)
+                    ? "; accept_generation / reject_generation record verdicts."
+                    : ", so it fills up on its own once the user starts generating."),
             },
             event: { name, summary: `Production stats: ${stats.length} model(s)`, ok: true },
           };
@@ -5090,6 +5295,16 @@ export async function executeChatTool(
           }
         }
 
+        // "You may run it with run_tool" is a second-person INSTRUCTION naming a
+        // verb this request may not carry, and the state that produces it is
+        // three independent switches wide: "Forge new tools" ON, "Run approved
+        // tools" OFF, "Auto-approve safe tool updates" ON. The model forges v2 of
+        // an approved tool with unchanged capabilities, it auto-approves, and
+        // this note tells it to run something it has no function for — so it
+        // narrates having run the update instead. The sentence stands on its own
+        // without the clause; only the offer is conditional.
+        const canRunNow = autoApproved && (await toolOnWire("run_tool", deps));
+
         const proposal: ToolProposal = { tool_id: toolId, name: toolName, description, capabilities: gate.capabilities, version, fingerprint, testResults, code, autoApproved, conformance };
         return {
           result: {
@@ -5114,7 +5329,8 @@ export async function executeChatTool(
               properties: conformance.properties.filter((c) => !c.pass).map((c) => `${c.name}: ${c.note}`),
             },
             note: autoApproved
-              ? "Update auto-approved (same capabilities, tests green — the user enabled auto-approval). You may run it with run_tool."
+              ? "Update auto-approved (same capabilities, tests green — the user enabled auto-approval)." +
+                (canRunNow ? " You may run it with run_tool." : "")
               : "Drafted and AWAITING THE USER'S APPROVAL (card shown; also in Settings → Tool Foundry). Never claim it ran. In hands-free, say it's ready to approve next time they look at the screen.",
             __toolProposal: proposal,
           },
@@ -5242,7 +5458,7 @@ export async function executeChatTool(
           if (perms["update_memory_entry"] === false) {
             return {
               result: { error: "Memory editing is disabled in the user's AI permissions (Edit memory entries). Ask the user to enable it in Settings." },
-              event: { name, summary: "supersede blocked by user settings", ok: false },
+              event: { name, summary: "Superseding needs “Edit memory entries” on", ok: false },
             };
           }
         }
@@ -5293,7 +5509,22 @@ export async function executeChatTool(
             return { result: { ok: true, new_entry_id: newId, superseded_entry_id: oldId }, event: { name, summary: "Superseded memory with corrected version (history kept)", ok: true } };
           } catch (e) {
             if (isMissingSupersessionSchema(e)) {
-              return { result: { error: `${SUPERSESSION_MIGRATION_MESSAGE} Until then, use update_memory_entry and tell the user the old version won't be kept.` }, event: { name, summary: "Supersede unavailable — migration not applied", ok: false } };
+              // The fallback names update_memory_entry, which has a permission
+              // of its own ("Edit memory entries"). In TODAY's code this branch
+              // is unreachable with that switch off — the guard ~40 lines above
+              // refuses supersede outright when editing is off — so the gate is
+              // belt-and-braces rather than a live fix. It is here because the
+              // two are enforced in different places: drop that guard (or reach
+              // this case from a path that skips it) and the migration fallback
+              // starts pointing at a verb the turn does not carry. The advice
+              // that survives is the honest half — history won't be kept.
+              const editOnWire = await toolOnWire("update_memory_entry", deps);
+              return {
+                result: {
+                  error: `${SUPERSESSION_MIGRATION_MESSAGE} Until then${editOnWire ? ", use update_memory_entry and tell" : ", tell"} the user the old version won't be kept.`,
+                },
+                event: { name, summary: "Supersede unavailable — migration not applied", ok: false },
+              };
             }
             throw e;
           }

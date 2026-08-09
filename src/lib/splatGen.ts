@@ -108,7 +108,13 @@ export async function resolveSourceImageUrl(opts: {
     return { url: direct, imageId: null };
   }
   const id = (opts.imageId || "").trim();
-  if (!id) throw new Error("Provide an image_id (from list_images / generate_image) or an image_url.");
+  // Names no tool on purpose. This message is interpolated as the LEADING clause
+  // of a model-visible result (chatTools.ts, generate_splat's catch), whose tail
+  // already routes the model correctly for BOTH permission states via
+  // toolOnWire("generate_image"). Naming generate_image here fired even with
+  // "Generate images" switched off, so the freshest thing in context pointed at
+  // an absent verb and then contradicted itself one clause later.
+  if (!id) throw new Error("Provide an image_id or an image_url.");
 
   const { data, error } = await supabase
     .from("image_attachments")

@@ -174,7 +174,35 @@ interface Snapshot {
 let snapshot: Snapshot = { settings: defaults, loaded: false };
 let loadedForUser: string | null | undefined = undefined; // undefined = never resolved
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
+/** The debounced write that has not run yet, so a closing tab can start it. */
+let pendingCommit: (() => void) | undefined;
 const listeners = new Set<() => void>();
+
+/**
+ * Start a pending settings write immediately when the page is going away.
+ *
+ * WHY. Every setting saves through a 500ms debounce. A consent the user just
+ * granted by clicking a button — "Approve — let the AI run this", which turns
+ * on run_tool — is committed server-side straight away while the permission
+ * that makes it usable sat in that window. Close the tab inside it and the
+ * approval survives, the grant does not, and the toast that said "the AI can
+ * run it now" was wrong.
+ *
+ * BEST EFFORT, NOT A GUARANTEE, and the difference matters: this only starts
+ * the request, and an unload can still cut it off. It shrinks the loss window
+ * from "500ms during which nothing was even attempted" to "the request was in
+ * flight". The app already recovers honestly from the remaining case — the
+ * approval card re-renders its note naming the switch — so this reduces a
+ * broken promise, it does not replace the recovery.
+ *
+ * pagehide is the reliable signal; visibilitychange covers mobile app-switch,
+ * where pagehide can be skipped entirely.
+ */
+if (typeof window !== "undefined") {
+  const flush = () => { pendingCommit?.(); };
+  window.addEventListener("pagehide", flush);
+  window.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); });
+}
 
 function publish(next: Partial<Snapshot>) {
   snapshot = { ...snapshot, ...next };
@@ -385,7 +413,8 @@ const pendingSaveKeys = new Set<keyof ChatSettings>();
 function persistSettings(userId: string, next: ChatSettings, changed?: Array<keyof ChatSettings>) {
   if (changed) for (const k of changed) pendingSaveKeys.add(k);
   if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {
+  // Named so a closing tab can run it early — see the pagehide flush above.
+  const commit = async () => {
     // NOTE: lean_mode is intentionally absent too. It is a deliberate
     // self-binding choice, and a stale tab's full-row write must never be
     // able to silently switch spending back on — it saves through its own
@@ -488,7 +517,14 @@ function persistSettings(userId: string, next: ChatSettings, changed?: Array<key
     }
     pendingSaveKeys.clear();
     settingsChannel?.postMessage("settings-updated");
-  }, 500);
+  };
+  pendingCommit = () => {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = undefined;
+    pendingCommit = undefined;
+    void commit();
+  };
+  saveTimer = setTimeout(() => { pendingCommit = undefined; void commit(); }, 500);
 }
 
 function updateStore(userId: string | undefined, partial: Partial<ChatSettings>) {

@@ -15,6 +15,7 @@ import { extractKnowledge } from "@/lib/knowledgeApi";
 import { Loader2, StickyNote, BookmarkPlus } from "lucide-react";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { isToolBlocked } from "@/lib/leanMode";
+import { TOOL_PERMISSION } from "@/lib/toolPermissions";
 import { usePlan } from "@/hooks/usePlan";
 import { openPricing } from "@/components/PricingDialog";
 import { useReadAloud } from "@/hooks/useReadAloud";
@@ -54,10 +55,11 @@ const ChatPanel: React.FC = () => {
   const { user } = useAuth();
   const {
     apiKey, nvidiaKeyLast4, geminiApiKey, leanMode, savedModels, selectedModel, voiceModel, autoReadReplies, burplexityApiToken, accessAllNeurons, loaded,
+    chatToolPermissions,
     handsFreeTtsRate,
     setSelectedModel, setAutoReadReplies,
   } = useChatSettings();
-  const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort, loadEarlier, hasEarlier, loadingEarlier, toolGatesForTurn } = useChat();
+  const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort, loadEarlier, hasEarlier, loadingEarlier, toolGatesForTurn, approvedToolCount } = useChat();
   const { isPaid } = usePlan();
   const { speakingId, speak, stop: stopSpeaking, pause: pauseSpeaking, resume: resumeSpeaking, isAudioActive } = useReadAloud();
   // Configured in the Settings tab; re-read here on mount (tab switches remount this panel).
@@ -709,7 +711,29 @@ const ChatPanel: React.FC = () => {
               new Promise<string | null>((resolve) => { window.setTimeout(() => resolve(null), 1500); }),
             ]).catch(() => null)
           : Promise.resolve(null);
-      if (voiceQuickSearch && burplexityApiToken && !isToolBlocked(leanMode, "web_search") && SEARCH_INTENT_RE.test(text)) {
+      // Voice quick-search fires a REAL Burplexity/Tavily call and injects its
+      // results into the turn, so it has to clear the SAME gates the executor
+      // applies to web_search: Lean Mode AND the user's own switch. It only ever
+      // checked Lean Mode, so a user who turned "Web search" off in Settings →
+      // AI Permissions still had searches run on every message that matched
+      // SEARCH_INTENT_RE — their switch did nothing here.
+      //
+      // DEFAULT-ALLOW, the app-wide convention: a permission counts as off ONLY
+      // when its stored value is explicitly `false`, never when the key is
+      // merely absent. Matches toolAvailability.ts:226
+      // (`input.permissions[permId] === false`) and AiPermissionsSettings.tsx:16
+      // (`chatToolPermissions[id] !== false`). Reading an absent key as "off"
+      // would silently switch voice quick-search off for every user who has
+      // never opened the permissions screen — a far wider regression than the
+      // leak being fixed. TOOL_PERMISSION is the lookup rather than a literal id
+      // so this follows the map if web_search is ever regrouped.
+      //
+      // Skipping is SILENT: no toast, no error, nothing written into model
+      // context. The turn proceeds without the search. Permission explanation
+      // lives in ToolStatusPanel by design — that register in a prompt
+      // measurably suppresses legitimate tool use.
+      const webSearchSwitchedOn = chatToolPermissions?.[TOOL_PERMISSION.web_search] !== false;
+      if (voiceQuickSearch && burplexityApiToken && webSearchSwitchedOn && !isToolBlocked(leanMode, "web_search") && SEARCH_INTENT_RE.test(text)) {
         runBackgroundSearch(text); // intentionally not awaited
       }
       // Take ownership of the attach-time upload promises: the unmount
@@ -1367,6 +1391,11 @@ const ChatPanel: React.FC = () => {
                   gates={toolGates}
                   onOpenSettings={openSettings}
                   lastTurn={lastTurnToolAccess}
+                  // Undefined until the count actually lands (and whenever the
+                  // Foundry's one-time setup hasn't run), which the panel reads
+                  // as "say nothing" — the loading moment must not assert that
+                  // the user has no library.
+                  approvedToolCount={approvedToolCount}
                 />
               )}
               <button onClick={() => { if (!isPaid) { openPricing("deep-research"); return; } setChatDeepResearch(!chatDeepResearch); }} title={isPaid ? undefined : "Deep Research is a Pro feature"} className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${chatDeepResearch && isPaid ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`}>

@@ -123,7 +123,18 @@ export const FOUNDRY_TOOL_DEFINITIONS: readonly any[] = [
     function: {
       name: "test_tool",
       description:
-        "Try CANDIDATE tool code against fixture data without saving anything — a scratchpad for repair, so a fix does not cost the user a forge plus a re-approval. Runs the same static gate as forge_tool, then three layers of checks: the tests you supply, held-out fixtures you have never been shown, and oracle-free properties. Never touches the user's real data and never writes to the database. Fix here first, then forge once.",
+        // NAMES NO OTHER TOOL, ON PURPOSE. CHAT_TOOL_DEFINITIONS is a static
+        // array, so a description cannot be gated per turn — which means it may
+        // only name a tool that CANNOT be withheld independently. test_tool is
+        // the one Foundry verb that survives an unapplied migration (see the
+        // exemption in toolAvailability.ts and the routing in
+        // executeFoundryTool), so on every account before setup this text is on
+        // the wire while forge_tool is not. It used to say "the same static gate
+        // as forge_tool … then forge once" — a description of a verb the model
+        // had no way to emit, which it resolves by narrating the save. The
+        // capability is named instead of the verb, so nothing about the guidance
+        // is lost when forging IS available.
+        "Try CANDIDATE tool code against fixture data without saving anything — a scratchpad for repair, so a fix does not cost the user a forge plus a re-approval. Runs the same static gate the Foundry applies when a tool is saved, then three layers of checks: the tests you supply, held-out fixtures you have never been shown, and oracle-free properties. Never touches the user's real data and never writes to the database. Get it clean here first, so the tool is saved once instead of three times.",
       parameters: {
         type: "object",
         properties: {
@@ -147,6 +158,27 @@ export const FOUNDRY_TOOL_NAMES: ReadonlySet<string> = new Set(
 export interface FoundryToolContext {
   /** Runs code in the existing sandbox. Injected so tests can stub it. */
   runSandboxed: typeof import("@/lib/toolSandbox").runToolSandboxed;
+  /**
+   * Is `forge_tool` itself on THIS turn's wire?
+   *
+   * WHY A VERB NEEDS TO KNOW ABOUT ANOTHER VERB. test_tool is deliberately
+   * exempt from the migration gate (toolAvailability.ts's
+   * off_foundry_unavailable rule skips it, and executeFoundryTool routes it
+   * around the probe), so it runs happily on an account where forge_tool has
+   * been pulled from the roster. On that account the Foundry prompt section is
+   * absent entirely, which makes this result the ONLY thing in context naming
+   * forge_tool — and the freshest thing at that. The model cannot emit the
+   * call, so it narrates having made it. This flag is what lets the result
+   * report its verdict without pointing at a verb that is not there.
+   *
+   * Passed in rather than probed here: this module is a pure seam, and the
+   * caller already computed the turn's roster. OMITTED means "no roster to
+   * consult" (tests, direct invocation) and keeps the clause — over-filtering
+   * a tool that IS on the wire suppresses legitimate use, which is the same
+   * harm in the other direction, so unknown fails OPEN exactly as
+   * modelCapabilities does.
+   */
+  forgeOnWire?: boolean;
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -487,7 +519,16 @@ async function testToolVerb(args: Record<string, unknown>, ctx: FoundryToolConte
   return {
     result: {
       ...body,
-      next: "Clean against fixtures, held-out variants and properties. Call forge_tool with this exact code to save it for the user's approval.",
+      // Only the "…now call forge_tool" TAIL is gated — never the verdict. A
+      // verb that ran still has to report what it did, and "the code is clean"
+      // is true regardless of what can be done with it next. The fallback
+      // points at save_file, which is ungated by construction (no
+      // TOOL_PERMISSION entry, in no Lean tier's blockedTools, not a Foundry
+      // verb), so the model is left with a real next move rather than a
+      // sentence with a hole in it.
+      next: ctx.forgeOnWire === false
+        ? "Clean against fixtures, held-out variants and properties. Nothing was saved — put the source in the user's Workspace with save_file so the work isn't lost, and tell them what it does."
+        : "Clean against fixtures, held-out variants and properties. Call forge_tool with this exact code to save it for the user's approval.",
     },
     event: { name, summary: `test_tool: ${report.summary}`, ok: true },
   };
