@@ -80,8 +80,8 @@ beforeEach(() => {
 
 describe("the seam", () => {
   it("exposes exactly the three verbs, and falls through for anything else", async () => {
-    expect([...FOUNDRY_TOOL_NAMES].sort()).toEqual(["list_tools", "read_tool", "test_tool"]);
-    expect(FOUNDRY_TOOL_DEFINITIONS.map((d) => d.function.name).sort()).toEqual(["list_tools", "read_tool", "test_tool"]);
+    expect([...FOUNDRY_TOOL_NAMES].sort()).toEqual(["delete_tool", "list_tools", "read_tool", "test_tool"]);
+    expect(FOUNDRY_TOOL_DEFINITIONS.map((d) => d.function.name).sort()).toEqual(["delete_tool", "list_tools", "read_tool", "test_tool"]);
     await expect(call("run_tool")).resolves.toBeNull();
     await expect(call("forge_tool")).resolves.toBeNull();
     await expect(call("read_workspace_item")).resolves.toBeNull();

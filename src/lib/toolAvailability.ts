@@ -81,7 +81,7 @@ export const RUN_TOOL = "run_tool";
  *  helps nobody. `list_tools` is the one plain survey and is useful the moment
  *  either switch is on. This grouping must stay identical to the inline gate in
  *  chatTools.ts's Foundry dispatch — same rule, two consumers. */
-export const FOUNDRY_REPAIR_TOOLS = ["read_tool", "test_tool"] as const;
+export const FOUNDRY_REPAIR_TOOLS = ["read_tool", "test_tool", "delete_tool"] as const;
 export const FOUNDRY_SURVEY_TOOL = "list_tools";
 const NEEDS_FORGE = new Set<string>([FORGE_TOOL, ...FOUNDRY_REPAIR_TOOLS]);
 const FOUNDRY_TOOLS = new Set<string>([...NEEDS_FORGE, RUN_TOOL, FOUNDRY_SURVEY_TOOL]);
