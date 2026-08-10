@@ -149,6 +149,22 @@ export const FOUNDRY_TOOL_DEFINITIONS: readonly any[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "delete_tool",
+      description:
+        "Permanently delete one of the user's Foundry tools by name, including its earlier versions. Destructive and irreversible: ask the user first, then call again with confirm=true. Use it when a tool is broken beyond repair, duplicated, or the user asks for it to be removed.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "The tool's name, e.g. 'chapter_word_count'. Call list_tools for exact names." },
+          confirm: { type: "boolean", description: "Must be true. Only set it after the user has agreed to the deletion in this conversation." },
+        },
+        required: ["name", "confirm"],
+      },
+    },
+  },
 ] as const;
 
 export const FOUNDRY_TOOL_NAMES: ReadonlySet<string> = new Set(
