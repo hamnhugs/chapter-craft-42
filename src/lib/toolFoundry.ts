@@ -354,6 +354,27 @@ export async function listTools(opts: { status?: string } = {}): Promise<AgentTo
   return (data as AgentToolRow[]) || [];
 }
 
+/** Permanently delete every version of a tool by name (RLS scopes this to the
+ *  signed-in user). Deleting the whole name — not one row — is the honest
+ *  behaviour: superseded versions are history of the SAME tool, and leaving
+ *  them behind means `list_tools` keeps surfacing a tool the user asked to be
+ *  rid of. Returns the versions that were removed so the caller can report a
+ *  fact rather than an assumption. */
+export async function deleteToolsByName(
+  name: string,
+): Promise<{ deleted: number; versions: number[] }> {
+  const { data, error } = await (supabase.from("agent_tools" as any) as any)
+    .delete()
+    .eq("name", name)
+    .select("id, version");
+  if (error) throw error;
+  const rows = (data as { id: string; version: number }[]) || [];
+  return {
+    deleted: rows.length,
+    versions: rows.map((r) => Number(r.version) || 0).sort((a, b) => a - b),
+  };
+}
+
 /** How many tools this user has approved and not yet superseded — the same set
  *  listTools({status:"approved"}) filters to, counted without transferring it.
  *
