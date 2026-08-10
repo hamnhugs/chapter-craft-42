@@ -66,6 +66,10 @@ export const TOOL_PERMISSION: Record<string, string> = {
   delete_scene: "delete_scene",
   accept_generation: "production_ledger",
   reject_generation: "production_ledger",
+  // Tool Foundry. The Foundry itself is opt-in (forge_tool / run_tool are
+  // deliberately absent here), but DELETING a tool destroys the only copy of
+  // its source, so it gets its own off switch on top of the opt-in.
+  delete_tool: "delete_tool",
 };
 
 /** Permissions enforced INSIDE an executor branch rather than at the tool
@@ -138,6 +142,12 @@ export const PERMISSION_GROUPS: PermGroup[] = [
       { id: "production_ledger", label: "Accept / reject takes", description: "Allow the AI to record verdicts on generations in the production ledger." },
       { id: "delete_scene", label: "Delete scenes", description: "Allow the AI to permanently delete a saved scene after you confirm.", danger: true },
       { id: "delete_master_asset", label: "Delete master assets", description: "Allow the AI to permanently delete a master asset after you confirm.", danger: true },
+    ],
+  },
+  {
+    group: "Tool Foundry",
+    items: [
+      { id: "delete_tool", label: "Delete Foundry tools", description: "Let the AI permanently delete a tool it built for you, including its earlier versions. It must ask you first.", danger: true },
     ],
   },
   {

@@ -477,7 +477,7 @@ describe("the allowlist stays honest", () => {
     // rather than trusted to a comment.
     const AV = readFileSync(resolve(process.cwd(), "src/lib/toolAvailability.ts"), "utf8");
     // read_tool rides with forge_tool…
-    expect(AV).toContain('export const FOUNDRY_REPAIR_TOOLS = ["read_tool", "test_tool"] as const;');
+    expect(AV).toContain('export const FOUNDRY_REPAIR_TOOLS = ["read_tool", "test_tool", "delete_tool"] as const;');
     expect(AV).toContain("const NEEDS_FORGE = new Set<string>([FORGE_TOOL, ...FOUNDRY_REPAIR_TOOLS]);");
     // …list_tools needs only EITHER switch…
     expect(AV).toContain("(tool === FOUNDRY_SURVEY_TOOL && !input.forgeOptIn && !input.runOptIn)");

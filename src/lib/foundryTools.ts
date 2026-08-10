@@ -161,7 +161,7 @@ export const FOUNDRY_TOOL_DEFINITIONS: readonly any[] = [
       parameters: {
         type: "object",
         properties: {
-          name: { type: "string", description: "The tool's name, e.g. 'chapter_word_count'. Call list_tools for exact names." },
+          name: { type: "string", description: "The tool's exact name, e.g. 'chapter_word_count'." },
           confirm: { type: "boolean", description: "Must be true. Only set it after the user has agreed to the deletion in this conversation." },
         },
         required: ["name", "confirm"],
