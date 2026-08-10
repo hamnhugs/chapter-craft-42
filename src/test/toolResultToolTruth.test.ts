@@ -358,6 +358,16 @@ const ALLOWLIST: Allowed[] = [
     why: "self-reference — generate_splat's unknown-price confirmation result.",
   },
   {
+    file: "src/lib/foundryTools.ts", tool: "list_tools",
+    snippet: "Call list_tools to see what is actually there.",
+    why: "delete_tool needs forgeOptIn && foundryReady (plus its own toggle); list_tools needs (forgeOptIn || runOptIn) && foundryReady — strictly weaker, so delete_tool running proves it.",
+  },
+  {
+    file: "src/lib/foundryTools.ts", tool: "delete_tool",
+    snippet: "call delete_tool again with confirm=true",
+    why: "self-reference: this is delete_tool's own confirmation refusal, so delete_tool was on the wire this very turn.",
+  },
+  {
     file: "src/lib/foundryTools.ts", tool: "test_tool",
     snippet: "Fix the errors below and call test_tool again",
     why: "self-reference — test_tool's own static-gate failure.",
@@ -477,7 +487,7 @@ describe("the allowlist stays honest", () => {
     // rather than trusted to a comment.
     const AV = readFileSync(resolve(process.cwd(), "src/lib/toolAvailability.ts"), "utf8");
     // read_tool rides with forge_tool…
-    expect(AV).toContain('export const FOUNDRY_REPAIR_TOOLS = ["read_tool", "test_tool"] as const;');
+    expect(AV).toContain('export const FOUNDRY_REPAIR_TOOLS = ["read_tool", "test_tool", "delete_tool"] as const;');
     expect(AV).toContain("const NEEDS_FORGE = new Set<string>([FORGE_TOOL, ...FOUNDRY_REPAIR_TOOLS]);");
     // …list_tools needs only EITHER switch…
     expect(AV).toContain("(tool === FOUNDRY_SURVEY_TOOL && !input.forgeOptIn && !input.runOptIn)");

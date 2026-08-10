@@ -1,5 +1,6 @@
 import {
   analyzeToolCode,
+  deleteToolsByName,
   foundryAvailable,
   latestToolRun,
   listTools,
@@ -62,6 +63,8 @@ export const FOUNDRY_ERROR_CODES = [
   "STATIC_ANALYSIS_FAILED",
   "CONFORMANCE_FAILED",
   "SANDBOX_UNAVAILABLE",
+  "CONFIRM_REQUIRED",
+  "TOOL_DELETE_FAILED",
 ] as const;
 
 export type FoundryErrorCode = (typeof FOUNDRY_ERROR_CODES)[number];
@@ -146,6 +149,22 @@ export const FOUNDRY_TOOL_DEFINITIONS: readonly any[] = [
           },
         },
         required: ["code", "tests"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_tool",
+      description:
+        "Permanently delete one of the user's Foundry tools by name, including its earlier versions. Destructive and irreversible: ask the user first, then call again with confirm=true. Use it when a tool is broken beyond repair, duplicated, or the user asks for it to be removed.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "The tool's exact name, e.g. 'chapter_word_count'." },
+          confirm: { type: "boolean", description: "Must be true. Only set it after the user has agreed to the deletion in this conversation." },
+        },
+        required: ["name", "confirm"],
       },
     },
   },
@@ -407,6 +426,63 @@ async function readToolVerb(args: Record<string, unknown>): Promise<FoundryToolR
   };
 }
 
+// ── delete_tool ──────────────────────────────────────────────────────────────
+async function deleteToolVerb(args: Record<string, unknown>): Promise<FoundryToolResult> {
+  const name = "delete_tool";
+  const toolName = String(args.name || "").trim();
+  if (!TOOL_NAME_RE.test(toolName)) {
+    return fail(
+      name,
+      "TOOL_NAME_INVALID",
+      toolName ? `'${toolName.slice(0, 40).replace(/[^\w -]/g, "")}' is not a valid tool name.` : "A tool name is required.",
+      "Tool names are snake_case, 3-40 chars. Call list_tools for the exact names, drafts included.",
+    );
+  }
+  // Confirmation is a SEPARATE turn on purpose: deletion cannot be undone and
+  // the row is the only copy of the source.
+  if (args.confirm !== true) {
+    return fail(
+      name,
+      "CONFIRM_REQUIRED",
+      `Deleting '${toolName}' is permanent and removes every version of it.`,
+      "Tell the user exactly what will be deleted and ask them. Only if they agree, call delete_tool again with confirm=true.",
+    );
+  }
+
+  let row: AgentToolRow | null;
+  try {
+    row = await resolveToolByName(toolName);
+  } catch (e) {
+    return fail(name, "FOUNDRY_QUERY_FAILED", `Could not look up '${toolName}'.`, "Try again, or call list_tools.", fencedDetail(e));
+  }
+  if (!row) {
+    return fail(name, "TOOL_NOT_FOUND", `No tool named '${toolName}'.`, "Call list_tools for the exact names — drafts are included there.");
+  }
+
+  let outcome: { deleted: number; versions: number[] };
+  try {
+    outcome = await deleteToolsByName(row.name);
+  } catch (e) {
+    return fail(name, "TOOL_DELETE_FAILED", `'${toolName}' could not be deleted.`, "Tell the user; they can also delete it in Settings → Tool Foundry.", fencedDetail(e));
+  }
+  if (outcome.deleted === 0) {
+    return fail(name, "TOOL_DELETE_FAILED", `'${toolName}' was not deleted (not found, or not yours).`, "Call list_tools to see what is actually there.");
+  }
+
+  const nonce = buildFenceNonce();
+  const safeName = sanitizeInline(row.name, nonce, 40);
+  return {
+    result: {
+      ok: true,
+      name: safeName,
+      deleted_versions: outcome.versions,
+      deleted_count: outcome.deleted,
+      note: "Deleted permanently, including earlier versions. It cannot be restored — if the user wants it back it has to be forged again.",
+    },
+    event: { name, summary: `Deleted Foundry tool "${safeName}" (${outcome.deleted} version${outcome.deleted === 1 ? "" : "s"})`, ok: true },
+  };
+}
+
 // ── test_tool ────────────────────────────────────────────────────────────────
 async function testToolVerb(args: Record<string, unknown>, ctx: FoundryToolContext): Promise<FoundryToolResult> {
   const name = "test_tool";
@@ -554,5 +630,6 @@ export async function executeFoundryTool(
   }
   if (name === "list_tools") return listToolsVerb(safeArgs);
   if (name === "read_tool") return readToolVerb(safeArgs);
+  if (name === "delete_tool") return deleteToolVerb(safeArgs);
   return null;
 }

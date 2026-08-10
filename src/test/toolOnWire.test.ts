@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { isFoundryTool } from "@/lib/toolAvailability";
 import { TOOL_PERMISSION } from "@/lib/toolPermissions";
 import { blockedTools } from "@/lib/leanMode";
 import { FORGE_TOOL, RUN_TOOL, computeToolGates, availableToolNames } from "@/lib/toolAvailability";
@@ -59,7 +60,10 @@ describe("the default-allow convention: OFF only on an explicit false", () => {
   // ALLOWED; only an explicit `false` in user_settings.chat_tool_permissions
   // blocks." A fresh account has {} there. Getting this backwards is invisible
   // in review and withholds a clause from every existing user.
-  const GOVERNED_BY_PERMISSION = Object.keys(TOOL_PERMISSION);
+  // Foundry verbs are excluded: their opt-in is INVERTED (off until the user
+  // turns the Foundry on), so an empty snapshot correctly withholds them even
+  // when they also carry a default-allow toggle of their own (delete_tool).
+  const GOVERNED_BY_PERMISSION = Object.keys(TOOL_PERMISSION).filter((t) => !isFoundryTool(t));
 
   it("says yes for every permissioned tool when the snapshot is empty", async () => {
     for (const tool of GOVERNED_BY_PERMISSION) {
