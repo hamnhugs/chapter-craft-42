@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useSyncExternalStore } from "react";
 import { useApp } from "@/context/AppContext";
 import { useChat } from "@/context/ChatContext";
 import { useAuth } from "@/hooks/useAuth";
@@ -37,6 +37,8 @@ import ToolStatusPanel from "@/components/ToolStatusPanel";
 import type { Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle, useWorkspaceItems } from "@/lib/workspaceStore";
 import { focusStatesForPinned } from "@/lib/chatFocus";
+import { bookContextStore, selectContextBooks } from "@/lib/chatBooks";
+import BookContextPicker from "@/components/BookContextPicker";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations, isSearchRateLimited } from "@/lib/chatTools";
 import { useDownloadableTtsId, downloadTtsAudio } from "@/lib/ttsAudioCache";
@@ -220,6 +222,28 @@ const ChatPanel: React.FC = () => {
     () => focusStatesForPinned(focusedItems, { voiceMode: handsFree.active }),
     [focusedItems, handsFree.active]
   );
+  // Book context — the loaded shelf/books, shown as chips so what rides with
+  // every message is continuously visible. Membership comes from the SAME
+  // selector sendMessage uses, so chips and prompt can never disagree.
+  // (Send-state badges appear on the per-reply receipt, not here: chapter
+  // text isn't loaded until send time, so pre-send size claims would be
+  // guesses.)
+  const bookSelection = useSyncExternalStore(bookContextStore.subscribe, bookContextStore.get);
+  useEffect(() => {
+    bookContextStore.init(user?.id ?? null);
+  }, [user?.id]);
+  const contextBooks = useMemo(
+    () => selectContextBooks(books, bookSelection, activeBookId ?? null),
+    [books, bookSelection, activeBookId]
+  );
+  const [booksPickerOpen, setBooksPickerOpen] = useState(false);
+  const removeContextBook = (id: string) => {
+    if (bookSelection.shelfId) {
+      bookContextStore.set({ ...bookSelection, excludedIds: [...bookSelection.excludedIds, id] });
+    } else {
+      bookContextStore.set({ ...bookSelection, bookIds: bookSelection.bookIds.filter((x) => x !== id) });
+    }
+  };
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -990,6 +1014,35 @@ const ChatPanel: React.FC = () => {
                 </div>
               </details>
             )}
+            {msg.role === "assistant" && msg.usedBooks && msg.usedBooks.length > 0 && (
+              <details className="mb-2 ml-4">
+                <summary className="cursor-pointer list-none inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md bg-primary-container/20 text-on-surface-variant hover:bg-primary-container/30 transition-colors">
+                  <span className="material-symbols-outlined text-xs">auto_stories</span>
+                  {(() => {
+                    const n = msg.usedBooks.filter((b) => b.state !== "omitted").length;
+                    // All-omitted is a receipt too — an invisible omission
+                    // would let the chips claim books the model never saw.
+                    return n > 0 ? `${n} book${n === 1 ? "" : "s"} in context` : "Books not sent";
+                  })()}
+                </summary>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {msg.usedBooks.map((b) => (
+                    <span key={b.id} className="text-[11px] px-2 py-0.5 rounded-md bg-surface-container-high text-on-surface-variant border border-outline-variant/20">
+                      {b.title}
+                      {b.state === "full"
+                        ? " · full text"
+                        : b.state === "excerpt"
+                          ? ` · ${b.chaptersSent}/${b.chaptersTotal} chapters`
+                          : b.state === "outline"
+                            ? " · chapter map only"
+                            : b.note
+                              ? ` · not sent (${b.note})`
+                              : " · not sent"}
+                    </span>
+                  ))}
+                </div>
+              </details>
+            )}
             <div
               className={`relative group ${msg.role === "user" ? "message-bubble-user bg-primary-container text-on-primary-container" : "message-bubble-ai bg-surface-container-high text-foreground border-l-2 border-primary-container/20"} p-5 shadow-sm leading-relaxed select-text`}
               style={{ WebkitTouchCallout: "none" } as React.CSSProperties}
@@ -1163,6 +1216,9 @@ const ChatPanel: React.FC = () => {
       {/* Pocket screen: hands-free touch guard on phones (arms after idle) */}
       <PocketScreen active={handsFree.active} state={handsFree.state} />
 
+      {/* Book-context picker (Books button + shelf "Chat with this shelf") */}
+      <BookContextPicker open={booksPickerOpen} onOpenChange={setBooksPickerOpen} />
+
       {/* Input Area */}
       <div className="px-4 pb-4 pt-2">
         <div className="bg-surface-container-low/90 backdrop-blur-xl p-3 rounded-2xl shadow-2xl border border-outline-variant/10 flex flex-col gap-3 max-w-4xl mx-auto">
@@ -1223,6 +1279,47 @@ const ChatPanel: React.FC = () => {
                     className="rounded-full hover:bg-surface-container-highest p-0.5 leading-none shrink-0"
                     title={`Unpin "${f.title}" from focus`}
                     aria-label={`Unpin ${f.title} from focus`}
+                  >
+                    <span className="material-symbols-outlined text-[12px] block">close</span>
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          {contextBooks.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 px-1 pb-1 text-xs font-body text-on-surface-variant">
+              <span
+                className="material-symbols-outlined text-[14px] text-primary-container"
+                style={{ fontVariationSettings: "'FILL' 1" }}
+                title="Book context — these books' text is sent to the AI with every message"
+                aria-hidden
+              >
+                auto_stories
+              </span>
+              {contextBooks.map((b) => (
+                <span
+                  key={b.id}
+                  className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-surface-container-high border border-outline-variant/20 max-w-[200px]"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setBooksPickerOpen(true)}
+                    className="truncate font-semibold text-primary hover:underline"
+                    title={`"${b.title}" is loaded as chat context`}
+                  >
+                    {b.title}
+                  </button>
+                  {b.id === activeBookId && (
+                    <span className="text-[9px] font-bold uppercase tracking-widest text-on-surface-variant shrink-0" title="Your active book — placed first in context">
+                      reading
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => removeContextBook(b.id)}
+                    className="rounded-full hover:bg-surface-container-highest p-0.5 leading-none shrink-0"
+                    title={`Remove "${b.title}" from chat context`}
+                    aria-label={`Remove ${b.title} from chat context`}
                   >
                     <span className="material-symbols-outlined text-[12px] block">close</span>
                   </button>
@@ -1448,6 +1545,15 @@ const ChatPanel: React.FC = () => {
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
+              <button
+                onClick={() => setBooksPickerOpen(true)}
+                aria-pressed={contextBooks.length > 0}
+                className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${contextBooks.length > 0 ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`}
+                title="Load books or a shelf as chat context"
+              >
+                <span className="material-symbols-outlined text-sm" style={contextBooks.length > 0 ? { fontVariationSettings: "'FILL' 1" } : {}}>auto_stories</span>
+                Books{contextBooks.length > 0 ? ` (${contextBooks.length})` : ""}
+              </button>
               <button
                 onClick={() => setWorkspaceOpen((v) => !v)}
                 aria-pressed={workspaceOpen}

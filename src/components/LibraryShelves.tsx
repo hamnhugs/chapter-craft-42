@@ -3,6 +3,8 @@ import { BookDocument } from "@/types/library";
 import { listFolders, createFolder, renameFolder, deleteFolder, BookFolder } from "@/lib/bookFolders";
 import { categoryColor, UNCATEGORIZED } from "@/lib/categoryColors";
 import { useApp } from "@/context/AppContext";
+import { useAuth } from "@/hooks/useAuth";
+import { bookContextStore } from "@/lib/chatBooks";
 import { toast } from "sonner";
 
 // Shelves: the Vault's single grouping surface. One user-managed primitive
@@ -30,7 +32,25 @@ interface Props {
 }
 
 const LibraryShelves: React.FC<Props> = ({ books, renderBook, filtered = false }) => {
-  const { updateBookFolder, clearBookFolderLocal } = useApp();
+  const { updateBookFolder, clearBookFolderLocal, setActiveTab } = useApp();
+  const { user } = useAuth();
+
+  // This view WRITES to the book-context store, so it must init it — on a
+  // cold start straight to the Vault, no chat surface has mounted yet, and
+  // an un-init'd store can't persist (the selection would then be wiped by
+  // ChatPanel's own init when the tab switches).
+  useEffect(() => {
+    bookContextStore.init(user?.id ?? null);
+  }, [user?.id]);
+
+  // The shelf's headline AI action — the successor to the retired "Digest
+  // folder into neuron": load the shelf as chat context and jump to Counsel.
+  const chatWithShelf = (shelf: BookFolder) => {
+    bookContextStore.init(user?.id ?? null); // idempotent belt-and-braces
+    bookContextStore.set({ shelfId: shelf.id, bookIds: [], excludedIds: [] });
+    toast.success(`"${shelf.name}" loaded into chat — its books ride with every message.`);
+    setActiveTab("chat");
+  };
   const [shelves, setShelves] = useState<BookFolder[]>([]);
   const [openShelfId, setOpenShelfId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -216,6 +236,17 @@ const LibraryShelves: React.FC<Props> = ({ books, renderBook, filtered = false }
             {shelf?.name}
             <span className="text-on-surface-variant font-normal">({booksOnShelf.length})</span>
           </span>
+          <span className="ml-auto" />
+          {shelf && (
+            <button
+              onClick={() => chatWithShelf(shelf)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-on-primary-container text-xs font-bold"
+              title="Load this shelf's books as chat context and open Counsel"
+            >
+              <span className="material-symbols-outlined text-sm">psychology</span>
+              Chat with this shelf
+            </button>
+          )}
         </nav>
 
         {booksOnShelf.length === 0 ? (
@@ -280,6 +311,13 @@ const LibraryShelves: React.FC<Props> = ({ books, renderBook, filtered = false }
                 <p className="text-xs text-on-surface-variant mt-0.5">{members.length} book{members.length === 1 ? "" : "s"}</p>
               </div>
               <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+                <button
+                  onClick={(e) => { e.stopPropagation(); chatWithShelf(f); }}
+                  title={`Chat with "${f.name}" — load its books as chat context`}
+                  className="p-1 rounded bg-surface-container-high hover:bg-primary/20 text-primary"
+                >
+                  <span className="material-symbols-outlined text-sm">psychology</span>
+                </button>
                 <button
                   onClick={(e) => { e.stopPropagation(); setRenameDraft(f.name); setRenaming(f.id); }}
                   title="Rename"

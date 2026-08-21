@@ -26,6 +26,10 @@ import { parseArtifact, type Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle } from "@/lib/workspaceStore";
 import { extractCodeBlocks, excludeArtifactDuplicates } from "@/lib/workspaceFiles";
 import { buildFocusBlock, type UsedFocusItem } from "@/lib/chatFocus";
+import {
+  bookContextStore, selectContextBooks, hydrateBooksForContext,
+  buildBookContextBlock, bookContextCharBudget, type UsedBookContext,
+} from "@/lib/chatBooks";
 import { toast } from "sonner";
 import { isEmbeddingModel } from "@/lib/utils";
 import { describeModel, freeChatProviders, localModelId, modelProvider, providerConfigured, providerKey, providerKeyUrl, providerLabel, resolveModel } from "@/lib/providers/registry";
@@ -57,6 +61,10 @@ export interface ChatMessage {
    *  as a "Focused on N files" receipt chip so focus is falsifiable, not
    *  asserted. Transient, like usedMemories. */
   usedFocus?: UsedFocusItem[];
+  /** Books serialized into this turn's book-context block — the receipt
+   *  ("N books in context") that makes the loaded-books claim falsifiable.
+   *  Transient, like usedFocus. */
+  usedBooks?: UsedBookContext[];
   /** Generated/recalled images rendered inline in the bubble (from the
    *  generate_image / edit_image / show_image tools). */
   images?: ChatImageRef[];
@@ -1169,21 +1177,63 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
         return;
       }
+      // Book context — the loaded shelf/books, resolved fresh from the store
+      // at every send (a reference, not a snapshot: books added to the shelf
+      // appear, deleted ones drop). Hydration happens HERE, below the
+      // pre-flight gates, so an error turn never pays for whole-book fetches.
+      bookContextStore.init(userIdRef.current);
+      const contextBooks = selectContextBooks(books, bookContextStore.get(), activeBookId ?? null);
+      // The turn's AbortController exists BEFORE hydration, and the fetches
+      // carry its signal — otherwise the Stop button is dead for the whole
+      // whole-book download stall and the provider request fires anyway.
+      abortRef.current = new AbortController();
+      const turnSignal = abortRef.current.signal;
+      let bookBlock: ReturnType<typeof buildBookContextBlock> = null;
+      if (contextBooks.length > 0) {
+        try {
+          const hydrated = await hydrateBooksForContext(contextBooks, { signal: turnSignal });
+          bookBlock = buildBookContextBlock(hydrated, {
+            voiceMode: isVoice,
+            offeredTools: [...offeredNames],
+            totalCharBudget: bookContextCharBudget(model),
+          });
+        } catch (e) {
+          if (turnSignal.aborted) {
+            // The user stopped the send during hydration — withdraw the empty
+            // streaming bubble and end the turn quietly.
+            setMessages((prev) => prev.filter((m) => m.id !== assistantId));
+            setIsLoading(false);
+            return;
+          }
+          // The turn proceeds without the block; the missing receipt is the
+          // honest signal that no book text was sent.
+          toast.error("Couldn't load book text for context — sending without it.");
+        }
+      }
+
+      // The book block is the FIRST message on the wire: long documents at
+      // the top with the query at the end (the position-bias literature), and
+      // — because the main prompt regenerates fence nonces every build — the
+      // only placement where an unchanged book selection forms a byte-stable
+      // prefix that provider-side caching can hit.
       const workingMessages: any[] = [
+        ...(bookBlock?.message ? [{ role: "system", content: bookBlock.message }] : []),
         { role: "system", content: systemPrompt },
         ...(summaryNote ? [{ role: "system", content: summaryNote }] : []),
         ...(focusBlock ? [{ role: "system", content: focusBlock.message }] : []),
         ...historyForModel,
       ];
-      // Receipt stamped only HERE — after the embedding-model and provider-key
-      // gates — so an error bubble from a send that never reached a provider
-      // can't claim "Focused on N files".
+      // Focus receipt stamped only HERE — after the embedding-model and
+      // provider-key gates — so an error bubble from a send that never
+      // reached a provider can't claim "Focused on N files". The usedBooks
+      // receipt is stricter still: it commits with toolAccess on the FIRST
+      // STREAM EVENT (see stampToolAccess) — it claims what a reply actually
+      // carried, and a dead connection must not leave a bubble asserting
+      // books rode with it.
       if (focusBlock && focusBlock.used.length > 0) {
         const used = focusBlock.used;
         setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, usedFocus: used } : m)));
       }
-
-      abortRef.current = new AbortController();
 
       // Ground truth for this turn: how many tools this request actually put
       // on the wire. "We never offered it" and "we offered it and the model
@@ -1206,7 +1256,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const stampToolAccess = () => {
         if (toolAccessStamped) return;
         toolAccessStamped = true;
-        setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, toolAccess: turnToolAccess } : m)));
+        // The usedBooks receipt commits here — with toolAccess, on the first
+        // stream event — because both claim what this reply's request
+        // actually carried; stamping at assembly time would let a refused
+        // connection leave an error bubble asserting "N books in context".
+        const usedB = bookBlock && bookBlock.used.length > 0 ? bookBlock.used : undefined;
+        setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, toolAccess: turnToolAccess, ...(usedB ? { usedBooks: usedB } : {}) } : m)));
       };
       /** Re-stamp after calls had to be salvaged out of the reply's prose.
        *  A NEW object every time, never a mutation of the stamped one: the
@@ -1446,6 +1501,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               inbound: [
                 trimmed,
                 ...(focusBlock ? [focusBlock.message] : []),
+                // Loaded book text is inbound too: a book that quotes
+                // call-shaped JSON (a technical manual, this app's own docs)
+                // must not have its quotes executed as authored calls.
+                ...(bookBlock?.message ? [bookBlock.message] : []),
                 ...turnToolResultText.slice().reverse(),
               ],
             });

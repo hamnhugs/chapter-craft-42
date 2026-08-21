@@ -484,3 +484,51 @@ describe("the approved-tool count reaches the status chip", () => {
     expect(render).toContain("approvedToolCount={approvedToolCount}");
   });
 });
+
+describe("book context block: built from the frozen roster, first on the wire, honest receipts", () => {
+  const bookBuildAt = CTX.indexOf("bookBlock = buildBookContextBlock(");
+
+  it("builds the block AFTER the turn's single gate computation, from the same roster", () => {
+    // The block's excerpt/outline pointers may name get_chapter_text; if it
+    // were built before (or without) the frozen roster, it could name a tool
+    // this turn's request does not carry — the four-layer law's layer one.
+    expect(bookBuildAt).toBeGreaterThan(-1);
+    expect(sendGatesAt).toBeLessThan(bookBuildAt);
+    const call = CTX.slice(bookBuildAt, CTX.indexOf("});", bookBuildAt));
+    expect(call).toContain("offeredTools: [...offeredNames]");
+  });
+
+  it("rides FIRST in workingMessages — before the nonce-churning main prompt", () => {
+    const wmAt = CTX.indexOf("const workingMessages: any[] = [");
+    const wm = CTX.slice(wmAt, CTX.indexOf("];", wmAt));
+    const bookIdx = wm.indexOf("bookBlock?.message");
+    const sysIdx = wm.indexOf("content: systemPrompt");
+    expect(bookIdx).toBeGreaterThan(-1);
+    expect(sysIdx).toBeGreaterThan(-1);
+    expect(bookIdx).toBeLessThan(sysIdx);
+  });
+
+  it("is inbound text for the salvage pass — book quotes are transcription, not authorship", () => {
+    expect(scanBody).toContain("bookBlock?.message");
+  });
+
+  it("stamps the usedBooks receipt with toolAccess on the first stream event, never at assembly", () => {
+    const stampAt = CTX.indexOf("const stampToolAccess = () => {");
+    const stampBody = CTX.slice(stampAt, CTX.indexOf("};", stampAt));
+    expect(stampBody).toContain("usedBooks");
+    // And nowhere between assembly and the stamp helper — the pre-provider
+    // window where an error bubble could claim books it never sent.
+    const assemblyToStamp = CTX.slice(bookBuildAt, stampAt);
+    expect(assemblyToStamp).not.toContain("usedBooks:");
+  });
+
+  it("hydration carries the turn's abort signal so Stop works during the fetch stall", () => {
+    const hydrateAt = CTX.indexOf("await hydrateBooksForContext(");
+    const call = CTX.slice(hydrateAt, CTX.indexOf(")", hydrateAt) + 1);
+    expect(call).toContain("signal");
+    // The controller must already exist at that point.
+    const controllerAt = CTX.indexOf("abortRef.current = new AbortController()");
+    expect(controllerAt).toBeGreaterThan(-1);
+    expect(controllerAt).toBeLessThan(hydrateAt);
+  });
+});
