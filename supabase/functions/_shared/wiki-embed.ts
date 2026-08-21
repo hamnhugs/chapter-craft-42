@@ -1,4 +1,4 @@
-// Shared embedding helper used by knowledge-extract, knowledge-ingest, and embed-entries.
+// Shared embedding helper used by knowledge-extract and embed-entries.
 // Writes to knowledge_entries.embedding_v2 (halfvec(1536)) so it lives side-by-side
 // with the existing 768-dim `embedding` column used by knowledge-retrieve.
 

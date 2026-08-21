@@ -89,7 +89,7 @@ export async function deleteWiki(id: string): Promise<void> {
 /**
  * Persist the loaded neuron set. ids[0] is the PRIMARY (written to
  * active_wiki_id — the value every existing single-neuron code path and the
- * ingest/extract edge functions read); the full ordered set goes to
+ * knowledge-extract edge function read); the full ordered set goes to
  * active_wiki_ids. Until the neuron-chains migration is applied the array
  * column doesn't exist, so the upsert retries without it — the primary still
  * persists and multi-load degrades to session-only.

@@ -347,7 +347,7 @@ export async function buildChatSystemPrompt({
   ];
   const coreOffered = CORE_TOOL_ORDER.filter(has);
   const searchBullets = [
-    ...ifTools(["search_wiki"], "- `search_wiki` → search ONLY the user's locally saved knowledge wiki. Use it for things they've already studied/ingested."),
+    ...ifTools(["search_wiki"], "- `search_wiki` → search ONLY the user's locally saved knowledge wiki. Use it for things they've already studied or saved."),
     ...ifTools(["web_search"],
       "- `web_search` → LIVE INTERNET search via the user's Burplexity instance. Use this WHENEVER the user asks to 'search', 'look up', 'google', 'check online', 'what's the latest', or anything time-sensitive or not in the wiki." +
       clause(["search_wiki"], " You may call both `search_wiki` and `web_search` in the same turn when useful.") +

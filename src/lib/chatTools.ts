@@ -657,7 +657,7 @@ export const CHAT_TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "switch_wiki",
-      description: "Switch the active wiki by id. Future ingest / search / conflict scope follows the new active wiki. Use after the user explicitly asks to switch.",
+      description: "Switch the active wiki by id. Future search / conflict scope follows the new active wiki. Use after the user explicitly asks to switch.",
       parameters: {
         type: "object",
         properties: { wiki_id: { type: "string" } },

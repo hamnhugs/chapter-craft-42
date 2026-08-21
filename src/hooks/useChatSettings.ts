@@ -61,10 +61,6 @@ interface ChatSettings {
   visionModel: string;
   /** Vision model that describes figures extracted from uploaded documents. "" = built-in default. */
   imageExtractionModel: string;
-  /** When true, figure extraction runs automatically after a book is digested. */
-  autoExtractFigures: boolean;
-  libraryIngestModel: string;
-  libraryIngestAutoFile: boolean;
   imageModelPrimary: string;
   imageModelFallback: string;
   imageQuality: string;
@@ -121,9 +117,6 @@ const defaults: ChatSettings = {
   autoApproveToolUpdates: false,
   visionModel: "",
   imageExtractionModel: "",
-  autoExtractFigures: true,
-  libraryIngestModel: "",
-  libraryIngestAutoFile: true,
   imageModelPrimary: "",
   imageModelFallback: "",
   imageQuality: "",
@@ -263,9 +256,6 @@ function rowToSettings(data: any): ChatSettings {
     autoApproveToolUpdates: data.auto_approve_tool_updates === true,
     visionModel: data.vision_model || "",
     imageExtractionModel: data.image_extraction_model || "",
-    autoExtractFigures: data.auto_extract_figures !== false,
-    libraryIngestModel: data.library_ingest_model || "",
-    libraryIngestAutoFile: data.library_ingest_auto_file !== false,
     imageModelPrimary: data.image_model_primary || "",
     imageModelFallback: data.image_model_fallback || "",
     imageQuality: data.image_quality || "",
@@ -318,8 +308,7 @@ function ensureLoaded(userId: string | null) {
       "wiki_model", "custom_system_prompt", "burplexity_api_token", "inworld_api_key",
       "inworld_enabled", "inworld_voice_id", "access_all_neurons", "max_reply_sentences",
       "auto_show_memory_images", "auto_approve_tool_updates", "vision_model",
-      "image_extraction_model", "auto_extract_figures", "library_ingest_model",
-      "library_ingest_auto_file", "image_model_primary", "image_model_fallback", "image_quality",
+      "image_extraction_model", "image_model_primary", "image_model_fallback", "image_quality",
       "image_size", "saved_image_models", "chat_tool_permissions", "video_model_primary",
       "saved_video_models", "video_default_duration", "video_default_resolution",
       "video_default_aspect", "video_generate_audio", "video_confirm_threshold",
@@ -341,7 +330,7 @@ function ensureLoaded(userId: string | null) {
     const OPTIONAL_READ = [
       "gemini_api_key", "tavily_api_key", "lean_mode", "nvidia_key_last4",
       "auto_show_memory_images", "auto_approve_tool_updates", "access_all_neurons",
-      "max_reply_sentences", "image_extraction_model", "auto_extract_figures",
+      "max_reply_sentences", "image_extraction_model",
       "video_model_primary", "saved_video_models", "video_default_duration",
       "video_default_resolution", "video_default_aspect", "video_generate_audio",
       "video_confirm_threshold", "video_identity_scale", "video_qc_enabled",
@@ -446,9 +435,6 @@ function persistSettings(userId: string, next: ChatSettings, changed?: Array<key
       auto_approve_tool_updates: next.autoApproveToolUpdates,
       vision_model: next.visionModel || null,
       image_extraction_model: next.imageExtractionModel || null,
-      auto_extract_figures: next.autoExtractFigures,
-      library_ingest_model: next.libraryIngestModel || null,
-      library_ingest_auto_file: next.libraryIngestAutoFile,
       image_model_primary: next.imageModelPrimary || null,
       image_model_fallback: next.imageModelFallback || null,
       image_quality: next.imageQuality || null,
@@ -482,7 +468,7 @@ function persistSettings(userId: string, next: ChatSettings, changed?: Array<key
     // column and retry so one new column never breaks every settings save.
     // PostgREST reports ONE missing column per attempt (alphabetically
     // first), so keep retrying until no optional column is named.
-    const optionalColumns = ["access_all_neurons", "max_reply_sentences", "auto_show_memory_images", "auto_approve_tool_updates", "image_extraction_model", "auto_extract_figures",
+    const optionalColumns = ["access_all_neurons", "max_reply_sentences", "auto_show_memory_images", "auto_approve_tool_updates", "image_extraction_model",
       "video_model_primary", "saved_video_models", "video_default_duration", "video_default_resolution",
       "video_default_aspect", "video_generate_audio", "video_confirm_threshold",
       "video_identity_scale", "video_qc_enabled", "video_motion_model",
@@ -678,9 +664,6 @@ export function useChatSettings() {
     setAutoApproveToolUpdates: (v: boolean) => update({ autoApproveToolUpdates: v }),
     setVisionModel: (m: string) => update({ visionModel: m }),
     setImageExtractionModel: (m: string) => update({ imageExtractionModel: m }),
-    setAutoExtractFigures: (v: boolean) => update({ autoExtractFigures: v }),
-    setLibraryIngestModel: (m: string) => update({ libraryIngestModel: m }),
-    setLibraryIngestAutoFile: (v: boolean) => update({ libraryIngestAutoFile: v }),
     setImageModelPrimary: (m: string) => update({ imageModelPrimary: m }),
     setImageModelFallback: (m: string) => update({ imageModelFallback: m }),
     setImageQuality: (q: string) => update({ imageQuality: q }),

@@ -352,8 +352,11 @@ describe("the additive contract: omitting offeredTools changes nothing", () => {
   // afterwards. If you deliberately edit the prompt's wording, re-capture both
   // numbers — a mismatch here means default behaviour moved, which is the one
   // thing this option was designed never to do.
+  // Re-captured 2026-08-20: the search_wiki bullet's "studied/ingested"
+  // became "studied or saved" when book digestion was removed (same length,
+  // new digest).
   const BASELINE_LENGTH = 23794;
-  const BASELINE_DIGEST = "8202213c";
+  const BASELINE_DIGEST = "3d1dfa2e";
   const fnv1a = (s: string) => {
     let h = 0x811c9dc5;
     for (let i = 0; i < s.length; i++) {

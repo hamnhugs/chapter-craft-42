@@ -31,7 +31,6 @@ import type { ProviderId } from "@/lib/providers/types";
 import { namespacedNvidiaId, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
 import { LEAN_MODES, LEAN_MODE_INFO } from "@/lib/leanMode";
 import { validateNvidiaKey } from "@/lib/providers/nvidiaAdapter";
-import { FIGURE_MODELS_PAID, FIGURE_MODELS_FREE, DEFAULT_FIGURE_MODEL } from "@/lib/figureModels";
 
 // The Settings tab — every user preference in one place.
 //
@@ -156,8 +155,8 @@ const PROVIDER_GROUP_LABEL: Record<ProviderId, string> = {
  *  BYTE-IDENTICAL names, so every option carries its provider in the text —
  *  grouping alone is not enough, and an <option> cannot hold a badge. Labels
  *  are never stripped of provenance. `openrouterOnly` is for features that
- *  run server-side on the OpenRouter key (wiki ops, digestion, figures) —
- *  a POSITIVE filter, so a newly added provider can't leak in by omission. */
+ *  run server-side on the OpenRouter key (wiki ops) — a POSITIVE filter, so
+ *  a newly added provider can't leak in by omission. */
 const ModelOptions: React.FC<{ models: string[]; openrouterOnly?: boolean }> = ({ models, openrouterOnly }) => {
   const groups = allProviders()
     .map((p) => ({
@@ -205,12 +204,10 @@ const SettingsPanel: React.FC = () => {
     handsFreeTtsRate, maxReplySentences,
     autoReadReplies, wikiModel, customSystemPrompt, burplexityApiToken,
     inworldApiKey, inworldEnabled, inworldVoiceId, accessAllNeurons, loaded,
-    imageExtractionModel, autoExtractFigures,
     saveApiKey, saveNvidiaKey, setGeminiApiKey, setTavilyApiKey, setLeanMode, addModel, removeModel, setSelectedModel, setDeepResearchModel,
     setVoiceModel, setVisionModel, setTtsRate, setHandsFreeTtsRate, setMaxReplySentences, setAutoReadReplies, setWikiModel,
     setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey,
     setInworldEnabled, setInworldVoiceId, setAccessAllNeurons,
-    setImageExtractionModel, setAutoExtractFigures,
   } = useChatSettings();
 
   const [newModelInput, setNewModelInput] = useState("");
@@ -650,7 +647,6 @@ const SettingsPanel: React.FC = () => {
                   Blocked capabilities are removed from the assistant's tools entirely, so it can't offer or
                   attempt them — it will say so once and give you the best free version instead. Anything you've
                   already made stays fully viewable in every mode. Applies to all your devices.
-                  {leanMode !== "full" && " Book digestion and figure extraction aren’t covered — they run on your OpenRouter key whenever you queue them."}
                 </Hint>
               </div>
               <div>
@@ -995,44 +991,6 @@ const SettingsPanel: React.FC = () => {
                   <ModelOptions models={savedModels} />
                 </select>
                 <Hint>For best image understanding pick a vision-strong model like <code>google/gemini-2.5-flash</code> (cheap, great at docs/OCR) or <code>google/gemini-2.5-pro</code> (best reasoning). Falls back to your Active model if blank.</Hint>
-              </div>
-              <div>
-                <FieldLabel>Figure Extraction Model (figures from your books)</FieldLabel>
-                <select
-                  value={imageExtractionModel || ""}
-                  onChange={(e) => setImageExtractionModel(e.target.value)}
-                  className={`${selectCls} mt-1.5`}
-                >
-                  <option value="">Default — {DEFAULT_FIGURE_MODEL} (built-in)</option>
-                  <optgroup label="Recommended — paid (needs your OpenRouter key)">
-                    {FIGURE_MODELS_PAID.map((m) => (<option key={m.id} value={m.id}>{m.label}</option>))}
-                  </optgroup>
-                  <optgroup label="Recommended — free (also needs your OpenRouter key; rate-limited, may train on your data)">
-                    {FIGURE_MODELS_FREE.map((m) => (<option key={m.id} value={m.id}>{m.label}</option>))}
-                  </optgroup>
-                  {(() => {
-                    const known = new Set([...FIGURE_MODELS_PAID, ...FIGURE_MODELS_FREE].map((m) => m.id));
-                    // Figure extraction runs server-side on OpenRouter/gateway
-                    // — NVIDIA ids would be forwarded verbatim and 400.
-                    const extra = savedModels.filter((m) => !known.has(m) && !isEmbeddingModel(m) && modelProvider(m) === "openrouter");
-                    return extra.length > 0 ? (
-                      <optgroup label="Your saved models">
-                        {extra.map((m) => (<option key={m} value={m}>{m}</option>))}
-                      </optgroup>
-                    ) : null;
-                  })()}
-                </select>
-                <Hint>
-                  Reads the figures pulled out of your uploaded documents (road signs, diagrams, charts…), writes a description for each, and pairs it with the matching neuron so chat can show the real picture while explaining the concept. Runs once per book at digestion — described figures are stored forever and cost nothing to reuse. Free models work but are limited to ~20 requests/min and 50–1000/day on OpenRouter.
-                </Hint>
-                <div className="mt-3">
-                  <ToggleRow
-                    text="Extract figures automatically after digesting a book"
-                    checked={autoExtractFigures}
-                    onChange={setAutoExtractFigures}
-                    ariaLabel="Toggle automatic figure extraction after digestion"
-                  />
-                </div>
               </div>
               <ImageModelsSettings />
               <VideoModelsSettings />

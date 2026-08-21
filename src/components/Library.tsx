@@ -7,15 +7,12 @@ import { useChatSettings } from "@/hooks/useChatSettings";
 import { usePlan } from "@/hooks/usePlan";
 import { openPricing } from "@/components/PricingDialog";
 import { structureJobs, useStructureJobs, StructureJob } from "@/lib/structureJobs";
-import { figureJobs, useFigureJobs, FigureJob } from "@/lib/figureJobs";
-import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { autoTagBooks } from "@/lib/autoTag";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import LibraryFolders from "@/components/LibraryFolders";
-import LibraryCollections from "@/components/LibraryCollections";
+import LibraryShelves from "@/components/LibraryShelves";
 
 import LibraryList from "@/components/LibraryList";
 
@@ -94,26 +91,22 @@ const SUPPORTED_UPLOAD_EXTENSIONS = ["pdf", "doc", "docx", "txt", "rtf", "odt", 
 const MAX_UPLOAD_ATTEMPTS = 3;
 const MAX_CONCURRENT_UPLOADS = 3;
 
-type ViewMode = "grid" | "folders" | "collections" | "list" | "graph";
+type ViewMode = "shelves" | "list" | "graph";
 const VIEW_KEY = "vault_view_mode";
 
 const VIEW_OPTIONS: { id: ViewMode; icon: string; label: string }[] = [
-  { id: "grid", icon: "grid_view", label: "Grid" },
-  { id: "folders", icon: "folder", label: "Folders" },
-  { id: "collections", icon: "folder_managed", label: "Collections" },
+  { id: "shelves", icon: "shelves", label: "Shelves" },
   { id: "list", icon: "view_list", label: "List" },
   { id: "graph", icon: "hub", label: "Mind map" },
 ];
 
 
 const Library: React.FC = () => {
-  const { books, addBook, removeBook, requestBookLoad, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile, activeWikiId } = useApp();
-  const { apiKey, imageExtractionModel } = useChatSettings();
+  const { books, addBook, removeBook, requestBookLoad, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile } = useApp();
+  const { apiKey } = useChatSettings();
   const { user } = useAuth();
   const { isPaid, loaded: planLoaded } = usePlan();
-  const { isAdmin, loaded: adminLoaded } = useIsAdmin();
   const jobs = useStructureJobs();
-  const figJobs = useFigureJobs();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const [sortBy, setSortBy] = useState<"date" | "name">("date");
@@ -122,9 +115,11 @@ const Library: React.FC = () => {
   const [currentBatchIds, setCurrentBatchIds] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   // Last-used view persists across sessions (Finder/Drive convention).
+  // Values from retired views (grid/folders/collections) fall back to
+  // Shelves, which absorbed all three.
   const [view, setView] = useState<ViewMode>(() => {
     const v = localStorage.getItem(VIEW_KEY);
-    return v === "folders" || v === "collections" || v === "list" || v === "graph" ? v : "grid";
+    return v === "list" || v === "graph" ? v : "shelves";
   });
   const [tagProgress, setTagProgress] = useState<{ done: number; total: number } | null>(null);
 
@@ -487,33 +482,6 @@ const Library: React.FC = () => {
     });
   };
 
-  // Manual figure extraction (also the backfill path for books digested
-  // before this feature existed). Requires the book's neurons to exist —
-  // the job errors with guidance if the book hasn't been digested yet.
-  const runExtractFigures = (book: BookDocument) => {
-    if (!book.fileName.toLowerCase().endsWith(".pdf")) {
-      toast("Figure extraction works on PDF books (EPUBs are converted to PDF at upload).");
-      return;
-    }
-    // The server enforces this too (describe-figures returns 402), but
-    // gating here spares a keyless free user the minutes-long PDF scan that
-    // would only end in that 402.
-    if (!apiKey && planLoaded && !isPaid && adminLoaded && !isAdmin) {
-      openPricing("figure-extraction");
-      return;
-    }
-    figureJobs.enqueue({
-      bookId: book.id,
-      bookTitle: book.title,
-      model: imageExtractionModel || undefined,
-      load: async () => {
-        const url = await loadBookFile(book.id);
-        if (!url) throw new Error("Could not load this book's file from storage.");
-        return { fileUrl: url };
-      },
-    });
-  };
-
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const dt = e.dataTransfer;
@@ -770,7 +738,7 @@ const Library: React.FC = () => {
           className="hidden"
         />
 
-        {/* Book grid / 3D mind map (search filters both the same way) */}
+        {/* Shelves / list / 3D mind map (search filters all views the same way) */}
         {books.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant">
             <span className="material-symbols-outlined text-6xl mb-4 opacity-25">library_books</span>
@@ -802,45 +770,6 @@ const Library: React.FC = () => {
               <LibraryGraph books={filteredBooks} onOpenBook={(id) => requestBookLoad(id)} />
             </Suspense>
           </LazyErrorBoundary>
-        ) : view === "folders" ? (
-          <LibraryFolders
-            books={filteredBooks}
-            renderBook={(book, i) => (
-              <BookCard
-                key={book.id}
-                book={book}
-                index={i}
-                query={query}
-                job={jobs[book.id]}
-                figJob={figJobs[book.id]}
-                onDetect={() => runDetect(book)}
-                onExtractFigures={() => runExtractFigures(book)}
-                onRead={() => requestBookLoad(book.id)}
-                onRemove={() => removeBook(book.id)}
-                onRename={(newTitle) => updateBookTitle(book.id, newTitle)}
-              />
-            )}
-          />
-        ) : view === "collections" ? (
-          <LibraryCollections
-            books={filteredBooks}
-            activeWikiId={activeWikiId}
-            renderBook={(book, i) => (
-              <BookCard
-                key={book.id}
-                book={book}
-                index={i}
-                query={query}
-                job={jobs[book.id]}
-                figJob={figJobs[book.id]}
-                onDetect={() => runDetect(book)}
-                onExtractFigures={() => runExtractFigures(book)}
-                onRead={() => requestBookLoad(book.id)}
-                onRemove={() => removeBook(book.id)}
-                onRename={(newTitle) => updateBookTitle(book.id, newTitle)}
-              />
-            )}
-          />
         ) : view === "list" ? (
 
           <LibraryList
@@ -852,23 +781,23 @@ const Library: React.FC = () => {
             highlight={(text) => <Highlight text={text} query={query} />}
           />
         ) : (
-          <div className="book-grid">
-            {filteredBooks.map((book, i) => (
+          <LibraryShelves
+            books={filteredBooks}
+            filtered={query.trim().length > 0}
+            renderBook={(book, i) => (
               <BookCard
                 key={book.id}
                 book={book}
                 index={i}
                 query={query}
                 job={jobs[book.id]}
-                figJob={figJobs[book.id]}
                 onDetect={() => runDetect(book)}
-                onExtractFigures={() => runExtractFigures(book)}
                 onRead={() => requestBookLoad(book.id)}
                 onRemove={() => removeBook(book.id)}
                 onRename={(newTitle) => updateBookTitle(book.id, newTitle)}
               />
-            ))}
-          </div>
+            )}
+          />
         )}
 
         {/* YouTube import (the former Reel tab) */}
@@ -903,18 +832,15 @@ const BookCard: React.FC<{
   index: number;
   query?: string;
   job?: StructureJob;
-  figJob?: FigureJob;
   onDetect: () => void;
-  onExtractFigures: () => void;
   onRead: () => void;
   onRemove: () => void;
   onRename: (newTitle: string) => void;
-}> = ({ book, index, query = "", job, figJob, onDetect, onExtractFigures, onRead, onRemove, onRename }) => {
+}> = ({ book, index, query = "", job, onDetect, onRead, onRemove, onRename }) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(book.title);
   const isPdf = book.fileName.toLowerCase().endsWith(".pdf");
   const detecting = job?.status === "queued" || job?.status === "running";
-  const extracting = figJob?.status === "queued" || figJob?.status === "running";
   const isHtml = book.fileName.toLowerCase().endsWith(".html");
   const metadataText = isPdf
     ? `${book.pageCount} pages · ${book.chapters.length} chapters · PDF`
@@ -1005,7 +931,7 @@ const BookCard: React.FC<{
           </div>
         )}
 
-        {/* Auto-structure + figure-extraction status */}
+        {/* Auto-structure status */}
         <div className="min-h-5 mb-4 space-y-1">
           {detecting ? (
             <p className="flex items-center gap-1.5 text-xs text-primary">
@@ -1022,24 +948,6 @@ const BookCard: React.FC<{
             <p className="flex items-center gap-1.5 text-xs text-destructive">
               <span className="material-symbols-outlined text-sm">error</span>
               <span className="truncate" title={job.error}>{job.error || "Detection failed"}</span>
-            </p>
-          ) : null}
-          {extracting ? (
-            <p className="flex items-center gap-1.5 text-xs text-primary">
-              <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>
-              <span className="truncate">{figJob?.progress || "Extracting figures…"}</span>
-            </p>
-          ) : figJob?.status === "done" ? (
-            <p className="flex items-center gap-1.5 text-xs text-primary">
-              <span className="material-symbols-outlined text-sm">imagesmode</span>
-              {figJob.kept === 0
-                ? "No usable figures found"
-                : `${figJob.kept} figure${figJob.kept === 1 ? "" : "s"} attached to neurons${(figJob.skipped ?? 0) > 0 ? ` (${figJob.skipped} skipped)` : ""}`}
-            </p>
-          ) : figJob?.status === "error" ? (
-            <p className="flex items-center gap-1.5 text-xs text-destructive">
-              <span className="material-symbols-outlined text-sm">error</span>
-              <span className="truncate" title={figJob.error}>{figJob.error || "Figure extraction failed"}</span>
             </p>
           ) : null}
         </div>
@@ -1068,24 +976,6 @@ const BookCard: React.FC<{
             >
               <span className={`material-symbols-outlined text-xl ${detecting ? "animate-spin" : ""}`}>
                 {detecting ? "progress_activity" : "auto_awesome"}
-              </span>
-            </button>
-          )}
-          {isPdf && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onExtractFigures(); }}
-              disabled={extracting}
-              title={
-                extracting
-                  ? "Extracting figures…"
-                  : figJob?.status === "error"
-                    ? "Retry figure extraction"
-                    : "Extract figures (signs, diagrams, charts) and attach them to this book's neurons"
-              }
-              className="p-3 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <span className={`material-symbols-outlined text-xl ${extracting ? "animate-spin" : ""}`}>
-                {extracting ? "progress_activity" : "image_search"}
               </span>
             </button>
           )}

@@ -1,22 +1,16 @@
 import { supabase } from "@/integrations/supabase/client";
 
+// Shelves (UI name) are stored in the book_folders table; membership is the
+// single-valued books.folder_id. The table's dormant parent_id/color/
+// default_wiki_id columns are legacy — nothing reads or writes them, and they
+// are dropped in the shelf-membership migration.
 export interface BookFolder {
   id: string;
   user_id: string;
   name: string;
-  parent_id: string | null;
-  color: string | null;
   sort_index: number;
-  /** Neuron this folder was last digested into. Null until first digest. */
-  default_wiki_id: string | null;
   created_at: string;
   updated_at: string;
-}
-
-export async function setFolderDefaultWiki(id: string, wikiId: string | null): Promise<void> {
-  const { error } = await (supabase.from("book_folders" as any) as any)
-    .update({ default_wiki_id: wikiId }).eq("id", id);
-  if (error) throw error;
 }
 
 export async function listFolders(): Promise<BookFolder[]> {
@@ -28,12 +22,12 @@ export async function listFolders(): Promise<BookFolder[]> {
   return (data as BookFolder[]) || [];
 }
 
-export async function createFolder(name: string, parentId?: string | null, color?: string | null): Promise<BookFolder> {
+export async function createFolder(name: string): Promise<BookFolder> {
   const { data: u } = await supabase.auth.getUser();
   const uid = u.user?.id;
   if (!uid) throw new Error("Not signed in");
   const { data, error } = await (supabase.from("book_folders" as any) as any)
-    .insert({ user_id: uid, name: name.trim(), parent_id: parentId || null, color: color || null })
+    .insert({ user_id: uid, name: name.trim() })
     .select("*")
     .single();
   if (error) throw error;
@@ -51,14 +45,5 @@ export async function deleteFolder(id: string): Promise<void> {
   if (error) throw error;
 }
 
-export async function moveBookToFolder(bookId: string, folderId: string | null): Promise<void> {
-  const { error } = await (supabase.from("books" as any) as any)
-    .update({ folder_id: folderId }).eq("id", bookId);
-  if (error) throw error;
-}
-
-export async function setFolderColor(id: string, color: string | null): Promise<void> {
-  const { error } = await (supabase.from("book_folders" as any) as any)
-    .update({ color }).eq("id", id);
-  if (error) throw error;
-}
+// Book→shelf moves go through AppContext.updateBookFolder, which also patches
+// the single client copy of the membership (books[].folderId).

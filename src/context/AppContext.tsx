@@ -36,6 +36,8 @@ interface AppState {
   removeChapter: (bookId: string, chapterId: string) => void;
   updateBookTitle: (bookId: string, newTitle: string) => void;
   updateBookTags: (bookId: string, category: string | null, tags: string[]) => Promise<void>;
+  updateBookFolder: (bookId: string, folderId: string | null) => Promise<void>;
+  clearBookFolderLocal: (folderId: string) => void;
   getActiveBook: () => BookDocument | undefined;
   loadBookFile: (bookId: string) => Promise<string>;
   /** Fetch one chapter's text on demand (not loaded at startup). */
@@ -147,7 +149,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // active_wiki_ids has no FK, so dead ids can linger there). If the
       // primary itself is gone/null, promote the next loaded neuron — or fall
       // back to the first wiki. Persist any repair: the DB primary is what
-      // the AI tools and the ingest/extract edge functions write to, so a
+      // the AI tools and the knowledge-extract edge function write to, so a
       // local-only heal would leave them targeting NULL/dead ids forever.
       const existing = new Set(list.map((w) => w.id));
       let set = active.set.filter((id) => existing.has(id));
@@ -711,6 +713,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   }, [user]);
 
+  // Shelf membership writes go through here so books[].folderId (the single
+  // client copy of books.folder_id) never goes stale after a move — the
+  // Shelves view derives entirely from it.
+  const updateBookFolder = useCallback(async (bookId: string, folderId: string | null) => {
+    if (!user) return;
+    const { error } = await supabase
+      .from("books")
+      .update({ folder_id: folderId } as any)
+      .eq("id", bookId)
+      .eq("user_id", user.id);
+    if (error) {
+      console.error("Failed to move book to shelf:", error);
+      throw error;
+    }
+    setBooks((prev) =>
+      prev.map((b) => (b.id === bookId ? { ...b, folderId } : b))
+    );
+  }, [user]);
+
+  // Deleting a shelf SET NULLs books.folder_id server-side via the FK; this
+  // mirrors that into client state without redundant per-book writes.
+  const clearBookFolderLocal = useCallback((folderId: string) => {
+    setBooks((prev) => prev.map((b) => (b.folderId === folderId ? { ...b, folderId: null } : b)));
+  }, []);
+
   const getActiveBook = useCallback(() => {
     return books.find((b) => b.id === activeBookId);
   }, [books, activeBookId]);
@@ -834,6 +861,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         removeChapter,
         updateBookTitle,
         updateBookTags,
+        updateBookFolder,
+        clearBookFolderLocal,
         getActiveBook,
         loadBookFile,
         loadChapterText,

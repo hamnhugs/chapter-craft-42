@@ -9,9 +9,6 @@ verify_jwt = false
 [functions.knowledge-lint]
 verify_jwt = false
 
-[functions.knowledge-ingest]
-verify_jwt = false
-
 [functions.knowledge-consolidate]
 verify_jwt = false
 
@@ -53,7 +50,4 @@ verify_jwt = true
 
 [functions.nvidia-chat]
 verify_jwt = true
-
-[functions.enqueue-ingest]
-verify_jwt = false
 
