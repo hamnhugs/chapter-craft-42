@@ -35,15 +35,15 @@ const BookContextPicker: React.FC<{
   }, [open]);
 
   const shelfMembers = useMemo(
-    () => (selection.shelfId ? books.filter((b) => b.folderId === selection.shelfId) : []),
+    () => (selection.shelfId ? books.filter((b) => b.folderIds.includes(selection.shelfId!)) : []),
     [books, selection.shelfId],
   );
-  // One O(books) pass for the dropdown's per-shelf counts, not a filter per
-  // option per render (store emits re-render the open dialog on every toggle).
+  // One O(memberships) pass for the dropdown's per-shelf counts, not a filter
+  // per option per render (store emits re-render the open dialog on every toggle).
   const countByShelf = useMemo(() => {
     const map = new Map<string, number>();
     for (const b of books) {
-      if (b.folderId) map.set(b.folderId, (map.get(b.folderId) || 0) + 1);
+      for (const folderId of b.folderIds) map.set(folderId, (map.get(folderId) || 0) + 1);
     }
     return map;
   }, [books]);

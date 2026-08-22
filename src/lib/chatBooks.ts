@@ -76,7 +76,7 @@ export interface UsedBookContext {
 }
 
 export interface BookContextSelection {
-  /** When set, membership resolves fresh from books[].folderId each turn. */
+  /** When set, membership resolves fresh from books[].folderIds each turn. */
   shelfId: string | null;
   /** Hand-picked mode (shelfId null): the explicit book ids. */
   bookIds: string[];
@@ -114,7 +114,7 @@ export function selectContextBooks(
   let members: BookDocument[];
   if (sel.shelfId) {
     const excluded = new Set(sel.excludedIds);
-    members = books.filter((b) => b.folderId === sel.shelfId && !excluded.has(b.id));
+    members = books.filter((b) => b.folderIds.includes(sel.shelfId!) && !excluded.has(b.id));
   } else if (sel.bookIds.length > 0) {
     const wanted = new Set(sel.bookIds);
     members = books.filter((b) => wanted.has(b.id));

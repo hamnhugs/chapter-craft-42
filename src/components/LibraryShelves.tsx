@@ -5,6 +5,10 @@ import { categoryColor, UNCATEGORIZED } from "@/lib/categoryColors";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/hooks/useAuth";
 import { bookContextStore } from "@/lib/chatBooks";
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
+  DropdownMenuCheckboxItem, DropdownMenuLabel,
+} from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 
 // Shelves: the Vault's single grouping surface. One user-managed primitive
@@ -12,15 +16,17 @@ import { toast } from "sonner";
 // (virtual category groups) and Collections view (managed folders + the
 // retired digestion controls). Categories and tags survive as filter chips
 // over the All-books section — computed facets over metadata, never a second
-// container (the Calibre "virtual library" model). Membership is still
-// one-shelf-per-book (books.folder_id); the junction-table migration that
-// makes shelves non-exclusive is a later, separate change.
+// container (the Calibre "virtual library" model). Membership is
+// NON-EXCLUSIVE (book_shelf_members junction) — checkbox membership, the
+// Kindle/Apple Books model — degrading to one-shelf-per-book while the
+// junction migration hasn't been applied (multiShelf false: checking a shelf
+// moves the book, matching what books.folder_id can actually store).
 //
-// Membership has exactly ONE client copy: books[].folderId in AppContext
-// (loaded paged at startup, patched by updateBookFolder on every move). This
-// view derives everything from the books prop — no second fetch, no local
-// assignments map, so the two can never disagree and the PostgREST 1000-row
-// cap on un-ranged selects never applies here.
+// Membership has exactly ONE client copy: books[].folderIds in AppContext
+// (loaded paged at startup, patched by toggleBookShelf on every change).
+// This view derives everything from the books prop — no second fetch, no
+// local assignments map, so the two can never disagree and the PostgREST
+// 1000-row cap on un-ranged selects never applies here.
 
 interface Props {
   books: BookDocument[];
@@ -32,7 +38,7 @@ interface Props {
 }
 
 const LibraryShelves: React.FC<Props> = ({ books, renderBook, filtered = false }) => {
-  const { updateBookFolder, clearBookFolderLocal, setActiveTab } = useApp();
+  const { toggleBookShelf, clearShelfLocal, multiShelf, setActiveTab } = useApp();
   const { user } = useAuth();
 
   // This view WRITES to the book-context store, so it must init it — on a
@@ -81,10 +87,11 @@ const LibraryShelves: React.FC<Props> = ({ books, renderBook, filtered = false }
   const membersByShelf = useMemo(() => {
     const map = new Map<string, BookDocument[]>();
     for (const b of books) {
-      if (!b.folderId) continue;
-      const list = map.get(b.folderId) || [];
-      list.push(b);
-      map.set(b.folderId, list);
+      for (const folderId of b.folderIds) {
+        const list = map.get(folderId) || [];
+        list.push(b);
+        map.set(folderId, list);
+      }
     }
     return map;
   }, [books]);
@@ -168,9 +175,10 @@ const LibraryShelves: React.FC<Props> = ({ books, renderBook, filtered = false }
     try {
       await deleteFolder(id);
       setShelves((prev) => prev.filter((x) => x.id !== id));
-      // The DB FK is ON DELETE SET NULL — mirror it in client state so the
-      // freed books show as unshelved without a reload.
-      clearBookFolderLocal(id);
+      // The DB cascades the junction rows (and SET NULLs the folder_id
+      // mirror) — reflect it in client state so the freed books show the
+      // change without a reload.
+      clearShelfLocal(id);
       if (openShelfId === id) setOpenShelfId(null);
       toast.success("Shelf deleted");
     } catch (e) {
@@ -178,11 +186,14 @@ const LibraryShelves: React.FC<Props> = ({ books, renderBook, filtered = false }
     }
   };
 
-  const assignBook = async (bookId: string, shelfId: string | null) => {
+  // Toggle semantics (multi-shelf add/remove vs exclusive-fallback move)
+  // live in AppContext.toggleBookShelf, which patches state optimistically —
+  // this view only surfaces failures.
+  const toggleShelf = async (b: BookDocument, shelfId: string) => {
     try {
-      await updateBookFolder(bookId, shelfId);
+      await toggleBookShelf(b.id, shelfId);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Move failed");
+      toast.error(e instanceof Error ? e.message : "Shelf change failed");
     }
   };
 
@@ -197,19 +208,41 @@ const LibraryShelves: React.FC<Props> = ({ books, renderBook, filtered = false }
     setActiveCategory((prev) => (prev === cat ? null : cat));
   };
 
-  // A book card with the shelf-assignment dropdown overlaid on hover.
+  // A book card with the checkbox shelf-membership menu overlaid on hover.
+  // onSelect preventDefault keeps the menu open across toggles — putting a
+  // book on three shelves is one open, three clicks.
   const renderBookCard = (b: BookDocument, index: number) => (
     <div key={b.id} className="relative group">
       {renderBook(b, index)}
-      <select
-        value={b.folderId || ""}
-        onChange={(e) => assignBook(b.id, e.target.value || null)}
-        className="absolute top-2 right-2 bg-surface-container-high text-xs rounded-md px-1.5 py-0.5 border border-outline-variant/30 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
-        title="Move to shelf"
-      >
-        <option value="">No shelf</option>
-        {shelves.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-      </select>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            className="absolute top-2 right-2 flex items-center gap-1 bg-surface-container-high text-xs rounded-md px-1.5 py-0.5 border border-outline-variant/30 opacity-0 group-hover:opacity-100 focus:opacity-100 data-[state=open]:opacity-100 transition-opacity"
+            title="Shelves"
+          >
+            <span className="material-symbols-outlined text-sm" aria-hidden>shelves</span>
+            {b.folderIds.length > 0 ? b.folderIds.length : ""}
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-44">
+          <DropdownMenuLabel className="text-[10px] uppercase tracking-widest text-on-surface-variant">
+            {multiShelf ? "Shelves" : "Shelf (one per book until the database update lands)"}
+          </DropdownMenuLabel>
+          {shelves.length === 0 && (
+            <DropdownMenuLabel className="font-normal text-xs">No shelves yet — create one above.</DropdownMenuLabel>
+          )}
+          {shelves.map((f) => (
+            <DropdownMenuCheckboxItem
+              key={f.id}
+              checked={b.folderIds.includes(f.id)}
+              onCheckedChange={() => toggleShelf(b, f.id)}
+              onSelect={(e) => e.preventDefault()}
+            >
+              {f.name}
+            </DropdownMenuCheckboxItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 
@@ -253,7 +286,7 @@ const LibraryShelves: React.FC<Props> = ({ books, renderBook, filtered = false }
           <div className="py-12 text-center text-on-surface-variant text-sm">
             {filtered
               ? "No books on this shelf match your search."
-              : "This shelf is empty — hover any book card and use the dropdown to move it here."}
+              : "This shelf is empty — hover any book card and use the shelf menu to add it here."}
           </div>
         ) : (
           <div className="book-grid">

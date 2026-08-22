@@ -19,7 +19,12 @@ export interface BookDocument {
   category?: string;
   /** Free-form topic tags assigned by auto-tag (mind map edges + search). */
   tags?: string[];
-  /** User-managed folder id (book_folders.id) — null when uncategorized. */
-  folderId?: string | null;
+  /** User-managed shelf ids (book_folders.id), non-exclusive; empty when
+   *  unshelved. Junction mode loads them in deterministic (book, shelf)
+   *  order; books.folder_id survives only as a BEST-EFFORT single-shelf
+   *  mirror for stale bundles (it may drift — e.g. a shelf delete SET NULLs
+   *  it while other memberships remain). In fallback mode (migration not
+   *  applied yet) this holds at most one id, derived from books.folder_id. */
+  folderIds: string[];
 }
 

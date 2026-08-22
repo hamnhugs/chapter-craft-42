@@ -22,7 +22,7 @@ function mkChapter(name: string, size: number, fill = "x"): Chapter {
   };
 }
 
-function mkBook(id: string, title: string, chapterSizes: number[], folderId: string | null = null, fill = "x"): BookDocument {
+function mkBook(id: string, title: string, chapterSizes: number[], folderIds: string | string[] | null = null, fill = "x"): BookDocument {
   return {
     id,
     title,
@@ -31,7 +31,7 @@ function mkBook(id: string, title: string, chapterSizes: number[], folderId: str
     pageCount: 100,
     addedAt: 0,
     chapters: chapterSizes.map((s, i) => mkChapter(`Chapter ${i + 1}`, s, fill)),
-    folderId,
+    folderIds: folderIds == null ? [] : Array.isArray(folderIds) ? folderIds : [folderIds],
   };
 }
 
@@ -50,7 +50,16 @@ describe("selectContextBooks — the one shared selector", () => {
     mkBook("b-4", "Delta", [100], null),
   ];
 
-  it("shelf mode resolves membership fresh from folderId, minus exclusions", () => {
+  it("a book on several shelves is a member of each (non-exclusive membership)", () => {
+    const multi = [
+      mkBook("b-1", "Alpha", [100], ["shelf-1", "shelf-2"]),
+      mkBook("b-2", "Beta", [100], ["shelf-2"]),
+    ];
+    expect(selectContextBooks(multi, sel({ shelfId: "shelf-1" }), null).map((b) => b.id)).toEqual(["b-1"]);
+    expect(selectContextBooks(multi, sel({ shelfId: "shelf-2" }), null).map((b) => b.id)).toEqual(["b-1", "b-2"]);
+  });
+
+  it("shelf mode resolves membership fresh from folderIds, minus exclusions", () => {
     const out = selectContextBooks(shelfBooks, sel({ shelfId: "shelf-1" }), null);
     expect(out.map((b) => b.id)).toEqual(["b-1", "b-3"]);
     const excl = selectContextBooks(shelfBooks, sel({ shelfId: "shelf-1", excludedIds: ["b-1"] }), null);

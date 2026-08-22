@@ -396,6 +396,7 @@ const Library: React.FC = () => {
             pageCount,
             chapters: [],
             addedAt: Date.now(),
+            folderIds: [],
           };
 
           const finalBookId = await addBook(newBook, fileToUpload);

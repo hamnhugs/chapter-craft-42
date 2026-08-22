@@ -1,9 +1,11 @@
 import { supabase } from "@/integrations/supabase/client";
 
 // Shelves (UI name) are stored in the book_folders table; membership is the
-// single-valued books.folder_id. The table's dormant parent_id/color/
-// default_wiki_id columns are legacy — nothing reads or writes them, and they
-// are dropped in the shelf-membership migration.
+// non-exclusive book_shelf_members junction (dual-mode with the legacy
+// single-valued books.folder_id — see shelfMembership.ts). The table's
+// dormant parent_id/color/default_wiki_id columns are dropped by the
+// 20260821120000_shelf_membership migration; this module never names them
+// (select * / explicit writes), so it works on either side of it.
 export interface BookFolder {
   id: string;
   user_id: string;
@@ -45,5 +47,5 @@ export async function deleteFolder(id: string): Promise<void> {
   if (error) throw error;
 }
 
-// Book→shelf moves go through AppContext.updateBookFolder, which also patches
-// the single client copy of the membership (books[].folderId).
+// Book→shelf membership changes go through AppContext.toggleBookShelf,
+// which also patches the single client copy (books[].folderIds).

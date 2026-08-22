@@ -5,6 +5,7 @@ import { BookDocument, Chapter } from "@/types/library";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Wiki, fetchWikis, fetchActiveWikiIds, loadWiki as loadWikiApi, loadWikiSet, createWiki, sessionActiveWikiIds } from "@/lib/wikisApi";
+import { fetchShelfMembership, applyShelfDelta, type ShelfDelta } from "@/lib/shelfMembership";
 import { MAX_ACTIVE_NEURONS } from "@/lib/neuronAccess";
 
 type TabId = "library" | "viewer" | "chat" | "wiki" | "wikis" | "settings" | "admin";
@@ -36,8 +37,14 @@ interface AppState {
   removeChapter: (bookId: string, chapterId: string) => void;
   updateBookTitle: (bookId: string, newTitle: string) => void;
   updateBookTags: (bookId: string, category: string | null, tags: string[]) => Promise<void>;
-  updateBookFolder: (bookId: string, folderId: string | null) => Promise<void>;
-  clearBookFolderLocal: (folderId: string) => void;
+  /** Toggle one shelf on/off for a book. Optimistic (state patches before
+   *  the write, inverse-delta rollback on failure); in multi-shelf mode a
+   *  check adds membership, in exclusive fallback it replaces it. */
+  toggleBookShelf: (bookId: string, shelfId: string) => Promise<void>;
+  clearShelfLocal: (folderId: string) => void;
+  /** True once the shelf-membership junction is confirmed live this session —
+   *  until then shelf assignment is exclusive (one shelf per book). */
+  multiShelf: boolean;
   getActiveBook: () => BookDocument | undefined;
   loadBookFile: (bookId: string) => Promise<string>;
   /** Fetch one chapter's text on demand (not loaded at startup). */
@@ -96,6 +103,7 @@ const getStoragePathsForBook = (userId: string, bookId: string, fileName: string
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [books, setBooks] = useState<BookDocument[]>([]);
+  const [multiShelf, setMultiShelf] = useState(false);
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
   const [pendingBookLoadId, setPendingBookLoadId] = useState<string | null>(null);
   // Restore-the-last-book runs once per signed-in session (guard ref).
@@ -254,6 +262,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!user) {
       setBooks([]);
       setActiveBookId(null);
+      setMultiShelf(false);
       return;
     }
 
@@ -291,43 +300,70 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addedAt: new Date(b.created_at).getTime(),
         category: b.category || undefined,
         tags: Array.isArray(b.tags) ? b.tags : [],
-        folderId: b.folder_id ?? null,
+        // Fallback-mode membership; replaced wholesale by junction rows below
+        // once the shelf-membership migration is confirmed live.
+        folderIds: b.folder_id ? [b.folder_id] : [],
       }));
       // The library (and the chat's view of it) is usable from here on, even
       // if chapters never arrive.
       setBooks(dbBooks);
+      const initialIds = new Set(dbBooks.map((b) => b.id));
 
-      const chapterRows = await fetchAllRows((from, to) =>
+      // Chapters and shelf membership load concurrently and patch state
+      // INDEPENDENTLY — they touch disjoint fields, and gating one behind
+      // the other would delay whichever resolves first for no reason.
+      void fetchAllRows((from, to) =>
         supabase
           .from("chapters")
           .select("id, book_id, name, start_page, end_page, created_at")
           .eq("user_id", user.id)
           .order("created_at", { ascending: true })
           .range(from, to)
-      );
+      ).then((chapterRows) => {
+        if (cancelled) return;
 
-      if (cancelled) return;
+        if (chapterRows.error) {
+          // Books stay. A chapter list is an enhancement, not a precondition.
+          console.error("Failed to load chapters:", chapterRows.error);
+          return;
+        }
 
-      if (chapterRows.error) {
-        // Books stay. A chapter list is an enhancement, not a precondition.
-        console.error("Failed to load chapters:", chapterRows.error);
-        return;
-      }
+        const chaptersByBookId = chapterRows.rows.reduce<Record<string, Chapter[]>>((acc, chapter: any) => {
+          if (!acc[chapter.book_id]) acc[chapter.book_id] = [];
+          acc[chapter.book_id].push({
+            id: chapter.id,
+            name: chapter.name,
+            startPage: chapter.start_page,
+            endPage: chapter.end_page,
+            textContent: "",
+          });
+          return acc;
+        }, {});
 
-      const chaptersByBookId = chapterRows.rows.reduce<Record<string, Chapter[]>>((acc, chapter: any) => {
-        if (!acc[chapter.book_id]) acc[chapter.book_id] = [];
-        acc[chapter.book_id].push({
-          id: chapter.id,
-          name: chapter.name,
-          startPage: chapter.start_page,
-          endPage: chapter.end_page,
-          textContent: "",
+        setBooks((prev) => prev.map((b) => ({ ...b, chapters: chaptersByBookId[b.id] || b.chapters })));
+      });
+
+      void fetchShelfMembership(user.id)
+        .then((membership) => {
+          // null = junction not applied yet: fallback mode, keep the
+          // folder_id-derived memberships already on the books.
+          if (cancelled || !membership) return;
+          setMultiShelf(true);
+          // Patch only books that existed when the snapshot was taken — a
+          // book that arrived after (realtime INSERT, upload) keeps its own
+          // folderIds; the snapshot can't speak for it.
+          setBooks((prev) => prev.map((b) =>
+            initialIds.has(b.id) ? { ...b, folderIds: membership.get(b.id) || [] } : b
+          ));
+        })
+        .catch((e) => {
+          // Transient failure — not a mode change. Memberships stay as
+          // derived from folder_id; the session keeps the exclusive UI, and
+          // applyShelfDelta still lands junction rows best-effort whenever
+          // the junction isn't known-missing, so nothing written this
+          // session vanishes on the next junction-mode reload.
+          console.error("Failed to load shelf membership:", e);
         });
-        return acc;
-      }, {});
-
-
-      setBooks((prev) => prev.map((b) => ({ ...b, chapters: chaptersByBookId[b.id] || b.chapters })));
     };
     loadBooks();
 
@@ -368,7 +404,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               addedAt: new Date(b.created_at).getTime(),
               category: b.category || undefined,
               tags: Array.isArray(b.tags) ? b.tags : [],
-              folderId: b.folder_id ?? null,
+              // A just-inserted book carries at most its folder_id mirror;
+              // junction rows for it would be written by this same client.
+              folderIds: b.folder_id ? [b.folder_id] : [],
             };
 
             return [newBook, ...prev];
@@ -519,7 +557,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         if (existingIndex === -1) return [nextBook, ...prev];
 
-        return prev.map((b) => (b.id === finalBookId ? { ...b, ...nextBook } : b));
+        // Re-upload: the freshly constructed book carries folderIds: [] —
+        // keep the existing membership, a re-upload is not an unshelving.
+        return prev.map((b) => (b.id === finalBookId ? { ...b, ...nextBook, folderIds: b.folderIds } : b));
       });
     } catch (err) {
       console.error("Failed to upload document to storage:", err);
@@ -713,29 +753,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   }, [user]);
 
-  // Shelf membership writes go through here so books[].folderId (the single
-  // client copy of books.folder_id) never goes stale after a move — the
-  // Shelves view derives entirely from it.
-  const updateBookFolder = useCallback(async (bookId: string, folderId: string | null) => {
+  // Shelf membership changes go through here so books[].folderIds (the
+  // single client copy of membership) never goes stale — the Shelves view
+  // derives entirely from it. The next set is computed INSIDE the functional
+  // update and applied optimistically before the write: the shelf menu stays
+  // open across toggles, and a second click issued before the first write's
+  // round trip resolves must see the first click's result, not the
+  // render-captured base (else its delta silently undoes the first toggle).
+  // Deltas from overlapping toggles commute at the database.
+  const toggleBookShelf = useCallback(async (bookId: string, shelfId: string) => {
     if (!user) return;
-    const { error } = await supabase
-      .from("books")
-      .update({ folder_id: folderId } as any)
-      .eq("id", bookId)
-      .eq("user_id", user.id);
-    if (error) {
-      console.error("Failed to move book to shelf:", error);
+    let delta: ShelfDelta | null = null;
+    setBooks((prev) => prev.map((b) => {
+      if (b.id !== bookId) return b;
+      const member = b.folderIds.includes(shelfId);
+      // Unchecking is mode-independent; checking replaces the set in the
+      // exclusive fallback (one shelf per book is all folder_id can hold).
+      const next = member
+        ? b.folderIds.filter((id) => id !== shelfId)
+        : multiShelf ? [...b.folderIds, shelfId] : [shelfId];
+      delta = {
+        adds: next.filter((id) => !b.folderIds.includes(id)),
+        removes: b.folderIds.filter((id) => !next.includes(id)),
+        ...((next[0] ?? null) !== (b.folderIds[0] ?? null)
+          ? { mirror: { value: next[0] ?? null } }
+          : {}),
+      };
+      return { ...b, folderIds: next };
+    }));
+    if (!delta) return; // unknown book id
+    const d: ShelfDelta = delta;
+    try {
+      await applyShelfDelta(user.id, bookId, d, multiShelf);
+    } catch (error) {
+      // Roll back by INVERSE DELTA, not by snapshot — a snapshot restore
+      // would clobber any later optimistic toggle on the same book.
+      setBooks((prev) => prev.map((b) => {
+        if (b.id !== bookId) return b;
+        const rolled = b.folderIds.filter((id) => !d.adds.includes(id));
+        for (const id of d.removes) if (!rolled.includes(id)) rolled.push(id);
+        return { ...b, folderIds: rolled };
+      }));
+      console.error("Failed to update book shelves:", error);
       throw error;
     }
-    setBooks((prev) =>
-      prev.map((b) => (b.id === bookId ? { ...b, folderId } : b))
-    );
-  }, [user]);
+  }, [user, multiShelf]);
 
-  // Deleting a shelf SET NULLs books.folder_id server-side via the FK; this
-  // mirrors that into client state without redundant per-book writes.
-  const clearBookFolderLocal = useCallback((folderId: string) => {
-    setBooks((prev) => prev.map((b) => (b.folderId === folderId ? { ...b, folderId: null } : b)));
+  // Deleting a shelf cascades its junction rows and SET NULLs books.folder_id
+  // server-side; this mirrors both into client state without per-book writes.
+  const clearShelfLocal = useCallback((folderId: string) => {
+    setBooks((prev) => prev.map((b) =>
+      b.folderIds.includes(folderId)
+        ? { ...b, folderIds: b.folderIds.filter((id) => id !== folderId) }
+        : b
+    ));
   }, []);
 
   const getActiveBook = useCallback(() => {
@@ -861,8 +932,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         removeChapter,
         updateBookTitle,
         updateBookTags,
-        updateBookFolder,
-        clearBookFolderLocal,
+        toggleBookShelf,
+        clearShelfLocal,
+        multiShelf,
         getActiveBook,
         loadBookFile,
         loadChapterText,
