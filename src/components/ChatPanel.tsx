@@ -63,7 +63,11 @@ const ChatPanel: React.FC = () => {
   } = useChatSettings();
   const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort, loadEarlier, hasEarlier, loadingEarlier, toolGatesForTurn, approvedToolCount } = useChat();
   const { isPaid } = usePlan();
-  const { speakingId, speak, stop: stopSpeaking, pause: pauseSpeaking, resume: resumeSpeaking, isAudioActive } = useReadAloud();
+  const {
+    speakingId, speak, stop: stopSpeaking, pause: pauseSpeaking, resume: resumeSpeaking, isAudioActive,
+    progress: speakProgress, isPaused: speakPaused, togglePause: toggleSpeakPause,
+    skipBack: speakSkipBack, skipForward: speakSkipForward,
+  } = useReadAloud();
   // Configured in the Settings tab; re-read here on mount (tab switches remount this panel).
   const [bargeInEnabled] = useState(() => localStorage.getItem("hands_free_barge_in") === "true");
   const handsFree = useHandsFree({
@@ -561,6 +565,36 @@ const ChatPanel: React.FC = () => {
     speak(msg.content, { id });
   };
 
+  // "Return" affordance (the Readwise Reader pattern): on a long reply the
+  // playhead and the viewport drift apart — tapping the mini-player's text
+  // scrolls the transcript back to the bubble being read. No-op for speech
+  // without a bubble (hands-free ids, digests).
+  const scrollToSpeakingBubble = useCallback(() => {
+    const id = speakProgress?.id;
+    if (!id) return;
+    const el = messagesContainerRef.current?.querySelector(`[data-bubble-id="${CSS.escape(id)}"]`);
+    if (!el) return;
+    programmaticScrollUntilRef.current = Date.now() + 1200;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [speakProgress?.id]);
+
+  // Hidden during hands-free: its FSM owns pause/resume (see the JSX note).
+  const miniPlayerVisible = !!speakProgress && !handsFree.active;
+
+  // The bar toggling in/out of flow resizes the transcript viewport, and
+  // scrollTop is preserved — so if the user was pinned to the bottom, the
+  // bar's height would eat exactly the tail of the bubble being spoken.
+  // Auto-scroll only reacts to tail-content changes, so re-pin here.
+  useLayoutEffect(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (dist > 0 && dist < 140) {
+      programmaticScrollUntilRef.current = Date.now() + 400;
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [miniPlayerVisible]);
+
   // Id of the message whose Inworld audio finished playing and is held in
   // memory — its bubble shows a download button (saving costs no API credits).
   const downloadableTtsId = useDownloadableTtsId();
@@ -966,7 +1000,7 @@ const ChatPanel: React.FC = () => {
         {messages.length > 0 && <WorkingMemoryPanel />}
 
         {messages.map((msg, i) => (
-          <div key={msg.id || i} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"} max-w-[85%] ${msg.role === "user" ? "self-end" : ""} group`}>
+          <div key={msg.id || i} data-bubble-id={bubbleId(msg, i)} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"} max-w-[85%] ${msg.role === "user" ? "self-end" : ""} group`}>
             <div className="flex items-center gap-2 mb-2 mx-4">
               {msg.role === "assistant" && <span className="material-symbols-outlined text-primary-container text-lg">auto_stories</span>}
               <span className={`font-headline font-bold text-sm tracking-wide ${msg.role === "user" ? "text-primary" : "text-secondary"}`}>
@@ -1212,6 +1246,68 @@ const ChatPanel: React.FC = () => {
         </div>
       </div>
 
+      {/* TTS mini-player: docked above the composer so the seek controls stay
+          one thumb-reach away however long the bubble is — the bubble's side
+          button only starts/stops. Skip semantics follow the engine: real
+          ±10s for Inworld audio, previous/next sentence for the browser
+          voice (which has no seekable time axis). Hidden while hands-free is
+          active: pause/resume there belongs to the barge-in verifier (a
+          manual pause would pin the FSM in "speaking" with the mic closed,
+          and a manual resume mid-verification would transcribe the
+          assistant's own audio as the next turn). */}
+      {miniPlayerVisible && speakProgress && (
+        <div className="mx-4 mb-2 flex items-center gap-1 rounded-2xl bg-surface-container-high border border-outline-variant/30 shadow-lg px-2 py-1.5">
+          <button
+            onClick={scrollToSpeakingBubble}
+            title="Show this message in the conversation"
+            className="flex-1 min-w-0 text-left px-1.5 py-0.5 rounded-lg hover:bg-surface-container-highest transition-colors"
+          >
+            <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-primary/80">
+              <span className="material-symbols-outlined text-xs" aria-hidden>graphic_eq</span>
+              Reading · {speakProgress.index + 1}/{speakProgress.total}
+            </span>
+            <span className="block text-xs text-on-surface-variant truncate">{speakProgress.text}</span>
+          </button>
+          <button
+            onClick={speakSkipBack}
+            title={speakProgress.mode === "inworld" ? "Back 10 seconds" : "Previous sentence"}
+            aria-label={speakProgress.mode === "inworld" ? "Back 10 seconds" : "Previous sentence"}
+            className="w-9 h-9 shrink-0 rounded-full flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-highest transition-colors"
+          >
+            <span className="material-symbols-outlined text-xl" aria-hidden>
+              {speakProgress.mode === "inworld" ? "replay_10" : "skip_previous"}
+            </span>
+          </button>
+          <button
+            onClick={toggleSpeakPause}
+            title={speakPaused ? "Resume" : "Pause"}
+            aria-label={speakPaused ? "Resume" : "Pause"}
+            className="w-9 h-9 shrink-0 rounded-full flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-highest transition-colors"
+          >
+            <span className="material-symbols-outlined text-xl" aria-hidden>
+              {speakPaused ? "play_arrow" : "pause"}
+            </span>
+          </button>
+          <button
+            onClick={speakSkipForward}
+            title={speakProgress.mode === "inworld" ? "Forward 10 seconds" : "Next sentence"}
+            aria-label={speakProgress.mode === "inworld" ? "Forward 10 seconds" : "Next sentence"}
+            className="w-9 h-9 shrink-0 rounded-full flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-highest transition-colors"
+          >
+            <span className="material-symbols-outlined text-xl" aria-hidden>
+              {speakProgress.mode === "inworld" ? "forward_10" : "skip_next"}
+            </span>
+          </button>
+          <button
+            onClick={stopSpeaking}
+            title="Stop reading"
+            aria-label="Stop reading"
+            className="w-9 h-9 ml-2 shrink-0 rounded-full flex items-center justify-center text-on-surface-variant hover:text-destructive hover:bg-surface-container-highest transition-colors"
+          >
+            <span className="material-symbols-outlined text-xl" aria-hidden>close</span>
+          </button>
+        </div>
+      )}
 
       {/* Pocket screen: hands-free touch guard on phones (arms after idle) */}
       <PocketScreen active={handsFree.active} state={handsFree.state} />

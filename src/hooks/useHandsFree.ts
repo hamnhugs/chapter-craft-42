@@ -459,6 +459,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeController {
 
   const stopAll = useCallback(() => {
     generationRef.current += 1; // orphan any in-flight turn (see handleUtterance)
+    const wasVerifying = verifyingRef.current;
     activeRef.current = false;
     busyRef.current = false;
     verifyingRef.current = false;
@@ -467,10 +468,10 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeController {
     destroyVad();
     // Hands-free OFF closes the MIC, not the voice: an in-flight reply keeps
     // playing (and is never replayed) — the per-message speaker button and
-    // the Read Aloud toggle still silence it on demand. If a barge-in
-    // verification left playback paused, resume it so the reply isn't
-    // stranded mid-sentence.
-    optsRef.current.resumeSpeaking?.();
+    // the Read Aloud toggle still silence it on demand. Resume ONLY a pause
+    // that barge-in verification itself created: a pause the user made via
+    // the mini-player is theirs and must survive the toggle.
+    if (wasVerifying) optsRef.current.resumeSpeaking?.();
     setInterim("");
     setFsm("idle");
     setActive(false);

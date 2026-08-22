@@ -22,9 +22,15 @@ import { useSyncExternalStore } from "react";
 // inaudible.
 // ---------------------------------------------------------------------------
 
+// Chunks are stored BY INDEX, not in arrival order: seek controls can replay
+// or skip chunks, so arrival order no longer matches message order. The
+// capture is complete only when every expected slot is filled — a message the
+// user skipped through (leaving unfetched chunks) simply never becomes
+// downloadable, same as a stopped read.
 interface Capture {
   id: string;
-  chunks: ArrayBuffer[];
+  chunks: (ArrayBuffer | undefined)[];
+  expected: number;
   complete: boolean;
 }
 
@@ -53,20 +59,27 @@ export function useDownloadableTtsId(): string | null {
 }
 
 /** Start capturing a new message's audio; drops any previous capture. */
-export function beginTtsCapture(id: string) {
-  capture = { id, chunks: [], complete: false };
+export function beginTtsCapture(id: string, expectedChunks: number) {
+  capture = { id, chunks: new Array(expectedChunks), expected: expectedChunks, complete: false };
   publish();
 }
 
-/** Retain one fetched chunk. No-op if a different capture has started since. */
-export function addTtsChunk(id: string, buf: ArrayBuffer) {
+/** Retain one fetched chunk at its message position. No-op if a different
+ *  capture has started since. Idempotent per slot (seeks refetch nothing, but
+ *  a retried fetch may deliver the same index twice). */
+export function addTtsChunkAt(id: string, index: number, buf: ArrayBuffer) {
   if (!capture || capture.id !== id || capture.complete) return;
-  if (buf.byteLength > 0) capture.chunks.push(buf);
+  if (index < 0 || index >= capture.expected) return;
+  if (buf.byteLength > 0) capture.chunks[index] = buf;
 }
 
-/** Mark the capture complete — playback reached the end with every chunk. */
+/** Mark the capture complete — playback reached the end AND every chunk slot
+ *  was filled (a skipped-past chunk was never fetched, so no download). */
 export function completeTtsCapture(id: string) {
-  if (!capture || capture.id !== id || capture.chunks.length === 0) return;
+  if (!capture || capture.id !== id || capture.expected === 0) return;
+  for (let i = 0; i < capture.expected; i++) {
+    if (!capture.chunks[i]) return;
+  }
   capture.complete = true;
   publish();
 }
@@ -124,7 +137,8 @@ function filenameFor(text: string): string {
  */
 export function downloadTtsAudio(id: string, messageText: string): boolean {
   if (!capture || capture.id !== id || !capture.complete) return false;
-  const blob = new Blob(capture.chunks.map(stripId3), { type: "audio/mpeg" });
+  const parts = capture.chunks.filter((c): c is ArrayBuffer => !!c);
+  const blob = new Blob(parts.map(stripId3), { type: "audio/mpeg" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
