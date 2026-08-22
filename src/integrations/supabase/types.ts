@@ -277,49 +277,61 @@ export type Database = {
       }
       book_folders: {
         Row: {
-          color: string | null
           created_at: string
-          default_wiki_id: string | null
           id: string
           name: string
-          parent_id: string | null
           sort_index: number
           updated_at: string
           user_id: string
         }
         Insert: {
-          color?: string | null
           created_at?: string
-          default_wiki_id?: string | null
           id?: string
           name: string
-          parent_id?: string | null
           sort_index?: number
           updated_at?: string
           user_id: string
         }
         Update: {
-          color?: string | null
           created_at?: string
-          default_wiki_id?: string | null
           id?: string
           name?: string
-          parent_id?: string | null
           sort_index?: number
           updated_at?: string
           user_id?: string
         }
+        Relationships: []
+      }
+      book_shelf_members: {
+        Row: {
+          book_id: string
+          created_at: string
+          folder_id: string
+          user_id: string
+        }
+        Insert: {
+          book_id: string
+          created_at?: string
+          folder_id: string
+          user_id: string
+        }
+        Update: {
+          book_id?: string
+          created_at?: string
+          folder_id?: string
+          user_id?: string
+        }
         Relationships: [
           {
-            foreignKeyName: "book_folders_default_wiki_id_fkey"
-            columns: ["default_wiki_id"]
+            foreignKeyName: "book_shelf_members_book_id_fkey"
+            columns: ["book_id"]
             isOneToOne: false
-            referencedRelation: "wikis"
+            referencedRelation: "books"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "book_folders_parent_id_fkey"
-            columns: ["parent_id"]
+            foreignKeyName: "book_shelf_members_folder_id_fkey"
+            columns: ["folder_id"]
             isOneToOne: false
             referencedRelation: "book_folders"
             referencedColumns: ["id"]
@@ -898,82 +910,6 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
-      }
-      ingest_jobs: {
-        Row: {
-          attempts: number
-          book_id: string | null
-          created_at: string
-          error: string | null
-          finished_at: string | null
-          folder_id: string | null
-          id: string
-          model: string | null
-          progress: string | null
-          result: Json | null
-          started_at: string | null
-          status: string
-          updated_at: string
-          user_id: string
-          wiki_id: string | null
-        }
-        Insert: {
-          attempts?: number
-          book_id?: string | null
-          created_at?: string
-          error?: string | null
-          finished_at?: string | null
-          folder_id?: string | null
-          id?: string
-          model?: string | null
-          progress?: string | null
-          result?: Json | null
-          started_at?: string | null
-          status?: string
-          updated_at?: string
-          user_id: string
-          wiki_id?: string | null
-        }
-        Update: {
-          attempts?: number
-          book_id?: string | null
-          created_at?: string
-          error?: string | null
-          finished_at?: string | null
-          folder_id?: string | null
-          id?: string
-          model?: string | null
-          progress?: string | null
-          result?: Json | null
-          started_at?: string | null
-          status?: string
-          updated_at?: string
-          user_id?: string
-          wiki_id?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "ingest_jobs_book_id_fkey"
-            columns: ["book_id"]
-            isOneToOne: false
-            referencedRelation: "books"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "ingest_jobs_folder_id_fkey"
-            columns: ["folder_id"]
-            isOneToOne: false
-            referencedRelation: "book_folders"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "ingest_jobs_wiki_id_fkey"
-            columns: ["wiki_id"]
-            isOneToOne: false
-            referencedRelation: "wikis"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       knowledge_conflicts: {
         Row: {
@@ -2601,32 +2537,6 @@ export type Database = {
         Args: { p_expected_sha256: string; p_tool_id: string }
         Returns: Json
       }
-      claim_next_ingest_job: {
-        Args: { _user_id: string }
-        Returns: {
-          attempts: number
-          book_id: string | null
-          created_at: string
-          error: string | null
-          finished_at: string | null
-          folder_id: string | null
-          id: string
-          model: string | null
-          progress: string | null
-          result: Json | null
-          started_at: string | null
-          status: string
-          updated_at: string
-          user_id: string
-          wiki_id: string | null
-        }
-        SetofOptions: {
-          from: "*"
-          to: "ingest_jobs"
-          isOneToOne: true
-          isSetofReturn: false
-        }
-      }
       conflicts_for_wiki: {
         Args: { target_wiki_id: string }
         Returns: {
@@ -2893,13 +2803,6 @@ export type Database = {
       renormalize_vibrancy: {
         Args: { _target_mean?: number; _user_id: string; _wiki_id?: string }
         Returns: number
-      }
-      requeue_stuck_ingest_jobs: {
-        Args: never
-        Returns: {
-          requeued: number
-          user_id: string
-        }[]
       }
       scan_cleanup_flags: {
         Args: { target_wiki_id?: string }
