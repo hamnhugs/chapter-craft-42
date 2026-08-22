@@ -9,15 +9,20 @@ import { modelProvider } from "@/lib/providers/registry";
 // progress with no provider plumbing, and one job at a time keeps pdfjs
 // memory use bounded.
 //
-// Pipeline per job:
-//   1. extract figures from the PDF client-side (free, no AI),
-//   2. load the book's neurons (knowledge_entries.source_book_id),
+// Pipeline per job (digestion-free — books need no neurons to extract):
+//   1. load the book's neurons as OPTIONAL pairing candidates (chat
+//      extraction still writes knowledge_entries.source_book_id; zero is a
+//      normal state, not an error),
+//   2. extract figures from the PDF client-side (free, no AI),
 //   3. replace any previously extracted figures for the book,
-//   4. describe + pair figures in batches via the describe-figures edge
-//      function (vision model: user's pick, else built-in default),
+//   4. describe (and, when candidates exist, pair) figures in batches via
+//      the describe-figures edge function (vision model: user's pick, else
+//      built-in default),
 //   5. upload kept figures to the private generated-images bucket and insert
-//      image_attachments rows (kind='figure', entry_id → neuron) — which the
-//      Neuron tab and chat retrieval already know how to display.
+//      image_attachments rows (kind='figure', entry_id → neuron or null,
+//      book_id + page always) — the Images panel shows every figure, and the
+//      stored prompt line carries book, page, and chapter provenance derived
+//      from the page number and the book's chapter ranges.
 
 export type FigureJobStatus = "queued" | "running" | "done" | "error";
 
@@ -36,8 +41,31 @@ interface JobInput {
   bookTitle: string;
   /** User's figure-extraction model override; server falls back to settings/default. */
   model?: string;
+  /** The book's chapter ranges, for chapter provenance on stored figures. */
+  chapters?: ChapterRange[];
   /** Lazily provides the PDF (fresh-upload File, or a storage URL). */
   load: () => Promise<{ file?: File | Blob; fileUrl?: string }>;
+}
+
+export interface ChapterRange {
+  name: string;
+  startPage: number;
+  endPage: number;
+}
+
+/** The chapter a page falls in (first match in reading order), cleaned for
+ *  embedding in a stored one-line provenance string. Chapter names are
+ *  UNTRUSTED (PDF headings, model renames) — strip the structural
+ *  characters that could break out of the bracketed [Attached image …]
+ *  note chat builds around this text (quotes, brackets, braces, backticks,
+ *  backslashes), collapse whitespace, and cap tight enough that provenance
+ *  survives the note's 120-char sanitizeInline budget. */
+export function chapterForPage(chapters: ChapterRange[] | undefined, page: number): string | null {
+  if (!chapters) return null;
+  const ch = chapters.find((c) => page >= c.startPage && page <= c.endPage);
+  if (!ch?.name) return null;
+  const clean = ch.name.replace(/["[\]{}`\\]/g, " ").replace(/\s+/g, " ").trim().slice(0, 30);
+  return clean.length > 0 ? clean : null;
 }
 
 const BATCH_SIZE = 4;
@@ -109,6 +137,10 @@ async function describeBatchWithRetry(body: unknown): Promise<{ results: Describ
       const err = e instanceof DescribeError ? e : new DescribeError((e as Error)?.message || "failed", 0);
       // Key/credit/plan problems affect every batch — abort the whole job.
       if (err.status === 401 || err.status === 402) throw err;
+      // A 400 is the edge function's own validation rejecting this payload —
+      // deterministic, so re-uploading the identical multi-MB batch (up to 4
+      // × 3.5M-char data URLs) two more times can only waste the uplink.
+      if (err.status === 400) throw err;
       lastErr = err;
       if (attempt < 3) {
         // Free vision models allow ~20 req/min; back off harder on 429.
@@ -126,9 +158,10 @@ async function runJob(input: JobInput): Promise<void> {
   const uid = userData.user?.id;
   if (!uid) throw new Error("Not signed in.");
 
-  // 1. The book's neurons — pairing candidates for the vision model. This is
-  // a millisecond query; run it BEFORE the minutes-long PDF scan so an
-  // undigested book fails fast instead of after all the rendering work.
+  // 1. The book's neurons — OPTIONAL pairing candidates for the vision
+  // model. Zero neurons is a normal state (digestion is gone; only chat
+  // extraction writes source_book_id now): the job proceeds and figures
+  // simply carry no neuron pairing, just book/page/chapter provenance.
   patch(bookId, { progress: "Checking this book's neurons…" });
   const { data: entries, error: entriesErr } = await supabase
     .from("knowledge_entries")
@@ -137,9 +170,6 @@ async function runJob(input: JobInput): Promise<void> {
     .limit(400);
   if (entriesErr) throw new Error(`Could not load neurons: ${entriesErr.message}`);
   const candidates = (entries || []).map((e: any) => ({ id: e.id as string, title: (e.title as string) || "" }));
-  if (candidates.length === 0) {
-    throw new Error("This book has no neurons yet — digest it first, then extract figures so each one can be paired with a concept.");
-  }
 
   // 2. Extract candidates client-side (no AI spend yet).
   const { file, fileUrl } = await input.load();
@@ -158,9 +188,14 @@ async function runJob(input: JobInput): Promise<void> {
   }
 
   // 3. Replace figures from any previous run (re-extraction = clean slate).
-  // Rows go first and every step is error-checked: rows are the source of
-  // truth, so an interruption may orphan storage objects (invisible) but can
-  // never leave rows pointing at deleted objects.
+  // The CHECK runs up front (it doubles as the figures-migration probe), but
+  // the destructive delete is DEFERRED until the first kept figure is about
+  // to land: a run whose every describe call fails — old server still
+  // deployed, provider outage — must not have already destroyed the book's
+  // existing figures on the way to its error card. Rows go first and every
+  // step is error-checked: rows are the source of truth, so an interruption
+  // may orphan storage objects (invisible) but can never leave rows pointing
+  // at deleted objects.
   const { data: old, error: oldErr } = await (supabase.from("image_attachments" as any) as any)
     .select("id, storage_path")
     .eq("book_id", bookId)
@@ -171,7 +206,11 @@ async function runJob(input: JobInput): Promise<void> {
     }
     throw new Error(`Could not check existing figures: ${oldErr.message}`);
   }
-  if (old && old.length > 0) {
+  let replaced = false;
+  const ensureOldReplaced = async (): Promise<void> => {
+    if (replaced) return;
+    replaced = true;
+    if (!old || old.length === 0) return;
     patch(bookId, { progress: `Replacing ${old.length} previously extracted figures…` });
     const { error: delErr } = await (supabase.from("image_attachments" as any) as any)
       .delete()
@@ -181,7 +220,7 @@ async function runJob(input: JobInput): Promise<void> {
     try {
       await supabase.storage.from("generated-images").remove(old.map((r: any) => r.storage_path));
     } catch { /* best-effort cleanup — orphaned objects are harmless */ }
-  }
+  };
 
   // 4 + 5. Describe in batches, then store kept figures as they come back.
   let kept = 0;
@@ -213,6 +252,15 @@ async function runJob(input: JobInput): Promise<void> {
     } catch (e) {
       const err = e as DescribeError;
       if (err.status === 401 || err.status === 402) throw err; // fatal for the whole job
+      // A still-deployed pre-rework server rejects candidate-less requests
+      // outright — every batch would fail the same way, so name the real
+      // cause instead of reporting it as a per-batch description failure.
+      // Matched on the SERVER's message, not the client-side candidate
+      // count: the old server filters empty ids/titles before counting, so
+      // the two counts can disagree.
+      if (/candidates required/i.test(err.message)) {
+        throw new Error("The updated figure-extraction service hasn't been deployed yet — give the deploy a minute and try again.");
+      }
       console.warn("[figureJobs] batch failed, skipping", err);
       lastBatchError = err;
       skipped += batch.length;
@@ -231,10 +279,17 @@ async function runJob(input: JobInput): Promise<void> {
         continue;
       }
       const entryId = r.concept_id && candidateIds.has(r.concept_id) ? r.concept_id : null;
-      // Keep the alt short enough that the RAG note (truncated to 160 chars)
-      // always retains the book title and page provenance.
+      // Provenance comes FIRST in the stored line: chat's attached-image
+      // note renders this field through sanitizeInline(…, 120), so anything
+      // past ~120 chars never reaches the model. Front-loading page, chapter,
+      // and title (chapter ≤30, title ≤30 ⇒ provenance ≤ ~85 chars) means
+      // truncation can only ever cost the alt's tail, never the provenance.
       const alt = (r.alt || "Figure").slice(0, 90);
+      const chapterName = chapterForPage(input.chapters, fig.page);
       const path = `${uid}/figures/${bookId}/${crypto.randomUUID()}.jpg`;
+      // Outside the per-figure try: a failed replace is a job error (the old
+      // set's integrity is at stake), never a silent per-figure skip.
+      await ensureOldReplaced();
       let uploaded = false;
       try {
         const { error: upErr } = await supabase.storage
@@ -250,8 +305,9 @@ async function runJob(input: JobInput): Promise<void> {
           phash: fig.phash,
           kind: "figure",
           // `prompt` is what chat retrieval quotes next to the neuron — make
-          // it a self-describing line with provenance.
-          prompt: `${alt} — figure from "${bookTitle.slice(0, 45)}", p. ${fig.page}`.slice(0, 300),
+          // it a self-describing line with provenance (page, chapter, book)
+          // front-loaded; see the budget comment above.
+          prompt: `Fig. p. ${fig.page}${chapterName ? ` (${chapterName})` : ""} of "${bookTitle.replace(/["[\]{}`\\]/g, " ").replace(/\s+/g, " ").trim().slice(0, 30)}" — ${alt}`.slice(0, 300),
           caption: (r.caption || "").slice(0, 2000),
           model: described.model_used || input.model || "",
           storage_path: path,

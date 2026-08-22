@@ -1,11 +1,17 @@
 // describe-figures: vision-model proxy for book figure extraction.
 //
 // The client extracts figure crops from the PDF locally (free) and sends a
-// small batch here as data URLs, together with the page context and the
-// book's neuron titles. One model call describes every figure in the batch
-// AND picks the single best-matching neuron per figure (or none) — the
-// token-efficient "caption once, store forever" pattern: after this call the
-// image never has to pass through a model again.
+// small batch here as data URLs, together with the page context and — when
+// the book has any — the book's neuron titles. One model call describes
+// every figure in the batch AND, when candidates were provided, picks the
+// single best-matching neuron per figure (or none) — the token-efficient
+// "caption once, store forever" pattern: after this call the image never
+// has to pass through a model again.
+//
+// Candidates are OPTIONAL (digestion-free rework): books without neurons
+// extract figures too; their concept_id is always null and the prompt never
+// mentions a concept list it doesn't have (the describe-but-withhold law —
+// asking a model to pick from an absent list invites invented ids).
 //
 // Provider policy mirrors auto-structure: the user's own OpenRouter key +
 // their chosen figure-extraction model when set; otherwise the Lovable AI
@@ -37,21 +43,26 @@ interface FigureIn { data_url: string; page: number; context: string }
 interface CandidateIn { id: string; title: string }
 
 function buildMessages(bookTitle: string, figures: FigureIn[], candidates: CandidateIn[]) {
+  const pairing = candidates.length > 0;
   const system = [
-    'You analyze figures extracted from a document so they can be attached to the user\'s knowledge notes ("neurons") and shown while learning. Return STRICT JSON only:',
-    '{"figures":[{"index":0,"alt":"short label, max 12 words","caption":"2-4 dense sentences describing the figure — include any text or labels readable in it and what it teaches","type":"photo|diagram|chart|sign|map|illustration|table|decorative","concept_id":"<id from CONCEPTS>"|null,"keep":true|false}]}',
+    'You analyze figures extracted from a document so they can be shown to the user while learning. Return STRICT JSON only:',
+    '{"figures":[{"index":0,"alt":"short label, max 12 words","caption":"2-4 dense sentences describing the figure — include any text or labels readable in it and what it teaches","type":"photo|diagram|chart|sign|map|illustration|table|decorative","concept_id":' + (pairing ? '"<id from CONCEPTS>"|null' : 'null') + ',"keep":true|false}]}',
     "Rules:",
     "- Exactly one object per input figure, in the same order, with matching index.",
-    "- concept_id: the id of the SINGLE concept this figure directly illustrates. Pick one only when the match is clear from the figure and its page text; otherwise use null. Never invent an id.",
+    pairing
+      ? "- concept_id: the id of the SINGLE concept this figure directly illustrates. Pick one only when the match is clear from the figure and its page text; otherwise use null. Never invent an id."
+      : "- concept_id: always null for this document.",
     "- keep=false for page furniture with no instructional value: logos, watermarks, decorative borders, publisher marks, author photos, QR codes, cover art.",
-    "- Research shows irrelevant images actively harm learning — be strict about both keep and concept_id.",
+    pairing
+      ? "- Research shows irrelevant images actively harm learning — be strict about both keep and concept_id."
+      : "- Research shows irrelevant images actively harm learning — be strict about keep.",
     "No prose outside the JSON object.",
   ].join("\n");
 
   const candidateLines = candidates.map((c) => `${c.id} | ${c.title}`).join("\n");
   const content: unknown[] = [{
     type: "text",
-    text: `DOCUMENT: "${bookTitle}"\n\nCONCEPTS (id | title):\n${candidateLines}\n\nAnalyze the ${figures.length} figure(s) below. Use each figure's nearby page text to understand what it illustrates.`,
+    text: `DOCUMENT: "${bookTitle}"\n\n${pairing ? `CONCEPTS (id | title):\n${candidateLines}\n\n` : ""}Analyze the ${figures.length} figure(s) below. Use each figure's nearby page text to understand what it illustrates.`,
   }];
   figures.forEach((f, i) => {
     content.push({
@@ -140,7 +151,8 @@ serve(async (req) => {
         title: String(c?.title || "").replace(/\s+/g, " ").slice(0, MAX_TITLE),
       }))
       .filter((c: CandidateIn) => c.id.length > 0 && c.title.length > 0);
-    if (candidates.length === 0) return json({ error: "candidates required" }, 400);
+    // Empty is valid: books without neurons still get descriptions; pairing
+    // is simply skipped (concept_id stays null via validIds below).
 
     const bookTitle = String(body?.book_title || "Untitled").slice(0, 120);
 
@@ -167,7 +179,13 @@ serve(async (req) => {
       if (!error) settingsModel = (data?.image_extraction_model || "").trim();
     }
 
-    const requestedModel = (String(body?.model || "").trim() || settingsModel || DEFAULT_MODEL);
+    // Choke point (the client-model-id-leak law): a namespaced non-OpenRouter
+    // id ("nvidia:…") persisted into settings by an older picker must not be
+    // forwarded verbatim. OpenRouter ids never carry ":" in their FIRST path
+    // segment — ":free" suffixes come after the "/".
+    const isOpenRouterId = (m: string) => m.length > 0 && !m.split("/")[0].includes(":");
+    const rawRequested = String(body?.model || "").trim() || settingsModel;
+    const requestedModel = isOpenRouterId(rawRequested) ? rawRequested : DEFAULT_MODEL;
 
     let endpoint: string;
     let key: string;

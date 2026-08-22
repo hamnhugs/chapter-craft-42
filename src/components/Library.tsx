@@ -7,6 +7,8 @@ import { useChatSettings } from "@/hooks/useChatSettings";
 import { usePlan } from "@/hooks/usePlan";
 import { openPricing } from "@/components/PricingDialog";
 import { structureJobs, useStructureJobs, StructureJob } from "@/lib/structureJobs";
+import { figureJobs, useFigureJobs, FigureJob } from "@/lib/figureJobs";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { autoTagBooks } from "@/lib/autoTag";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -103,10 +105,12 @@ const VIEW_OPTIONS: { id: ViewMode; icon: string; label: string }[] = [
 
 const Library: React.FC = () => {
   const { books, addBook, removeBook, requestBookLoad, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile } = useApp();
-  const { apiKey } = useChatSettings();
+  const { apiKey, imageExtractionModel } = useChatSettings();
   const { user } = useAuth();
   const { isPaid, loaded: planLoaded } = usePlan();
+  const { isAdmin, loaded: adminLoaded } = useIsAdmin();
   const jobs = useStructureJobs();
+  const figJobs = useFigureJobs();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const [sortBy, setSortBy] = useState<"date" | "name">("date");
@@ -483,6 +487,37 @@ const Library: React.FC = () => {
     });
   };
 
+  // Manual figure extraction — digestion-free: books need no neurons. When
+  // the book has any (chat extraction still creates them), figures are
+  // paired with them; every figure carries book/page/chapter provenance
+  // either way.
+  const runExtractFigures = (book: BookDocument) => {
+    if (!book.fileName.toLowerCase().endsWith(".pdf")) {
+      toast("Figure extraction works on PDF books (EPUBs are converted to PDF at upload).");
+      return;
+    }
+    // Without an OpenRouter key, describe-figures takes the gateway path,
+    // which requires a subscription open-access mode never grants (admins
+    // exempt) — the run could only end in a 402 AFTER the minutes-long PDF
+    // scan. Say what actually unblocks it, before any scanning; the retired
+    // paywall (openPricing no-ops under OPEN_ACCESS) is not the answer.
+    if (!apiKey && adminLoaded && !isAdmin) {
+      toast("Figure extraction needs your OpenRouter API key — add one in Settings → AI Models & Keys.");
+      return;
+    }
+    figureJobs.enqueue({
+      bookId: book.id,
+      bookTitle: book.title,
+      model: imageExtractionModel || undefined,
+      chapters: book.chapters.map((c) => ({ name: c.name, startPage: c.startPage, endPage: c.endPage })),
+      load: async () => {
+        const url = await loadBookFile(book.id);
+        if (!url) throw new Error("Could not load this book's file from storage.");
+        return { fileUrl: url };
+      },
+    });
+  };
+
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const dt = e.dataTransfer;
@@ -792,7 +827,9 @@ const Library: React.FC = () => {
                 index={i}
                 query={query}
                 job={jobs[book.id]}
+                figJob={figJobs[book.id]}
                 onDetect={() => runDetect(book)}
+                onExtractFigures={() => runExtractFigures(book)}
                 onRead={() => requestBookLoad(book.id)}
                 onRemove={() => removeBook(book.id)}
                 onRename={(newTitle) => updateBookTitle(book.id, newTitle)}
@@ -833,15 +870,18 @@ const BookCard: React.FC<{
   index: number;
   query?: string;
   job?: StructureJob;
+  figJob?: FigureJob;
   onDetect: () => void;
+  onExtractFigures: () => void;
   onRead: () => void;
   onRemove: () => void;
   onRename: (newTitle: string) => void;
-}> = ({ book, index, query = "", job, onDetect, onRead, onRemove, onRename }) => {
+}> = ({ book, index, query = "", job, figJob, onDetect, onExtractFigures, onRead, onRemove, onRename }) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(book.title);
   const isPdf = book.fileName.toLowerCase().endsWith(".pdf");
   const detecting = job?.status === "queued" || job?.status === "running";
+  const extracting = figJob?.status === "queued" || figJob?.status === "running";
   const isHtml = book.fileName.toLowerCase().endsWith(".html");
   const metadataText = isPdf
     ? `${book.pageCount} pages · ${book.chapters.length} chapters · PDF`
@@ -932,7 +972,7 @@ const BookCard: React.FC<{
           </div>
         )}
 
-        {/* Auto-structure status */}
+        {/* Auto-structure + figure-extraction status */}
         <div className="min-h-5 mb-4 space-y-1">
           {detecting ? (
             <p className="flex items-center gap-1.5 text-xs text-primary">
@@ -949,6 +989,24 @@ const BookCard: React.FC<{
             <p className="flex items-center gap-1.5 text-xs text-destructive">
               <span className="material-symbols-outlined text-sm">error</span>
               <span className="truncate" title={job.error}>{job.error || "Detection failed"}</span>
+            </p>
+          ) : null}
+          {extracting ? (
+            <p className="flex items-center gap-1.5 text-xs text-primary">
+              <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+              <span className="truncate">{figJob?.progress || "Extracting figures…"}</span>
+            </p>
+          ) : figJob?.status === "done" ? (
+            <p className="flex items-center gap-1.5 text-xs text-primary">
+              <span className="material-symbols-outlined text-sm">imagesmode</span>
+              {figJob.kept === 0
+                ? "No usable figures found"
+                : `${figJob.kept} figure${figJob.kept === 1 ? "" : "s"} saved to Images${(figJob.skipped ?? 0) > 0 ? ` (${figJob.skipped} skipped)` : ""}`}
+            </p>
+          ) : figJob?.status === "error" ? (
+            <p className="flex items-center gap-1.5 text-xs text-destructive">
+              <span className="material-symbols-outlined text-sm">error</span>
+              <span className="truncate" title={figJob.error}>{figJob.error || "Figure extraction failed"}</span>
             </p>
           ) : null}
         </div>
@@ -977,6 +1035,24 @@ const BookCard: React.FC<{
             >
               <span className={`material-symbols-outlined text-xl ${detecting ? "animate-spin" : ""}`}>
                 {detecting ? "progress_activity" : "auto_awesome"}
+              </span>
+            </button>
+          )}
+          {isPdf && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onExtractFigures(); }}
+              disabled={extracting}
+              title={
+                extracting
+                  ? "Extracting figures…"
+                  : figJob?.status === "error"
+                    ? "Retry figure extraction"
+                    : "Extract figures (signs, diagrams, charts) into your Images, tagged with their chapter — and paired with this book's neurons where they exist"
+              }
+              className="p-3 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <span className={`material-symbols-outlined text-xl ${extracting ? "animate-spin" : ""}`}>
+                {extracting ? "progress_activity" : "image_search"}
               </span>
             </button>
           )}
