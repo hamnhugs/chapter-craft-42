@@ -217,8 +217,9 @@ const LibraryShelves: React.FC<Props> = ({ books, renderBook, filtered = false }
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
-            className="absolute top-2 right-2 flex items-center gap-1 bg-surface-container-high text-xs rounded-md px-1.5 py-0.5 border border-outline-variant/30 opacity-0 group-hover:opacity-100 focus:opacity-100 data-[state=open]:opacity-100 transition-opacity"
+            className="cc-hover-reveal cc-tap-44 absolute top-2 right-2 flex items-center gap-1 bg-surface-container-high text-xs rounded-md px-1.5 py-0.5 border border-outline-variant/30 opacity-0 group-hover:opacity-100 focus:opacity-100 data-[state=open]:opacity-100 transition-opacity"
             title="Shelves"
+            aria-label={`Shelves for “${b.title}” (on ${b.folderIds.length})`}
           >
             <span className="material-symbols-outlined text-sm" aria-hidden>shelves</span>
             {b.folderIds.length > 0 ? b.folderIds.length : ""}
@@ -254,8 +255,8 @@ const LibraryShelves: React.FC<Props> = ({ books, renderBook, filtered = false }
   if (openShelfId) {
     const shelf = shelves.find((f) => f.id === openShelfId);
     return (
-      <div className="flex flex-col gap-5">
-        <nav aria-label="Shelf navigation" className="flex items-center gap-1.5 text-sm">
+      <div className="cc-container flex flex-col gap-5">
+        <nav aria-label="Shelf navigation" className="flex flex-wrap items-center gap-1.5 text-sm">
           <button
             onClick={() => setOpenShelfId(null)}
             className="flex items-center gap-1 px-2 py-1 rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors"
@@ -264,16 +265,16 @@ const LibraryShelves: React.FC<Props> = ({ books, renderBook, filtered = false }
             All shelves
           </button>
           <span className="text-on-surface-variant/50" aria-hidden>/</span>
-          <span className="flex items-center gap-1.5 px-2 py-1 font-semibold text-foreground">
+          <span className="flex min-w-0 items-center gap-1.5 px-2 py-1 font-semibold text-foreground">
             <span className="material-symbols-outlined text-base text-primary" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden>folder_open</span>
-            {shelf?.name}
-            <span className="text-on-surface-variant font-normal">({booksOnShelf.length})</span>
+            <span className="truncate">{shelf?.name}</span>
+            <span className="shrink-0 text-on-surface-variant font-normal">({booksOnShelf.length})</span>
           </span>
           <span className="ml-auto" />
           {shelf && (
             <button
               onClick={() => chatWithShelf(shelf)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-on-primary-container text-xs font-bold"
+              className="inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-on-primary-container text-xs font-bold"
               title="Load this shelf's books as chat context and open Counsel"
             >
               <span className="material-symbols-outlined text-sm">psychology</span>
@@ -298,7 +299,7 @@ const LibraryShelves: React.FC<Props> = ({ books, renderBook, filtered = false }
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="cc-container flex flex-col gap-6">
       {/* Shelf cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
         {shelves.map((f) => {
@@ -328,7 +329,12 @@ const LibraryShelves: React.FC<Props> = ({ books, renderBook, filtered = false }
                   ))}
                 </div>
               </div>
-              <div className="min-w-0 z-10 pointer-events-none">
+              {/* `w-full`, not just `min-w-0`: this is a flex item in a COLUMN
+                  flex container, so `min-width` does not constrain it — the
+                  cross-axis size is fit-content, and a `truncate` child's
+                  nowrap min-content would push the card wider than its track.
+                  A definite width is what makes the ellipsis reachable. */}
+              <div className="w-full min-w-0 z-10 pointer-events-none">
                 {renaming === f.id ? (
                   <input
                     autoFocus
@@ -336,32 +342,39 @@ const LibraryShelves: React.FC<Props> = ({ books, renderBook, filtered = false }
                     onChange={(e) => setRenameDraft(e.target.value)}
                     onBlur={() => handleRename(f.id)}
                     onKeyDown={(e) => { if (e.key === "Enter") handleRename(f.id); if (e.key === "Escape") setRenaming(null); }}
-                    className="bg-surface-container-highest rounded px-2 py-0.5 text-sm pointer-events-auto"
+                    className="w-full min-w-0 bg-surface-container-highest rounded px-2 py-0.5 text-sm pointer-events-auto"
                   />
                 ) : (
                   <p className="font-headline font-bold text-base text-foreground truncate w-full">{f.name}</p>
                 )}
                 <p className="text-xs text-on-surface-variant mt-0.5">{members.length} book{members.length === 1 ? "" : "s"}</p>
               </div>
-              <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+              {/* On a touch screen these are the ONLY route to renaming or
+                  deleting a shelf, and `hover` never fires there — so
+                  `.cc-hover-reveal` un-hides them and `.cc-tap-32` gives each
+                  one a real target. Desktop hover behaviour is unchanged. */}
+              <div className="cc-hover-reveal absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
                 <button
                   onClick={(e) => { e.stopPropagation(); chatWithShelf(f); }}
                   title={`Chat with "${f.name}" — load its books as chat context`}
-                  className="p-1 rounded bg-surface-container-high hover:bg-primary/20 text-primary"
+                  aria-label={`Chat with "${f.name}" — load its books as chat context`}
+                  className="cc-tap-32 p-1 rounded bg-surface-container-high hover:bg-primary/20 text-primary"
                 >
                   <span className="material-symbols-outlined text-sm">psychology</span>
                 </button>
                 <button
                   onClick={(e) => { e.stopPropagation(); setRenameDraft(f.name); setRenaming(f.id); }}
                   title="Rename"
-                  className="p-1 rounded bg-surface-container-high hover:bg-surface-container-highest"
+                  aria-label={`Rename shelf "${f.name}"`}
+                  className="cc-tap-32 p-1 rounded bg-surface-container-high hover:bg-surface-container-highest"
                 >
                   <span className="material-symbols-outlined text-sm">edit</span>
                 </button>
                 <button
                   onClick={(e) => { e.stopPropagation(); handleDelete(f.id); }}
                   title="Delete"
-                  className="p-1 rounded bg-surface-container-high hover:bg-red-500/20 text-red-300"
+                  aria-label={`Delete shelf "${f.name}"`}
+                  className="cc-tap-32 p-1 rounded bg-surface-container-high hover:bg-red-500/20 text-red-300"
                 >
                   <span className="material-symbols-outlined text-sm">delete</span>
                 </button>

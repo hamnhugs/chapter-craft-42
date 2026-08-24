@@ -10,10 +10,14 @@ import { structureJobs, useStructureJobs, StructureJob } from "@/lib/structureJo
 import { figureJobs, useFigureJobs, FigureJob } from "@/lib/figureJobs";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { autoTagBooks } from "@/lib/autoTag";
+import { isTouchPrimary } from "@/lib/focusPolicy";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import LibraryShelves from "@/components/LibraryShelves";
 
 import LibraryList from "@/components/LibraryList";
@@ -540,11 +544,11 @@ const Library: React.FC = () => {
 
   return (
     <div className="h-full flex flex-col animate-fade-in overflow-auto">
-      <main className="cc-container max-w-7xl mx-auto px-6 py-12 flex flex-col gap-12 w-full">
+      <main className="cc-vault-main max-w-7xl mx-auto px-6 py-12 flex flex-col gap-12 w-full">
         {/* Header Section */}
         <section className="flex flex-col md:flex-row md:items-end justify-between gap-6">
           <div className="space-y-2">
-            <h1 className="font-headline text-5xl md:text-7xl font-bold tracking-tighter text-primary italic">
+            <h1 className="cc-vault-title font-headline text-5xl md:text-7xl font-bold tracking-tighter text-primary italic">
               My Library
             </h1>
             <p className="text-on-surface-variant font-body max-w-md">
@@ -594,8 +598,9 @@ const Library: React.FC = () => {
                       : undefined
                   }
                   title={opt.label}
+                  aria-label={opt.label}
                   aria-pressed={view === opt.id}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-all ${
+                  className={`cc-tap-44 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-all ${
                     view === opt.id
                       ? "bg-primary/15 text-primary font-semibold"
                       : "text-on-surface-variant hover:text-primary"
@@ -643,7 +648,7 @@ const Library: React.FC = () => {
               <button
                 onClick={() => setQuery("")}
                 aria-label="Clear search"
-                className="absolute right-3 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-highest transition-colors"
+                className="cc-tap-44 absolute right-3 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-highest transition-colors"
               >
                 <span className="material-symbols-outlined text-lg">close</span>
               </button>
@@ -719,17 +724,17 @@ const Library: React.FC = () => {
         <div
           onDragOver={(e) => e.preventDefault()}
           onDrop={handleDrop}
-          className="group relative bg-surface-container-low border-2 border-dashed border-outline-variant/30 rounded-2xl p-12 flex flex-col items-center justify-center text-center transition-all hover:border-primary/40 hover:bg-surface-container-high cursor-pointer"
+          className="cc-vault-dropzone group relative bg-surface-container-low border-2 border-dashed border-outline-variant/30 rounded-2xl p-12 flex flex-col items-center justify-center text-center transition-all hover:border-primary/40 hover:bg-surface-container-high cursor-pointer"
           onClick={() => fileInputRef.current?.click()}
         >
-          <div className="mb-4 w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+          <div className="cc-dropzone-icon mb-4 w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center group-hover:scale-110 transition-transform">
             <span className="material-symbols-outlined text-primary text-3xl">cloud_upload</span>
           </div>
-          <h3 className="text-xl font-headline font-bold text-primary mb-1">
+          <h3 className="cc-dropzone-title text-xl font-headline font-bold text-primary mb-1">
             {isUploading ? "Uploading…" : "Drop PDF or EPUB"}
           </h3>
-          <p className="text-on-surface-variant text-sm mb-6">Max file size 50MB. Supports PDF, EPUB, HTML, DOC, TXT.</p>
-          <div className="flex items-center gap-3 flex-wrap justify-center">
+          <p className="cc-dropzone-hint text-on-surface-variant text-sm mb-6">Max file size 50MB. Supports PDF, EPUB, HTML, DOC, TXT.</p>
+          <div className="cc-dropzone-actions flex items-center gap-3 flex-wrap justify-center">
             <button
               className="px-8 py-3 bg-primary-container text-on-primary-container font-bold rounded-xl active:scale-95 transition-transform"
               onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
@@ -797,7 +802,7 @@ const Library: React.FC = () => {
           <LazyErrorBoundary title="The mind map couldn't load" hint="Check your connection and try toggling it again.">
             <Suspense
               fallback={
-                <div className="flex flex-col items-center justify-center h-[60vh] min-h-[420px] rounded-2xl bg-surface-container-low border border-outline-variant/10 text-on-surface-variant">
+                <div className="flex flex-col items-center justify-center h-[60vh] min-h-[min(420px,60dvh)] rounded-2xl bg-surface-container-low border border-outline-variant/10 text-on-surface-variant">
                   <span className="material-symbols-outlined text-4xl animate-spin mb-3">progress_activity</span>
                   <p className="text-sm">Loading mind map…</p>
                 </div>
@@ -879,6 +884,22 @@ const BookCard: React.FC<{
 }> = ({ book, index, query = "", job, figJob, onDetect, onExtractFigures, onRead, onRemove, onRename }) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(book.title);
+  const renameFromMenu = useRef(false);
+
+  const startRename = () => { setDraft(book.title); setEditing(true); };
+  /**
+   * The title is the biggest, most obvious target on the card, and on a touch
+   * screen tapping it opened an inline rename and raised the keyboard — when
+   * what a tap on a book plainly means is "open this book". Pointer capability
+   * decides the AFFORDANCE here, never the layout; rename stays reachable on
+   * touch through the card's overflow menu.
+   */
+  const onTitleClick = (e: React.MouseEvent) => {
+    const pointerType = (e.nativeEvent as Partial<PointerEvent>).pointerType;
+    const touch = pointerType ? pointerType === "touch" || pointerType === "pen" : isTouchPrimary();
+    if (touch) onRead();
+    else startRename();
+  };
   const isPdf = book.fileName.toLowerCase().endsWith(".pdf");
   const detecting = job?.status === "queued" || job?.status === "running";
   const extracting = figJob?.status === "queued" || figJob?.status === "running";
@@ -888,6 +909,28 @@ const BookCard: React.FC<{
     : isHtml
     ? `${book.chapters.length > 0 ? `${book.chapters.length} sections · ` : ""}HTML`
     : "Document file";
+
+  // One label per action, shared by the wide icon button's tooltip, its
+  // aria-label, and the narrow card's menu item — so the only description of
+  // what a control does cannot be a `title` a touch screen never shows.
+  // Every branch CONTAINS the visible menu-item text ("Detect chapters" /
+  // "Extract figures") — WCAG 2.5.3 label-in-name: a speech-input user invokes
+  // a control by the label they can SEE, and an aria-label that drops it makes
+  // the command silently match nothing. The error branches are the ones casual
+  // testing never renders.
+  const detectLabel = detecting
+    ? "Detecting chapters…"
+    : job?.status === "error"
+      ? "Detect chapters (retry)"
+      : book.chapters.length > 0
+        ? "Re-detect chapters with AI"
+        : "Auto-detect chapters with AI";
+  const extractLabel = extracting
+    ? "Extracting figures…"
+    : figJob?.status === "error"
+      ? "Extract figures (retry)"
+      : "Extract figures (signs, diagrams, charts) into your Images, tagged with their chapter — and paired with this book's neurons where they exist";
+  const removeLabel = `Delete “${book.title}”`;
 
   // Warm gradient hues
   const hues = [35, 25, 40, 15, 45, 20];
@@ -902,7 +945,7 @@ const BookCard: React.FC<{
       {/* Cover */}
       <div
         data-book-cover-placeholder={book.coverImageUrl ? undefined : ""}
-        className="aspect-[3/2] relative overflow-hidden bg-surface-container-highest flex items-center justify-center"
+        className="cc-book-cover aspect-[3/2] relative overflow-hidden bg-surface-container-highest flex items-center justify-center"
         style={{
           background: book.coverImageUrl
             ? undefined
@@ -920,10 +963,10 @@ const BookCard: React.FC<{
       </div>
 
       {/* Info */}
-      <div className="p-6">
+      <div className="cc-book-info p-6">
         {editing ? (
           <input
-            className="w-full text-xl font-headline font-bold bg-transparent border border-outline-variant rounded-lg px-2 py-1 mb-1 text-primary focus:outline-none focus:ring-1 focus:ring-primary/40"
+            className="cc-book-title w-full text-xl font-headline font-bold bg-transparent border border-outline-variant rounded-lg px-2 py-1 mb-1 text-primary focus:outline-none focus:ring-1 focus:ring-primary/40"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             autoFocus
@@ -938,19 +981,19 @@ const BookCard: React.FC<{
           />
         ) : (
           <h4
-            className="font-headline text-2xl font-bold text-primary mb-1 cursor-pointer hover:text-accent transition-colors line-clamp-2"
-            onClick={() => { setDraft(book.title); setEditing(true); }}
+            className="cc-book-title font-headline text-2xl font-bold text-primary mb-1 cursor-pointer hover:text-accent transition-colors line-clamp-2"
+            onClick={onTitleClick}
           >
             <Highlight text={book.title} query={query} />
           </h4>
         )}
-        <p className="text-on-surface-variant text-xs font-medium uppercase tracking-wider mb-2">
+        <p className="cc-book-meta text-on-surface-variant text-xs font-medium uppercase tracking-wider mb-2">
           {metadataText}
         </p>
 
         {/* Category + tags (set by Auto-tag; they drive the mind map) */}
         {(book.category || (book.tags?.length ?? 0) > 0) && (
-          <div className="flex flex-wrap gap-1.5 mb-2">
+          <div className="cc-book-tags flex flex-wrap gap-1.5 mb-2">
             {book.category && (
               <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[11px] font-medium">
                 {book.category}
@@ -973,7 +1016,7 @@ const BookCard: React.FC<{
         )}
 
         {/* Auto-structure + figure-extraction status */}
-        <div className="min-h-5 mb-4 space-y-1">
+        <div className="cc-book-status min-h-5 mb-4 space-y-1">
           {detecting ? (
             <p className="flex items-center gap-1.5 text-xs text-primary">
               <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>
@@ -1011,26 +1054,25 @@ const BookCard: React.FC<{
           ) : null}
         </div>
 
-        <div className="flex items-center gap-3">
+        {/* Actions. Both the wide row and the narrow overflow menu are always
+            in the DOM; `[data-cc-wide]` / `[data-cc-narrow]` in index.css pick
+            one from the CARD's own width. Rendering them as two JSX branches
+            instead would remount the subtree on every column-count change and
+            drop the dropdown's open state mid-interaction. */}
+        <div className="cc-book-actions flex items-center gap-3">
           <button
             onClick={onRead}
-            className="flex-1 py-3 bg-primary/10 text-primary font-bold rounded-lg hover:bg-primary hover:text-on-primary-container transition-all active:scale-95"
+            className="cc-book-open flex-1 min-w-0 py-3 bg-primary/10 text-primary font-bold rounded-lg hover:bg-primary hover:text-on-primary-container transition-all active:scale-95"
           >
             Open
           </button>
           {isPdf && (
             <button
+              data-cc-wide
               onClick={(e) => { e.stopPropagation(); onDetect(); }}
               disabled={detecting}
-              title={
-                detecting
-                  ? "Detecting chapters…"
-                  : job?.status === "error"
-                    ? "Retry chapter detection"
-                    : book.chapters.length > 0
-                      ? "Re-detect chapters with AI"
-                      : "Auto-detect chapters with AI"
-              }
+              title={detectLabel}
+              aria-label={detectLabel}
               className="p-3 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <span className={`material-symbols-outlined text-xl ${detecting ? "animate-spin" : ""}`}>
@@ -1040,15 +1082,11 @@ const BookCard: React.FC<{
           )}
           {isPdf && (
             <button
+              data-cc-wide
               onClick={(e) => { e.stopPropagation(); onExtractFigures(); }}
               disabled={extracting}
-              title={
-                extracting
-                  ? "Extracting figures…"
-                  : figJob?.status === "error"
-                    ? "Retry figure extraction"
-                    : "Extract figures (signs, diagrams, charts) into your Images, tagged with their chapter — and paired with this book's neurons where they exist"
-              }
+              title={extractLabel}
+              aria-label={extractLabel}
               className="p-3 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <span className={`material-symbols-outlined text-xl ${extracting ? "animate-spin" : ""}`}>
@@ -1057,11 +1095,75 @@ const BookCard: React.FC<{
             </button>
           )}
           <button
+            data-cc-wide
             onClick={(e) => { e.stopPropagation(); onRemove(); }}
+            title={removeLabel}
+            aria-label={removeLabel}
             className="p-3 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-error-container/20 hover:text-destructive transition-all"
           >
             <span className="material-symbols-outlined text-xl">delete</span>
           </button>
+
+          {/* Narrow cards: the same three actions behind one 44px target. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                data-cc-narrow
+                onClick={(e) => e.stopPropagation()}
+                aria-label={`More actions for “${book.title}”`}
+                className="shrink-0 w-11 h-11 items-center justify-center bg-surface-container-highest text-on-surface-variant rounded-lg transition-all"
+              >
+                <span className={`material-symbols-outlined text-xl ${detecting || extracting ? "animate-spin" : ""}`}>
+                  {detecting || extracting ? "progress_activity" : "more_vert"}
+                </span>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              /* Items are one flex row of nowrap text, so a long label makes
+                 the MENU that wide — `removeLabel` embeds the book title and
+                 rendered a 600px menu in a 375px viewport. Bound it to the
+                 screen and let long text truncate. */
+              className="min-w-52 max-w-[min(18rem,calc(100vw-2rem))]"
+              onCloseAutoFocus={(e) => {
+                // Radix restores focus to the trigger on close, which would
+                // pull it straight back out of the rename input.
+                if (renameFromMenu.current) { renameFromMenu.current = false; e.preventDefault(); }
+              }}
+            >
+              <DropdownMenuItem
+                aria-label={`Rename “${book.title}”`}
+                onSelect={() => { renameFromMenu.current = true; startRename(); }}
+              >
+                <span className="material-symbols-outlined text-base mr-2 shrink-0" aria-hidden>edit</span>
+                <span className="truncate">Rename</span>
+              </DropdownMenuItem>
+              {isPdf && (
+                <DropdownMenuItem disabled={detecting} aria-label={detectLabel} onSelect={() => onDetect()}>
+                  <span className={`material-symbols-outlined text-base mr-2 shrink-0 ${detecting ? "animate-spin" : ""}`} aria-hidden>
+                    {detecting ? "progress_activity" : "auto_awesome"}
+                  </span>
+                  <span className="truncate">{detecting ? "Detecting chapters…" : "Detect chapters"}</span>
+                </DropdownMenuItem>
+              )}
+              {isPdf && (
+                <DropdownMenuItem disabled={extracting} aria-label={extractLabel} onSelect={() => onExtractFigures()}>
+                  <span className={`material-symbols-outlined text-base mr-2 shrink-0 ${extracting ? "animate-spin" : ""}`} aria-hidden>
+                    {extracting ? "progress_activity" : "image_search"}
+                  </span>
+                  <span className="truncate">{extracting ? "Extracting figures…" : "Extract figures"}</span>
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                aria-label={removeLabel}
+                onSelect={() => onRemove()}
+              >
+                <span className="material-symbols-outlined text-base mr-2 shrink-0" aria-hidden>delete</span>
+                <span className="truncate">Delete</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
     </div>

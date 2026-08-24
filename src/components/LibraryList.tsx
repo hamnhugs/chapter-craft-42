@@ -59,7 +59,7 @@ const LibraryList: React.FC<{
       {/* Header row (hidden on mobile where rows become 2-line cards).
           The grid template grows with the breakpoints that reveal the Tags
           (lg) and Chapters (md) cells, so columns always line up. */}
-      <div className="hidden sm:grid grid-cols-[3rem_minmax(10rem,2fr)_minmax(7rem,1fr)_4rem_6rem_2.5rem] md:grid-cols-[3rem_minmax(10rem,2fr)_minmax(7rem,1fr)_4rem_4rem_6rem_2.5rem] lg:grid-cols-[3rem_minmax(10rem,2fr)_minmax(7rem,1fr)_minmax(8rem,1.4fr)_4rem_4rem_6rem_2.5rem] items-center gap-3 px-4 py-2.5 border-b border-outline-variant/10 bg-surface-container-high/50">
+      <div className="hidden sm:grid grid-cols-[3rem_minmax(8rem,2fr)_minmax(5rem,1fr)_4rem_6rem_2.5rem] md:grid-cols-[3rem_minmax(8rem,2fr)_minmax(5rem,1fr)_4rem_4rem_6rem_2.5rem] lg:grid-cols-[3rem_minmax(8rem,2fr)_minmax(5rem,1fr)_minmax(6rem,1.4fr)_4rem_4rem_6rem_2.5rem] items-center gap-3 px-4 py-2.5 border-b border-outline-variant/10 bg-surface-container-high/50">
         <span aria-hidden />
         <Header label="Title" sortKey="name" />
         <Header label="Category" />
@@ -86,7 +86,7 @@ const LibraryList: React.FC<{
                     onOpenBook(book.id);
                   }
                 }}
-                className="grid grid-cols-[3rem_1fr_2.5rem] sm:grid-cols-[3rem_minmax(10rem,2fr)_minmax(7rem,1fr)_4rem_6rem_2.5rem] md:grid-cols-[3rem_minmax(10rem,2fr)_minmax(7rem,1fr)_4rem_4rem_6rem_2.5rem] lg:grid-cols-[3rem_minmax(10rem,2fr)_minmax(7rem,1fr)_minmax(8rem,1.4fr)_4rem_4rem_6rem_2.5rem] items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-surface-container-high/60 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                className="grid grid-cols-[3rem_minmax(0,1fr)_2.5rem] sm:grid-cols-[3rem_minmax(8rem,2fr)_minmax(5rem,1fr)_4rem_6rem_2.5rem] md:grid-cols-[3rem_minmax(8rem,2fr)_minmax(5rem,1fr)_4rem_4rem_6rem_2.5rem] lg:grid-cols-[3rem_minmax(8rem,2fr)_minmax(5rem,1fr)_minmax(6rem,1.4fr)_4rem_4rem_6rem_2.5rem] items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-surface-container-high/60 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
               >
                 {/* Cover thumb */}
                 <div className="w-10 h-14 rounded-sm overflow-hidden bg-surface-container-highest flex items-center justify-center shrink-0">

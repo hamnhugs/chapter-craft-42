@@ -712,16 +712,221 @@
 }
 
 /* Container queries — the book grid responds to its own column width,
-   not the viewport, so it stays correct under future split-pane layouts. */
+   not the viewport, so it stays correct under future split-pane layouts.
+ *
+ * This sits on the SHELVES VIEW's root, deliberately not on `<main>`.
+ * `container-type` applies layout containment, and layout containment makes an
+ * element a containing block for `position: fixed` descendants — which would
+ * capture LibraryGraph's `fixed inset-0 z-[100]` expanded mind map and paint
+ * "fullscreen" as main's 32,000px-tall box, clipped by the Vault's own
+ * `overflow-auto`. Chromium 148 measured as NOT confining it (a `fixed`
+ * `inset: 0` probe inside `main` reported the full 375x812 viewport), so this
+ * has never been a live bug here — but the spec says it should, engines
+ * disagree, and the repo has already shipped this exact failure once with
+ * aurora's `backdrop-filter` confining MediaFrame's fullscreen.
+ *
+ * The shelves view contains the only `.book-grid` and no fixed-position
+ * descendant, so scoping the container there costs nothing — the element is a
+ * stretched flex child of `main`, so it is exactly the width `main`'s content
+ * box was — and takes the whole question off the table.
+ * Pinned by src/test/vaultMobileLayout.test.ts. */
 .cc-container { container-type: inline-size; container-name: main; }
+
+/* ── The Vault grid ───────────────────────────────────────────────────────
+ *
+ * EVERY track is `minmax(0, 1fr)`, never a bare `1fr`.
+ *
+ * `1fr` is shorthand for `minmax(auto, 1fr)`, and that `auto` floor is the
+ * widest grid ITEM's min-content contribution — which a `1fr` share can never
+ * shrink below. So a single book whose title carries one unbreakable token
+ * sizes every card in the Vault. Measured on the live app at a 375px viewport:
+ * one Anna's Archive filename-as-title with a 32-char MD5 in it
+ * ("… -- d5659d01fa25730be5e83fbdc52e192c -- Anna's Archive") has a 436.61px
+ * min-content width at `text-2xl`, which set a 484.61px track inside a 327px
+ * container and pushed all 54 cards 158px off-screen — horizontally scrolling
+ * the whole Vault to 509px. The other 53 books were blameless.
+ *
+ * `minmax(0, …)` removes the floor, so no single book's metadata can size the
+ * grid again — the class of bug, not the one title. `.cc-book-title` below
+ * additionally makes such tokens WRAP rather than be clipped by the card's
+ * `overflow-hidden`, and `[data-book-card]`'s inline-size containment zeroes
+ * the contribution a third time. Any one of the three is sufficient; the bug
+ * was expensive enough to be worth all three.
+ */
 .book-grid {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 1.5rem;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
 }
 @supports (container-type: inline-size) {
-  @container main (min-width: 640px)  { .book-grid { grid-template-columns: repeat(2, 1fr); } }
-  @container main (min-width: 1024px) { .book-grid { grid-template-columns: repeat(3, 1fr); } }
+  /* Two-up as soon as two cards can carry a cover and a title — the phone
+     bookshelf convention (Apple Books, Kindle). 300px of container = two
+     144px cards. */
+  @container main (min-width: 300px)  { .book-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @container main (min-width: 640px)  { .book-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem; } }
+  @container main (min-width: 1024px) { .book-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+}
+
+/* ── The book card ────────────────────────────────────────────────────────
+ *
+ * The card is its OWN query container, so its density follows the width of the
+ * box actually being laid out rather than the viewport's. This is the same law
+ * the workspace layout kernel is built on (src/lib/workspaceLayout.ts): a
+ * rotated phone is 852x393, so it clears every viewport breakpoint in the
+ * stylesheet while its cards are still ~390px. A viewport breakpoint cannot
+ * express "this card is narrow"; a container query is exactly that statement.
+ *
+ * Inline-size containment also zeroes the card's min-content contribution,
+ * which is the third of the three independent guards on the grid blowout above.
+ */
+[data-book-card] { container-type: inline-size; container-name: bookcard; }
+
+/* Book titles are frequently raw filenames (PDF metadata, Anna's Archive,
+   YouTube transcript imports) carrying hashes, ISBNs and underscore runs with
+   no soft break opportunity. `anywhere` — not `break-word` — because only
+   `anywhere` also collapses the MIN-CONTENT width, which is what the grid
+   track and the flex row are sized from. */
+.cc-book-title { overflow-wrap: anywhere; }
+
+/* The narrow card's overflow menu is in the DOM at every size and revealed by
+   the compact blocks below. One JSX position with swapped class strings, never
+   two branches rendering the same subtree — a branch swap would remount the
+   card and drop the dropdown's open state mid-interaction.
+
+   THIS RULE MUST STAY ABOVE THE COMPACT BLOCKS. `@container` and `@media` add
+   no specificity, so the reveal and this default are both (0,1,0) and SOURCE
+   ORDER alone decides. With this rule underneath them the menu was
+   unconditionally `display: none` and no narrow card ever had a secondary
+   action — pinned by src/test/vaultMobileLayout.test.ts. */
+[data-cc-narrow] { display: none; }
+
+/* The compact card. Declared twice on purpose: a container query cannot see
+   viewport HEIGHT, and a landscape phone (852x393) has wide cards inside a
+   viewport too short to show even one full-height card. 480px is
+   SHORT_VIEWPORT_MAX_HEIGHT from the layout kernel, kept in sync by
+   src/test/vaultMobileLayout.test.ts. */
+@supports (container-type: inline-size) {
+  @container bookcard (max-width: 260px) {
+    .cc-book-cover   { aspect-ratio: 4 / 3; }
+    .cc-book-info    { padding: 0.625rem; }
+    .cc-book-title   { font-size: 0.9375rem; line-height: 1.2rem; margin-bottom: 0.125rem; }
+    .cc-book-meta    { font-size: 0.625rem; letter-spacing: 0.04em; margin-bottom: 0.25rem; }
+    .cc-book-tags    { display: none; }
+    .cc-book-status  { min-height: 0; margin-bottom: 0.5rem; }
+    .cc-book-actions { gap: 0.375rem; }
+    .cc-book-open    { padding-top: 0.5rem; padding-bottom: 0.5rem; font-size: 0.8125rem; }
+    /* The rename <input> shares cc-book-title (for overflow-wrap) — but iOS
+       Safari zooms the page when a focused input computes under 16px, so the
+       compact 15px must never reach it. (0,1,1) beats the (0,1,0) shrink. */
+    input.cc-book-title { font-size: 1rem; }
+    [data-cc-wide]   { display: none; }
+    [data-cc-narrow] { display: inline-flex; }
+  }
+}
+@media (max-height: 480px) {
+  .cc-book-cover   { aspect-ratio: 4 / 3; }
+  /* Short-viewport EXTRA (no container-query twin): on a landscape phone the
+     cards are wide — 351px at 852x393 — so a 4/3 cover alone is 263px of a
+     393px viewport and one book fills the screen. Capping the cover lets the
+     grid show ~3 books per screen instead of 1.7. `object-cover` on the image
+     crops rather than distorts. */
+  .cc-book-cover   { max-height: 7.5rem; }
+  .cc-book-info    { padding: 0.625rem; }
+  .cc-book-title   { font-size: 0.9375rem; line-height: 1.2rem; margin-bottom: 0.125rem; }
+  .cc-book-meta    { font-size: 0.625rem; letter-spacing: 0.04em; margin-bottom: 0.25rem; }
+  .cc-book-tags    { display: none; }
+  .cc-book-status  { min-height: 0; margin-bottom: 0.5rem; }
+  .cc-book-actions { gap: 0.375rem; }
+  .cc-book-open    { padding-top: 0.5rem; padding-bottom: 0.5rem; font-size: 0.8125rem; }
+  input.cc-book-title { font-size: 1rem; }
+  [data-cc-wide]   { display: none; }
+  [data-cc-narrow] { display: inline-flex; }
+}
+
+/* `:hover` LATCHES on iOS: the first tap fires it and it stays until you tap
+   something else, so a "lift on hover" card sits raised after every tap. Where
+   there is no hover, there is no lift. */
+@media (hover: none) {
+  /* Doubled attribute selector, (0,3,0): Tailwind emits its PSEUDO-CLASS
+     variants (`.hover\:-translate-y-1:hover`, (0,2,0)) after this file's own
+     rules, so a single `[data-book-card]:hover` (also (0,2,0)) loses the tie
+     on source order and ships as dead code. Same trick, same reason, as
+     `.cc-vault-title.cc-vault-title`. */
+  [data-book-card][data-book-card]:hover { transform: none; }
+}
+
+/* ── The Vault's own page chrome ──────────────────────────────────────────
+ *
+ * Media queries, not container queries, and ONLY here: `.cc-vault-main` IS the
+ * `main` query container, and a container cannot query itself.
+ *
+ * The condition is `(max-width: 640px) OR (max-height: 480px)` because
+ * geometry is two-dimensional. A landscape phone is 852x393 — it clears every
+ * width breakpoint in this stylesheet while having less vertical room than the
+ * portrait phone the width query was written for. 480px is
+ * SHORT_VIEWPORT_MAX_HEIGHT from src/lib/workspaceLayout.ts.
+ *
+ * Measured before this rule, at 375x812: 1,216px of scrolling stood between
+ * the top of the Vault and the first book card — a 386px dropzone, a 48px
+ * headline and 48px of gap between every one of six stacked sections.
+ */
+@media (max-width: 640px), (max-height: 480px) {
+  .cc-vault-main {
+    /* `viewport-fit=cover` is set in index.html, so on a notched phone held
+       sideways the display cutout eats into the layout viewport. `max()`
+       keeps the normal 1rem everywhere else. */
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+    padding-top: 1.25rem;
+    padding-bottom: 1.25rem;
+    gap: 1.25rem;
+  }
+  /* Doubled selector, (0,2,0). Tailwind emits its RESPONSIVE variants after
+     this file's own rules, so `md:text-7xl` on the same element wins a
+     (0,1,0) tie on source order — and `md` is 768, which every phone clears
+     in landscape. Measured 72px at 852x393 before the doubling. Same trick,
+     and the same reason, as `.cc-measure.cc-measure`. */
+  .cc-vault-title.cc-vault-title { font-size: 2.25rem; line-height: 2.5rem; }
+  .cc-vault-dropzone { padding: 1.25rem; }
+  .cc-vault-dropzone .cc-dropzone-icon { width: 3rem; height: 3rem; margin-bottom: 0.5rem; }
+  .cc-vault-dropzone .cc-dropzone-title { font-size: 1.125rem; line-height: 1.5rem; }
+  .cc-vault-dropzone .cc-dropzone-hint { margin-bottom: 0.75rem; font-size: 0.75rem; }
+  .cc-vault-dropzone .cc-dropzone-actions button { padding-left: 1.25rem; padding-right: 1.25rem; }
+}
+
+/* ── Hover-only affordances on a touch screen ─────────────────────────────
+ *
+ * `opacity-0 group-hover:opacity-100` hides a control behind an event a touch
+ * screen never fires. Measured on the live app: the per-book shelf menu and the
+ * shelf card's Chat / Rename / Delete buttons all sat at opacity 0 with
+ * `(any-hover: hover)` false — putting a book on a shelf, renaming a shelf and
+ * deleting a shelf were unreachable on a phone, with no other route to any of
+ * them.
+ *
+ * This is the sanctioned use of a capability probe: `hover: none` decides
+ * whether an AFFORDANCE is revealed and how big its target is. It never picks a
+ * layout mode — that stays a pure function of geometry.
+ */
+@media (hover: none) {
+  .cc-hover-reveal { opacity: 1; }
+  /* A touch TABLET has wide cards (no container reveal) and a tall viewport
+     (no height reveal), so without this the overflow menu — the only touch
+     route to Rename — existed on no tablet. Revealing it everywhere hover
+     doesn't exist is an affordance decision, not a layout one: the wide
+     buttons remain, and Rename gains its one touch route. */
+  [data-cc-narrow] { display: inline-flex; }
+  /* WCAG 2.2 SC 2.5.8 is a 24px floor; 44px is the platform guidance. These
+     controls sit ON a tappable card, where a miss opens the book instead — so
+     the book card's shelf trigger gets the full 44. The shelf card's three
+     actions share a 155px-wide card at two-up, where three 44px targets would
+     span the whole card, so they take 32 — still clear of the 24px floor. */
+  .cc-tap-44, .cc-tap-32 {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .cc-tap-44 { min-width: 44px; min-height: 44px; }
+  .cc-tap-32 { min-width: 32px; min-height: 32px; }
 }
 
 /* Liquid-glass surface utility (any theme; really sings under Aurora) */

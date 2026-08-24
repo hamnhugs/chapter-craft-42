@@ -65,7 +65,7 @@ const GraphButton: React.FC<{
     title={title}
     aria-label={title}
     aria-pressed={pressed}
-    className={`w-9 h-9 rounded-full flex items-center justify-center border shadow-sm transition-all ${
+    className={`cc-tap-44 w-9 h-9 rounded-full flex items-center justify-center border shadow-sm transition-all ${
       pressed
         ? "bg-primary/20 text-primary border-primary/30"
         : "bg-surface-container-highest/90 text-on-surface-variant border-outline-variant/20 hover:text-primary"
@@ -275,7 +275,7 @@ const LibraryGraph: React.FC<{
         aria-label={`Mind map of ${books.length} books across ${new Set(books.map((b) => b.category || UNCATEGORIZED)).size} categories`}
         onPointerDown={handlePointerDown}
         className={`relative w-full overflow-hidden bg-surface-container-low border border-outline-variant/10 ${
-          expanded ? "h-full rounded-xl" : "h-[60vh] min-h-[420px] rounded-2xl"
+          expanded ? "h-full rounded-xl" : "h-[60vh] min-h-[min(420px,60dvh)] rounded-2xl"
         }`}
       >
         {size.width > 0 && (
