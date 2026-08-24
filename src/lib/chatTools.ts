@@ -5,6 +5,10 @@ import { blockedToolResult, isToolBlocked, type LeanMode } from "@/lib/leanMode"
 import { TOOL_PERMISSION, permissionRefusal } from "@/lib/toolPermissions";
 import { sanitizeIlike } from "@/lib/sanitize";
 import { workspaceStore } from "@/lib/workspaceStore";
+// For get_chapter_text's not-found alternatives: the books the user loaded as
+// chat context are exactly the ones the model is plausibly trying to read.
+// Acyclic: chatBooks imports buildChatSystemPrompt, which imports neither of us.
+import { bookContextStore, selectContextBooks } from "@/lib/chatBooks";
 import { BookDocument, Chapter } from "@/types/library";
 import { parseBlocksVerbose } from "@/lib/responseBlocks";
 import { parseArtifact, ARTIFACT_MAX_CONTENT } from "@/lib/artifacts";
@@ -2065,28 +2069,121 @@ export async function executeChatTool(
       }
       case "get_chapter_text": {
         const maxChars = Math.max(500, Math.min(20000, Number(args.max_chars) || 8000));
+        const wanted = String(args.chapter_id ?? "").trim();
+        // The books plausibly being read: the ACTIVE book FIRST (it is the
+        // one open in front of the user, and slicing must never cut it), then
+        // the loaded context books, de-duplicated. This ONE scope drives both
+        // the name-match recovery and the error's alternatives — matching
+        // against the whole library would let a hostile chapter name in any
+        // long-forgotten upload serve itself to an error-recovering model.
+        const scoped: BookDocument[] = [];
+        {
+          const seen = new Set<string>();
+          const active = deps.activeBookId ? deps.books.find((b) => b.id === deps.activeBookId) : undefined;
+          if (active) {
+            scoped.push(active);
+            seen.add(active.id);
+          }
+          for (const b of selectContextBooks(deps.books, bookContextStore.get(), deps.activeBookId)) {
+            if (!seen.has(b.id)) {
+              scoped.push(b);
+              seen.add(b.id);
+            }
+          }
+        }
         let chapter: Chapter | undefined;
         let bookTitle = "";
+        let bookId = "";
+        let matchNote: string | undefined;
+        // An exact id is unforgeable, so it may match the whole library.
         for (const b of deps.books) {
-          const c = b.chapters.find((ch) => ch.id === args.chapter_id);
+          const c = b.chapters.find((ch) => ch.id === wanted);
           if (c) {
             chapter = c;
             bookTitle = b.title;
+            bookId = b.id;
             break;
           }
         }
+        // Recovery pass: tool RESULTS are not replayed across turns, so on a
+        // later turn the model has no verbatim id in context and often passes
+        // a chapter NAME, or a half-remembered id, instead. A UNIQUE name
+        // match within the scoped books is served (read-class, and honest
+        // about how it matched); an ambiguous or empty match falls through.
+        if (!chapter && wanted.length >= 6) {
+          const lower = wanted.toLowerCase();
+          const hits: Array<{ c: Chapter; b: BookDocument }> = [];
+          for (const b of scoped) {
+            for (const c of b.chapters) {
+              const n = (c.name || "").toLowerCase();
+              if (n === lower || n.includes(lower)) hits.push({ c, b });
+            }
+          }
+          if (hits.length === 1) {
+            chapter = hits[0].c;
+            bookTitle = hits[0].b.title;
+            bookId = hits[0].b.id;
+            matchNote = `No chapter has the id "${wanted.slice(0, 60)}" — matched it as a chapter NAME instead. Use the id below for exact fetches.`;
+          }
+        }
         if (!chapter) {
-          return { result: { error: "Chapter not found" }, event: { name, summary: "Chapter not found", ok: false } };
+          // The validator-error law: location + violation + ADMISSIBLE
+          // ALTERNATIVES. A bare "not found" strands the model — measured
+          // live, it apologised to the user that the book was inaccessible.
+          // Chapterless books are excluded: an alternatives list holding zero
+          // ids next to "retry with one of them" re-creates the dead end.
+          const withChapters = scoped.filter((b) => b.chapters.length > 0);
+          const shownBooks = withChapters.slice(0, 5);
+          const moreBooks = withChapters.length - shownBooks.length;
+          const CHAPTER_CAP = 30;
+          let chaptersCut = false;
+          const valid_chapters = shownBooks.map((b) => {
+            const cut = b.chapters.length - CHAPTER_CAP;
+            if (cut > 0) chaptersCut = true;
+            return {
+              book_title: (b.title || "Untitled").slice(0, 80),
+              book_id: b.id,
+              chapters: b.chapters.slice(0, CHAPTER_CAP).map((c) => ({ id: c.id, name: (c.name || "").slice(0, 80) })),
+              // No silent caps: a dropped tail must say it was dropped, or the
+              // model concludes the missing chapter does not exist — the exact
+              // live failure this error shape exists to close.
+              ...(cut > 0 ? { more_chapters_not_listed: cut } : {}),
+            };
+          });
+          return {
+            result: {
+              error: "No chapter with that id",
+              requested: wanted.slice(0, 80),
+              ...(valid_chapters.length > 0
+                ? {
+                    valid_chapters,
+                    ...(moreBooks > 0 ? { more_books_not_listed: moreBooks } : {}),
+                    note:
+                      moreBooks > 0 || chaptersCut
+                        ? "Currently valid chapter ids for the books in play (list truncated — the counts above say what was cut) — retry with one of them."
+                        : "These are the currently valid chapter ids for the books in play — retry with one of them.",
+                  }
+                : scoped.length > 0
+                  ? { note: "The books in play have no isolated chapters yet — there is no chapter text to fetch." }
+                  : { note: "Open a book first to learn its current chapter ids." }),
+            },
+            event: { name, summary: "Chapter not found", ok: false },
+          };
         }
         const text = chapter.textContent || (deps.loadChapterText ? await deps.loadChapterText(chapter.id) : "");
         return {
           result: {
             id: chapter.id,
             name: chapter.name,
+            // Provenance on every serve: name-matched text especially must
+            // never enter context without saying which book it came from.
+            book_id: bookId,
+            book_title: (bookTitle || "Untitled").slice(0, 80),
             start_page: chapter.startPage,
             end_page: chapter.endPage,
             text: text.slice(0, maxChars),
             truncated: text.length > maxChars,
+            ...(matchNote ? { note: matchNote } : {}),
           },
           event: { name, summary: `Read "${chapter.name}" from ${bookTitle}`, ok: true },
         };

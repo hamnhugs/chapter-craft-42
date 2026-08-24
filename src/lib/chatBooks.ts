@@ -247,8 +247,21 @@ function chapterName(c: ChapterPiece, nonce: string): string {
   return sanitizeInline(c.chapter.name || `Chapter ${c.index + 1}`, nonce, 120) || `Chapter ${c.index + 1}`;
 }
 
+/**
+ * Headers print the chapter's id UNCONDITIONALLY. Why they need ids at all:
+ * tool RESULTS are not replayed across turns, and without an id anywhere in
+ * context a later "read that chapter again" intent has nothing valid to pass
+ * — measured live (2026-08-24, gemini-2.5-flash voice turns), the model
+ * fabricated a chapter id, hit "Chapter not found", and told the user it
+ * couldn't access the book. Why unconditionally rather than gated on the
+ * read tool like `outlineLine`: an id is DATA (identity), not a tool name —
+ * the tool-truth law gates NAMING tools, which stays in `stateNote` and the
+ * outline lines — and gating would re-key the block's bytes to the roster,
+ * which FLAPS (image turns drop tools entirely), killing the app's largest
+ * byte-stable cache prefix twice per image round-trip.
+ */
 function chapterHeader(c: ChapterPiece, nonce: string): string {
-  return `[ch ${c.index + 1} — "${chapterName(c, nonce)}" (pages ${c.chapter.startPage}–${c.chapter.endPage})]`;
+  return `[ch ${c.index + 1} — "${chapterName(c, nonce)}" (pages ${c.chapter.startPage}–${c.chapter.endPage}, chapter_id: ${c.chapter.id})]`;
 }
 
 /** One outline line per chapter: enough for navigation, scoping, and — on
