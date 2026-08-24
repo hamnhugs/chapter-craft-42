@@ -12,6 +12,21 @@ export function cn(...inputs: ClassValue[]) {
  * NVIDIA's catalog carries embedding ids WITHOUT "embed" in the name
  * (baai/bge-m3, nvidia/nvclip, nemoretriever rows) — matched explicitly.
  */
+/**
+ * OpenRouter's `:batch` variant ids route ONLY to the asynchronous Batch API —
+ * the synchronous /chat/completions endpoint answers 404 "This model is only
+ * available through the Batch API" (hit live 2026-08-24: the user picked
+ * `google/gemini-3.6-flash:batch` for its cheaper pricing and every chat send
+ * died). Nothing in this app speaks the batch endpoint, so a `:batch` id must
+ * never reach any live-model role. The gate does NOT silently strip the suffix:
+ * the un-suffixed sibling bills at full price, and swapping a user's model for
+ * a differently-priced one behind their back violates the provider-visibility
+ * rule — the refusal names the runnable sibling instead.
+ */
+export function isBatchOnlyModel(id: string): boolean {
+  return /:batch$/i.test(id || "");
+}
+
 export function isEmbeddingModel(id: string): boolean {
   if (!id) return false;
   const s = id.toLowerCase();

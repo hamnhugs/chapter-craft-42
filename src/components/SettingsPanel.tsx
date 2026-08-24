@@ -25,7 +25,7 @@ import ToolFoundrySettings from "@/components/ToolFoundrySettings";
 import { getMemoryMode, setMemoryMode, MemoryMode } from "@/lib/knowledgeApi";
 import { consumeSettingsSection } from "@/lib/settingsNav";
 import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
-import { isEmbeddingModel } from "@/lib/utils";
+import { isEmbeddingModel, isBatchOnlyModel } from "@/lib/utils";
 import { allProviders, describeModel, freeChatProviders, isNvidiaModel, localModelId, modelProvider, namespacedId, providerConfigured, providerKeyUrl, providerLabel, NVIDIA_PREFIX } from "@/lib/providers/registry";
 import type { ProviderId } from "@/lib/providers/types";
 import { namespacedNvidiaId, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
@@ -673,7 +673,7 @@ const SettingsPanel: React.FC = () => {
               <div>
                 <FieldLabel>Active Chat Model</FieldLabel>
                 <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} className={`${selectCls} mt-1.5`}>
-                  <ModelOptions models={savedModels.filter((m) => !isEmbeddingModel(m) || m === selectedModel)} />
+                  <ModelOptions models={savedModels.filter((m) => (!isEmbeddingModel(m) && !isBatchOnlyModel(m)) || m === selectedModel)} />
                 </select>
               </div>
 
@@ -717,14 +717,21 @@ const SettingsPanel: React.FC = () => {
                       <div className="flex flex-wrap gap-1.5">
                         {group.map((m) => {
                           const embed = isEmbeddingModel(m);
+                          const batchOnly = isBatchOnlyModel(m);
                           return (
                             <span
                               key={m}
-                              title={embed ? "Embedding model — used by Wiki reindex, not Chat" : describeModel(m)}
+                              title={
+                                embed
+                                  ? "Embedding model — used by Wiki reindex, not Chat"
+                                  : batchOnly
+                                    ? "Batch-pricing variant — OpenRouter serves it only through the asynchronous Batch API, so no live feature here can run it"
+                                    : describeModel(m)
+                              }
                               className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md ${
                                 m === selectedModel
                                   ? "bg-primary-container/20 text-primary border border-primary-container/30"
-                                  : embed
+                                  : embed || batchOnly
                                     ? "bg-surface-container-highest/50 text-on-surface-variant/60 italic"
                                     : "bg-surface-container-highest text-on-surface-variant"
                               }`}
@@ -877,7 +884,7 @@ const SettingsPanel: React.FC = () => {
                 <FieldLabel>Voice Model (spoken replies / hands-free)</FieldLabel>
                 <select value={voiceModel || ""} onChange={(e) => setVoiceModel(e.target.value)} className={`${selectCls} mt-1.5`}>
                   <option value="">Same as Active model</option>
-                  <ModelOptions models={savedModels} />
+                  <ModelOptions models={savedModels.filter((m) => !isBatchOnlyModel(m) || m === voiceModel)} />
                 </select>
                 <Hint>Pick a fast model (e.g. <code>google/gemini-2.5-flash-lite</code>) for snappier spoken replies.</Hint>
               </div>
@@ -952,7 +959,7 @@ const SettingsPanel: React.FC = () => {
               <div>
                 <FieldLabel>Deep Research Model</FieldLabel>
                 <select value={deepResearchModel} onChange={(e) => setDeepResearchModel(e.target.value)} className={`${selectCls} mt-1.5`}>
-                  <ModelOptions models={savedModels} />
+                  <ModelOptions models={savedModels.filter((m) => !isBatchOnlyModel(m) || m === deepResearchModel)} />
                 </select>
                 <Hint>Used when Deep Research is ON. Pick a strong reasoning model for best results.</Hint>
               </div>
@@ -976,7 +983,7 @@ const SettingsPanel: React.FC = () => {
               <div>
                 <FieldLabel>Quick Search Model (lightweight preferred)</FieldLabel>
                 <select value={voiceQuickSearchModel || selectedModel} onChange={(e) => setVoiceQuickSearchModel(e.target.value)} className={`${selectCls} mt-1.5`}>
-                  <ModelOptions models={savedModels} />
+                  <ModelOptions models={savedModels.filter((m) => !isBatchOnlyModel(m) || m === voiceQuickSearchModel)} />
                 </select>
               </div>
             </Section>
@@ -992,7 +999,7 @@ const SettingsPanel: React.FC = () => {
                 <FieldLabel>Vision Model (used when you attach an image)</FieldLabel>
                 <select value={visionModel || ""} onChange={(e) => setVisionModel(e.target.value)} className={`${selectCls} mt-1.5`}>
                   <option value="">Same as Active model</option>
-                  <ModelOptions models={savedModels} />
+                  <ModelOptions models={savedModels.filter((m) => !isBatchOnlyModel(m) || m === visionModel)} />
                 </select>
                 <Hint>For best image understanding pick a vision-strong model like <code>google/gemini-2.5-flash</code> (cheap, great at docs/OCR) or <code>google/gemini-2.5-pro</code> (best reasoning). Falls back to your Active model if blank.</Hint>
               </div>
@@ -1086,7 +1093,7 @@ const SettingsPanel: React.FC = () => {
                   {/* Wiki ops run server-side against OpenRouter only — NVIDIA
                       models are excluded here so a pick can't silently break
                       reindexing. */}
-                  <ModelOptions models={savedModels} openrouterOnly />
+                  <ModelOptions models={savedModels.filter((m) => !isBatchOnlyModel(m))} openrouterOnly />
                 </select>
                 <Hint>Powers wiki extract and health checks. Custom models use OpenRouter and need your API key above (NVIDIA models aren't available for wiki ops).</Hint>
                 {wikiModel && !apiKey && (

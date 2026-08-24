@@ -31,7 +31,7 @@ import {
   buildBookContextBlock, bookContextCharBudget, type UsedBookContext,
 } from "@/lib/chatBooks";
 import { toast } from "sonner";
-import { isEmbeddingModel } from "@/lib/utils";
+import { isEmbeddingModel, isBatchOnlyModel } from "@/lib/utils";
 import { describeModel, freeChatProviders, localModelId, modelProvider, providerConfigured, providerKey, providerKeyUrl, providerLabel, resolveModel } from "@/lib/providers/registry";
 import type { ProviderId } from "@/lib/providers/types";
 import { namespacedNvidiaId, nvidiaModelInfo, nvidiaNoThinkingBody, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
@@ -563,7 +563,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Batch: don't pay an LLM call every turn for 2 messages.
       if (cur.covered > 0 && target - cur.covered < SUMMARY_MIN_BATCH) return;
       const model = selectedModel;
-      if (!model || isEmbeddingModel(model)) return;
+      if (!model || isEmbeddingModel(model) || isBatchOnlyModel(model)) return;
       // Summaries follow the selected model through the same provider seam
       // as chat — with only the OTHER provider's key saved, they'd silently
       // 404 forever otherwise. No key for this provider → skip quietly.
@@ -1160,6 +1160,19 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // writing into it.
       if (isEmbeddingModel(model)) {
         const msg = `"${model}" is an embedding model — pick a chat model in Settings (it's only valid for Wiki reindex).`;
+        toast.error(msg);
+        assistantText = `❌ ${msg}`;
+        updateAssistant();
+        setIsLoading(false);
+        return;
+      }
+      // ":batch" ids run only on OpenRouter's asynchronous Batch API — the
+      // live endpoint 404s them. Refuse with the runnable sibling named
+      // rather than silently stripping the suffix: the sibling bills at full
+      // price, and swapping models behind the user's back is the invisible
+      // routing the provider-visibility rule forbids.
+      if (isBatchOnlyModel(model)) {
+        const msg = `"${model}" is a batch-pricing variant that can't answer live chat — in Settings pick "${model.replace(/:batch$/i, "")}" (same model, standard pricing) instead.`;
         toast.error(msg);
         assistantText = `❌ ${msg}`;
         updateAssistant();
