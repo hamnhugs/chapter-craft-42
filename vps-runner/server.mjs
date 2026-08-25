@@ -28,7 +28,7 @@
 import http from "node:http";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdtemp, writeFile, rm, readFile } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, readFile, mkdir, stat, readdir } from "node:fs/promises";
 import { readFileSync, existsSync } from "node:fs";
 import os, { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -74,6 +74,12 @@ const MEM_FLOOR = 64 * MB, PIDS_FLOOR = 128; // too-low kills the runsc sentry a
 // headroom for docker/the runner/the user's other services (e.g. Hermes bots).
 const RESERVE_CORES    = Math.max(0, Number(config.reserve_cores) || 1);
 const RESERVE_RAM_FRAC = Math.min(0.9, Math.max(0.15, Number(config.reserve_ram_frac) || 0.15));
+
+// ── persistence (master switch OFF = today; /state is only ever ephemeral) ────
+const PERSIST_ENABLED    = config.persist_enabled === true;
+const STATE_DIR          = String(config.state_dir || "/var/lib/chapter-craft-runner/state");
+const STATE_QUOTA_MB     = Math.max(16, Number(config.state_quota_mb) || 256);
+const STATE_MAX_TOTAL_MB = Math.max(STATE_QUOTA_MB, Number(config.state_max_total_mb) || 4096);
 const SKEW_SEC = 60;
 const NONCE_FILE = join(process.cwd(), ".nonce-cache.json");
 
@@ -149,6 +155,83 @@ function redact(s, secretNames) {
   return out;
 }
 
+// ── persistent state (per-lineage-epoch directory; opt-in, fenced at approval) ─
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+function sanitizeUuid(x) { const s = String(x || "").toLowerCase(); return UUID_RE.test(s) ? s : null; }
+
+// Run a command to completion. Resolves { code, stdout, stderr } — never throws.
+function runCmd(cmd, args) {
+  return new Promise((resolve) => {
+    let out = "", err = "";
+    let p;
+    try { p = spawn(cmd, args); } catch (e) { resolve({ code: -1, stdout: "", stderr: String(e?.message || e) }); return; }
+    p.stdout?.on("data", (d) => (out += d.toString()));
+    p.stderr?.on("data", (d) => (err += d.toString()));
+    p.on("close", (code) => resolve({ code: code ?? -1, stdout: out, stderr: err }));
+    p.on("error", (e) => resolve({ code: -1, stdout: out, stderr: String(e?.message || e) }));
+  });
+}
+async function duBytes(p) { const r = await runCmd("du", ["-sb", p]); if (r.code === 0) { const n = Number(String(r.stdout).split(/\s+/)[0]); return Number.isFinite(n) ? n : 0; } return 0; }
+
+// A 'fresh' epoch bump orphans the prior epoch's directory for this lineage —
+// remove those so state does not accumulate across versions.
+async function gcSiblingEpochs(key, keepEpoch) {
+  let entries = [];
+  try { entries = await readdir(STATE_DIR); } catch { return; }
+  for (const e of entries) {
+    const m = e.match(/^([0-9a-f-]{36})-(\d+)$/);
+    if (m && m[1] === key && Number(m[2]) !== keepEpoch) {
+      // Never yank a directory a concurrent run at a different epoch (e.g. a
+      // still-executing superseded version) still has bind-mounted.
+      if (stateChains.has(`${m[1]}:${Number(m[2])}`)) continue;
+      await runCmd("rm", ["-rf", join(STATE_DIR, e)]);
+    }
+  }
+}
+
+// Ensure the durable directory for this (lineage, epoch). The parent STATE_DIR is
+// 0700 owned by the runner user, so host access is gated there; the per-program
+// dir is 0777 only so the container's --user 65534 can write into it (the parent
+// still blocks any other host user). Returns { path } or { error }.
+async function ensureStateDir(key, epoch) {
+  // Enforce the 0700 parent in code rather than trusting operator setup — it is
+  // the ONLY thing gating other local host users out of the 0777 per-program dirs
+  // (which hold persisted state + any secret an ancestor wrote). install -d
+  // creates it if missing; the chmod forces 0700 even on a pre-existing looser dir.
+  const pd = await runCmd("install", ["-d", "-m", "0700", STATE_DIR]);
+  if (pd.code !== 0) return { error: `could not secure the state parent directory: ${String(pd.stderr).slice(0, 200)}` };
+  await runCmd("chmod", ["0700", STATE_DIR]);
+  const path = join(STATE_DIR, `${key}-${epoch}`);
+  // Aggregate cap is a SOFT, pre-run bound (a single runaway run can still exceed
+  // it mid-run — see the config doc); re-check it on BOTH the existing and new
+  // paths so accumulated state can't drift past the cap unnoticed.
+  const total = await duBytes(STATE_DIR);
+  if (total >= STATE_MAX_TOTAL_MB * MB)
+    return { error: `state storage is at the ${STATE_MAX_TOTAL_MB}MB cap — free some or raise state_max_total_mb` };
+  if (existsSync(path)) {
+    if (await duBytes(path) > STATE_QUOTA_MB * MB)
+      return { error: `this program's stored state exceeds its ${STATE_QUOTA_MB}MB quota — clear it or raise state_quota_mb` };
+    return { path };
+  }
+  await gcSiblingEpochs(key, epoch);                 // reclaim old epochs of this lineage (a 'fresh' bump)
+  const r = await runCmd("install", ["-d", "-m", "0777", path]);
+  if (r.code !== 0) return { error: `could not create state directory: ${String(r.stderr).slice(0, 200)}` };
+  return { path };
+}
+
+// Serialize runs that share one (lineage, epoch) directory so concurrent jobs
+// cannot interleave writes into the same state.
+const stateChains = new Map();
+async function acquireStateLock(key) {
+  const prev = stateChains.get(key) || Promise.resolve();
+  let resolveNext;
+  const next = new Promise((r) => (resolveNext = r));
+  const chained = prev.then(() => next, () => next);
+  stateChains.set(key, chained);
+  await prev.catch(() => {});
+  return () => { resolveNext(); if (stateChains.get(key) === chained) stateChains.delete(key); };
+}
+
 async function runJob(job) {
   const mode = job.mode === "verify" ? "verify" : "run";
   const language = String(job.language || "");
@@ -157,9 +240,14 @@ async function runJob(job) {
   const manifest = job.manifest || {};
   const timeoutMs = Math.min(MAX_TIMEOUT_MS, Math.max(1000, Number(manifest.timeout_ms) || 15000));
 
-  // VERIFY is forced hermetic: no network, no secrets, whatever was asked.
+  // VERIFY is forced hermetic: no network, no secrets, no durable state.
   const wantsAllowlist = mode === "run" && manifest.network === "allowlist";
   const secretNames = mode === "run" && Array.isArray(manifest.secrets) ? manifest.secrets.filter((n) => typeof n === "string" && own(SECRETS, n) !== undefined) : [];
+  // A persist run mounts durable state that an ANCESTOR version may have written a
+  // secret into, so declared-names redaction is not enough — redact the FULL
+  // configured secrets map from a persist run's output (defense in depth).
+  const persistRun = mode === "run" && manifest.persist === true && PERSIST_ENABLED;
+  const redactNames = persistRun ? Object.keys(SECRETS) : secretNames;
 
   if (wantsAllowlist && !egressReady) {
     return { status: "error", exit_code: null, stdout: "", stderr: "this runner cannot serve allowlist egress (the egress lockdown self-test did not pass); re-forge the program with network 'none' or fix the runner's egress setup", ms: 0 };
@@ -168,9 +256,29 @@ async function runJob(job) {
   const dir = await mkdtemp(join(tmpdir(), "ccprog-"));
   const name = `ccprog_${crypto.randomUUID().slice(0, 12)}`;
   const started = Date.now();
+  let releaseStateLock = null;
   try {
     const codeFile = join(dir, "prog");
     await writeFile(codeFile, code, "utf8");
+
+    // /state: verify gets a throwaway tmpfs (hermetic — an unapproved draft can
+    // neither read accumulated state nor persist anything); a real persist run
+    // gets its durable per-(lineage,epoch) directory; a persist request with the
+    // operator switch OFF falls back to an ephemeral tmpfs so it still runs.
+    let stateArgs = [];
+    if (mode === "verify") {
+      stateArgs = ["--tmpfs", "/state:size=16m,mode=0700,noexec,nosuid,nodev"];
+    } else if (persistRun) {
+      const key = sanitizeUuid(job.state_key);
+      const epoch = Number.isInteger(job.state_epoch) && job.state_epoch > 0 ? job.state_epoch : null;
+      if (!key || !epoch) return { status: "error", exit_code: null, stdout: "", stderr: "persistent state requested but no valid state key/epoch was provided", ms: Date.now() - started };
+      releaseStateLock = await acquireStateLock(`${key}:${epoch}`);
+      const sd = await ensureStateDir(key, epoch);
+      if (sd.error) return { status: "error", exit_code: null, stdout: "", stderr: sd.error, ms: Date.now() - started };
+      stateArgs = ["-v", `${sd.path}:/state`];
+    } else if (mode === "run" && manifest.persist === true) {
+      stateArgs = ["--tmpfs", "/state:size=64m,mode=0700,nosuid,nodev"];
+    }
 
     const netArgs = wantsAllowlist
       ? ["--network", EGRESS_NETWORK,
@@ -212,6 +320,7 @@ async function runJob(job) {
       "--read-only",
       "--tmpfs", "/tmp:size=64m,mode=1777,noexec,nosuid,nodev",
       "--tmpfs", "/dev/shm:size=16m,noexec,nosuid,nodev",
+      ...stateArgs,
       "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
       "--user", "65534:65534",
       "--ulimit", "nofile=1024:1024", "--ulimit", "nproc=256:256",
@@ -269,8 +378,8 @@ async function runJob(job) {
     if (startError || (!done && !killedForTimeout)) {
       return { status: "sandbox_unavailable", exit_code: null, stdout: "", stderr: truncate(startError || "the sandbox container could not start"), ms };
     }
-    stdout = truncate(redact(stdout, secretNames));
-    stderr = truncate(redact(stderr, secretNames));
+    stdout = truncate(redact(stdout, redactNames));
+    stderr = truncate(redact(stderr, redactNames));
     if (killedForTimeout) return { status: "timeout", exit_code: exitCode, stdout, stderr, ms };
     if (oomKilled) return { status: "oom", exit_code: exitCode, stdout, stderr, ms };
     if (wantsAllowlist && /ccprog: egress blocked/i.test(stderr)) return { status: "egress_blocked", exit_code: exitCode, stdout, stderr, ms };
@@ -278,9 +387,11 @@ async function runJob(job) {
     return { status: "error", exit_code: exitCode, stdout, stderr, ms };
   } finally {
     // Always clean up — the container (belt-and-suspenders over the backstop) and
-    // the per-job temp dir, whatever path we left by.
+    // the per-job temp dir, whatever path we left by. The durable /state directory
+    // is NEVER removed here — only gcSiblingEpochs (a fresh-epoch bump) prunes it.
     spawn("docker", ["rm", "-f", name]);
     await rm(dir, { recursive: true, force: true }).catch(() => {});
+    if (releaseStateLock) releaseStateLock();
   }
 }
 

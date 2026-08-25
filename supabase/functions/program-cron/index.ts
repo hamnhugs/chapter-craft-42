@@ -131,6 +131,20 @@ serve(async (req) => {
       await service.from("program_runs").insert({ id: runId, user_id: userId, program_id: programId, sha256: pin, mode: "cron", status: "pending" });
 
       const manifest = (program.manifest || {}) as Record<string, unknown>;
+      const wantsPersist = manifest.persist === true;
+      let stateKey: string | null = null, stateEpoch = 1;
+      if (wantsPersist) {
+        stateKey = (program as any).root_id || programId;
+        // FAIL CLOSED (see program-run): never dispatch a persist run at a guessed
+        // epoch of 1. On an unresolved epoch, error the run and release the lease
+        // so a later tick can retry once the state row is readable.
+        const { data: st, error: stErr } = await service.from("program_state").select("epoch").eq("root_id", stateKey).maybeSingle();
+        if (stErr || !st || !Number.isInteger((st as any).epoch) || (st as any).epoch < 1) {
+          await service.from("program_runs").update({ status: "error", error: "Could not resolve the program's persistent-state epoch." }).eq("id", runId);
+          await service.rpc("release_schedule_lease", { p_schedule_id: scheduleId, p_token: token }); released++; continue;
+        }
+        stateEpoch = (st as any).epoch;
+      }
       let r: { status: number; body: any };
       try {
         r = await callRunner(conn, "POST", "/run", {
@@ -142,8 +156,10 @@ serve(async (req) => {
             allowed_hosts: Array.isArray(manifest.allowed_hosts) ? manifest.allowed_hosts : [],
             secrets: Array.isArray(manifest.secrets) ? manifest.secrets : [],
             memory: manifest.memory, cpus: manifest.cpus, pids: manifest.pids,
+            persist: wantsPersist,
             timeout_ms: Math.min(CRON_SYNC_MAX_MS, Number(manifest.timeout_ms) || 15000),
           },
+          state_key: stateKey, state_epoch: stateEpoch,
           args: {},
         }, CRON_SYNC_MAX_MS);
       } catch (e) {

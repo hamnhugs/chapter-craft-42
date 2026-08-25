@@ -85,7 +85,7 @@ serve(async (req) => {
 
     const { data: program, error: pErr } = await supabase
       .from("agent_programs")
-      .select("id, name, language, code, manifest, status, superseded_by, run_count, fail_count")
+      .select("id, root_id, name, language, code, manifest, status, superseded_by, run_count, fail_count")
       .eq("id", programId)
       .eq("status", "approved")
       .is("superseded_by", null)
@@ -124,6 +124,25 @@ serve(async (req) => {
     }
 
     const manifest = (program.manifest || {}) as Record<string, unknown>;
+    // Persistence: resolve the lineage's current epoch (the fence). The runner
+    // mounts /state at ${lineage}-${epoch}; a fresh approved version bumps the
+    // epoch, so it cannot inherit a prior version's state unless the user carried
+    // it forward at approval time.
+    const wantsPersist = manifest.persist === true;
+    let stateKey: string | null = null, stateEpoch = 1;
+    if (wantsPersist) {
+      stateKey = (program as any).root_id || program.id;
+      // FAIL CLOSED: approve_program always writes a program_state row for a
+      // persist lineage, so a missing/unreadable row means we cannot prove the
+      // CURRENT epoch. Never fall back to epoch 1 (the oldest) — that could mount
+      // an ancestor version's /state past the approval fence.
+      const { data: st, error: stErr } = await supabase.from("program_state").select("epoch").eq("root_id", stateKey).maybeSingle();
+      if (stErr || !st || !Number.isInteger((st as any).epoch) || (st as any).epoch < 1) {
+        await service.from("program_runs").update({ status: "error", error: "Could not resolve the program's persistent-state epoch." }).eq("id", runId);
+        return fail("PROGRAM_INTEGRITY_FAILED", "Could not resolve the program's persistent-state epoch — try again.");
+      }
+      stateEpoch = (st as any).epoch;
+    }
     // Send the job. Secret NAMES only; the runner injects values + redacts them.
     let r: { status: number; body: any };
     try {
@@ -135,8 +154,11 @@ serve(async (req) => {
           network: manifest.network === "allowlist" ? "allowlist" : "none",
           allowed_hosts: Array.isArray(manifest.allowed_hosts) ? manifest.allowed_hosts : [],
           secrets: Array.isArray(manifest.secrets) ? manifest.secrets : [],
+          memory: manifest.memory, cpus: manifest.cpus, pids: manifest.pids,
+          persist: wantsPersist,
           timeout_ms: Number(manifest.timeout_ms) || 15000,
         },
+        state_key: stateKey, state_epoch: stateEpoch,
         args: body?.args ?? {},
       }, RUN_TIMEOUT_MS);
     } catch (e) {

@@ -50,6 +50,9 @@ export interface ProgramManifest {
   timeout_ms: number;
   /** Secret NAMES only — values live on the runner, never here or in context. */
   secrets: string[];
+  /** Durable per-program /state between runs. Only honored when the operator has
+   *  enabled persistence on the runner; fenced per approved version by epoch. */
+  persist?: boolean;
   /** Folds the model-read description into the approval hash (see forge_program). */
   description_sha256?: string;
 }
@@ -148,7 +151,13 @@ export function validateProgramManifest(raw: unknown): ManifestValidation {
   if (!Number.isFinite(timeout_ms)) timeout_ms = 15_000;
   timeout_ms = Math.min(MAX_PROGRAM_TIMEOUT_MS, Math.max(MIN_PROGRAM_TIMEOUT_MS, Math.round(timeout_ms)));
 
-  return { ok: errors.length === 0, errors, manifest: { network, allowed_hosts, timeout_ms, secrets } };
+  let persist = false;
+  if (r.persist === true) persist = true;
+  else if (r.persist !== undefined && r.persist !== false) errors.push("persist must be true or false");
+
+  // Only emit `persist` when true, so a non-persist program's manifest (and thus
+  // its approval fingerprint) is byte-identical to the pre-persistence shape.
+  return { ok: errors.length === 0, errors, manifest: { network, allowed_hosts, timeout_ms, secrets, ...(persist ? { persist: true } : {}) } };
 }
 
 export interface IoSpecValidation { ok: boolean; errors: string[]; io_spec: ProgramIoSpec; }
@@ -339,8 +348,11 @@ export async function programFingerprint(programId: string): Promise<string> {
   return String(data);
 }
 
-export async function approveProgram(programId: string, expectedSha256: string): Promise<void> {
-  const { error } = await (supabase.rpc as any)("approve_program", { p_program_id: programId, p_expected_sha256: expectedSha256 });
+/** Approve a draft. `disposition` only matters for a persist program whose lineage
+ *  already has stored state: "carry" reuses it (may contain secrets/payloads a
+ *  prior version wrote); anything else (the default) starts a fresh, empty state. */
+export async function approveProgram(programId: string, expectedSha256: string, disposition?: "fresh" | "carry"): Promise<void> {
+  const { error } = await (supabase.rpc as any)("approve_program", { p_program_id: programId, p_expected_sha256: expectedSha256, p_state_disposition: disposition ?? null });
   if (error) throw error;
 }
 

@@ -44,6 +44,18 @@
   "_doc_reserve_ram_frac": "OPTIONAL (default 0.15, min 0.15). Fraction of RAM held back for the host. Combined with reserve_cores to compute the safe effective concurrency at boot.",
   "reserve_ram_frac": 0.15,
 
+  "_doc_persist_enabled": "OPTIONAL (default false). MASTER SWITCH for persistent program state. While false, a program that requests persistence still runs but gets an EPHEMERAL /state (nothing survives). Set true only after creating state_dir (see docs). A persist program can write a secret to its /state that survives the run — the runner redacts the full secrets map from persist output, but treat persisted data as readable by anyone with host access.",
+  "persist_enabled": false,
+
+  "_doc_state_dir": "OPTIONAL (default /var/lib/chapter-craft-runner/state). Daemon-visible dir (NOT under /tmp) holding one 0777 sub-directory per (program-lineage, epoch); the 0700 parent gates host access. Must be owned by the runner user.",
+  "state_dir": "/var/lib/chapter-craft-runner/state",
+
+  "_doc_state_quota_mb": "OPTIONAL (default 256). Soft per-program cap: a run is refused once that program's stored state exceeds this.",
+  "state_quota_mb": 256,
+
+  "_doc_state_max_total_mb": "OPTIONAL (default 4096). SOFT aggregate cap across ALL programs' state, checked BEFORE each run. /state is a bind mount with no hard size limit, so a single runaway run can still exceed this mid-run — keep it comfortably under free disk. Reduces, does not eliminate, the risk of program state filling the box.",
+  "state_max_total_mb": 4096,
+
   "_doc_concurrency": "OPTIONAL (default 3). Max jobs running at once (clamped down at boot by reserve_cores/reserve_ram_frac if the box is too small for that many at the configured ceilings).",
   "concurrency": 3,
 
