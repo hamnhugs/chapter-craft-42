@@ -1602,6 +1602,27 @@ export type Database = {
           },
         ]
       }
+      program_state: {
+        Row: {
+          epoch: number
+          root_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          epoch?: number
+          root_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          epoch?: number
+          root_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       prompt_presets: {
         Row: {
           body: string
@@ -2831,7 +2852,11 @@ export type Database = {
       }
       app_open_access: { Args: never; Returns: boolean }
       approve_program: {
-        Args: { p_expected_sha256: string; p_program_id: string }
+        Args: {
+          p_expected_sha256: string
+          p_program_id: string
+          p_state_disposition?: string
+        }
         Returns: Json
       }
       approve_tool: {
