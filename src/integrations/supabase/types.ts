@@ -1430,6 +1430,27 @@ export type Database = {
           },
         ]
       }
+      program_cron_health: {
+        Row: {
+          id: boolean
+          last_ok_at: string | null
+          last_tick_at: string | null
+          note: string | null
+        }
+        Insert: {
+          id?: boolean
+          last_ok_at?: string | null
+          last_tick_at?: string | null
+          note?: string | null
+        }
+        Update: {
+          id?: boolean
+          last_ok_at?: string | null
+          last_tick_at?: string | null
+          note?: string | null
+        }
+        Relationships: []
+      }
       program_disables: {
         Row: {
           disabled_at: string
@@ -1502,6 +1523,80 @@ export type Database = {
             foreignKeyName: "program_runs_program_id_fkey"
             columns: ["program_id"]
             isOneToOne: false
+            referencedRelation: "agent_programs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      program_schedules: {
+        Row: {
+          created_at: string
+          daily_at_minute: number | null
+          enabled: boolean
+          every_seconds: number | null
+          fail_count: number
+          id: string
+          in_flight: boolean
+          last_run_at: string | null
+          last_tick_at: string | null
+          lease_token: string | null
+          lease_until: string | null
+          name: string
+          next_run_at: string
+          paused_reason: string | null
+          pinned_sha256: string
+          program_id: string
+          root_id: string | null
+          tz: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          daily_at_minute?: number | null
+          enabled?: boolean
+          every_seconds?: number | null
+          fail_count?: number
+          id?: string
+          in_flight?: boolean
+          last_run_at?: string | null
+          last_tick_at?: string | null
+          lease_token?: string | null
+          lease_until?: string | null
+          name: string
+          next_run_at: string
+          paused_reason?: string | null
+          pinned_sha256: string
+          program_id: string
+          root_id?: string | null
+          tz?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          daily_at_minute?: number | null
+          enabled?: boolean
+          every_seconds?: number | null
+          fail_count?: number
+          id?: string
+          in_flight?: boolean
+          last_run_at?: string | null
+          last_tick_at?: string | null
+          lease_token?: string | null
+          lease_until?: string | null
+          name?: string
+          next_run_at?: string
+          paused_reason?: string | null
+          pinned_sha256?: string
+          program_id?: string
+          root_id?: string | null
+          tz?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "program_schedules_program_id_fkey"
+            columns: ["program_id"]
+            isOneToOne: true
             referencedRelation: "agent_programs"
             referencedColumns: ["id"]
           },
@@ -2743,6 +2838,20 @@ export type Database = {
         Args: { p_expected_sha256: string; p_tool_id: string }
         Returns: Json
       }
+      autopause_program_schedule: {
+        Args: { p_reason: string; p_schedule_id: string }
+        Returns: undefined
+      }
+      claim_due_schedules: {
+        Args: { p_limit?: number }
+        Returns: {
+          lease_token: string
+          program_id: string
+          schedule_id: string
+          tz: string
+          user_id: string
+        }[]
+      }
       conflicts_for_wiki: {
         Args: { target_wiki_id: string }
         Returns: {
@@ -2783,6 +2892,7 @@ export type Database = {
         }
       }
       delete_entries_bulk: { Args: { entry_ids: string[] }; Returns: number }
+      delete_program_schedule: { Args: { p_program_id: string }; Returns: Json }
       disable_program: { Args: { p_name: string }; Returns: Json }
       entries_due_for_review: {
         Args: { _limit?: number; _wiki_id?: string }
@@ -2907,6 +3017,10 @@ export type Database = {
         }[]
       }
       is_admin: { Args: never; Returns: boolean }
+      mark_cron_tick: {
+        Args: { p_note?: string; p_ok: boolean }
+        Returns: undefined
+      }
       match_image_memories: {
         Args: {
           filter_wiki_id?: string
@@ -3003,10 +3117,31 @@ export type Database = {
         }
       }
       my_entitlements: { Args: never; Returns: Json }
+      pause_program_schedule: {
+        Args: { p_enabled: boolean; p_program_id: string }
+        Returns: Json
+      }
       program_fingerprint: { Args: { p_program_id: string }; Returns: string }
+      program_next_run_at: {
+        Args: {
+          p_daily_min: number
+          p_every: number
+          p_from: string
+          p_tz: string
+        }
+        Returns: string
+      }
+      reclaim_schedule_lease: {
+        Args: { p_schedule_id: string; p_token: string }
+        Returns: boolean
+      }
       record_review: {
         Args: { _entry_id: string; _recalled?: boolean }
         Returns: string
+      }
+      release_schedule_lease: {
+        Args: { p_schedule_id: string; p_token: string }
+        Returns: undefined
       }
       renormalize_vibrancy: {
         Args: { _target_mean?: number; _user_id: string; _wiki_id?: string }
@@ -3027,6 +3162,19 @@ export type Database = {
           similarity: number
           wiki_id: string
         }[]
+      }
+      set_program_schedule: {
+        Args: {
+          p_daily_at_minute?: number
+          p_every_seconds?: number
+          p_program_id: string
+          p_tz?: string
+        }
+        Returns: Json
+      }
+      settle_program_schedule: {
+        Args: { p_ok: boolean; p_schedule_id: string; p_token: string }
+        Returns: undefined
       }
       supersede_knowledge_entry: {
         Args: {
