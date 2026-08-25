@@ -156,11 +156,22 @@ export async function callRunner(
     `Content-Length: ${bodyBytes.length}\r\n` +
     `Connection: close\r\n\r\n`;
 
-  // Deno.connectTls with a literal `hostname` (an IP) connects to exactly that
-  // IP with NO DNS lookup, while `serverName` drives SNI + certificate
-  // validation against the real hostname.
+  // The IP pin must be two-stage: the Supabase edge runtime ignores
+  // Deno.connectTls's `serverName` (no SNI goes out and the certificate is
+  // validated against the IP — fatal alert 80 from the proxy, then
+  // NotValidForName). A plain TCP connect to the literal IP (no DNS lookup)
+  // followed by startTls with the real hostname keeps the anti-rebinding pin
+  // AND restores SNI + certificate validation against conn.host.
   const tls = await Promise.race([
-    Deno.connectTls({ hostname: conn.ip, port: conn.port, serverName: conn.host }),
+    (async () => {
+      const tcp = await Deno.connect({ hostname: conn.ip, port: conn.port });
+      try {
+        return await Deno.startTls(tcp, { hostname: conn.host });
+      } catch (e) {
+        try { tcp.close(); } catch { /* already closed */ }
+        throw e;
+      }
+    })(),
     new Promise<never>((_, rej) => setTimeout(() => rej(new Error("connect timeout")), timeoutMs)),
   ]);
   try {
