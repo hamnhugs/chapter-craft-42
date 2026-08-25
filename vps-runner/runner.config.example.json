@@ -26,7 +26,25 @@
   "_doc_max_timeout_ms": "OPTIONAL (default 60000). Hard ceiling on a job's wall-clock time; a program's own manifest.timeout_ms is clamped to this.",
   "max_timeout_ms": 60000,
 
-  "_doc_concurrency": "OPTIONAL (default 3). Max jobs running at once.",
+  "_doc_max_memory": "OPTIONAL (default = `memory`). CEILING for a program's requested memory (manifest.memory). Raise it for heavier jobs, e.g. \"2g\". 0/\"unlimited\" is IGNORED and falls back to the default — never infinite. Swap is always pinned equal (no swap). Keep concurrency x max_memory <= (1 - reserve_ram_frac) x RAM.",
+  "max_memory": "512m",
+
+  "_doc_max_cpus": "OPTIONAL (default = `cpus`). CEILING for a program's requested CPU (manifest.cpus), e.g. \"2\". The sandbox always runs at --cpu-shares 512 (below host services) so jobs yield under contention. Keep concurrency x max_cpus <= cores - reserve_cores.",
+  "max_cpus": "1",
+
+  "_doc_max_pids": "OPTIONAL (default = `pids_limit`). CEILING for a program's process/thread count. Counts THREADS; the runner floors the effective value at 128 so the gVisor sentry can boot.",
+  "max_pids": 256,
+
+  "_doc_max_output_kb": "OPTIONAL (default 128). Max KB of stdout+stderr returned per run before truncation.",
+  "max_output_kb": 128,
+
+  "_doc_reserve_cores": "OPTIONAL (default 1). CPU cores held back for docker/the runner/your other services (e.g. Hermes bots). The boot safety governor clamps effective concurrency so raised ceilings never overcommit the box; it only ever LOWERS concurrency and logs when it does.",
+  "reserve_cores": 1,
+
+  "_doc_reserve_ram_frac": "OPTIONAL (default 0.15, min 0.15). Fraction of RAM held back for the host. Combined with reserve_cores to compute the safe effective concurrency at boot.",
+  "reserve_ram_frac": 0.15,
+
+  "_doc_concurrency": "OPTIONAL (default 3). Max jobs running at once (clamped down at boot by reserve_cores/reserve_ram_frac if the box is too small for that many at the configured ceilings).",
   "concurrency": 3,
 
   "_doc_queue_max": "OPTIONAL (default 10). Max jobs waiting for a slot before new requests get 429.",

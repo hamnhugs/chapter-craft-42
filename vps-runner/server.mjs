@@ -30,7 +30,7 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdtemp, writeFile, rm, readFile } from "node:fs/promises";
 import { readFileSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import os, { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // ── config ───────────────────────────────────────────────────────────────────
@@ -49,10 +49,31 @@ const MAX_TIMEOUT_MS = Number(config.max_timeout_ms) || 60_000;
 const CONCURRENCY = Math.max(1, Number(config.concurrency) || 3);
 const QUEUE_MAX = Math.max(0, Number(config.queue_max) ?? 10);
 const PORT = Number(config.port) || 8752;
-const MEMORY = String(config.memory || "512m");
-const CPUS = String(config.cpus || "1");
-const PIDS = Number(config.pids_limit) || 256;
-const OUTPUT_CAP = 128 * 1024;
+// ── resource helpers + operator ceilings ─────────────────────────────────────
+const MB = 1024 * 1024;
+const memToBytes = (s) => { const m = String(s).trim().match(/^(\d+(?:\.\d+)?)\s*([bkmg]?)$/i); if (!m) return null; return Math.floor(parseFloat(m[1]) * ({ "": 1, b: 1, k: 1024, m: MB, g: 1024 * MB }[m[2].toLowerCase()])); };
+const bytesToMem = (b) => `${Math.floor(b / MB)}m`;
+const cpuToMilli = (s) => { const n = parseFloat(String(s)); return Number.isFinite(n) && n > 0 ? Math.round(n * 1000) : null; };
+// 0 / -1 / NaN / "unlimited" NEVER means infinity — it falls back to the safe default.
+const ceil = (v, dflt) => (Number.isFinite(v) && v > 0 ? v : dflt);
+
+// Per-job DEFAULTS (when a manifest omits a request) and operator CEILINGS (a manifest
+// request is clamped to these). Raising a *_max lets an approved program ask for more;
+// a program can never exceed the ceiling and can never drop below the floor that keeps
+// the gVisor sentry alive.
+const MEM_DEFAULT  = memToBytes(config.memory) ?? 512 * MB;
+const MEM_MAX      = ceil(memToBytes(config.max_memory), MEM_DEFAULT);
+const CPU_DEFAULT  = cpuToMilli(config.cpus) ?? 1000;
+const CPU_MAX      = ceil(cpuToMilli(config.max_cpus), CPU_DEFAULT);
+const PIDS_DEFAULT = Number(config.pids_limit) || 256;
+const PIDS_MAX     = ceil(Number(config.max_pids), PIDS_DEFAULT);
+const OUTPUT_CAP   = ceil(Number(config.max_output_kb), 128) * 1024;
+const MEM_FLOOR = 64 * MB, PIDS_FLOOR = 128; // too-low kills the runsc sentry at spawn (pids counts THREADS)
+
+// Host reservation: the boot guard clamps effective concurrency so the box always keeps
+// headroom for docker/the runner/the user's other services (e.g. Hermes bots).
+const RESERVE_CORES    = Math.max(0, Number(config.reserve_cores) || 1);
+const RESERVE_RAM_FRAC = Math.min(0.9, Math.max(0.15, Number(config.reserve_ram_frac) || 0.15));
 const SKEW_SEC = 60;
 const NONCE_FILE = join(process.cwd(), ".nonce-cache.json");
 
@@ -99,10 +120,13 @@ function verify(req, method, path, rawBody) {
 }
 
 // ── concurrency + queue ──────────────────────────────────────────────────────
+// CONCURRENCY_EFF may be clamped BELOW the configured concurrency at boot (see the
+// startup safety governor) so raised per-job ceilings can never overcommit host RAM/cores.
+let CONCURRENCY_EFF = CONCURRENCY;
 let active = 0;
 const waiters = [];
 function acquire() {
-  if (active < CONCURRENCY) { active++; return Promise.resolve(true); }
+  if (active < CONCURRENCY_EFF) { active++; return Promise.resolve(true); }
   if (waiters.length >= QUEUE_MAX) return Promise.resolve(false); // shed load → 429
   return new Promise((res) => waiters.push(res));
 }
@@ -163,10 +187,28 @@ async function runJob(job) {
     const secretEnv = [];
     for (const n of secretNames) { secretEnv.push("--env", `${n}=${own(SECRETS, n)}`); }
 
+    // Map the (fingerprinted, human-approved) manifest resource requests to docker limits,
+    // clamped to the operator ceilings. `req()` honors a request ONLY on a real run — an
+    // unapproved verify draft can never ask for more than the defaults, so forge-time
+    // verification can never be used to DoS the box.
+    const req = (raw, parse, dflt, cap) => {
+      let v = dflt;
+      if (mode === "run" && raw != null) { const p = parse(raw); if (p != null && p > 0) v = p; }
+      return Math.min(v, cap);
+    };
+    const memB = Math.max(MEM_FLOOR,  req(manifest.memory, memToBytes,        MEM_DEFAULT,  MEM_MAX));
+    const cpuM =                      req(manifest.cpus,   cpuToMilli,        CPU_DEFAULT,  CPU_MAX);
+    const pids = Math.max(PIDS_FLOOR, req(manifest.pids,   (x) => Number(x) || null, PIDS_DEFAULT, PIDS_MAX));
+
     const dockerArgs = [
       "run", "--name", name, "--runtime=runsc",
       ...netArgs,
-      "--memory", MEMORY, "--memory-swap", MEMORY, "--cpus", CPUS, "--pids-limit", String(PIDS),
+      // swap pinned equal to memory (no swap); --cpu-shares 512 puts the sandbox cgroup
+      // weight BELOW host services (docker/Hermes default 1024) so jobs yield under contention.
+      "--memory", bytesToMem(memB), "--memory-swap", bytesToMem(memB),
+      "--cpus", (cpuM / 1000).toFixed(3),
+      "--cpu-shares", "512",
+      "--pids-limit", String(pids),
       "--read-only",
       "--tmpfs", "/tmp:size=64m,mode=1777,noexec,nosuid,nodev",
       "--tmpfs", "/dev/shm:size=16m,noexec,nosuid,nodev",
@@ -253,7 +295,7 @@ async function healthCanary() {
     // gVisor sentry needs dozens just to boot — a tighter canary-only cap
     // fails the sandbox at spawn even though actual jobs would run.
     const p = spawn("docker", ["run", "--rm", "--runtime=runsc", "--network", "none",
-      "--memory", "64m", "--cpus", "0.5", "--pids-limit", String(PIDS), "--read-only",
+      "--memory", "64m", "--cpus", "0.5", "--pids-limit", String(PIDS_MAX), "--read-only",
       "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "65534:65534",
       SANDBOX_IMAGE, "bash", "-c", "echo ccprog-canary-ok"]);
     const timer = setTimeout(() => { try { p.kill(); } catch { /* */ } resolve(false); }, 15000);
@@ -343,5 +385,23 @@ const server = http.createServer(async (req, res) => {
   // Re-running the self-test on an interval flips it back to false the moment the
   // lockdown stops holding. (network:none jobs are unaffected either way.)
   setInterval(() => { void revalidateEgress(); }, 90_000).unref?.();
+
+  // Safety governor: never let raised per-job ceilings overcommit the host. Reserve cores
+  // + a RAM fraction for docker/the runner/the user's other services (e.g. Hermes bots),
+  // and clamp effective concurrency by BOTH the RAM bound and the CPU bound. This can only
+  // LOWER concurrency; on a correctly-sized box it equals the configured value.
+  {
+    const ram = os.totalmem(), cores = os.cpus().length;
+    const effReserveCores = cores > RESERVE_CORES ? RESERVE_CORES : Math.max(0, cores - 1);
+    const ramBound = Math.max(1, Math.floor((ram * (1 - RESERVE_RAM_FRAC)) / MEM_MAX));
+    const cpuBound = Math.max(1, Math.floor((cores - effReserveCores) / (CPU_MAX / 1000)));
+    CONCURRENCY_EFF = Math.max(1, Math.min(CONCURRENCY, ramBound, cpuBound));
+    if (CONCURRENCY_EFF < CONCURRENCY)
+      console.error(`[runner] SAFETY CLAMP effective concurrency ${CONCURRENCY}→${CONCURRENCY_EFF} `
+        + `(RAM-bound ${ramBound}, CPU-bound ${cpuBound}; reserving ${effReserveCores} core(s) + `
+        + `${Math.round(RESERVE_RAM_FRAC * 100)}% RAM for the host). Lower the ceilings or size up the box.`);
+    console.log(`[runner] ceilings: mem<=${bytesToMem(MEM_MAX)} cpus<=${(CPU_MAX / 1000).toFixed(2)} `
+      + `pids<=${PIDS_MAX} output<=${OUTPUT_CAP / 1024}kb concurrency_eff=${CONCURRENCY_EFF}`);
+  }
   server.listen(PORT, "127.0.0.1", () => console.log(`[runner] listening on 127.0.0.1:${PORT} (put TLS in front — see README)`));
 })();
