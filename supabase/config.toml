@@ -51,3 +51,11 @@ verify_jwt = true
 [functions.nvidia-chat]
 verify_jwt = true
 
+# program-cron is woken by the pg_cron heartbeat with a Vault BEARER SECRET, not a
+# user JWT, so the platform gateway must NOT require a JWT — the function's own
+# constant-time bearer gate (PROGRAM_CRON_KEY) is the sole, deliberate auth on this
+# endpoint. program-run / program-verify are intentionally absent here: they take a
+# real user JWT and correctly keep the platform default verify_jwt=true.
+[functions.program-cron]
+verify_jwt = false
+

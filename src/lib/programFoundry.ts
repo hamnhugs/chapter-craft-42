@@ -360,6 +360,79 @@ export async function latestProgramApprovalSha(programId: string): Promise<strin
   return rows.length > 0 ? rows[0].sha256 : null;
 }
 
+// ── schedules (cron) ─────────────────────────────────────────────────────────
+// A schedule runs an APPROVED program on a recurrence. The scheduler is
+// server-side (program-cron edge fn + pg_cron); these wrappers only create/read
+// via SECURITY DEFINER RPCs — there is no client write path to program_schedules,
+// and no model-facing tool calls set_program_schedule (the AI cannot self-schedule).
+export interface ProgramScheduleRow {
+  id: string;
+  program_id: string;
+  name: string;
+  every_seconds: number | null;
+  daily_at_minute: number | null;
+  tz: string;
+  enabled: boolean;
+  next_run_at: string;
+  last_run_at: string | null;
+  fail_count: number;
+  paused_reason: string | null;
+  created_at: string;
+}
+
+const SCHEDULE_COLUMNS =
+  "id, program_id, name, every_seconds, daily_at_minute, tz, enabled, next_run_at, last_run_at, fail_count, paused_reason, created_at";
+
+export async function listSchedules(): Promise<ProgramScheduleRow[]> {
+  const { data, error } = await (supabase.from("program_schedules" as any) as any)
+    .select(SCHEDULE_COLUMNS)
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (error) throw error;
+  return (data as ProgramScheduleRow[]) || [];
+}
+
+/** Create or replace the schedule for a program. Pass EITHER everySeconds
+ *  (300..604800) OR dailyAtMinute (0..1439, minutes past midnight in `tz`). */
+export async function setProgramSchedule(
+  programId: string,
+  opts: { everySeconds?: number; dailyAtMinute?: number; tz?: string },
+): Promise<{ next_run_at: string }> {
+  const { data, error } = await (supabase.rpc as any)("set_program_schedule", {
+    p_program_id: programId,
+    p_every_seconds: opts.everySeconds ?? null,
+    p_daily_at_minute: opts.dailyAtMinute ?? null,
+    p_tz: opts.tz ?? "UTC",
+  });
+  if (error) throw error;
+  return { next_run_at: String((data as any)?.next_run_at ?? "") };
+}
+
+export async function pauseProgramSchedule(programId: string, enabled: boolean): Promise<void> {
+  const { error } = await (supabase.rpc as any)("pause_program_schedule", { p_program_id: programId, p_enabled: enabled });
+  if (error) throw error;
+}
+
+export async function deleteProgramSchedule(programId: string): Promise<void> {
+  const { error } = await (supabase.rpc as any)("delete_program_schedule", { p_program_id: programId });
+  if (error) throw error;
+}
+
+export interface CronHealth { last_tick_at: string | null; last_ok_at: string | null; note: string | null; }
+
+/** Scheduler liveness for the settings badge. Resolves null (never throws) when
+ *  the table is absent (client ahead of the migration) or unreadable. */
+export async function cronHealth(): Promise<CronHealth | null> {
+  try {
+    const { data, error } = await (supabase.from("program_cron_health" as any) as any)
+      .select("last_tick_at, last_ok_at, note").eq("id", true).maybeSingle();
+    if (error) return null;
+    return (data as CronHealth) || null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Toolshed mirror (DEFERRED to approval time) ──────────────────────────────
 const TOOLSHED_WIKI_NAME = "Toolshed";
 
