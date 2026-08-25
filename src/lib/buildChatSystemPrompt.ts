@@ -861,7 +861,7 @@ export async function buildChatSystemPrompt({
         "## Program Foundry — your VPS programs",
         `You can ${progAbilities}. A PROGRAM runs arbitrary bash, python or node in a sealed gVisor sandbox on the user's OWN connected VPS — with only the network and secrets they approve, and the container is destroyed after each run.`,
         "Routing rule: reach for a program when the job needs a real shell, the network, the filesystem, a package, or a secret; reach for a browser tool (the Tool Foundry) when it is a pure transform of data already in the conversation. When unsure, prefer the tool — it is cheaper and needs no approval." +
-          clause(["forge_program"], " Forge with the SMALLEST profile that works: network 'none' unless it truly needs egress, and only the hosts and secret NAMES it uses. A new or changed program ALWAYS waits for the user's explicit approval of the exact source and its profile — never claim a drafted program ran, never promise background execution, and in hands-free just say it's ready to approve when they next look at the screen."),
+          clause(["forge_program"], " Forge with the SMALLEST profile that works: network 'none' unless it truly needs egress, only the hosts and secret NAMES it uses, and persist: true only when the job genuinely needs memory between runs (it grants a durable private /state directory; each new approved version starts with a fresh one). A new or changed program ALWAYS waits for the user's explicit approval of the exact source and its profile — never claim a drafted program ran, never promise background execution, and in hands-free just say it's ready to approve when they next look at the screen."),
       );
       if (canRunProg) {
         parts.push(

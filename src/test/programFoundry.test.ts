@@ -51,6 +51,20 @@ describe("validateProgramManifest — fails closed, never widens silently", () =
     expect(validateProgramManifest({ timeout_ms: 999999 }).manifest.timeout_ms).toBe(MAX_PROGRAM_TIMEOUT_MS);
     expect(validateProgramManifest({ timeout_ms: 8000 }).manifest.timeout_ms).toBe(8000);
   });
+
+  it("emits persist ONLY when true, so old manifests stay byte-identical", () => {
+    // A non-persist program's manifest (and thus its approval fingerprint)
+    // must not change shape because the field exists now.
+    expect("persist" in validateProgramManifest({}).manifest).toBe(false);
+    expect("persist" in validateProgramManifest({ persist: false }).manifest).toBe(false);
+    expect(validateProgramManifest({ persist: true }).manifest.persist).toBe(true);
+  });
+
+  it("rejects a non-boolean persist instead of coercing it", () => {
+    const r = validateProgramManifest({ persist: "yes" });
+    expect(r.ok).toBe(false);
+    expect(r.errors.join(" ")).toMatch(/persist/i);
+  });
 });
 
 describe("validateIoSpec", () => {

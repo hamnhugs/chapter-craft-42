@@ -113,7 +113,8 @@ const ProgramApprovalCard: React.FC<{ proposal: ProgramProposal }> = ({ proposal
 
       <div className="text-xs text-on-surface-variant">
         <span className="font-semibold text-foreground">Runs on your VPS with: </span>
-        {NETWORK_LABEL(proposal)}{secrets.length > 0 ? `; secrets: ${secrets.join(", ")}` : "; no secrets"}.
+        {NETWORK_LABEL(proposal)}{secrets.length > 0 ? `; secrets: ${secrets.join(", ")}` : "; no secrets"}
+        {proposal.manifest?.persist === true ? "; keeps state between runs (a new version starts fresh)" : ""}.
       </div>
       {exfilRisk && (
         <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-2 text-[11px] text-on-surface">
