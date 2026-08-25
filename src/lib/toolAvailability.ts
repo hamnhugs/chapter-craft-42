@@ -45,6 +45,8 @@ export type ToolGateCode =
   | "off_lean_mode"
   | "off_foundry_optin"
   | "off_foundry_unavailable"
+  | "off_program_optin"
+  | "off_program_unavailable"
   | "off_model_no_tools"
   | "off_model_image_turn";
 
@@ -55,7 +57,7 @@ export interface ToolGate {
   reason: string;
   /** The exact control that lifts it, in the user's words. */
   fix: string;
-  fixTarget: "settings_permissions" | "settings_foundry" | "settings_lean" | "settings_model" | "none";
+  fixTarget: "settings_permissions" | "settings_foundry" | "settings_programs" | "settings_lean" | "settings_model" | "none";
 }
 
 export interface ToolGateInput {
@@ -65,6 +67,13 @@ export interface ToolGateInput {
   forgeOptIn: boolean;
   runOptIn: boolean;
   foundryReady: boolean;
+  /** Program Foundry (VPS execution). Opt-ins are INVERTED like the tool Foundry's. */
+  forgeProgramOptIn: boolean;
+  runProgramOptIn: boolean;
+  /** Program Foundry is usable only when its migration has landed AND a VPS
+   *  runner is connected — one flag folds both so a verb whose first call would
+   *  fail is never offered. */
+  programReady: boolean;
   /** false when the turn's model cannot call functions at all. */
   providerSupportsTools: boolean;
   /** true when this turn carries images AND the model disables tools on image turns. */
@@ -88,6 +97,23 @@ const FOUNDRY_TOOLS = new Set<string>([...NEEDS_FORGE, RUN_TOOL, FOUNDRY_SURVEY_
 /** Is this tool governed by the Tool Foundry's opt-in switches at all? */
 export function isFoundryTool(tool: string): boolean {
   return FOUNDRY_TOOLS.has(tool);
+}
+
+/** The Program Foundry (VPS execution) mirror of the Tool Foundry constants.
+ *  Same INVERTED opt-in shape — an explicit `true` grants — and the same
+ *  grouping: reading and deleting ride with forging (they are the repair loop),
+ *  the survey needs only one switch, running is its own switch. Kept a separate
+ *  set from the Tool Foundry so a program verb is never confused with a tool
+ *  verb by any gate, and so the two Foundries can be enabled independently. */
+export const FORGE_PROGRAM = "forge_program";
+export const RUN_PROGRAM = "run_program";
+export const PROGRAM_REPAIR_TOOLS = ["read_program", "delete_program"] as const;
+export const PROGRAM_SURVEY_TOOL = "list_programs";
+const NEEDS_FORGE_PROGRAM = new Set<string>([FORGE_PROGRAM, ...PROGRAM_REPAIR_TOOLS]);
+const PROGRAM_TOOLS = new Set<string>([...NEEDS_FORGE_PROGRAM, RUN_PROGRAM, PROGRAM_SURVEY_TOOL]);
+/** Is this tool governed by the Program Foundry's opt-in switches at all? */
+export function isProgramTool(tool: string): boolean {
+  return PROGRAM_TOOLS.has(tool);
 }
 
 /** permission id → the label the settings screen actually renders. Naming the
@@ -241,6 +267,42 @@ const RULES: GateRule[] = [
     groupFix: "Open Settings → Tool Foundry and paste the setup line it shows you into Lovable, then reload.",
   },
   {
+    // Program Foundry opt-in (INVERTED, like the tool Foundry) — same shape,
+    // its own switches. There is no per-verb migration exemption here: every
+    // program verb needs the runner, so none is a stand-alone scratchpad.
+    code: "off_program_optin",
+    fixTarget: "settings_programs",
+    applies: (tool, input) =>
+      (NEEDS_FORGE_PROGRAM.has(tool) && !input.forgeProgramOptIn) ||
+      (tool === RUN_PROGRAM && !input.runProgramOptIn) ||
+      (tool === PROGRAM_SURVEY_TOOL && !input.forgeProgramOptIn && !input.runProgramOptIn),
+    reason: (tool) =>
+      tool === FORGE_PROGRAM
+        ? "Forging VPS programs is switched off, so the AI can't write programs for your server."
+        : tool === RUN_PROGRAM
+          ? "Running VPS programs is switched off, so the AI can't use the programs it has already built."
+          : tool === PROGRAM_SURVEY_TOOL
+            ? "The Program Foundry is switched off, so the AI can't see what programs it has built."
+            : "Forging VPS programs is switched off, so the AI can't read or repair its own programs.",
+    fix: (tool) =>
+      tool === RUN_PROGRAM
+        ? "Turn on “Run approved programs” in Settings → Program Foundry."
+        : tool === PROGRAM_SURVEY_TOOL
+          ? "Turn on either switch in Settings → Program Foundry."
+          : "Turn on “Forge new programs” in Settings → Program Foundry.",
+    groupReason: "The Program Foundry switches are off, so the AI can't write or run programs on your server.",
+    groupFix: "Turn on “Forge new programs” and “Run approved programs” in Settings → Program Foundry.",
+  },
+  {
+    code: "off_program_unavailable",
+    fixTarget: "settings_programs",
+    applies: (tool, input) => PROGRAM_TOOLS.has(tool) && !input.programReady,
+    reason: () => "The Program Foundry is switched on, but it still needs its one-time database setup and a connected VPS runner.",
+    fix: () => "Open Settings → Program Foundry: run the setup line it shows you in Lovable, then connect your VPS.",
+    groupReason: "The Program Foundry is switched on, but it still needs its one-time database setup and a connected VPS runner.",
+    groupFix: "Open Settings → Program Foundry: run the setup line it shows you in Lovable, then connect your VPS.",
+  },
+  {
     code: "off_lean_mode",
     fixTarget: "settings_lean",
     applies: (tool, input) => blockedTools(input.leanMode).includes(tool),
@@ -323,6 +385,8 @@ const MODEL_FACT: Record<ToolGateCode, string> = {
   off_lean_mode: "The user has Lean Mode on, which keeps the paid generators out of your list.",
   off_foundry_optin: "The user has the Tool Foundry switch off, so the foundry tools are not in your list.",
   off_foundry_unavailable: "The Tool Foundry's one-time database setup has not run on this account yet.",
+  off_program_optin: "The user has the Program Foundry switch off, so the program tools are not in your list.",
+  off_program_unavailable: "The Program Foundry's one-time database setup or the VPS runner connection is not ready on this account yet.",
   off_model_no_tools: "The model answering this turn cannot call tools, so none were sent with the request.",
   off_model_image_turn:
     "This turn carries a picture and the model answering it drops tools on picture turns, so none were sent with the request.",
@@ -389,6 +453,7 @@ export function allGateCopy(): string[] {
   const probes = [
     FORGE_TOOL, RUN_TOOL, "generate_video", "generate_image", "web_search",
     "delete_chapter", "rename_book", "supersede_memory_entry", "some_new_tool",
+    FORGE_PROGRAM, RUN_PROGRAM, PROGRAM_SURVEY_TOOL, "read_program", "delete_program",
   ];
   // Two permission states, because off_permission now has two branches: the
   // tool's own switch, and a DEPENDS_ON switch its executor also requires.
@@ -402,6 +467,7 @@ export function allGateCopy(): string[] {
     const input = {
       toolNames: probes, leanMode: "full", permissions,
       forgeOptIn: false, runOptIn: false, foundryReady: false,
+      forgeProgramOptIn: false, runProgramOptIn: false, programReady: false,
       providerSupportsTools: false, imageTurnDisablesTools: false,
     } as unknown as ToolGateInput;
     for (const rule of RULES) {

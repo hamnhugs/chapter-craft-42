@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { isFoundryTool } from "@/lib/toolAvailability";
+import { isFoundryTool, isProgramTool } from "@/lib/toolAvailability";
 import { TOOL_PERMISSION } from "@/lib/toolPermissions";
 import { blockedTools } from "@/lib/leanMode";
-import { FORGE_TOOL, RUN_TOOL, computeToolGates, availableToolNames } from "@/lib/toolAvailability";
+import {
+  FORGE_TOOL, RUN_TOOL, FORGE_PROGRAM, RUN_PROGRAM, PROGRAM_SURVEY_TOOL,
+  computeToolGates, availableToolNames,
+} from "@/lib/toolAvailability";
 
 /**
  * WHAT toolOnWire MEANS — the predicate every gated tool result rests on.
@@ -27,13 +30,19 @@ import { FORGE_TOOL, RUN_TOOL, computeToolGates, availableToolNames } from "@/li
  *     has never opened the permissions screen, which is most of them.
  */
 
-const h = vi.hoisted(() => ({ foundryReady: true }));
+const h = vi.hoisted(() => ({ foundryReady: true, programsMigrated: true }));
 
 // The Foundry's one-time database probe. toolOnWire consults it for the
 // Foundry verbs, so it has to be controllable rather than real.
 vi.mock("@/lib/toolFoundry", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/toolFoundry")>()),
   foundryAvailable: async () => h.foundryReady,
+}));
+// The Program Foundry migration probe. toolOnWire consults it for the program
+// verbs (folded with the runner-configured flag), so it too is controllable.
+vi.mock("@/lib/programFoundry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/programFoundry")>()),
+  programsAvailable: async () => h.programsMigrated,
 }));
 
 // chatTools reaches Supabase at module scope for other code paths. Every call
@@ -50,20 +59,29 @@ vi.mock("@/integrations/supabase/client", () => {
 const { toolOnWire } = await import("@/lib/chatTools");
 
 type Deps = Parameters<typeof toolOnWire>[1];
-const deps = (permissions: Record<string, boolean> = {}, leanMode?: "full" | "lean" | "chat_only"): Deps =>
-  ({ permissionsSnapshot: permissions, ...(leanMode ? { leanMode } : {}) }) as Deps;
+const deps = (
+  permissions: Record<string, boolean> = {},
+  leanMode?: "full" | "lean" | "chat_only",
+  runnerConfigured?: boolean,
+): Deps =>
+  ({
+    permissionsSnapshot: permissions,
+    ...(leanMode ? { leanMode } : {}),
+    ...(runnerConfigured !== undefined ? { programRunnerConfigured: runnerConfigured } : {}),
+  }) as Deps;
 
-beforeEach(() => { h.foundryReady = true; });
+beforeEach(() => { h.foundryReady = true; h.programsMigrated = true; });
 
 describe("the default-allow convention: OFF only on an explicit false", () => {
   // toolPermissions.ts's stated semantics: "every permission defaults to
   // ALLOWED; only an explicit `false` in user_settings.chat_tool_permissions
   // blocks." A fresh account has {} there. Getting this backwards is invisible
   // in review and withholds a clause from every existing user.
-  // Foundry verbs are excluded: their opt-in is INVERTED (off until the user
-  // turns the Foundry on), so an empty snapshot correctly withholds them even
-  // when they also carry a default-allow toggle of their own (delete_tool).
-  const GOVERNED_BY_PERMISSION = Object.keys(TOOL_PERMISSION).filter((t) => !isFoundryTool(t));
+  // Foundry AND Program Foundry verbs are excluded: both opt-ins are INVERTED
+  // (off until the user turns the Foundry on), so an empty snapshot correctly
+  // withholds them even when they also carry a default-allow toggle of their own
+  // (delete_tool / delete_program).
+  const GOVERNED_BY_PERMISSION = Object.keys(TOOL_PERMISSION).filter((t) => !isFoundryTool(t) && !isProgramTool(t));
 
   it("says yes for every permissioned tool when the snapshot is empty", async () => {
     for (const tool of GOVERNED_BY_PERMISSION) {
@@ -206,6 +224,66 @@ describe("the Foundry's INVERTED opt-in", () => {
   });
 });
 
+describe("the Program Foundry's INVERTED opt-in (plus migration AND a runner)", () => {
+  // The mirror of the Tool Foundry block, with one extra axis: readiness is the
+  // migration probe AND a connected runner (deps.programRunnerConfigured). A
+  // program verb with no runner is off the wire, because a phantom program verb
+  // in a result is a fabricated VPS run — the costliest lie in the app.
+
+  it("withholds every program verb on a default account", async () => {
+    for (const tool of [FORGE_PROGRAM, RUN_PROGRAM, PROGRAM_SURVEY_TOOL, "read_program", "delete_program"]) {
+      expect(await toolOnWire(tool, deps({}, undefined, true)), tool).toBe(false);
+    }
+  });
+
+  it("is not fooled by a truthy-but-not-true value", async () => {
+    const sneaky = { [FORGE_PROGRAM]: "true", [RUN_PROGRAM]: 1 } as unknown as Record<string, boolean>;
+    expect(await toolOnWire(FORGE_PROGRAM, deps(sneaky, undefined, true))).toBe(false);
+    expect(await toolOnWire(RUN_PROGRAM, deps(sneaky, undefined, true))).toBe(false);
+  });
+
+  it("grants forge, read and delete on the forge switch alone (runner present)", async () => {
+    const forgeOnly = deps({ [FORGE_PROGRAM]: true }, undefined, true);
+    expect(await toolOnWire(FORGE_PROGRAM, forgeOnly)).toBe(true);
+    expect(await toolOnWire("read_program", forgeOnly)).toBe(true);
+    expect(await toolOnWire("delete_program", forgeOnly)).toBe(true);
+    expect(await toolOnWire(RUN_PROGRAM, forgeOnly)).toBe(false);
+  });
+
+  it("grants running on the run switch alone, and nothing else", async () => {
+    const runOnly = deps({ [RUN_PROGRAM]: true }, undefined, true);
+    expect(await toolOnWire(RUN_PROGRAM, runOnly)).toBe(true);
+    expect(await toolOnWire(FORGE_PROGRAM, runOnly)).toBe(false);
+    expect(await toolOnWire("read_program", runOnly)).toBe(false);
+  });
+
+  it("gives list_programs to EITHER switch", async () => {
+    expect(await toolOnWire(PROGRAM_SURVEY_TOOL, deps({ [FORGE_PROGRAM]: true }, undefined, true))).toBe(true);
+    expect(await toolOnWire(PROGRAM_SURVEY_TOOL, deps({ [RUN_PROGRAM]: true }, undefined, true))).toBe(true);
+    expect(await toolOnWire(PROGRAM_SURVEY_TOOL, deps({}, undefined, true))).toBe(false);
+  });
+
+  it("withholds every program verb with NO runner, even with both switches on", async () => {
+    // The extra axis: opt-in on, migration present, but no connected runner.
+    const bothOnNoRunner = deps({ [FORGE_PROGRAM]: true, [RUN_PROGRAM]: true }, undefined, false);
+    for (const tool of [FORGE_PROGRAM, RUN_PROGRAM, PROGRAM_SURVEY_TOOL, "read_program", "delete_program"]) {
+      expect(await toolOnWire(tool, bothOnNoRunner), tool).toBe(false);
+    }
+    // …and with the runner it comes back.
+    const bothOnRunner = deps({ [FORGE_PROGRAM]: true, [RUN_PROGRAM]: true }, undefined, true);
+    expect(await toolOnWire(FORGE_PROGRAM, bothOnRunner)).toBe(true);
+    expect(await toolOnWire(RUN_PROGRAM, bothOnRunner)).toBe(true);
+  });
+
+  it("also requires the migration — no scratchpad exemption here", async () => {
+    h.programsMigrated = false;
+    const bothOn = deps({ [FORGE_PROGRAM]: true, [RUN_PROGRAM]: true }, undefined, true);
+    for (const tool of [FORGE_PROGRAM, RUN_PROGRAM, PROGRAM_SURVEY_TOOL, "read_program", "delete_program"]) {
+      expect(await toolOnWire(tool, bothOn), tool).toBe(false);
+    }
+  });
+});
+
 describe("it agrees with computeToolGates, which is the roster the model actually gets", () => {
   // THE POINT OF THE WHOLE FUNCTION. toolOnWire is a second implementation of
   // rules that live in toolAvailability.ts. Two implementations of one rule
@@ -219,7 +297,8 @@ describe("it agrees with computeToolGates, which is the roster the model actuall
     "generate_image", "edit_image", "generate_video", "generate_splat", "web_search",
     "create_artifact", "delete_image", "lock_master_asset", "accept_generation",
     "supersede_memory_entry", "list_images", "show_image", "save_file",
-    FORGE_TOOL, RUN_TOOL, "list_tools", "read_tool", "test_tool",
+    FORGE_TOOL, RUN_TOOL, "list_tools", "read_tool", "test_tool", "delete_tool",
+    FORGE_PROGRAM, RUN_PROGRAM, PROGRAM_SURVEY_TOOL, "read_program", "delete_program",
   ];
 
   const SCENARIOS: Array<{
@@ -227,6 +306,9 @@ describe("it agrees with computeToolGates, which is the roster the model actuall
     permissions: Record<string, boolean>;
     leanMode: "full" | "lean" | "chat_only";
     foundryReady: boolean;
+    /** Program Foundry axes; default true so existing scenarios are unaffected. */
+    programsMigrated?: boolean;
+    runnerConfigured?: boolean;
   }> = [
     { name: "fresh account", permissions: {}, leanMode: "full", foundryReady: true },
     { name: "lean tier", permissions: {}, leanMode: "lean", foundryReady: true },
@@ -238,11 +320,26 @@ describe("it agrees with computeToolGates, which is the roster the model actuall
     { name: "foundry run only", permissions: { [RUN_TOOL]: true }, leanMode: "full", foundryReady: true },
     { name: "foundry on, migration missing", permissions: { [FORGE_TOOL]: true, [RUN_TOOL]: true }, leanMode: "full", foundryReady: false },
     { name: "lean + forge on", permissions: { [FORGE_TOOL]: true }, leanMode: "lean", foundryReady: true },
+    // Program Foundry scenarios — the readiness axis is migration AND runner.
+    { name: "program both on", permissions: { [FORGE_PROGRAM]: true, [RUN_PROGRAM]: true }, leanMode: "full", foundryReady: true },
+    { name: "program forge only", permissions: { [FORGE_PROGRAM]: true }, leanMode: "full", foundryReady: true },
+    { name: "program run only", permissions: { [RUN_PROGRAM]: true }, leanMode: "full", foundryReady: true },
+    { name: "program on, migration missing", permissions: { [FORGE_PROGRAM]: true, [RUN_PROGRAM]: true }, leanMode: "full", foundryReady: true, programsMigrated: false },
+    { name: "program on, no runner", permissions: { [FORGE_PROGRAM]: true, [RUN_PROGRAM]: true }, leanMode: "full", foundryReady: true, runnerConfigured: false },
+    { name: "lean + program run on", permissions: { [RUN_PROGRAM]: true }, leanMode: "lean", foundryReady: true },
+    // A Foundry/program verb that ALSO carries a default-allow switch, switched
+    // off while the opt-in is on — computeToolGates withholds via off_permission,
+    // so toolOnWire must too (the divergence a review caught).
+    { name: "foundry forge on, delete_tool off", permissions: { [FORGE_TOOL]: true, delete_tool: false }, leanMode: "full", foundryReady: true },
+    { name: "program forge on, delete_program off", permissions: { [FORGE_PROGRAM]: true, delete_program: false }, leanMode: "full", foundryReady: true },
   ];
 
   for (const s of SCENARIOS) {
     it(s.name, async () => {
       h.foundryReady = s.foundryReady;
+      const programsMigrated = s.programsMigrated ?? true;
+      const runnerConfigured = s.runnerConfigured ?? true;
+      h.programsMigrated = programsMigrated;
       const roster = new Set(
         availableToolNames(
           computeToolGates({
@@ -252,6 +349,9 @@ describe("it agrees with computeToolGates, which is the roster the model actuall
             forgeOptIn: s.permissions[FORGE_TOOL] === true,
             runOptIn: s.permissions[RUN_TOOL] === true,
             foundryReady: s.foundryReady,
+            forgeProgramOptIn: s.permissions[FORGE_PROGRAM] === true,
+            runProgramOptIn: s.permissions[RUN_PROGRAM] === true,
+            programReady: programsMigrated && runnerConfigured,
             providerSupportsTools: true,
             imageTurnDisablesTools: false,
           }),
@@ -259,7 +359,7 @@ describe("it agrees with computeToolGates, which is the roster the model actuall
       );
       const disagreements: string[] = [];
       for (const tool of PROBE_TOOLS) {
-        const onWire = await toolOnWire(tool, deps(s.permissions, s.leanMode));
+        const onWire = await toolOnWire(tool, deps(s.permissions, s.leanMode, runnerConfigured));
         if (onWire !== roster.has(tool)) {
           disagreements.push(
             `${tool}: computeToolGates says ${roster.has(tool) ? "OFFERED" : "withheld"}, ` +

@@ -57,6 +57,8 @@ const GROUP_LABEL: Record<ToolGateCode, string> = {
   off_lean_mode: "Lean Mode",
   off_foundry_optin: "Tool Foundry",
   off_foundry_unavailable: "Tool Foundry",
+  off_program_optin: "Program Foundry",
+  off_program_unavailable: "Program Foundry",
   off_model_no_tools: "This model",
   off_model_image_turn: "This model",
 };
@@ -67,6 +69,8 @@ const GROUP_ICON: Record<ToolGateCode, string> = {
   off_lean_mode: "savings",
   off_foundry_optin: "construction",
   off_foundry_unavailable: "construction",
+  off_program_optin: "dns",
+  off_program_unavailable: "dns",
   off_model_no_tools: "smart_toy",
   off_model_image_turn: "image",
 };
@@ -374,7 +378,8 @@ const ToolStatusPanel: React.FC<{
                       onOpenSettings(
                         group.fixTarget === "settings_permissions" ? "permissions"
                           : group.fixTarget === "settings_foundry" ? "foundry"
-                            : "models",
+                            : group.fixTarget === "settings_programs" ? "programs"
+                              : "models",
                       );
                     }}
                     // w-full, not self-start: these sentences are long, and a

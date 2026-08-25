@@ -83,6 +83,9 @@ const SCENARIOS: Array<[string, Partial<Opts>]> = [
   ["question does not touch the book", { books: [book], selectedBook: book, latestUserQuery: "vvv qqq zzz" }],
   ["foundry on", { foundryTools: true }],
   ["foundry on + voice", { foundryTools: true, voiceMode: true }],
+  ["programs on", { programTools: true }],
+  ["programs on + voice", { programTools: true, voiceMode: true }],
+  ["both foundries on", { foundryTools: true, programTools: true }],
   // Lean Mode was never varied here, and that blind spot cost us: its block is
   // appended LAST — the position the model recalls best — and it named ten
   // tools from a string literal. Two live triggers made it lie: Lean Mode with
@@ -99,6 +102,8 @@ const OFFERED_SETS: Array<[string, string[]]> = [
   ["no tools at all", []],
   ["forge only", ["forge_tool"]],
   ["run only", ["run_tool"]],
+  ["forge_program only", ["forge_program"]],
+  ["run_program only", ["run_program"]],
   ["a middle subset", ALL_TOOLS.filter((_, i) => i % 3 === 0)],
   ["a second middle subset", ALL_TOOLS.filter((_, i) => i % 5 === 1).concat("run_tool")],
 ];
@@ -305,6 +310,76 @@ describe("a retrieved Toolshed card cannot smuggle run_tool into the prompt", ()
     });
     expect(prompt).toContain(journal);
     expect(prompt).not.toContain("_(a self-built tool");
+  });
+});
+
+describe("a retrieved Program card cannot smuggle run_program into the prompt", () => {
+  // Verbatim shape of toolshed.ts `buildProgramCard` — the entry mirrorApproved
+  // Program upserts into knowledge_entries with entry_type "program".
+  const programCard = [
+    "What it does: Syncs the Hermes feed.",
+    "When to reach for it: when the request turns on sync feed AND needs a real shell — that is a program, run on the user's own VPS, not a browser tool. running this beats re-deriving the same steps by hand.",
+    'Signature: run_program("sync_feed", args) — one JSON arguments object; the program reads it from PROGRAM_ARGS.',
+    "Runtime: python in a sealed gVisor container on the user's VPS; no network; uses no secrets.",
+    "Verification: smoke test passed.",
+    "Limitations: the container is destroyed after every run and keeps nothing.",
+    "Tags: program, foundry, vps, python, sync, feed",
+    "Version and health: v1 · not run yet · manage in Settings → Program Foundry",
+  ].join("\n");
+  const programNode = { id: "k9", title: "Program: sync_feed", entry_type: "program", content: programCard, hop: 0, score: 0.9 };
+
+  it("strips the callable signature when run_program is off the wire", async () => {
+    retrievalPayload = { nodes: [programNode], edges: [] };
+    const { prompt } = await build({
+      latestUserQuery: "sync the hermes feed",
+      offeredTools: ALL_TOOLS.filter((t) => t !== "run_program"),
+    });
+    expect(prompt).toContain("### Program: sync_feed");
+    expect(prompt).not.toContain("run_program");
+    // The rest of the card is genuine context and stays, including the label.
+    expect(prompt).toContain("What it does: Syncs the Hermes feed.");
+    expect(prompt).toContain("_(a self-built VPS program, not a journal memory)_");
+    const open = prompt.match(/<<<memory:([0-9a-z]+)>>>/);
+    expect(open, "retrieved entries must still be fenced").toBeTruthy();
+    expect(prompt).toContain(`<<<end:${open![1]}>>>`);
+  });
+
+  it("keeps the signature when run_program IS on the wire", async () => {
+    retrievalPayload = { nodes: [programNode], edges: [] };
+    const { prompt } = await build({ latestUserQuery: "sync the feed", offeredTools: ALL_TOOLS });
+    expect(prompt).toContain('Signature: run_program("sync_feed", args)');
+  });
+});
+
+describe("the Program Foundry block is truthful per switch", () => {
+  it("emits no section when neither program verb is offered", async () => {
+    const { prompt } = await build({ programTools: true, offeredTools: [] });
+    expect(prompt).not.toContain("Program Foundry — your VPS programs");
+    expect(prompt).not.toContain("run_program");
+    expect(prompt).not.toContain("forge_program");
+  });
+
+  it("describes forging (only) when only forge_program is offered", async () => {
+    const { prompt } = await build({ programTools: true, offeredTools: ["forge_program"] });
+    expect(prompt).toContain("## Program Foundry — your VPS programs");
+    expect(prompt).toContain("forge programs that run a real shell for yourself (`forge_program`)");
+    expect(prompt).toContain("waits for the user's explicit approval");
+    // The run line names run_program, so it must NOT appear with run off the wire.
+    expect(prompt).not.toContain("run_program");
+  });
+
+  it("emits the run guidance when run_program is offered", async () => {
+    const { prompt } = await build({ programTools: true, offeredTools: ["run_program", "list_programs"] });
+    expect(prompt).toContain("run approved ones (`run_program`)");
+    expect(prompt).toContain("`run_program` runs any approved program by name");
+    expect(prompt).toContain("`list_programs` shows the full set");
+    expect(prompt).not.toContain("forge_program");
+  });
+
+  it("carries the routing rule so the model picks the right Foundry", async () => {
+    const { prompt } = await build({ programTools: true, offeredTools: ["forge_program"] });
+    expect(prompt).toContain("Routing rule:");
+    expect(prompt).toContain("reach for a browser tool (the Tool Foundry)");
   });
 });
 

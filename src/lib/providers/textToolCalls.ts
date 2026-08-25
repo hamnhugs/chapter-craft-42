@@ -255,6 +255,16 @@ const RECOVERY_ALLOWED = [
   // sentence in front of the user. All three are absent.
   "list_tools",
   "read_tool",
+
+  // Program Foundry (inspection only). Inventory and source of the user's own
+  // VPS programs, fenced as data — the read half of the repair loop. Everything
+  // that EXECUTES or MUTATES is absent, and more strictly than for tools:
+  // run_program runs ARBITRARY CODE ON THE USER'S SERVER (the single most
+  // dangerous verb in the app — a quoted blob must never reach it), forge_program
+  // writes a draft and raises an approval card, and delete_program destroys the
+  // only copy. None can execute from recovered text.
+  "list_programs",
+  "read_program",
 ] as const;
 
 /** The effective allow-list: what was vetted above, minus anything the settings

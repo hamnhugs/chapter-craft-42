@@ -1,0 +1,43 @@
+{
+  "_README": "Copy this file to runner.config.json and fill it in (see README.md). Generate each signing secret and API secret with `openssl rand -hex 32`. runner.config.json holds real secrets — chmod 600 it and NEVER commit it. server.mjs loads it from $RUNNER_CONFIG (the systemd unit sets /etc/chapter-craft-runner/runner.config.json) or ./runner.config.json.",
+
+  "_doc_keys": "REQUIRED. Map of keyId -> signing secret. The app signs each request with HMAC-SHA256; the keyId it sends must exist here and the secret must match. Unknown or empty keys are rejected (no empty-secret fallback). You paste one keyId + its secret into the app's Program Foundry settings.",
+  "keys": {
+    "prod-key-1": "REPLACE_WITH_openssl_rand_hex_32"
+  },
+
+  "_doc_secrets": "OPTIONAL. Map of SECRET_NAME -> value. A program declares which names it needs (manifest.secrets); the runner injects only those, by name, as env vars into that job's container, then REDACTS the values out of stdout/stderr. The app and the model never see these values — only the names.",
+  "secrets": {
+    "HERMES_TOKEN": "REPLACE_WITH_YOUR_API_TOKEN"
+  },
+
+  "_doc_sandbox_image": "OPTIONAL (default chapter-craft-sandbox:latest). The docker image built from Dockerfile.sandbox.",
+  "sandbox_image": "chapter-craft-sandbox:latest",
+
+  "_doc_egress_network": "OPTIONAL (default ccprog-egress). The docker network created by setup-egress.sh for allowlist-egress jobs. Ignored entirely unless a program requests network 'allowlist' AND the startup self-test passed.",
+  "egress_network": "ccprog-egress",
+
+  "_doc_allowed_hosts_global": "OPTIONAL (default []). The hostnames the egress proxy will dial for allowlist jobs. Empty array = deny all outbound (every job effectively runs offline even in allowlist mode). '*.example.com' matches the apex and any subdomain.",
+  "allowed_hosts_global": ["api.example.com"],
+
+  "_doc_max_timeout_ms": "OPTIONAL (default 60000). Hard ceiling on a job's wall-clock time; a program's own manifest.timeout_ms is clamped to this.",
+  "max_timeout_ms": 60000,
+
+  "_doc_concurrency": "OPTIONAL (default 3). Max jobs running at once.",
+  "concurrency": 3,
+
+  "_doc_queue_max": "OPTIONAL (default 10). Max jobs waiting for a slot before new requests get 429.",
+  "queue_max": 10,
+
+  "_doc_port": "OPTIONAL (default 8752). server.mjs binds 127.0.0.1 on this port only; put Caddy/TLS in front (see README).",
+  "port": 8752,
+
+  "_doc_memory": "OPTIONAL (default 512m). Per-container memory limit; swap is pinned equal so there is no swap.",
+  "memory": "512m",
+
+  "_doc_cpus": "OPTIONAL (default 1). Per-container CPU limit.",
+  "cpus": "1",
+
+  "_doc_pids_limit": "OPTIONAL (default 256). Per-container process/thread cap.",
+  "pids_limit": 256
+}

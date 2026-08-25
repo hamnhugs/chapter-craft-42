@@ -70,6 +70,10 @@ export const TOOL_PERMISSION: Record<string, string> = {
   // deliberately absent here), but DELETING a tool destroys the only copy of
   // its source, so it gets its own off switch on top of the opt-in.
   delete_tool: "delete_tool",
+  // Program Foundry (VPS). forge_program / run_program are opt-in and absent
+  // here for the same reason; delete_program destroys the only copy of a
+  // program's source, so it too gets its own off switch on top of the opt-in.
+  delete_program: "delete_program",
 };
 
 /** Permissions enforced INSIDE an executor branch rather than at the tool
@@ -148,6 +152,12 @@ export const PERMISSION_GROUPS: PermGroup[] = [
     group: "Tool Foundry",
     items: [
       { id: "delete_tool", label: "Delete Foundry tools", description: "Let the AI permanently delete a tool it built for you, including its earlier versions. It must ask you first.", danger: true },
+    ],
+  },
+  {
+    group: "Program Foundry",
+    items: [
+      { id: "delete_program", label: "Delete Foundry programs", description: "Let the AI permanently delete a VPS program it built for you, including its earlier versions. It must ask you first.", danger: true },
     ],
   },
   {

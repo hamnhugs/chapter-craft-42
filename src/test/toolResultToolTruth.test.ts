@@ -63,7 +63,7 @@ import { isFoundryTool } from "@/lib/toolAvailability";
  * a reason — that is the point, not a workaround.
  */
 
-const FILES = ["src/lib/chatTools.ts", "src/lib/foundryTools.ts"] as const;
+const FILES = ["src/lib/chatTools.ts", "src/lib/foundryTools.ts", "src/lib/chatPrograms.ts"] as const;
 type FileName = (typeof FILES)[number];
 
 const ALL_TOOLS: string[] = (CHAT_TOOL_DEFINITIONS as ReadonlyArray<any>).map((d) => d.function.name as string);
@@ -407,6 +407,13 @@ const ALLOWLIST: Allowed[] = [
     file: "src/lib/foundryTools.ts", tool: "forge_tool",
     snippet: "only forge_tool once it is clean",
     why: "read_tool's note. read_tool and forge_tool have the IDENTICAL gate (both in NEEDS_FORGE, neither exempt from off_foundry_unavailable), so read_tool running proves forge_tool is on the wire.",
+  },
+
+  // ── Program Foundry ──
+  {
+    file: "src/lib/chatPrograms.ts", tool: "delete_program",
+    snippet: "call delete_program again with confirm=true",
+    why: "self-reference: this is delete_program's own confirmation refusal, so delete_program was on the wire this very turn.",
   },
 ];
 

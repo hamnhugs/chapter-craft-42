@@ -11,6 +11,7 @@ import { focusComposer, isTouchPrimary } from "@/lib/focusPolicy";
 import PocketScreen from "@/components/PocketScreen";
 import { LensImageFrame, MemoryChips } from "@/components/MemoryLensStrip";
 import ToolApprovalCard from "@/components/ToolApprovalCard";
+import ProgramApprovalCard from "@/components/ProgramApprovalCard";
 import { extractKnowledge } from "@/lib/knowledgeApi";
 import { Loader2, StickyNote, BookmarkPlus } from "lucide-react";
 import { useChatSettings } from "@/hooks/useChatSettings";
@@ -1139,6 +1140,9 @@ const ChatPanel: React.FC = () => {
                   )}
                   {msg.toolProposals && msg.toolProposals.map((p) => (
                     <ToolApprovalCard key={p.tool_id} proposal={p} />
+                  ))}
+                  {msg.programProposals && msg.programProposals.map((p) => (
+                    <ProgramApprovalCard key={p.program_id} proposal={p} />
                   ))}
                   {msg.viaModel && (
                     <div className="text-[10px] text-on-surface-variant/60 mb-1.5 font-medium tracking-wide">

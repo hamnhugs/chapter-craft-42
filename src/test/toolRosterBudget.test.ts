@@ -28,7 +28,13 @@ import { CHAT_TOOL_DEFINITIONS } from "@/lib/chatTools";
  * run_tool and never enter the roster, which is why the library can grow
  * without making everything else worse.
  */
-const ROSTER_BUDGET = 68; // +1: delete_tool (Foundry tool removal, confirm-gated)
+// +5: the Program Foundry verbs (forge_program, run_program, list_programs,
+// read_program, delete_program). A program is the VPS-executed sibling of a
+// Foundry tool — a categorically new capability, not a sibling of an existing
+// verb — so it earns roster slots the same way the Tool Foundry's did, and the
+// same deliberate speed bump applies: every other tool got slightly harder to
+// select, which the description quality of these five has to earn back.
+const ROSTER_BUDGET = 73;
 
 describe("the tool roster stays within its stated budget", () => {
   it(`ships at most ${ROSTER_BUDGET} tools`, () => {

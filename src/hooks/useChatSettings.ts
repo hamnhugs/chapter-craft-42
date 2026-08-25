@@ -20,6 +20,14 @@ interface ChatSettings {
    *  from the debounced full-row upsert so unrelated saves can't clobber it.
    *  Non-empty ⇒ "an NVIDIA key is configured". */
   nvidiaKeyLast4: string;
+  /** Program Foundry VPS runner connection. The signing key is WRITE-ONLY
+   *  (saved via saveProgramRunner, read back only by the program-run/program-
+   *  verify edge functions under RLS, excluded from the debounced full-row
+   *  upsert); only its last-4 sibling reaches the client. The URL + key id are
+   *  client-read so the Settings screen can show them. */
+  programRunnerUrl: string;
+  programRunnerKeyId: string;
+  programRunnerLast4: string;
   /** Google Gemini key. CLIENT-READ, unlike the NVIDIA key: Gemini's API is
    *  CORS-open, so the browser calls it directly and needs the value. Same
    *  posture as inworldApiKey. */
@@ -95,6 +103,9 @@ interface ChatSettings {
 const defaults: ChatSettings = {
   apiKey: "",
   nvidiaKeyLast4: "",
+  programRunnerUrl: "",
+  programRunnerKeyId: "",
+  programRunnerLast4: "",
   geminiApiKey: "",
   tavilyApiKey: "",
   leanMode: "full",
@@ -226,6 +237,10 @@ function rowToSettings(data: any): ChatSettings {
     // Deliberately NOT data.nvidia_api_key — the full key never enters
     // client state (write-only convention; see the interface comment).
     nvidiaKeyLast4: data.nvidia_key_last4 || "",
+    // Deliberately NOT data.program_runner_signing_key — write-only, never read.
+    programRunnerUrl: data.program_runner_url || "",
+    programRunnerKeyId: data.program_runner_key_id || "",
+    programRunnerLast4: data.program_runner_last4 || "",
     geminiApiKey: data.gemini_api_key || "",
     tavilyApiKey: data.tavily_api_key || "",
     leanMode: (["full", "lean", "chat_only"] as const).includes(data.lean_mode)
@@ -316,6 +331,7 @@ function ensureLoaded(userId: string | null) {
       "splat_model_primary", "splat_default_quality", "splat_max_file_mb",
       "splat_confirm_threshold", "splat_click_to_activate", "splat_monthly_quota",
       "splat_auto_fallback", "gemini_api_key", "tavily_api_key", "lean_mode",
+      "program_runner_url", "program_runner_key_id", "program_runner_last4",
     ];
     const sel = (cols: string) => supabase
       .from("user_settings")
@@ -337,6 +353,7 @@ function ensureLoaded(userId: string | null) {
       "video_motion_model", "fal_api_key", "splat_model_primary",
       "splat_default_quality", "splat_max_file_mb", "splat_confirm_threshold",
       "splat_click_to_activate", "splat_monthly_quota", "splat_auto_fallback",
+      "program_runner_url", "program_runner_key_id", "program_runner_last4",
     ];
     let cols = [...READ_COLUMNS];
     let { data, error } = await sel(cols.join(", "));
@@ -603,6 +620,57 @@ export function useChatSettings() {
     return true;
   }, [user]);
 
+  /** Save the Program Foundry VPS runner connection. The signing key is
+   *  write-only (delta-written: sent ONLY when the user typed a new one, so an
+   *  unrelated save can't wipe it — the DB keep-trigger preserves it too), the
+   *  URL + key id are client-read. Client-side validation is UX only; the
+   *  program-run / program-verify edge functions re-validate the URL
+   *  authoritatively (https + no private/loopback/metadata hosts). */
+  const saveProgramRunner = useCallback(async (opts: { url: string; keyId: string; signingKey?: string }): Promise<boolean> => {
+    const uid = user?.id;
+    if (!uid) { toast.error("Sign in first"); return false; }
+    const url = opts.url.trim();
+    const keyId = opts.keyId.trim();
+    const signingKey = (opts.signingKey || "").trim();
+    if (url) {
+      let parsed: URL;
+      try { parsed = new URL(url); } catch { toast.error("Enter a valid runner URL"); return false; }
+      if (parsed.protocol !== "https:") { toast.error("The runner URL must use https"); return false; }
+      if (/^(localhost$|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|::1$|\[)/i.test(parsed.hostname)) {
+        toast.error("The runner must be a public host, not a private or loopback address");
+        return false;
+      }
+      if (!keyId) { toast.error("Enter the key id from your runner config"); return false; }
+    }
+    const last4 = signingKey ? signingKey.slice(-4) : undefined;
+    const payload: Record<string, unknown> = { user_id: uid, program_runner_url: url, program_runner_key_id: keyId };
+    // The signing key is sent ONLY when the user typed one. Omitting it from the
+    // upsert leaves the stored key unchanged (PostgREST updates only the columns
+    // present), so an edit that just changes the URL keeps the key, and the DB
+    // keep-trigger is a second guard against a broad write nulling it.
+    if (signingKey) { payload.program_runner_signing_key = signingKey; payload.program_runner_last4 = last4; }
+    // Disconnecting clears the URL (which turns the feature off) and the last4
+    // indicator; the inert write-only key is left as-is — with no URL nothing can
+    // read it, and re-connecting can reuse it.
+    if (!url) { payload.program_runner_last4 = ""; }
+    const { error } = await supabase.from("user_settings").upsert(payload as any, { onConflict: "user_id" });
+    if (error) {
+      const m = (error.message || "").toLowerCase();
+      if (m.includes("program_runner")) toast.error("Program runner columns missing — ask Lovable to run the Program Foundry migration first");
+      else toast.error(`Failed to save runner: ${error.message}`);
+      return false;
+    }
+    publish({ settings: {
+      ...snapshot.settings,
+      programRunnerUrl: url, programRunnerKeyId: keyId,
+      ...(signingKey ? { programRunnerLast4: last4 as string } : {}),
+      ...(!url ? { programRunnerLast4: "" } : {}),
+    } });
+    settingsChannel?.postMessage("settings-updated");
+    toast.success(url ? "VPS runner saved" : "VPS runner disconnected");
+    return true;
+  }, [user]);
+
   const addModel = useCallback((model: string) => {
     const id = model.trim();
     if (!id) return;
@@ -641,8 +709,12 @@ export function useChatSettings() {
   return {
     ...settings,
     loaded: snap.loaded,
+    /** Derived: a VPS runner is connected when a URL is stored. Drives the
+     *  Program Foundry roster gate and the run/verify seam. */
+    programRunnerConfigured: !!settings.programRunnerUrl,
     saveApiKey,
     saveNvidiaKey,
+    saveProgramRunner,
     setLeanMode,
     setGeminiApiKey: (k: string) => update({ geminiApiKey: k.trim() }),
     setTavilyApiKey: (k: string) => update({ tavilyApiKey: k.trim() }),

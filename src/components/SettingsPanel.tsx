@@ -22,6 +22,7 @@ import { useReflexEnabled, setReflexEnabled } from "@/lib/reflex";
 import AiPermissionsSettings from "@/components/AiPermissionsSettings";
 import MemoryLensSettings from "@/components/MemoryLensSettings";
 import ToolFoundrySettings from "@/components/ToolFoundrySettings";
+import ProgramRunnerSettings from "@/components/ProgramRunnerSettings";
 import { getMemoryMode, setMemoryMode, MemoryMode } from "@/lib/knowledgeApi";
 import { consumeSettingsSection } from "@/lib/settingsNav";
 import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
@@ -58,6 +59,7 @@ const SECTIONS = [
   { id: "images", icon: "image", title: "Images & Vision" },
   { id: "memory", icon: "neurology", title: "Neuron & Memory" },
   { id: "permissions", icon: "shield_person", title: "AI Permissions" },
+  { id: "programs", icon: "dns", title: "Program Foundry" },
   { id: "prompts", icon: "history_edu", title: "Prompts" },
   { id: "appearance", icon: "palette", title: "Appearance" },
   { id: "account", icon: "person", title: "Account & Plan" },
@@ -1132,6 +1134,16 @@ const SettingsPanel: React.FC = () => {
               description="The AI's workshop: it forges reusable tools for itself, stored as neurons in its Toolshed — nothing runs without your approval."
             >
               <ToolFoundrySettings />
+            </Section>
+
+            {/* ── Program Foundry (VPS) ── */}
+            <Section
+              id="programs"
+              icon="dns"
+              title="Program Foundry"
+              description="Connect your VPS so the AI can forge and run real bash/python/node programs — arbitrary shell in a sealed gVisor sandbox, nothing runs without your per-program approval."
+            >
+              <ProgramRunnerSettings />
             </Section>
 
             {/* ── Prompts ── */}

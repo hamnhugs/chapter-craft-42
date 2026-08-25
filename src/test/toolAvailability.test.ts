@@ -35,6 +35,9 @@ const OPEN: ToolGateInput = {
   forgeOptIn: true,
   runOptIn: true,
   foundryReady: true,
+  forgeProgramOptIn: true,
+  runProgramOptIn: true,
+  programReady: true,
   providerSupportsTools: true,
   imageTurnDisablesTools: false,
 };

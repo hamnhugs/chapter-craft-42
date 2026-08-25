@@ -10,12 +10,14 @@ import { buildChatSystemPrompt, type UsedMemory } from "@/lib/buildChatSystemPro
 import { lensVerdict, type MemoryImageCandidate } from "@/lib/memoryLens";
 import { findSentenceCapIndex, truncateAtSentenceCap } from "@/lib/sentenceCap";
 import { isReflexEnabled } from "@/lib/reflex";
-import { CHAT_TOOL_DEFINITIONS, executeChatTool, resetToolshedCache, ToolEvent, type ToolProposal } from "@/lib/chatTools";
+import { CHAT_TOOL_DEFINITIONS, executeChatTool, resetToolshedCache, ToolEvent, type ToolProposal, type ProgramProposal } from "@/lib/chatTools";
 import {
   computeToolGates, availableToolNames, groupWithheld,
   type ToolGate, type ToolGateCode,
 } from "@/lib/toolAvailability";
 import { foundryAvailable, countApprovedTools } from "@/lib/toolFoundry";
+import { programsAvailable, resetProgramsAvailability } from "@/lib/programFoundry";
+import { resetProgramEdgeAvailability } from "@/lib/programRunner";
 import { modelToolSupport } from "@/lib/modelCapabilities";
 import { scanTextForToolCalls, hasUnclosedCallOpener, type RecoveredToolCall } from "@/lib/providers/textToolCalls";
 import type { ChatImageRef } from "@/lib/imageGen";
@@ -74,6 +76,9 @@ export interface ChatMessage {
   /** Tool Foundry: drafted tools awaiting approval — rendered as approval
    *  cards (ephemeral; Settings → Tool Foundry is the canonical surface). */
   toolProposals?: ToolProposal[];
+  /** Program Foundry: drafted VPS programs awaiting approval — rendered as
+   *  program approval cards (ephemeral; Settings → Program Foundry is canonical). */
+  programProposals?: ProgramProposal[];
   /** Generated video clips rendered inline in the bubble (from the
    *  generate_video / show_video tools). Each resolves live via its job_id. */
   videos?: ChatVideoRef[];
@@ -412,7 +417,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, selectedModel, setSelectedModel, savedModels, addModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, maxReplySentences, autoShowMemoryImages, chatToolPermissions, visionModel, imageModelPrimary, imageModelFallback,
     videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold,
     videoIdentityScale, videoQcEnabled, videoMotionModel,
-    falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback } = useChatSettings();
+    falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback,
+    programRunnerConfigured } = useChatSettings();
   // Every client-visible credential in one object, so key selection is a
   // registry lookup instead of a branch each new provider must remember to
   // extend. Shipping Gemini WITHOUT this sent Google the OpenRouter key.
@@ -502,6 +508,30 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const forgeEnabled = forgeOptIn && foundryReady;
   const runEnabled = runOptIn && foundryReady;
   const foundryEnabled = forgeEnabled || runEnabled;
+
+  // Program Foundry (VPS execution). Same inverted opt-in as the Tool Foundry,
+  // but readiness has a SECOND axis: the migration must have landed AND a VPS
+  // runner must be connected. With no runner there is nowhere to execute or even
+  // smoke-test, so every program verb is withheld from the roster (never a
+  // mid-chat NO_RUNNER refusal), and `programReady` folds both so a verb whose
+  // first call would fail is never offered.
+  const forgeProgramOptIn = chatToolPermissions?.forge_program === true;
+  const runProgramOptIn = chatToolPermissions?.run_program === true;
+  const programOptIn = forgeProgramOptIn || runProgramOptIn;
+  const [programsMigrated, setProgramsMigrated] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    // Reset the session probes on a sign-in change (they cache process-wide), so
+    // the second account's Program Foundry is judged on its own schema/runner.
+    resetProgramsAvailability();
+    resetProgramEdgeAvailability();
+    programsAvailable().then((ok) => { if (alive) setProgramsMigrated(ok); });
+    return () => { alive = false; };
+  }, [programOptIn, user?.id]);
+  // Default CLOSED while the probe is unresolved: never emit a program verb whose
+  // first call would 404 before the session knows the migration/runner state.
+  const programReady = programsMigrated && programRunnerConfigured === true;
+  const programEnabled = programOptIn && programReady;
   const [chatDeepResearch, setChatDeepResearch] = useState<boolean>(() =>
     typeof window !== "undefined" && localStorage.getItem("chat_deep_research") === "1");
   const [voiceDeepResearch, setVoiceDeepResearch] = useState<boolean>(() =>
@@ -1007,6 +1037,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         forgeOptIn,
         runOptIn,
         foundryReady,
+        forgeProgramOptIn,
+        runProgramOptIn,
+        programReady,
         providerSupportsTools,
         imageTurnDisablesTools,
       });
@@ -1042,6 +1075,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // "run approved tools" off no longer prints a named menu of the user's
         // approved tools with no `run_tool` to order from.
         foundryTools: foundryEnabled,
+        programTools: programEnabled,
         offeredTools: [...offeredNames],
       });
 
@@ -1111,6 +1145,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       let lensChipsHolder: MemoryImageCandidate[] | undefined;
       // Tool Foundry proposals forged this turn (approval cards).
       const turnToolProposals: ToolProposal[] = [];
+      // Program Foundry proposals forged this turn (VPS program approval cards).
+      const turnProgramProposals: ProgramProposal[] = [];
       let assistantText = "";
       // Model "thinking" streamed alongside the reply (reasoning_content /
       // think-tag content, normalized by the adapter). Rendered as a
@@ -1146,6 +1182,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 splats: turnSplats.length > 0 ? [...turnSplats] : copy[i].splats,
                 memoryImageChips: lensChipsHolder ?? copy[i].memoryImageChips,
                 toolProposals: turnToolProposals.length > 0 ? [...turnToolProposals] : copy[i].toolProposals,
+                programProposals: turnProgramProposals.length > 0 ? [...turnProgramProposals] : copy[i].programProposals,
               };
               break;
             }
@@ -1647,6 +1684,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               splatMonthlyQuota,
               splatAutoFallback,
               permissionsSnapshot: permissionsRef.current,
+              programRunnerConfigured: programRunnerConfigured === true,
             };
             const { result, event } = await executeChatTool(t.name!, t.args || "{}", toolDeps);
 
@@ -1670,6 +1708,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               if (r.__toolProposal && typeof r.__toolProposal === "object") {
                 turnToolProposals.push(r.__toolProposal);
               }
+              if (r.__programProposal && typeof r.__programProposal === "object") {
+                turnProgramProposals.push(r.__programProposal);
+              }
               // A tool that renders its own document (blueprint sheets, stage
               // plans) hands it over here rather than through create_artifact's
               // arguments. This is the whole reason it is a side channel: a
@@ -1688,8 +1729,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   toast.error("A drawing could not be displayed (too large or malformed).");
                 }
               }
-              if ("__images" in r || "__videos" in r || "__splats" in r || "__vision" in r || "__toolProposal" in r || "__artifact" in r) {
-                const { __images, __videos, __splats, __vision, __toolProposal, __artifact, ...clean } = r;
+              if ("__images" in r || "__videos" in r || "__splats" in r || "__vision" in r || "__toolProposal" in r || "__programProposal" in r || "__artifact" in r) {
+                const { __images, __videos, __splats, __vision, __toolProposal, __programProposal, __artifact, ...clean } = r;
                 modelResult = clean;
               }
             }
@@ -2054,6 +2095,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       forgeOptIn,
       runOptIn,
       foundryReady,
+      forgeProgramOptIn,
+      runProgramOptIn,
+      programReady,
       // The SAME capability call the send path makes, for the same reason it
       // is a shared function and not two expressions: the chip and the wire
       // must be one computation, or the chip eventually claims a tool was
@@ -2064,7 +2108,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // tools on a picture turn.
       imageTurnDisablesTools: !!nv && nv.imagesDisableTools === true && hasImages,
     });
-  }, [visionModel, chatDeepResearch, isPaid, deepResearchModel, selectedModel, leanMode, chatToolPermissions, forgeOptIn, runOptIn, foundryReady]);
+  }, [visionModel, chatDeepResearch, isPaid, deepResearchModel, selectedModel, leanMode, chatToolPermissions, forgeOptIn, runOptIn, foundryReady, forgeProgramOptIn, runProgramOptIn, programReady]);
 
   const injectDisplayMessage = useCallback((content: string) => {
     setMessages((prev) => [

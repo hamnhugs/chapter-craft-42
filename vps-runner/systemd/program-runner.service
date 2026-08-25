@@ -1,0 +1,53 @@
+# Chapter Craft Program Runner — systemd unit.
+#
+# Install:
+#   sudo useradd --system --home-dir /opt/chapter-craft-runner --shell /usr/sbin/nologin ccrunner
+#   sudo usermod -aG docker ccrunner
+#   sudo mkdir -p /opt/chapter-craft-runner /etc/chapter-craft-runner /var/lib/chapter-craft-runner/tmp
+#   # copy server.mjs, selftest.mjs, egress-proxy.mjs, package.json into /opt/chapter-craft-runner
+#   sudo chown -R ccrunner:ccrunner /opt/chapter-craft-runner /var/lib/chapter-craft-runner
+#   sudo install -o ccrunner -g ccrunner -m 600 runner.config.json /etc/chapter-craft-runner/runner.config.json
+#   sudo cp systemd/program-runner.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now program-runner
+#
+# Adjust ExecStart if `which node` is not /usr/bin/env's node (e.g. nvm installs).
+
+[Unit]
+Description=Chapter Craft Program Runner (gVisor sandbox executor)
+Documentation=file:/opt/chapter-craft-runner/README.md
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=ccrunner
+Group=ccrunner
+# Needs the docker socket to launch sandbox containers.
+SupplementaryGroups=docker
+
+WorkingDirectory=/opt/chapter-craft-runner
+Environment=RUNNER_CONFIG=/etc/chapter-craft-runner/runner.config.json
+# Keep per-job code files OUT of /tmp: PrivateTmp gives THIS unit a private /tmp
+# that the (separate) docker daemon cannot see, which would break the -v bind of
+# the program file. Point Node's os.tmpdir() at a real, daemon-visible path.
+Environment=TMPDIR=/var/lib/chapter-craft-runner/tmp
+
+ExecStart=/usr/bin/env node server.mjs
+Restart=always
+RestartSec=3
+
+# ── basic hardening ──────────────────────────────────────────────────────────
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+# server.mjs writes .nonce-cache.json in WorkingDirectory and job files in TMPDIR.
+ReadWritePaths=/opt/chapter-craft-runner /var/lib/chapter-craft-runner
+ProtectControlGroups=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

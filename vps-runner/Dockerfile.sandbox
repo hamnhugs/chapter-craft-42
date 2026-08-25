@@ -1,0 +1,36 @@
+# Chapter Craft sandbox image — builds `chapter-craft-sandbox:latest`.
+#
+# The runner mounts an AI-authored program at /work/prog and runs exactly one of:
+#     bash    /work/prog
+#     python3 /work/prog
+#     node    /work/prog
+# so the image only needs those three interpreters on PATH. Nothing else.
+#
+# It is deliberately minimal: no compilers, no package managers invoked at run
+# time, a non-root default user, and a bare /work workdir. Every container is
+# started by server.mjs with gVisor (--runtime=runsc), --cap-drop ALL,
+# --read-only, --user 65534:65534 and no swap, so this image just supplies the
+# interpreters — the isolation comes from the runtime flags.
+#
+# Build:  docker build -f Dockerfile.sandbox -t chapter-craft-sandbox:latest .
+
+# node:20-alpine pins Node 20 (satisfies `node /work/prog`) on a tiny musl base.
+FROM node:20-alpine
+
+# bash (for `bash /work/prog`) and python3 (for `python3 /work/prog`). Node is
+# already provided by the base image. --no-cache keeps the layer small; no
+# build toolchain is installed.
+RUN apk add --no-cache bash python3 \
+ && rm -rf /var/cache/apk/* /root/.npm /root/.cache
+
+# A bare, world-traversable workdir. The program is bind-mounted read-only at
+# /work/prog by the runner; the container never writes here.
+RUN mkdir -p /work && chmod 755 /work
+WORKDIR /work
+
+# Default to an unprivileged user. The runner also forces --user 65534:65534 at
+# run time, so this is defense in depth rather than the sole control.
+USER 65534:65534
+
+# No ENTRYPOINT/CMD on purpose: the runner always supplies the exact argv
+# (e.g. ["python3","/work/prog"]).
