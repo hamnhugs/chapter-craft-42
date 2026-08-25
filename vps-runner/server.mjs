@@ -241,14 +241,24 @@ async function healthCanary() {
   // not just that the process is up (a non-KVM/broken host fails here).
   return await new Promise((resolve) => {
     let out = "";
+    let err = "";
+    // Use the real job pids ceiling: the pids cgroup counts THREADS, and the
+    // gVisor sentry needs dozens just to boot — a tighter canary-only cap
+    // fails the sandbox at spawn even though actual jobs would run.
     const p = spawn("docker", ["run", "--rm", "--runtime=runsc", "--network", "none",
-      "--memory", "64m", "--cpus", "0.5", "--pids-limit", "16", "--read-only",
+      "--memory", "64m", "--cpus", "0.5", "--pids-limit", String(PIDS), "--read-only",
       "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", "65534:65534",
       SANDBOX_IMAGE, "bash", "-c", "echo ccprog-canary-ok"]);
     const timer = setTimeout(() => { try { p.kill(); } catch { /* */ } resolve(false); }, 15000);
     p.stdout.on("data", (d) => (out += d.toString()));
-    p.on("close", () => { clearTimeout(timer); resolve(out.includes("ccprog-canary-ok")); });
-    p.on("error", () => { clearTimeout(timer); resolve(false); });
+    p.stderr.on("data", (d) => (err += d.toString()));
+    p.on("close", () => {
+      clearTimeout(timer);
+      const ok = out.includes("ccprog-canary-ok");
+      if (!ok) console.error(`[runner] health canary FAILED: ${err.trim().slice(0, 500) || "(no stderr)"}`);
+      resolve(ok);
+    });
+    p.on("error", (e) => { clearTimeout(timer); console.error(`[runner] health canary spawn error: ${e.message}`); resolve(false); });
   });
 }
 
