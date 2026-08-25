@@ -17,6 +17,9 @@
   "_doc_egress_network": "OPTIONAL (default ccprog-egress). The docker network created by setup-egress.sh for allowlist-egress jobs. Ignored entirely unless a program requests network 'allowlist' AND the startup self-test passed.",
   "egress_network": "ccprog-egress",
 
+  "_doc_egress_proxy_ip": "OPTIONAL (default 172.31.99.2). The ccprog-proxy container's fixed IP — must match setup-egress.sh's CCPROG_PROXY_IP. Injected into sandboxes as a static /etc/hosts entry for 'ccprog-proxy' because Docker's embedded DNS does not work under gVisor.",
+  "egress_proxy_ip": "172.31.99.2",
+
   "_doc_allowed_hosts_global": "OPTIONAL (default []). The hostnames the egress proxy will dial for allowlist jobs. Empty array = deny all outbound (every job effectively runs offline even in allowlist mode). '*.example.com' matches the apex and any subdomain.",
   "allowed_hosts_global": ["api.example.com"],
 

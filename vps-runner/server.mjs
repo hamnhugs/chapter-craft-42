@@ -44,6 +44,7 @@ const KEYS = config.keys || {};                       // { keyId: signingKey }
 const SECRETS = config.secrets || {};                 // { NAME: value }
 const SANDBOX_IMAGE = config.sandbox_image || "chapter-craft-sandbox:latest";
 const EGRESS_NETWORK = config.egress_network || "ccprog-egress"; // docker network for allowlist jobs
+const EGRESS_PROXY_IP = String(config.egress_proxy_ip || "172.31.99.2"); // setup-egress.sh's CCPROG_PROXY_IP
 const MAX_TIMEOUT_MS = Number(config.max_timeout_ms) || 60_000;
 const CONCURRENCY = Math.max(1, Number(config.concurrency) || 3);
 const QUEUE_MAX = Math.max(0, Number(config.queue_max) ?? 10);
@@ -148,7 +149,13 @@ async function runJob(job) {
     await writeFile(codeFile, code, "utf8");
 
     const netArgs = wantsAllowlist
-      ? ["--network", EGRESS_NETWORK, "--env", `CCPROG_ALLOWED_HOSTS=${(manifest.allowed_hosts || []).join(",")}`,
+      ? ["--network", EGRESS_NETWORK,
+         // Docker's embedded DNS (127.0.0.11) does not work inside a gVisor
+         // sandbox (the resolver socket is host-bound; getaddrinfo gets
+         // EAI_AGAIN), so the proxy name must resolve from a static
+         // /etc/hosts entry, pinned to the same IP setup-egress.sh assigns.
+         "--add-host", `ccprog-proxy:${EGRESS_PROXY_IP}`,
+         "--env", `CCPROG_ALLOWED_HOSTS=${(manifest.allowed_hosts || []).join(",")}`,
          "--env", "HTTP_PROXY=http://ccprog-proxy:8753", "--env", "HTTPS_PROXY=http://ccprog-proxy:8753",
          "--env", "http_proxy=http://ccprog-proxy:8753", "--env", "https_proxy=http://ccprog-proxy:8753"]
       : ["--network", "none"];
