@@ -65,6 +65,87 @@ export type Database = {
         }
         Relationships: []
       }
+      agent_programs: {
+        Row: {
+          code: string
+          created_at: string
+          description: string
+          fail_count: number
+          id: string
+          io_spec: Json
+          language: string
+          last_run_at: string | null
+          manifest: Json
+          name: string
+          root_id: string | null
+          run_count: number
+          status: string
+          superseded_by: string | null
+          user_id: string
+          verified_at: string | null
+          verifier_fingerprint: string | null
+          verifier_report: Json | null
+          version: number
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          description: string
+          fail_count?: number
+          id?: string
+          io_spec?: Json
+          language: string
+          last_run_at?: string | null
+          manifest?: Json
+          name: string
+          root_id?: string | null
+          run_count?: number
+          status?: string
+          superseded_by?: string | null
+          user_id: string
+          verified_at?: string | null
+          verifier_fingerprint?: string | null
+          verifier_report?: Json | null
+          version?: number
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          description?: string
+          fail_count?: number
+          id?: string
+          io_spec?: Json
+          language?: string
+          last_run_at?: string | null
+          manifest?: Json
+          name?: string
+          root_id?: string | null
+          run_count?: number
+          status?: string
+          superseded_by?: string | null
+          user_id?: string
+          verified_at?: string | null
+          verifier_fingerprint?: string | null
+          verifier_report?: Json | null
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_programs_root_id_fkey"
+            columns: ["root_id"]
+            isOneToOne: false
+            referencedRelation: "agent_programs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_programs_superseded_by_fkey"
+            columns: ["superseded_by"]
+            isOneToOne: false
+            referencedRelation: "agent_programs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       agent_tools: {
         Row: {
           code: string
@@ -1317,6 +1398,115 @@ export type Database = {
           },
         ]
       }
+      program_approvals: {
+        Row: {
+          approved_at: string
+          id: string
+          program_id: string
+          sha256: string
+          user_id: string
+        }
+        Insert: {
+          approved_at?: string
+          id?: string
+          program_id: string
+          sha256: string
+          user_id: string
+        }
+        Update: {
+          approved_at?: string
+          id?: string
+          program_id?: string
+          sha256?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "program_approvals_program_id_fkey"
+            columns: ["program_id"]
+            isOneToOne: false
+            referencedRelation: "agent_programs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      program_disables: {
+        Row: {
+          disabled_at: string
+          id: string
+          name: string
+          root_id: string | null
+          user_id: string
+        }
+        Insert: {
+          disabled_at?: string
+          id?: string
+          name: string
+          root_id?: string | null
+          user_id: string
+        }
+        Update: {
+          disabled_at?: string
+          id?: string
+          name?: string
+          root_id?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      program_runs: {
+        Row: {
+          created_at: string
+          error: string | null
+          exit_code: number | null
+          id: string
+          mode: string
+          ms: number | null
+          program_id: string | null
+          sha256: string | null
+          status: string
+          stderr_bytes: number | null
+          stdout_bytes: number | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          error?: string | null
+          exit_code?: number | null
+          id?: string
+          mode?: string
+          ms?: number | null
+          program_id?: string | null
+          sha256?: string | null
+          status?: string
+          stderr_bytes?: number | null
+          stdout_bytes?: number | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          error?: string | null
+          exit_code?: number | null
+          id?: string
+          mode?: string
+          ms?: number | null
+          program_id?: string | null
+          sha256?: string | null
+          status?: string
+          stderr_bytes?: number | null
+          stdout_bytes?: number | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "program_runs_program_id_fkey"
+            columns: ["program_id"]
+            isOneToOne: false
+            referencedRelation: "agent_programs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       prompt_presets: {
         Row: {
           body: string
@@ -1775,6 +1965,10 @@ export type Database = {
           nvidia_api_key: string | null
           nvidia_key_last4: string | null
           openrouter_api_key: string | null
+          program_runner_key_id: string | null
+          program_runner_last4: string | null
+          program_runner_signing_key: string | null
+          program_runner_url: string | null
           saved_image_models: Json
           saved_models: Json | null
           saved_video_models: Json | null
@@ -1839,6 +2033,10 @@ export type Database = {
           nvidia_api_key?: string | null
           nvidia_key_last4?: string | null
           openrouter_api_key?: string | null
+          program_runner_key_id?: string | null
+          program_runner_last4?: string | null
+          program_runner_signing_key?: string | null
+          program_runner_url?: string | null
           saved_image_models?: Json
           saved_models?: Json | null
           saved_video_models?: Json | null
@@ -1903,6 +2101,10 @@ export type Database = {
           nvidia_api_key?: string | null
           nvidia_key_last4?: string | null
           openrouter_api_key?: string | null
+          program_runner_key_id?: string | null
+          program_runner_last4?: string | null
+          program_runner_signing_key?: string | null
+          program_runner_url?: string | null
           saved_image_models?: Json
           saved_models?: Json | null
           saved_video_models?: Json | null
@@ -2533,6 +2735,10 @@ export type Database = {
         }[]
       }
       app_open_access: { Args: never; Returns: boolean }
+      approve_program: {
+        Args: { p_expected_sha256: string; p_program_id: string }
+        Returns: Json
+      }
       approve_tool: {
         Args: { p_expected_sha256: string; p_tool_id: string }
         Returns: Json
@@ -2577,6 +2783,7 @@ export type Database = {
         }
       }
       delete_entries_bulk: { Args: { entry_ids: string[] }; Returns: number }
+      disable_program: { Args: { p_name: string }; Returns: Json }
       entries_due_for_review: {
         Args: { _limit?: number; _wiki_id?: string }
         Returns: {
@@ -2796,6 +3003,7 @@ export type Database = {
         }
       }
       my_entitlements: { Args: never; Returns: Json }
+      program_fingerprint: { Args: { p_program_id: string }; Returns: string }
       record_review: {
         Args: { _entry_id: string; _recalled?: boolean }
         Returns: string
