@@ -3,7 +3,11 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useChatSettings } from "@/hooks/useChatSettings";
-import { programsAvailable, listPrograms, disableProgram, type AgentProgramRow } from "@/lib/programFoundry";
+import {
+  programsAvailable, listPrograms, disableProgram,
+  listSchedules, setProgramSchedule, pauseProgramSchedule, deleteProgramSchedule, cronHealth,
+  type AgentProgramRow, type ProgramScheduleRow, type CronHealth,
+} from "@/lib/programFoundry";
 
 /**
  * Settings → Program Foundry — the management surface for the AI's VPS programs.
@@ -21,6 +25,85 @@ import { programsAvailable, listPrograms, disableProgram, type AgentProgramRow }
  */
 
 const MIGRATION_FILE = "supabase/migrations/20260824000000_program_foundry.sql";
+
+// ── scheduling (cron) ────────────────────────────────────────────────────────
+const BROWSER_TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch { return "UTC"; } })();
+
+// value encoding: "" = off, "i<seconds>" = interval, "d<minute>" = daily-at-minute
+const SCHEDULE_PRESETS: Array<{ label: string; value: string }> = [
+  { label: "Off (no schedule)", value: "" },
+  { label: "Every 15 minutes", value: "i900" },
+  { label: "Every 30 minutes", value: "i1800" },
+  { label: "Hourly", value: "i3600" },
+  { label: "Every 6 hours", value: "i21600" },
+  { label: "Daily at 9:00 AM", value: "d540" },
+  { label: "Daily at 6:00 PM", value: "d1080" },
+];
+
+function scheduleToPreset(s?: ProgramScheduleRow): string {
+  if (!s) return "";
+  if (s.every_seconds != null) return `i${s.every_seconds}`;
+  if (s.daily_at_minute != null) return `d${s.daily_at_minute}`;
+  return "";
+}
+function presetToArgs(v: string): { everySeconds?: number; dailyAtMinute?: number; tz?: string } | null {
+  if (v.startsWith("i")) return { everySeconds: Number(v.slice(1)) };
+  if (v.startsWith("d")) return { dailyAtMinute: Number(v.slice(1)), tz: BROWSER_TZ };
+  return null;
+}
+
+/** Per-program recurrence control. Only shown for an APPROVED program on a
+ *  connected runner. Runs happen server-side (program-cron); this only creates
+ *  the schedule via owner-scoped RPCs. */
+const ScheduleControl: React.FC<{ program: AgentProgramRow; schedule?: ProgramScheduleRow; onChanged: () => void }> = ({ program, schedule, onChanged }) => {
+  const [busy, setBusy] = useState(false);
+  const apply = useCallback(async (v: string) => {
+    setBusy(true);
+    try {
+      if (!v) {
+        if (schedule) { await deleteProgramSchedule(program.id); toast.success("Schedule removed"); }
+      } else {
+        const a = presetToArgs(v);
+        if (a) { const { next_run_at } = await setProgramSchedule(program.id, a); toast.success(next_run_at ? `Scheduled — next run ${new Date(next_run_at).toLocaleString()}` : "Scheduled"); }
+      }
+      onChanged();
+    } catch (e) {
+      toast.error(`Could not update schedule: ${String((e as Error)?.message || e).slice(0, 160)}`);
+    } finally { setBusy(false); }
+  }, [program.id, schedule, onChanged]);
+  const toggle = useCallback(async () => {
+    if (!schedule) return;
+    setBusy(true);
+    try { await pauseProgramSchedule(program.id, !schedule.enabled); onChanged(); }
+    catch (e) { toast.error(`Could not update: ${String((e as Error)?.message || e).slice(0, 160)}`); }
+    finally { setBusy(false); }
+  }, [program.id, schedule, onChanged]);
+
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-2">
+      <span className="text-[11px] text-on-surface-variant" aria-hidden>⏱</span>
+      <select value={scheduleToPreset(schedule)} onChange={(e) => apply(e.target.value)} disabled={busy}
+        aria-label={`Schedule for ${program.name}`}
+        className="rounded border border-outline/50 bg-surface px-2 py-1 text-[11px] disabled:opacity-50">
+        {SCHEDULE_PRESETS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+      {schedule && (
+        <>
+          <span className="text-[11px] text-on-surface-variant">
+            {schedule.enabled
+              ? `next ${new Date(schedule.next_run_at).toLocaleString()}`
+              : (schedule.paused_reason || "paused")}
+            {schedule.fail_count > 0 && schedule.enabled ? ` · ${schedule.fail_count} recent fail${schedule.fail_count > 1 ? "s" : ""}` : ""}
+          </span>
+          <button onClick={toggle} disabled={busy}
+            className="rounded border border-outline/50 px-2 py-0.5 text-[11px] disabled:opacity-50">
+            {schedule.enabled ? "Pause" : "Resume"}
+          </button>
+        </>
+      )}
+    </div>
+  );
+};
 
 const ProgramRunnerSettings: React.FC = () => {
   const {
@@ -42,9 +125,20 @@ const ProgramRunnerSettings: React.FC = () => {
   useEffect(() => { setUrl(programRunnerUrl || ""); setKeyId(programRunnerKeyId || ""); }, [programRunnerUrl, programRunnerKeyId]);
 
   const [programs, setPrograms] = useState<AgentProgramRow[]>([]);
+  const [schedules, setSchedules] = useState<Map<string, ProgramScheduleRow>>(new Map());
+  const [cronOk, setCronOk] = useState<CronHealth | null>(null);
+  const [schedulesReady, setSchedulesReady] = useState<boolean | null>(null);
   const refresh = useCallback(async () => {
     if (!(await programsAvailable())) return;
     try { setPrograms((await listPrograms()).filter((p) => !p.superseded_by)); } catch { /* ignore */ }
+    // Schedules live in the later cron migration; if it isn't applied yet, hide
+    // the scheduling UI instead of erroring (schedulesReady=false).
+    try {
+      const list = await listSchedules();
+      setSchedules(new Map(list.map((s) => [s.program_id, s])));
+      setCronOk(await cronHealth());
+      setSchedulesReady(true);
+    } catch { setSchedulesReady(false); }
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -166,14 +260,29 @@ const ProgramRunnerSettings: React.FC = () => {
       {programs.length > 0 && (
         <div className="flex flex-col gap-2">
           <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Your programs</p>
+          {schedulesReady === true && (
+            <p className="text-[10px] text-on-surface-variant">
+              Scheduler {cronOk?.last_tick_at
+                ? `· last ran ${new Date(cronOk.last_tick_at).toLocaleTimeString()}`
+                : "· not running yet — finish the cron deploy (pg_cron heartbeat)"}
+            </p>
+          )}
+          {schedulesReady === false && programRunnerConfigured && (
+            <p className="text-[10px] text-amber-500">Scheduling needs the cron update — deploy <code>20260825090000_operator_tier.sql</code> via Lovable.</p>
+          )}
           {programs.map((p) => (
-            <div key={p.id} className="flex items-center justify-between gap-2 rounded border border-outline/30 px-2 py-1.5">
-              <div className="min-w-0">
-                <p className="truncate text-sm text-on-surface">{p.name} <span className="text-xs text-on-surface-variant">v{p.version} · {p.status} · {p.language}</span></p>
-                <p className="truncate text-xs text-on-surface-variant">{(p.manifest as any)?.network === "allowlist" ? "network: allowlist" : "no network"}{Array.isArray((p.manifest as any)?.secrets) && (p.manifest as any).secrets.length > 0 ? ` · secrets: ${(p.manifest as any).secrets.join(", ")}` : ""}</p>
+            <div key={p.id} className="rounded border border-outline/30 px-2 py-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm text-on-surface">{p.name} <span className="text-xs text-on-surface-variant">v{p.version} · {p.status} · {p.language}</span></p>
+                  <p className="truncate text-xs text-on-surface-variant">{(p.manifest as any)?.network === "allowlist" ? "network: allowlist" : "no network"}{Array.isArray((p.manifest as any)?.secrets) && (p.manifest as any).secrets.length > 0 ? ` · secrets: ${(p.manifest as any).secrets.join(", ")}` : ""}</p>
+                </div>
+                {p.status !== "disabled" && (
+                  <button onClick={() => onDisableName(p.name)} className="shrink-0 rounded border border-red-500/40 px-2 py-1 text-[11px] text-red-500">Disable</button>
+                )}
               </div>
-              {p.status !== "disabled" && (
-                <button onClick={() => onDisableName(p.name)} className="shrink-0 rounded border border-red-500/40 px-2 py-1 text-[11px] text-red-500">Disable</button>
+              {p.status === "approved" && programRunnerConfigured && schedulesReady === true && (
+                <ScheduleControl program={p} schedule={schedules.get(p.id)} onChanged={refresh} />
               )}
             </div>
           ))}
