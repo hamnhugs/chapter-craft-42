@@ -59,17 +59,22 @@ no curl, no git, no compiler toolchain.
 
 ## Libraries
 
-- **Standard library only.** Python 3.12's stdlib, Node 20's built-ins, and
-  POSIX/BusyBox tools that ship with Alpine. That is the complete inventory.
-- `pip`, `npm`, and `apk` are not present, and could not install anything
-  anyway (read-only filesystem, no-execute scratch, and package hosts are not
-  reachable). **Do not write programs that attempt runtime installation** — the
-  failure is guaranteed, in every network mode.
-- Additional libraries can only be added by the **operator** baking them into
-  the sandbox image (a one-time rebuild on the VPS). If a task genuinely needs
-  a third-party package, tell the user which package and why, and let them
-  decide — then write the program assuming it is present only after they
-  confirm the image was rebuilt.
+- **Python stdlib + a baked-in third-party set**, Node 20 built-ins, and
+  POSIX/BusyBox tools. The Python packages available for `import` are:
+  `requests`, `beautifulsoup4` (`bs4`), `lxml`, `html5lib`, `aiohttp`, `yaml`
+  (PyYAML), `dateutil`, `numpy`, and `pandas` — plus everything in the standard
+  library. Node has a global `fetch()` for HTTP.
+- **No runtime installation.** `pip`/`npm`/`apk` cannot install at run time
+  (read-only filesystem, no-execute scratch, offline by default). **Never write
+  a program that installs a package at runtime** — the failure is guaranteed.
+- A package that is NOT in the list above can only be added by the **operator**
+  baking it into the sandbox image (a one-line edit to `Dockerfile.sandbox` +
+  rebuild on the VPS). If a task genuinely needs one, name the package and why,
+  and let the user decide — then assume it is present only after they confirm
+  the rebuild.
+- **scrapy and other crawling frameworks are intentionally absent**: they assume
+  multi-host crawling, cross-run persistence, and minutes-long runs, none of
+  which this sandbox provides. For fetch-and-parse, use `requests` + `bs4`/`lxml`.
 
 ## Network
 

@@ -4,23 +4,37 @@
 #     bash    /work/prog
 #     python3 /work/prog
 #     node    /work/prog
-# so the image only needs those three interpreters on PATH. Nothing else.
 #
-# It is deliberately minimal: no compilers, no package managers invoked at run
-# time, a non-root default user, and a bare /work workdir. Every container is
-# started by server.mjs with gVisor (--runtime=runsc), --cap-drop ALL,
-# --read-only, --user 65534:65534 and no swap, so this image just supplies the
-# interpreters — the isolation comes from the runtime flags.
+# It is deliberately minimal at RUN time: no compilers invoked, no runtime package
+# installs (the root fs is read-only and offline by default), a non-root default
+# user, a bare /work workdir. Every container is started by server.mjs with gVisor
+# (--runtime=runsc), --cap-drop ALL, --read-only, --user 65534:65534 and no swap —
+# the isolation comes from the runtime flags, not this image.
 #
-# Build:  docker build -f Dockerfile.sandbox -t chapter-craft-sandbox:latest .
+# Third-party libraries are baked in HERE, at build time (which has network + root),
+# so approved programs can `import` them even though runtime is sealed. To add more,
+# extend the apk line below and rebuild:
+#     docker build -f Dockerfile.sandbox -t chapter-craft-sandbox:latest .
+#     sudo systemctl restart program-runner   # picks up the new image on next run
 
 # node:20-alpine pins Node 20 (satisfies `node /work/prog`) on a tiny musl base.
 FROM node:20-alpine
 
-# bash (for `bash /work/prog`) and python3 (for `python3 /work/prog`). Node is
-# already provided by the base image. --no-cache keeps the layer small; no
-# build toolchain is installed.
-RUN apk add --no-cache bash python3 \
+# Interpreters + a curated, NO-COMPILE Python library set from Alpine's own repos
+# (musl-native packages — no build toolchain, no runtime pip). These cover the real
+# work programs do: HTTP clients, HTML/XML parsing, async I/O, YAML/date handling,
+# and numeric/data work. requests pulls in urllib3/certifi/idna automatically;
+# beautifulsoup4 pulls soupsieve. Node 20 already ships a global fetch().
+#
+# NOTE on scrapy: the crawling FRAMEWORK is intentionally not included — it assumes
+# multi-host crawling, cross-run persistence, and minutes-long runs, none of which
+# this sandbox provides. Its actual capability (fetch + parse) is covered by
+# requests + beautifulsoup4 + lxml below.
+RUN apk add --no-cache \
+      bash python3 py3-pip \
+      py3-requests py3-beautifulsoup4 py3-lxml py3-html5lib \
+      py3-aiohttp py3-yaml py3-dateutil \
+      py3-numpy py3-pandas \
  && rm -rf /var/cache/apk/* /root/.npm /root/.cache
 
 # A bare, world-traversable workdir. The program is bind-mounted read-only at
