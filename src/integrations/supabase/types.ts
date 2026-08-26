@@ -1530,6 +1530,9 @@ export type Database = {
       }
       program_schedules: {
         Row: {
+          active_run_deadline: string | null
+          active_run_id: string | null
+          active_run_started_at: string | null
           created_at: string
           daily_at_minute: number | null
           enabled: boolean
@@ -1541,6 +1544,7 @@ export type Database = {
           last_tick_at: string | null
           lease_token: string | null
           lease_until: string | null
+          max_runtime_s: number | null
           name: string
           next_run_at: string
           paused_reason: string | null
@@ -1551,6 +1555,9 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          active_run_deadline?: string | null
+          active_run_id?: string | null
+          active_run_started_at?: string | null
           created_at?: string
           daily_at_minute?: number | null
           enabled?: boolean
@@ -1562,6 +1569,7 @@ export type Database = {
           last_tick_at?: string | null
           lease_token?: string | null
           lease_until?: string | null
+          max_runtime_s?: number | null
           name: string
           next_run_at: string
           paused_reason?: string | null
@@ -1572,6 +1580,9 @@ export type Database = {
           user_id: string
         }
         Update: {
+          active_run_deadline?: string | null
+          active_run_id?: string | null
+          active_run_started_at?: string | null
           created_at?: string
           daily_at_minute?: number | null
           enabled?: boolean
@@ -1583,6 +1594,7 @@ export type Database = {
           last_tick_at?: string | null
           lease_token?: string | null
           lease_until?: string | null
+          max_runtime_s?: number | null
           name?: string
           next_run_at?: string
           paused_reason?: string | null
@@ -2770,6 +2782,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      abort_async_program_run: {
+        Args: { p_run_id: string; p_schedule_id: string }
+        Returns: boolean
+      }
       accessible_wiki_ids: { Args: { uid: string }; Returns: string[] }
       admin_delete_user: { Args: { _user_id: string }; Returns: undefined }
       admin_grant_lifetime: {
@@ -2866,6 +2882,15 @@ export type Database = {
       autopause_program_schedule: {
         Args: { p_reason: string; p_schedule_id: string }
         Returns: undefined
+      }
+      begin_async_program_run: {
+        Args: {
+          p_deadline: string
+          p_run_id: string
+          p_schedule_id: string
+          p_token: string
+        }
+        Returns: boolean
       }
       claim_due_schedules: {
         Args: { p_limit?: number }
@@ -3192,10 +3217,15 @@ export type Database = {
         Args: {
           p_daily_at_minute?: number
           p_every_seconds?: number
+          p_max_runtime_s?: number
           p_program_id: string
           p_tz?: string
         }
         Returns: Json
+      }
+      settle_async_program_run: {
+        Args: { p_ok: boolean; p_run_id: string; p_schedule_id: string }
+        Returns: boolean
       }
       settle_program_schedule: {
         Args: { p_ok: boolean; p_schedule_id: string; p_token: string }
@@ -3213,6 +3243,7 @@ export type Database = {
         }
         Returns: string
       }
+      sweep_orphan_cron_runs: { Args: never; Returns: number }
       tool_fingerprint: { Args: { p_tool_id: string }; Returns: string }
     }
     Enums: {
