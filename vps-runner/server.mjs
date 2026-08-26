@@ -28,7 +28,7 @@
 import http from "node:http";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdtemp, writeFile, rm, readFile, mkdir, stat, readdir } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, readFile, mkdir, stat, readdir, rename } from "node:fs/promises";
 import { readFileSync, existsSync } from "node:fs";
 import os, { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -47,7 +47,10 @@ const EGRESS_NETWORK = config.egress_network || "ccprog-egress"; // docker netwo
 const EGRESS_PROXY_IP = String(config.egress_proxy_ip || "172.31.99.2"); // setup-egress.sh's CCPROG_PROXY_IP
 const MAX_TIMEOUT_MS = Number(config.max_timeout_ms) || 60_000;
 const CONCURRENCY = Math.max(1, Number(config.concurrency) || 3);
-const QUEUE_MAX = Math.max(0, Number(config.queue_max) ?? 10);
+// NOTE: Number(undefined) is NaN, and NaN is not nullish — `Number(x) ?? 10`
+// never fell back, making `waiters.length >= NaN` always false (an unbounded
+// queue) when the config omitted queue_max. Coalesce BEFORE converting.
+const QUEUE_MAX = Math.max(0, Number(config.queue_max ?? 10) || 0);
 const PORT = Number(config.port) || 8752;
 // ── resource helpers + operator ceilings ─────────────────────────────────────
 const MB = 1024 * 1024;
@@ -80,6 +83,24 @@ const PERSIST_ENABLED    = config.persist_enabled === true;
 const STATE_DIR          = String(config.state_dir || "/var/lib/chapter-craft-runner/state");
 const STATE_QUOTA_MB     = Math.max(16, Number(config.state_quota_mb) || 256);
 const STATE_MAX_TOTAL_MB = Math.max(STATE_QUOTA_MB, Number(config.state_max_total_mb) || 4096);
+
+// ── async (long unattended) runs: accepted immediately, executed in background,
+// result persisted to disk so a restart never loses a finished run, collected
+// later via signed GET /result. The runner stays inbound-only — it never calls
+// anyone back.
+const RESULTS_DIR          = String(config.results_dir || "/var/lib/chapter-craft-runner/results");
+// Hard ceiling on an async job's wall-clock, whatever the caller asks: 2..60 min.
+// The default matches the app's largest offered allowance (1 hour) so the
+// out-of-box config never silently clamps a granted schedule into guaranteed
+// timeouts; operators may lower it, and the accept response reports the
+// effective value so the scheduler can tell the truth about the clamp.
+const ASYNC_MAX_TIMEOUT_MS = Math.min(3_600_000, Math.max(120_000, Number(config.async_max_timeout_ms) || 3_600_000));
+const RESULT_TTL_MS        = Math.max(1, Number(config.result_ttl_hours) || 48) * 3_600_000;
+// Aggregate disk bound for persisted results (same discipline as /state's cap).
+const RESULTS_MAX_TOTAL_MB = Math.max(64, Number(config.results_max_total_mb) || 1024);
+// Keep every serialized result comfortably under the poller's 1MB read cap —
+// an over-cap response would be truncated mid-JSON and unrecognizable.
+const RESULT_JSON_BUDGET   = 700 * 1024;
 const SKEW_SEC = 60;
 const NONCE_FILE = join(process.cwd(), ".nonce-cache.json");
 
@@ -136,7 +157,19 @@ function acquire() {
   if (waiters.length >= QUEUE_MAX) return Promise.resolve(false); // shed load → 429
   return new Promise((res) => waiters.push(res));
 }
+// Take a slot only if one is free RIGHT NOW — cron dispatches must never sit in
+// the queue behind a long job and then time out on the caller's side (a queued
+// wait would be settled as a program failure when it was really contention).
+function acquireNoWait() { if (active < CONCURRENCY_EFF) { active++; return true; } return false; }
 function release() { active--; const next = waiters.shift(); if (next) { active++; next(true); } }
+
+// Async jobs can hold a slot for up to ASYNC_MAX_TIMEOUT_MS, so cap the lane:
+// on a multi-slot box at least one slot always stays free for interactive runs;
+// on a single-slot box the one slot is shared. Callers that must not wait
+// behind a long hold (cron dispatches, interactive runs) send no_wait and get
+// an honest "busy"; only hermetic verify jobs still queue.
+let asyncActive = 0;
+const asyncLaneMax = () => Math.max(1, CONCURRENCY_EFF - 1);
 
 // ── egress self-test state (fail-closed for allowlist) ───────────────────────
 let egressReady = false;
@@ -211,12 +244,96 @@ async function ensureStateDir(key, epoch) {
   if (existsSync(path)) {
     if (await duBytes(path) > STATE_QUOTA_MB * MB)
       return { error: `this program's stored state exceeds its ${STATE_QUOTA_MB}MB quota — clear it or raise state_quota_mb` };
+    // Re-attempt sibling GC even when this epoch's dir already exists: the
+    // create-time sweep skips an epoch a still-executing superseded run holds
+    // (the stateChains guard), and without a retry that skip was permanent —
+    // the stale epoch (possibly ancestor-written secrets) leaked until the
+    // aggregate cap wedged the lineage. Fire-and-forget; the in-use guard
+    // still protects live epochs.
+    void gcSiblingEpochs(key, epoch);
     return { path };
   }
   await gcSiblingEpochs(key, epoch);                 // reclaim old epochs of this lineage (a 'fresh' bump)
   const r = await runCmd("install", ["-d", "-m", "0777", path]);
   if (r.code !== 0) return { error: `could not create state directory: ${String(r.stderr).slice(0, 200)}` };
   return { path };
+}
+
+// ── async result store (survives restarts; the poll endpoint reads it) ────────
+const resultPath  = (id) => join(RESULTS_DIR, `${id}.json`);
+const startedPath = (id) => join(RESULTS_DIR, `${id}.started.json`);
+
+// Same 0700-parent discipline as STATE_DIR: results carry program output, which
+// may include anything the program printed.
+async function ensureResultsDir() {
+  const r = await runCmd("install", ["-d", "-m", "0700", RESULTS_DIR]);
+  if (r.code !== 0) return { error: `could not secure the results directory: ${String(r.stderr).slice(0, 200)}` };
+  await runCmd("chmod", ["0700", RESULTS_DIR]);
+  return {};
+}
+
+// The serialized result must fit the poller's read cap: control-char-heavy
+// output inflates ~6x under JSON escaping, so OUTPUT_CAP-sized streams can
+// exceed 1MB of JSON. Re-truncate stdout (then stderr) until it fits — a
+// truncated-but-parseable result beats an unreadable complete one.
+function fitResultBudget(obj) {
+  const size = () => Buffer.byteLength(JSON.stringify(obj), "utf8");
+  for (const key of ["stdout", "stderr"]) {
+    let over = size() - RESULT_JSON_BUDGET;
+    if (over <= 0) return obj;
+    const s = typeof obj[key] === "string" ? obj[key] : "";
+    // JSON escaping inflates at most 6x, so cutting over/1 chars always
+    // converges; cut generously (escaped bytes >= chars) then re-measure.
+    if (s.length > 0) obj[key] = s.slice(0, Math.max(0, s.length - over)) + "\n[...truncated to fit the result envelope]";
+  }
+  return obj;
+}
+
+// Atomic write (tmp + rename): a poll can never read a half-written result, and
+// a crash mid-write leaves the .started marker in place → reconciled as lost.
+async function writeResultFile(id, obj) {
+  const tmp = resultPath(id) + ".tmp";
+  await writeFile(tmp, JSON.stringify(fitResultBudget(obj)), "utf8");
+  await rename(tmp, resultPath(id));
+}
+
+// Boot-time truth: no job survives a runner restart. Kill orphaned sandbox
+// containers (dockerd keeps them running after our child processes die), and
+// turn every dangling .started marker into an honest "lost" result so pollers
+// settle instead of waiting forever.
+async function reconcileOrphanedAsyncRuns() {
+  const ps = await runCmd("docker", ["ps", "-aq", "--filter", "name=ccprog_"]);
+  for (const cid of ps.stdout.split(/\s+/).filter(Boolean)) await runCmd("docker", ["rm", "-f", cid]);
+  let entries = [];
+  try { entries = await readdir(RESULTS_DIR); } catch { return; }
+  for (const e of entries) {
+    const m = e.match(/^([0-9a-f-]{36})\.started\.json$/);
+    if (!m) continue;
+    if (!existsSync(resultPath(m[1]))) {
+      try {
+        await writeResultFile(m[1], { v: 1, run_id: m[1], finished_at: Date.now(), status: "lost", exit_code: null, stdout: "", stderr: "the runner restarted while this job was in flight", ms: 0 });
+        console.error(`[runner] async run ${m[1]} marked lost (restart while in flight)`);
+      } catch (err) { console.error(`[runner] could not write lost-marker for ${m[1]}:`, err); }
+    }
+    await rm(join(RESULTS_DIR, e), { force: true }).catch(() => {});
+  }
+}
+
+// Results are collected within a few ticks; anything older than the TTL was
+// abandoned (deleted schedule, dead project) — reclaim the disk. NEVER touch
+// .started markers here: with a short TTL and a max-length job the marker can
+// be older than the TTL while its job is STILL RUNNING, and deleting it would
+// make the poll see "unknown" and reap a live run as lost. Boot reconciliation
+// owns marker cleanup.
+async function gcResultFiles() {
+  let entries = [];
+  try { entries = await readdir(RESULTS_DIR); } catch { return; }
+  const now = Date.now();
+  for (const e of entries) {
+    if (e.endsWith(".started.json")) continue;
+    const full = join(RESULTS_DIR, e);
+    try { const st = await stat(full); if (now - st.mtimeMs > RESULT_TTL_MS) await rm(full, { force: true }); } catch { /* raced */ }
+  }
 }
 
 // Serialize runs that share one (lineage, epoch) directory so concurrent jobs
@@ -238,7 +355,11 @@ async function runJob(job) {
   if (!INTERP[language]) return { status: "error", exit_code: null, stdout: "", stderr: `unsupported language: ${language}`, ms: 0 };
   const code = String(job.code || "");
   const manifest = job.manifest || {};
-  const timeoutMs = Math.min(MAX_TIMEOUT_MS, Math.max(1000, Number(manifest.timeout_ms) || 15000));
+  // Async jobs (accepted-then-polled) may run past the sync cap, up to the
+  // operator's async ceiling. Only a real run can be async — mode "verify"
+  // stays on the sync cap whatever the caller claims.
+  const timeoutCap = job.async === true && mode === "run" ? ASYNC_MAX_TIMEOUT_MS : MAX_TIMEOUT_MS;
+  const timeoutMs = Math.min(timeoutCap, Math.max(1000, Number(manifest.timeout_ms) || 15000));
 
   // VERIFY is forced hermetic: no network, no secrets, no durable state.
   const wantsAllowlist = mode === "run" && manifest.network === "allowlist";
@@ -445,19 +566,93 @@ const server = http.createServer(async (req, res) => {
     const path = url.pathname;
     const raw = await readBody(req);
 
-    const auth = verify(req, req.method, path, raw);
+    // The signature covers pathname + query (identical to pathname when there is
+    // no query, so pre-query clients keep verifying): /result?run_id=… must not
+    // be tamperable below the MAC.
+    const auth = verify(req, req.method, url.pathname + url.search, raw);
     if (!auth.ok) return send(res, 401, { ok: false, error: `unauthorized: ${auth.why}` });
 
     if (req.method === "GET" && path === "/health") {
       const sandbox_ok = await healthCanary();
-      return send(res, 200, { ok: true, sandbox_ok, egress_ready: egressReady, runner: "chapter-craft-runner" });
+      return send(res, 200, { ok: true, sandbox_ok, egress_ready: egressReady, async_max_ms: ASYNC_MAX_TIMEOUT_MS, runner: "chapter-craft-runner" });
+    }
+
+    // Poll a previously-accepted async run. Three truthful states:
+    //   done    → the persisted result (survives restarts)
+    //   running → accepted, still executing
+    //   unknown → this runner has no record (never dispatched here, lost before
+    //             the marker was written, or already GC'd past the TTL)
+    if (req.method === "GET" && path === "/result") {
+      const runId = sanitizeUuid(url.searchParams.get("run_id"));
+      if (!runId) return send(res, 400, { ok: false, error: "run_id must be a uuid" });
+      try {
+        const txt = await readFile(resultPath(runId), "utf8");
+        return send(res, 200, { ok: true, done: true, result: JSON.parse(txt) });
+      } catch { /* not finished (or never here) */ }
+      if (existsSync(startedPath(runId))) return send(res, 200, { ok: true, done: false, running: true });
+      return send(res, 200, { ok: true, done: false, unknown: true });
     }
 
     if (req.method === "POST" && path === "/run") {
       let job;
       try { job = JSON.parse(raw.toString() || "{}"); } catch { return send(res, 400, { status: "error", error: "invalid json" }); }
-      const got = await acquire();
-      if (!got) return send(res, 429, { status: "error", error: "runner busy" });
+
+      // ── async accept: validate cheaply, persist a started-marker, respond
+      // immediately, execute in background. The caller supplies the run_id (it
+      // is also its DB row id); we only ever use a sanitized UUID as a filename.
+      if (job.async === true) {
+        if (job.mode === "verify") return send(res, 400, { status: "error", error: "verification cannot run async" });
+        const runId = sanitizeUuid(job.run_id);
+        if (!runId) return send(res, 400, { status: "error", error: "async requires a uuid run_id" });
+        if (!INTERP[String(job.language || "")]) return send(res, 400, { status: "error", error: `unsupported language: ${String(job.language || "")}` });
+        if (job?.manifest?.network === "allowlist" && !egressReady) {
+          return send(res, 200, { status: "error", error: "this runner cannot serve allowlist egress (the egress lockdown self-test did not pass); re-forge the program with network 'none' or fix the runner's egress setup" });
+        }
+        const rd = await ensureResultsDir();
+        if (rd.error) return send(res, 200, { status: "sandbox_unavailable", error: rd.error });
+        // The effective wall-clock this runner will actually grant — echoed so
+        // the scheduler can set an honest deadline and name any operator clamp.
+        const effectiveMs = Math.min(ASYNC_MAX_TIMEOUT_MS, Math.max(1000, Number(job?.manifest?.timeout_ms) || 15000));
+        // Idempotent re-dispatch: if we already know this run_id, don't start it twice.
+        if (existsSync(resultPath(runId)) || existsSync(startedPath(runId))) {
+          return send(res, 200, { status: "accepted", run_id: runId, effective_timeout_ms: effectiveMs, duplicate: true });
+        }
+        // Aggregate disk bound (mirrors the /state discipline): stop accepting
+        // new async work once the results store is at its cap.
+        if (await duBytes(RESULTS_DIR) >= RESULTS_MAX_TOTAL_MB * MB) {
+          return send(res, 429, { status: "busy", error: `the async results store is at its ${RESULTS_MAX_TOTAL_MB}MB cap — collect or GC results, or raise results_max_total_mb` });
+        }
+        if (asyncActive >= asyncLaneMax() || !acquireNoWait()) {
+          return send(res, 429, { status: "busy", error: "runner busy — the async lane is full; retry on a later tick" });
+        }
+        asyncActive++;
+        try {
+          await writeFile(startedPath(runId), JSON.stringify({ run_id: runId, started_at: Date.now() }), "utf8");
+        } catch (e) {
+          asyncActive--; release();
+          return send(res, 200, { status: "sandbox_unavailable", error: `could not persist the run marker: ${String(e?.message || e).slice(0, 200)}` });
+        }
+        void (async () => {
+          let result;
+          try { result = await runJob(job); }
+          catch (e) { result = { status: "error", exit_code: null, stdout: "", stderr: String(e?.message || e).slice(0, 500), ms: 0 }; }
+          try {
+            await writeResultFile(runId, { v: 1, run_id: runId, finished_at: Date.now(), ...result });
+            await rm(startedPath(runId), { force: true }).catch(() => {});
+          } catch (e) {
+            console.error(`[runner] async result write FAILED for ${runId}:`, e);
+          } finally {
+            asyncActive--; release();
+          }
+        })();
+        return send(res, 200, { status: "accepted", run_id: runId, effective_timeout_ms: effectiveMs });
+      }
+
+      // ── sync path. no_wait callers (cron) shed instead of queueing: a queued
+      // wait behind a long job would blow the caller's timeout and be recorded
+      // as a program failure when it was really contention.
+      const got = job.no_wait === true ? acquireNoWait() : await acquire();
+      if (!got) return send(res, 429, { status: "busy", error: "runner busy" });
       try {
         const result = await runJob(job);
         return send(res, 200, result);
@@ -489,6 +684,14 @@ const server = http.createServer(async (req, res) => {
   };
   await revalidateEgress();
   console.log(`[runner] egress allowlist ${egressReady ? "ENABLED" : "DISABLED (network:none only)"}`);
+
+  // Async-run hygiene: settle the truth about anything that was in flight when
+  // the previous process died, then GC expired results periodically.
+  await ensureResultsDir().then((r) => { if (r.error) console.error(`[runner] ${r.error}`); });
+  await reconcileOrphanedAsyncRuns();
+  await gcResultFiles();
+  setInterval(() => { void gcResultFiles(); }, 6 * 3_600_000).unref?.();
+  console.log(`[runner] async runs: cap ${Math.round(ASYNC_MAX_TIMEOUT_MS / 60000)}min, results in ${RESULTS_DIR} (ttl ${Math.round(RESULT_TTL_MS / 3_600_000)}h)`);
   // Re-prove the lockdown continuously: host firewall rules (ufw reload, a manual
   // flush, an incomplete netfilter restore) can drop the iptables constraints
   // WITHOUT restarting this process. Latching egressReady=true at boot would then

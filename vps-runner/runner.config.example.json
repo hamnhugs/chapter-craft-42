@@ -56,7 +56,19 @@
   "_doc_state_max_total_mb": "OPTIONAL (default 4096). SOFT aggregate cap across ALL programs' state, checked BEFORE each run. /state is a bind mount with no hard size limit, so a single runaway run can still exceed this mid-run — keep it comfortably under free disk. Reduces, does not eliminate, the risk of program state filling the box.",
   "state_max_total_mb": 4096,
 
-  "_doc_concurrency": "OPTIONAL (default 3). Max jobs running at once (clamped down at boot by reserve_cores/reserve_ram_frac if the box is too small for that many at the configured ceilings).",
+  "_doc_async_max_timeout_ms": "OPTIONAL (default 3600000 = 1 hour, matching the app's largest schedule allowance; clamped 2..60 min). Hard ceiling on an ASYNC (scheduled long-run) job's wall-clock, whatever the scheduler asks for. Lower it to cap long runs shorter — the accept response echoes the effective value so the app can tell the truth. Sync jobs stay on max_timeout_ms.",
+  "async_max_timeout_ms": 3600000,
+
+  "_doc_results_dir": "OPTIONAL (default /var/lib/chapter-craft-runner/results). Durable 0700 dir holding one JSON result file per async run so a runner restart never loses a finished result; the scheduler collects them via signed GET /result. Must be owned by the runner user.",
+  "results_dir": "/var/lib/chapter-craft-runner/results",
+
+  "_doc_result_ttl_hours": "OPTIONAL (default 48). Async result files older than this are deleted (results are normally collected within minutes).",
+  "result_ttl_hours": 48,
+
+  "_doc_results_max_total_mb": "OPTIONAL (default 1024). Aggregate cap on the async results store, checked before accepting each async job (mirrors state_max_total_mb). Once at the cap the runner returns busy until results are collected or GC'd.",
+  "results_max_total_mb": 1024,
+
+  "_doc_concurrency": "OPTIONAL (default 3). Max jobs running at once (clamped down at boot by reserve_cores/reserve_ram_frac if the box is too small for that many at the configured ceilings). An async long-run job holds one of these slots for its whole runtime; on a multi-slot box at least one slot is always kept free for interactive runs.",
   "concurrency": 3,
 
   "_doc_queue_max": "OPTIONAL (default 10). Max jobs waiting for a slot before new requests get 429.",

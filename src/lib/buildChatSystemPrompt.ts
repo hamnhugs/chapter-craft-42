@@ -868,7 +868,8 @@ export async function buildChatSystemPrompt({
           "Every approved program keeps its own entry in your Toolshed neuron," +
             (has("search_wiki") ? " so `search_wiki` finds one by what it does, and" : " and") +
             " `run_program` runs any approved program by name." +
-            clause(["list_programs"], " `list_programs` shows the full set, drafts included."),
+            clause(["list_programs"], " `list_programs` shows the full set, drafts included.") +
+            " A live `run_program` call is capped around a minute of wall-clock; for longer unattended work, the user can schedule an approved program in Settings → Program Foundry with a bigger runtime allowance (up to an hour) — suggest that instead of promising to run something long right now.",
         );
       }
     }

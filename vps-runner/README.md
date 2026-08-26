@@ -307,6 +307,32 @@ connection failure in stderr — which is still safe; nothing left the box.
 
 ---
 
+## 8. Long unattended runs (async + poll)
+
+A schedule in the app can grant a program a **runtime allowance** past the ~60s
+sync cap (up to `async_max_timeout_ms`, default 1 hour, hard-capped at 1 hour).
+The scheduler then dispatches the job **async**: the runner accepts immediately
+(`{"status":"accepted"}`), executes in the background, and writes the finished
+result to `results_dir` (default `/var/lib/chapter-craft-runner/results`,
+created 0700). Later scheduler ticks collect it via the signed
+`GET /result?run_id=…` endpoint. The runner never calls anyone back — it stays
+inbound-only with the same HMAC keys.
+
+Semantics worth knowing:
+
+- **A restart aborts in-flight async jobs.** On boot the runner force-removes
+  leftover `ccprog_*` containers and converts every dangling started-marker into
+  an honest `lost` result, so the scheduler settles instead of waiting forever.
+  Finished results are files — they survive restarts.
+- **An async job holds a normal concurrency slot** for its whole runtime. With
+  `concurrency` > 1 the async lane is capped at `concurrency - 1`, so one slot
+  always stays free for interactive runs; on a 1-slot box the single slot is
+  shared and interactive runs may see `runner busy` while a long job runs.
+- **Result files expire** after `result_ttl_hours` (default 48h); they are
+  normally collected within a couple of minutes of finishing.
+
+---
+
 ## Operating notes
 
 - **Update the code:** replace the files in `/opt/chapter-craft-runner`, then

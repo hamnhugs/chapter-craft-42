@@ -5,8 +5,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import {
   programsAvailable, listPrograms, disableProgram,
-  listSchedules, setProgramSchedule, pauseProgramSchedule, deleteProgramSchedule, cronHealth,
-  type AgentProgramRow, type ProgramScheduleRow, type CronHealth,
+  listSchedules, setProgramSchedule, pauseProgramSchedule, deleteProgramSchedule, cronHealth, latestCronOutcomes,
+  type AgentProgramRow, type ProgramScheduleRow, type CronHealth, type ProgramRunRow,
 } from "@/lib/programFoundry";
 
 /**
@@ -52,19 +52,50 @@ function presetToArgs(v: string): { everySeconds?: number; dailyAtMinute?: numbe
   return null;
 }
 
+// Long-run allowance: 0 = standard sync run (≤60s). Anything longer is
+// dispatched async and polled by the scheduler until its result lands.
+const RUNTIME_PRESETS: Array<{ label: string; seconds: number }> = [
+  { label: "Standard (≤60s)", seconds: 0 },
+  { label: "Up to 5 min", seconds: 300 },
+  { label: "Up to 15 min", seconds: 900 },
+  { label: "Up to 30 min", seconds: 1800 },
+  { label: "Up to 1 hour", seconds: 3600 },
+];
+
+// A scheduled run's outcome, in plain words. 'ok' is the quiet case; everything
+// else names what happened so a schedule is never just an anonymous fail count.
+const CRON_OUTCOME_LABEL = (r: ProgramRunRow): string => {
+  const at = new Date(r.created_at).toLocaleString();
+  switch (r.status) {
+    case "ok": return `succeeded (${at})`;
+    case "timeout": return `timed out (${at})`;
+    case "oom": return `ran out of memory (${at})`;
+    case "egress_blocked": return `egress blocked (${at})`;
+    case "lost": return `lost — runner restarted mid-run (${at})`;
+    case "skipped": return `skipped — runner busy (${at})`;
+    case "sandbox_unavailable": return `runner unreachable (${at})`;
+    case "pending": return `in progress (${at})`;
+    default: return `failed (${at})`;
+  }
+};
+
 /** Per-program recurrence control. Only shown for an APPROVED program on a
  *  connected runner. Runs happen server-side (program-cron); this only creates
  *  the schedule via owner-scoped RPCs. */
-const ScheduleControl: React.FC<{ program: AgentProgramRow; schedule?: ProgramScheduleRow; onChanged: () => void }> = ({ program, schedule, onChanged }) => {
+const ScheduleControl: React.FC<{ program: AgentProgramRow; schedule?: ProgramScheduleRow; longRuns: boolean; lastCron?: ProgramRunRow; onChanged: () => void }> = ({ program, schedule, longRuns, lastCron, onChanged }) => {
   const [busy, setBusy] = useState(false);
-  const apply = useCallback(async (v: string) => {
+  const apply = useCallback(async (v: string, runtimeS?: number) => {
     setBusy(true);
     try {
       if (!v) {
         if (schedule) { await deleteProgramSchedule(program.id); toast.success("Schedule removed"); }
       } else {
         const a = presetToArgs(v);
-        if (a) { const { next_run_at } = await setProgramSchedule(program.id, a); toast.success(next_run_at ? `Scheduled — next run ${new Date(next_run_at).toLocaleString()}` : "Scheduled"); }
+        if (a) {
+          const maxRuntimeS = runtimeS !== undefined ? (runtimeS || null) : (schedule?.max_runtime_s ?? null);
+          const { next_run_at } = await setProgramSchedule(program.id, { ...a, maxRuntimeS });
+          toast.success(next_run_at ? `Scheduled — next run ${new Date(next_run_at).toLocaleString()}` : "Scheduled");
+        }
       }
       onChanged();
     } catch (e) {
@@ -87,14 +118,40 @@ const ScheduleControl: React.FC<{ program: AgentProgramRow; schedule?: ProgramSc
         className="rounded border border-outline/50 bg-surface px-2 py-1 text-[11px] disabled:opacity-50">
         {SCHEDULE_PRESETS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
+      {schedule && longRuns && (
+        <select
+          value={String(schedule.max_runtime_s ?? 0)}
+          onChange={(e) => apply(scheduleToPreset(schedule), Number(e.target.value))}
+          // Disabled while paused: changing the allowance goes through
+          // set_program_schedule, whose upsert re-enables the schedule and
+          // resets the fail streak — a paused schedule must not silently re-arm
+          // from this dropdown next to the Resume button.
+          disabled={busy || !schedule.enabled}
+          aria-label={`Runtime allowance for ${program.name}`}
+          className="rounded border border-outline/50 bg-surface px-2 py-1 text-[11px] disabled:opacity-50">
+          {RUNTIME_PRESETS
+            // An interval must exceed the allowance by the 5-min headroom the RPC
+            // requires (else it rejects, and a 100%-duty schedule would starve
+            // others). Daily schedules (every_seconds null) accept any allowance.
+            .filter((o) => o.seconds === 0 || schedule.every_seconds == null || o.seconds + 300 <= schedule.every_seconds)
+            .map((o) => <option key={o.seconds} value={String(o.seconds)}>{o.label}</option>)}
+        </select>
+      )}
       {schedule && (
         <>
           <span className="text-[11px] text-on-surface-variant">
-            {schedule.enabled
-              ? `next ${new Date(schedule.next_run_at).toLocaleString()}`
-              : (schedule.paused_reason || "paused")}
+            {schedule.active_run_id
+              ? (schedule.active_run_started_at ? `in flight since ${new Date(schedule.active_run_started_at).toLocaleTimeString()}` : "in flight…")
+              : schedule.enabled
+                ? `next ${new Date(schedule.next_run_at).toLocaleString()}`
+                : (schedule.paused_reason || "paused")}
             {schedule.fail_count > 0 && schedule.enabled ? ` · ${schedule.fail_count} recent fail${schedule.fail_count > 1 ? "s" : ""}` : ""}
           </span>
+          {lastCron && !schedule.active_run_id && (
+            <span className="text-[11px] text-on-surface-variant" title={lastCron.error || undefined}>
+              · last run {CRON_OUTCOME_LABEL(lastCron)}
+            </span>
+          )}
           <button onClick={toggle} disabled={busy}
             className="rounded border border-outline/50 px-2 py-0.5 text-[11px] disabled:opacity-50">
             {schedule.enabled ? "Pause" : "Resume"}
@@ -128,14 +185,18 @@ const ProgramRunnerSettings: React.FC = () => {
   const [schedules, setSchedules] = useState<Map<string, ProgramScheduleRow>>(new Map());
   const [cronOk, setCronOk] = useState<CronHealth | null>(null);
   const [schedulesReady, setSchedulesReady] = useState<boolean | null>(null);
+  const [longRuns, setLongRuns] = useState(false);
+  const [cronRuns, setCronRuns] = useState<Map<string, ProgramRunRow>>(new Map());
   const refresh = useCallback(async () => {
     if (!(await programsAvailable())) return;
     try { setPrograms((await listPrograms()).filter((p) => !p.superseded_by)); } catch { /* ignore */ }
     // Schedules live in the later cron migration; if it isn't applied yet, hide
     // the scheduling UI instead of erroring (schedulesReady=false).
     try {
-      const list = await listSchedules();
-      setSchedules(new Map(list.map((s) => [s.program_id, s])));
+      const { rows, longRuns: lr } = await listSchedules();
+      setSchedules(new Map(rows.map((s) => [s.program_id, s])));
+      setLongRuns(lr);
+      setCronRuns(await latestCronOutcomes(rows.map((s) => s.program_id)));
       setCronOk(await cronHealth());
       setSchedulesReady(true);
     } catch { setSchedulesReady(false); }
@@ -282,7 +343,7 @@ const ProgramRunnerSettings: React.FC = () => {
                 )}
               </div>
               {p.status === "approved" && programRunnerConfigured && schedulesReady === true && (
-                <ScheduleControl program={p} schedule={schedules.get(p.id)} onChanged={refresh} />
+                <ScheduleControl program={p} schedule={schedules.get(p.id)} longRuns={longRuns} lastCron={cronRuns.get(p.id)} onChanged={refresh} />
               )}
             </div>
           ))}

@@ -159,6 +159,13 @@ serve(async (req) => {
           timeout_ms: Number(manifest.timeout_ms) || 15000,
         },
         state_key: stateKey, state_epoch: stateEpoch,
+        // Shed instead of queueing: a scheduled long run can hold the runner's
+        // only slot for up to an hour. Without no_wait the request would park in
+        // the runner's queue, this caller would time out at RUN_TIMEOUT_MS and
+        // report the run failed, and the runner would then execute it anyway
+        // (secrets/egress/state side effects) against a dead socket. no_wait
+        // turns that into an honest, immediate "busy".
+        no_wait: true,
         args: body?.args ?? {},
       }, RUN_TIMEOUT_MS);
     } catch (e) {
@@ -168,6 +175,13 @@ serve(async (req) => {
 
     // Settle the run row (service role; the log has no client write policy).
     const rb = (r.body || {}) as Record<string, unknown>;
+    // A busy runner (a scheduled long run holds the slot) is contention, not a
+    // program failure: record it as skipped and tell the user plainly, without
+    // touching the program's health streak.
+    if (r.status === 429 || rb.status === "busy") {
+      await service.from("program_runs").update({ status: "skipped", error: "runner busy — a scheduled long run is using the sandbox" }).eq("id", runId);
+      return fail("PROGRAM_RUNNER_BUSY", "The runner is busy with a scheduled long run right now — try again in a bit.");
+    }
     const runnerStatus = String(rb.status || (r.status >= 200 && r.status < 300 ? "ok" : "error"));
     const statusMap: Record<string, string> = {
       ok: "ok", error: "error", timeout: "timeout", oom: "oom",

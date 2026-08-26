@@ -11,7 +11,8 @@ retrying variations.
 One self-contained source file in **bash**, **python**, or **node**, executed in
 a fresh, throwaway container on the user's VPS. The container is created for the
 run and destroyed afterward. Nothing carries over between runs except what the
-program prints.
+program prints — unless the program was approved with **persistence**, which
+grants it a durable private `/state` directory (see "Persistent state" below).
 
 | Interpreter | Version | Invoked as |
 |---|---|---|
@@ -24,11 +25,16 @@ no curl, no git, no compiler toolchain.
 
 ## Resource limits (per run)
 
-- **Memory:** 512 MB, no swap. **CPU:** 1 core. **Processes/threads:** 256.
-- **Wall clock:** the manifest's `timeout_ms`, clamped to 1–60 seconds
-  (default 15s). The container is killed shortly after the limit.
+As configured on this runner (2026-08-25):
+
+- **Memory:** 1 GB, no swap (a manifest may request up to 2 GB). **CPU:** 1
+  core. **Processes/threads:** 256 (requestable up to 1024).
+- **Wall clock (interactive):** the manifest's `timeout_ms`, clamped to 1–60
+  seconds (default 15s). The container is killed shortly after the limit.
+  Longer wall-clock exists only on a **user-set schedule** — see "Long
+  unattended runs" below; a live run can never exceed the sync cap.
 - **Open files:** 1024.
-- **Output:** stdout and stderr are each captured up to **128 KB**, then
+- **Output:** stdout and stderr are each captured up to **512 KB**, then
   truncated with `[...truncated]`. Results larger than that must be summarized
   or chunked across runs by design.
 
@@ -44,7 +50,7 @@ no curl, no git, no compiler toolchain.
 
 - **Output** is whatever the program prints to stdout (stderr for
   diagnostics). The exit code matters: `0` is success. There is no other
-  channel — no files survive the run.
+  channel — no files survive the run (except `/state`, for persist programs).
 
 ## Filesystem
 
@@ -54,8 +60,30 @@ no curl, no git, no compiler toolchain.
   **no-execute** — files written there cannot be executed. `/dev/shm` offers
   16 MB more. Use scratch for intermediate data only; results must still be
   printed.
+- **`/state` is durable storage for persist programs only** (see the next
+  section). For everything else it is ephemeral or absent.
 - Consequence: downloading or generating a binary/script and executing it is
   not possible. All logic lives in the one source file.
+
+## Persistent state (`/state`)
+
+A program forged with `persist: true` in its manifest keeps a private, durable
+`/state` directory between runs. Facts that shape how you write one:
+
+- `/state` belongs to the program's **lineage** (all versions of one name share
+  the identity), but each **newly approved version starts with a fresh, empty
+  `/state`** unless the user explicitly chooses to carry the old state forward
+  on the approval card. Never assume prior state exists: treat a missing file
+  as first-run and initialize it.
+- The **verification smoke test always sees an empty, throwaway `/state`** —
+  the first-run path is the verified path.
+- Soft quota ~256 MB per program; store compact working state (counters,
+  cursors, caches, small databases), not bulk archives. Results must still be
+  **printed** — `/state` is memory, not an output channel.
+- Anything written to `/state` is readable by later runs of the same lineage
+  and by the VPS operator. Don't store secret values there.
+- Declare `persist: true` only when the job genuinely needs memory between
+  runs; stateless stays the default and the safer choice.
 
 ## Libraries
 
@@ -73,8 +101,10 @@ no curl, no git, no compiler toolchain.
   and let the user decide — then assume it is present only after they confirm
   the rebuild.
 - **scrapy and other crawling frameworks are intentionally absent**: they assume
-  multi-host crawling, cross-run persistence, and minutes-long runs, none of
-  which this sandbox provides. For fetch-and-parse, use `requests` + `bs4`/`lxml`.
+  crawling arbitrary hosts, and every hostname here needs an explicit operator
+  grant. For fetch-and-parse against granted hosts, use `requests` +
+  `bs4`/`lxml` (with `/state` for cursors and a schedule for recurring pulls,
+  if the task needs them).
 
 ## Network
 
@@ -162,6 +192,24 @@ from the exit code and expected output. Consequences for how you write:
 - Approved programs are permanent, rerunnable capabilities, filed in the
   library for retrieval.
 
+## Long unattended runs (schedules)
+
+- A **live** run is always capped at ~60 seconds. There is no way to start a
+  longer run directly, and promising one is a lie — don't.
+- The **user** can put an approved program on a schedule (Settings → Program
+  Foundry) and grant that schedule a runtime allowance of **up to 1 hour**.
+  Scheduled long runs execute unattended in the background; their results land
+  in the run history a few minutes after they finish, not in live chat.
+- Writing for a long scheduled run is the same discipline as any other program
+  — read `PROGRAM_ARGS` defensively (schedules pass `{}`), print a compact
+  result, exit 0 on success — plus: make progress durable in `/state` if the
+  work is resumable, because a runner restart aborts an in-flight run (it is
+  recorded as `lost`, and the next scheduled slot retries).
+- When a task genuinely needs minutes of wall-clock (large pulls, slow APIs,
+  batch processing), forge the program normally and tell the user what
+  schedule + runtime allowance to set. Suggest splitting work across shorter
+  runs first — it is usually the better design.
+
 ## When the task needs more than the sandbox has
 
 Make one clear, specific request to the user rather than iterating drafts:
@@ -169,17 +217,21 @@ Make one clear, specific request to the user rather than iterating drafts:
 - **New internet destination** → name the exact hostname(s) to grant.
 - **API credential** → name the secret to add on the runner.
 - **Third-party library** → name the package to bake into the sandbox image.
-- **More than 60s / 512MB / 128KB output** → say what the task actually needs;
-  the operator can tune runner limits, or the task can be split across runs.
+- **More than 60s of wall-clock** → ask the user to schedule it with a runtime
+  allowance (up to 1 hour), or split the task across runs.
+- **More memory / output than the limits above** → say what the task actually
+  needs; the operator can tune runner limits.
 
 ## Good fits / poor fits
 
 **Good:** text and data processing, parsing and transformation, statistics,
 generation (names, tables, structured data), format conversion, calling one or
 two granted APIs with stdlib HTTP, self-contained computations that finish in
-seconds and print their result.
+seconds and print their result, recurring scheduled jobs that keep compact
+working state in `/state`.
 
 **Poor:** anything needing heavy third-party frameworks at runtime, crawling
-arbitrary/many hosts (each hostname needs an operator grant), long-running or
-listening processes, work that must persist files, results larger than the
+arbitrary/many hosts (each hostname needs an operator grant), listening
+processes or anything that must outlive its run, bulk file storage (persist
+state is a ~256 MB working set, not an archive), results larger than the
 output cap.

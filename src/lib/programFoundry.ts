@@ -318,8 +318,8 @@ export async function deleteProgramsByName(name: string): Promise<{ deleted: num
 // ── run audit (read-only; program_runs is written server-side) ───────────────
 export interface ProgramRunRow {
   id: string;
-  mode: "run" | "verify";
-  status: "pending" | "ok" | "error" | "killed" | "timeout" | "oom" | "egress_blocked" | "sandbox_unavailable";
+  mode: "run" | "verify" | "cron";
+  status: "pending" | "ok" | "error" | "killed" | "timeout" | "oom" | "egress_blocked" | "sandbox_unavailable" | "skipped" | "lost";
   exit_code: number | null;
   ms: number | null;
   stdout_bytes: number | null;
@@ -339,6 +339,29 @@ export async function recentProgramRuns(programId: string, limit = 5): Promise<P
     .limit(Math.min(20, Math.max(1, limit)));
   if (error) throw error;
   return (data as ProgramRunRow[]) || [];
+}
+
+/** Latest SCHEDULED (cron) outcome per program, for the given program ids. The
+ *  interactive run-history readers filter to mode='run', so without this the
+ *  outcome of every scheduled run — ok, timeout, lost, skipped — is invisible
+ *  to the user; a schedule's only visible signal would be an anonymous fail
+ *  counter. Resolves an empty map (never throws) on a pre-cron DB. */
+export async function latestCronOutcomes(programIds: string[]): Promise<Map<string, ProgramRunRow>> {
+  const out = new Map<string, ProgramRunRow>();
+  if (programIds.length === 0) return out;
+  try {
+    const { data, error } = await (supabase.from("program_runs" as any) as any)
+      .select(RUN_COLUMNS + ", program_id")
+      .in("program_id", programIds)
+      .eq("mode", "cron")
+      .order("created_at", { ascending: false })
+      .limit(500);
+    if (error) return out;
+    for (const r of (data as Array<ProgramRunRow & { program_id: string }>) || []) {
+      if (!out.has(r.program_id)) out.set(r.program_id, r); // first = newest
+    }
+  } catch { /* pre-migration or transient */ }
+  return out;
 }
 
 // ── RPCs ─────────────────────────────────────────────────────────────────────
@@ -390,32 +413,53 @@ export interface ProgramScheduleRow {
   fail_count: number;
   paused_reason: string | null;
   created_at: string;
+  /** Long-run allowance in seconds (null = standard ≤60s sync run). Absent until
+   *  the long-runs migration is applied — see listSchedules().longRuns. */
+  max_runtime_s: number | null;
+  /** The in-flight async run's id, when a long run is currently executing. */
+  active_run_id: string | null;
+  /** When the in-flight async run began (for an honest "in flight since …"). */
+  active_run_started_at: string | null;
 }
 
 const SCHEDULE_COLUMNS =
   "id, program_id, name, every_seconds, daily_at_minute, tz, enabled, next_run_at, last_run_at, fail_count, paused_reason, created_at";
+const SCHEDULE_COLUMNS_LONG = SCHEDULE_COLUMNS + ", max_runtime_s, active_run_id, active_run_started_at";
 
-export async function listSchedules(): Promise<ProgramScheduleRow[]> {
-  const { data, error } = await (supabase.from("program_schedules" as any) as any)
-    .select(SCHEDULE_COLUMNS)
-    .order("created_at", { ascending: false })
-    .limit(100);
-  if (error) throw error;
-  return (data as ProgramScheduleRow[]) || [];
+/** First-read-is-the-probe (house pattern): try the long-runs columns; ONLY when
+ *  the migration isn't applied yet (missing-schema error) fall back to the base
+ *  set and report longRuns=false. Any OTHER error rethrows — a transient failure
+ *  must not masquerade as "no long-runs support", which would hide a real
+ *  allowance and let the next recurrence edit silently wipe it. */
+export async function listSchedules(): Promise<{ rows: ProgramScheduleRow[]; longRuns: boolean }> {
+  const q = (cols: string) => (supabase.from("program_schedules" as any) as any)
+    .select(cols).order("created_at", { ascending: false }).limit(100);
+  const { data, error } = await q(SCHEDULE_COLUMNS_LONG);
+  if (!error) return { rows: (data as ProgramScheduleRow[]) || [], longRuns: true };
+  if (!isMissingSchema(error)) throw error;
+  const { data: base, error: baseErr } = await q(SCHEDULE_COLUMNS);
+  if (baseErr) throw baseErr;
+  const rows = ((base as any[]) || []).map((r) => ({ ...r, max_runtime_s: null, active_run_id: null, active_run_started_at: null })) as ProgramScheduleRow[];
+  return { rows, longRuns: false };
 }
 
 /** Create or replace the schedule for a program. Pass EITHER everySeconds
- *  (300..604800) OR dailyAtMinute (0..1439, minutes past midnight in `tz`). */
+ *  (300..604800) OR dailyAtMinute (0..1439, minutes past midnight in `tz`).
+ *  maxRuntimeS (120..3600) grants a long unattended allowance — the run is
+ *  dispatched async and polled by the scheduler. Only sent when set, so the
+ *  call still matches the pre-long-runs RPC signature on an older database. */
 export async function setProgramSchedule(
   programId: string,
-  opts: { everySeconds?: number; dailyAtMinute?: number; tz?: string },
+  opts: { everySeconds?: number; dailyAtMinute?: number; tz?: string; maxRuntimeS?: number | null },
 ): Promise<{ next_run_at: string }> {
-  const { data, error } = await (supabase.rpc as any)("set_program_schedule", {
+  const args: Record<string, unknown> = {
     p_program_id: programId,
     p_every_seconds: opts.everySeconds ?? null,
     p_daily_at_minute: opts.dailyAtMinute ?? null,
     p_tz: opts.tz ?? "UTC",
-  });
+  };
+  if (opts.maxRuntimeS != null) args.p_max_runtime_s = opts.maxRuntimeS;
+  const { data, error } = await (supabase.rpc as any)("set_program_schedule", args);
   if (error) throw error;
   return { next_run_at: String((data as any)?.next_run_at ?? "") };
 }

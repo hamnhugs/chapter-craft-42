@@ -501,7 +501,37 @@ Note (verdict persistence-exfil-escape fix 4): wherever docs say "noexec ⇒ nev
 
 ---
 
-## 9. Deferred, DESIGNED, not shipped: long unattended runs (`program-report`)
+## 9. Long unattended runs — SHIPPED 2026-08-25 as a POLL design (supersedes the report-back sketch below)
+
+> **AMENDMENT (2026-08-25, user-directed):** long runs shipped with a **poll**
+> design instead of the report-back sketched below, keeping the runner strictly
+> INBOUND-ONLY — no new outbound path from the runner, no Supabase URL in the job
+> payload, no new inbound edge fn. What shipped (migration
+> `20260827000000_program_long_runs.sql`, `program-cron`, `vps-runner/server.mjs`):
+>
+> - The allowance lives on the SCHEDULE (`program_schedules.max_runtime_s`,
+>   120..3600s, owner-only `set_program_schedule`) — the manifest and its
+>   approval fingerprint are untouched, and a program still cannot self-schedule
+>   or self-extend.
+> - `program-cron` dispatches a long job with `async:true` + the run row's id;
+>   the runner validates, persists a started-marker, replies `accepted`
+>   immediately, executes in background, and writes the result atomically to a
+>   durable results dir. Later ticks poll signed `GET /result?run_id` (the HMAC
+>   now covers the query string) and settle.
+> - Single-flight hands off from the claim lease to an `active_run_id` marker
+>   via `begin_async_program_run` (CAS, lease-token-guarded, marker set BEFORE
+>   the wire call so an accepted job can never be untracked);
+>   `claim_due_schedules` refuses rows with a marker; `settle_async_program_run`
+>   / `abort_async_program_run` are CAS on the exact run id (single winner;
+>   abort = deferral, no fail-count).
+> - Loss is typed, never silent: runner restart mid-flight → boot reconciliation
+>   kills orphan `ccprog_*` containers and writes `lost` results; `unknown` polls
+>   settle lost only after a 3-min settling window (dispatch race); a run past
+>   deadline + 1h grace is reaped `lost`. `program_runs.status` gains `'lost'`.
+> - Busy runners defer (429/`busy` → release/abort, cron sync dispatches send
+>   `no_wait`), fixing the pre-existing miscount of contention as failure.
+
+### 9-orig. The earlier report-back sketch (NOT built; kept for the record)
 
 To lift cron wall-clock past `CRON_SYNC_MAX_MS`, the ONLY safe path (invariant #4 preserved) is async
 report-back: `program-cron` dispatches fire-and-forget with a `run_id`; when the job finishes the RUNNER
