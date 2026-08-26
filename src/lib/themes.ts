@@ -1,7 +1,7 @@
 // Theme registry. Each theme defines HSL token overrides applied to :root
 // via the ThemeProvider, plus optional fonts loaded from Google Fonts.
 
-export type ThemeId = "dexters-lab" | "fruit-stripe" | "aurora";
+export type ThemeId = "dexters-lab" | "fruit-stripe" | "aurora" | "desolate-lab";
 
 export interface ThemeDef {
   id: ThemeId;
@@ -12,6 +12,7 @@ export interface ThemeDef {
     headline: string; // CSS font-family value (UI headings)
     body: string;
     display?: string; // optional wordmark/hero font; falls back to headline
+    label?: string; // optional label/mono font; falls back to body
     googleFontsHref?: string; // <link href=...> to load
   };
   // HSL strings (e.g. "38 100% 83%") for CSS variables
@@ -183,6 +184,85 @@ export const THEMES: ThemeDef[] = [
       "--viewer-bg": "230 35% 7%",
       "--toolbar-bg": "230 30% 9%",
       "--book-spine": "340 85% 70%",
+    },
+  },
+  {
+    id: "desolate-lab",
+    name: "Desolate Lab",
+    description: "Isolated terminal — light-absorbing blacks, technical grays, one signal red.",
+    swatch: ["#131313", "#e5e2e1", "#b0564a"],
+    fonts: {
+      headline: "'Space Grotesk', system-ui, sans-serif",
+      body: "'Space Grotesk', system-ui, sans-serif",
+      display: "'Space Grotesk', system-ui, sans-serif",
+      label: "'JetBrains Mono', ui-monospace, monospace",
+      googleFontsHref:
+        "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap",
+    },
+    tokens: {
+      // Base charcoal #131313
+      "--background": "0 0% 7%",
+      // On-surface #e5e2e1
+      "--foreground": "20 7% 89%",
+      // Panel #1c1b1b (surface-container-low)
+      "--card": "0 3% 11%",
+      "--card-foreground": "20 7% 89%",
+      "--popover": "0 0% 5%",
+      "--popover-foreground": "20 7% 89%",
+      // Primary: pure white — reserved for critical text & high-impact triggers
+      "--primary": "0 0% 100%",
+      "--primary-foreground": "180 5% 11%",
+      // Secondary container #494949 → dark steel for the app
+      "--secondary": "0 0% 16%",
+      "--secondary-foreground": "20 7% 89%",
+      "--muted": "0 3% 11%",
+      // Outline #8e9192
+      "--muted-foreground": "195 2% 56%",
+      // Signal red (CRITICAL_DEPLETION) — the only hue in the facility
+      "--accent": "8 40% 49%",
+      "--accent-foreground": "0 0% 100%",
+      // Error #ffb4ab
+      "--destructive": "4 100% 84%",
+      "--destructive-foreground": "357 100% 21%",
+      // 1px structural borders #2a2a2a
+      "--border": "0 0% 16%",
+      "--input": "0 3% 11%",
+      // Focus ring: white
+      "--ring": "0 0% 100%",
+      // Sharp: every corner in the lab is 0px
+      "--radius": "0rem",
+      "--surface-container-lowest": "0 0% 5%",
+      "--surface-container-low": "0 3% 11%",
+      "--surface-container": "0 2% 12%",
+      "--surface-container-high": "0 0% 16%",
+      "--surface-container-highest": "60 2% 21%",
+      "--outline": "195 2% 56%",
+      // Outline-variant #444748
+      "--outline-variant": "210 3% 27%",
+      "--on-surface-variant": "210 4% 78%",
+      "--primary-container": "0 0% 89%",
+      "--on-primary-container": "180 5% 11%",
+      // Secondary container #494949 / on #b9b8b8
+      "--secondary-container": "0 0% 29%",
+      "--on-secondary-container": "0 0% 73%",
+      // Error container #93000a / on #ffdad6
+      "--error-container": "353 100% 29%",
+      "--on-error-container": "5 100% 92%",
+      "--tertiary": "0 0% 100%",
+      "--tertiary-container": "20 7% 89%",
+      "--primary-fixed-dim": "240 1% 78%",
+      "--viewer-bg": "0 0% 7%",
+      "--toolbar-bg": "0 0% 5%",
+      "--book-spine": "195 2% 56%",
+      // Sidebar rail — same tonal ladder
+      "--sidebar-background": "0 0% 5%",
+      "--sidebar-foreground": "20 7% 89%",
+      "--sidebar-primary": "0 0% 100%",
+      "--sidebar-primary-foreground": "180 5% 11%",
+      "--sidebar-accent": "0 0% 16%",
+      "--sidebar-accent-foreground": "20 7% 89%",
+      "--sidebar-border": "0 0% 16%",
+      "--sidebar-ring": "0 0% 100%",
     },
   },
 ];

@@ -10,6 +10,8 @@
     --font-headline: 'Space Grotesk', system-ui, sans-serif;
     --font-body: 'Space Grotesk', system-ui, sans-serif;
     --font-display: 'Space Grotesk', system-ui, sans-serif;
+    --font-label: 'Space Grotesk', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
     --background: 265 61% 11%;
 
     --foreground: 270 100% 93%;
@@ -989,4 +991,115 @@ html.cc-media-overlay-open .message-bubble-user {
   transform: none !important;
   will-change: auto !important;
   contain: none !important;
+}
+
+/* ============================================================
+   DESOLATE LAB — industrial minimalism / isolated terminal.
+   Sharp corners, no shadows, tonal layering, CRT glass overlay.
+   ============================================================ */
+
+/* Sharp shape language: every element 0px radius (square pips per spec) */
+[data-theme="desolate-lab"] *,
+[data-theme="desolate-lab"] *::before,
+[data-theme="desolate-lab"] *::after {
+  border-radius: 0 !important;
+}
+
+/* Shadows are strictly prohibited — hierarchy via tonal layers + borders */
+[data-theme="desolate-lab"] * {
+  box-shadow: none !important;
+}
+
+/* Selection — white on the void */
+[data-theme="desolate-lab"] ::selection {
+  background: hsl(0 0% 100%);
+  color: hsl(180 5% 11%);
+}
+
+/* Focus — 1px white rule, no glow */
+[data-theme="desolate-lab"] *:focus-visible {
+  outline: 1px solid hsl(0 0% 100%) !important;
+  outline-offset: 2px;
+}
+
+/* Terminal chrome: buttons, tabs, menu items speak in mono uppercase */
+[data-theme="desolate-lab"] button,
+[data-theme="desolate-lab"] [role="tab"],
+[data-theme="desolate-lab"] [role="menuitem"],
+[data-theme="desolate-lab"] [role="option"],
+[data-theme="desolate-lab"] label,
+[data-theme="desolate-lab"] .font-label {
+  font-family: var(--font-label);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* Headlines — tight, dense, industrial */
+[data-theme="desolate-lab"] h1,
+[data-theme="desolate-lab"] h2,
+[data-theme="desolate-lab"] h3 {
+  letter-spacing: -0.03em;
+}
+
+/* Inputs — thin-stroke boxes, mono entry */
+[data-theme="desolate-lab"] input,
+[data-theme="desolate-lab"] textarea,
+[data-theme="desolate-lab"] select {
+  border: 1px solid hsl(var(--outline-variant)) !important;
+  background: hsl(var(--surface-container-lowest));
+  caret-color: hsl(0 0% 100%);
+}
+
+/* Ultra-thin, non-rounded scrollbars — a gray line against the dark */
+[data-theme="desolate-lab"] ::-webkit-scrollbar { width: 6px; height: 6px; }
+[data-theme="desolate-lab"] ::-webkit-scrollbar-track { background: transparent; }
+[data-theme="desolate-lab"] ::-webkit-scrollbar-thumb {
+  background: hsl(210 3% 27%);
+  border-radius: 0;
+}
+[data-theme="desolate-lab"] ::-webkit-scrollbar-thumb:hover { background: hsl(195 2% 56%); }
+
+/* CRT glass: scanlines + vignette + a lone pulsing signal at center */
+[data-theme="desolate-lab"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.22) 0px,
+    rgba(0, 0, 0, 0.22) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  opacity: 0.35;
+}
+[data-theme="desolate-lab"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 70% 60% at 50% 45%, rgba(60, 90, 120, 0.10) 0%, transparent 60%),
+    radial-gradient(ellipse 120% 100% at 50% 50%, transparent 55%, rgba(0, 0, 0, 0.55) 100%);
+  animation: desolate-signal 8s ease-in-out infinite;
+}
+@keyframes desolate-signal {
+  0%, 100% { opacity: 0.85; }
+  50% { opacity: 1; }
+}
+
+/* Honour reduced-motion: freeze the signal pulse */
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="desolate-lab"] body::after { animation: none !important; }
+}
+
+/* Desolate Lab dialogs/overlays — heavy black glass, 1px structural border */
+[data-theme="desolate-lab"] [role="dialog"],
+[data-theme="desolate-lab"] [role="menu"],
+[data-theme="desolate-lab"] [data-radix-popper-content-wrapper] > * {
+  border: 1px solid hsl(210 3% 27%) !important;
+  background: hsl(0 0% 5%) !important;
 }

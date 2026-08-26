@@ -17,7 +17,8 @@ export default {
         headline: ['var(--font-headline)', '"Space Grotesk"', 'system-ui', 'sans-serif'],
         display: ['var(--font-display)', 'var(--font-headline)', '"Space Grotesk"', 'system-ui', 'sans-serif'],
         body: ['var(--font-body)', 'Inter', 'system-ui', 'sans-serif'],
-        label: ['var(--font-body)', 'Inter', 'system-ui', 'sans-serif'],
+        label: ['var(--font-label)', 'var(--font-body)', 'Inter', 'system-ui', 'sans-serif'],
+        mono: ['var(--font-mono)', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       colors: {
         border: "hsl(var(--border))",
