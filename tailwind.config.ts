@@ -14,8 +14,8 @@ export default {
     },
     extend: {
       fontFamily: {
-        headline: ['var(--font-headline)', '"Newsreader"', 'Georgia', 'serif'],
-        display: ['var(--font-display)', 'var(--font-headline)', '"Newsreader"', 'Georgia', 'serif'],
+        headline: ['var(--font-headline)', '"Space Grotesk"', 'system-ui', 'sans-serif'],
+        display: ['var(--font-display)', 'var(--font-headline)', '"Space Grotesk"', 'system-ui', 'sans-serif'],
         body: ['var(--font-body)', 'Inter', 'system-ui', 'sans-serif'],
         label: ['var(--font-body)', 'Inter', 'system-ui', 'sans-serif'],
       },

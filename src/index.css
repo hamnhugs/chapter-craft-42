@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;0,6..72,800;1,6..72,400;1,6..72,600;1,6..72,700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
 
 @tailwind base;
@@ -7,71 +7,71 @@
 
 @layer base {
   :root {
-    --font-headline: 'Newsreader', Georgia, serif;
-    --font-body: 'Inter', system-ui, sans-serif;
-    --font-display: 'Newsreader', Georgia, serif;
-    --background: 0 0% 7.5%;
+    --font-headline: 'Space Grotesk', system-ui, sans-serif;
+    --font-body: 'Space Grotesk', system-ui, sans-serif;
+    --font-display: 'Space Grotesk', system-ui, sans-serif;
+    --background: 265 61% 11%;
 
-    --foreground: 20 4% 89%;
+    --foreground: 270 100% 93%;
 
-    --card: 0 0% 16.5%;
-    --card-foreground: 20 4% 89%;
+    --card: 265 42% 16%;
+    --card-foreground: 270 100% 93%;
 
-    --popover: 0 0% 12.5%;
-    --popover-foreground: 20 4% 89%;
+    --popover: 265 51% 13%;
+    --popover-foreground: 270 100% 93%;
 
-    --primary: 38 100% 83%;
-    --primary-foreground: 30 100% 13%;
+    --primary: 286 100% 85%;
+    --primary-foreground: 284 100% 22%;
 
-    --secondary: 58 22% 71%;
-    --secondary-foreground: 60 33% 8%;
+    --secondary: 186 100% 91%;
+    --secondary-foreground: 265 61% 11%;
 
-    --muted: 0 0% 16.5%;
-    --muted-foreground: 36 18% 67%;
+    --muted: 265 35% 18%;
+    --muted-foreground: 291 18% 80%;
 
-    --accent: 43 100% 50%;
-    --accent-foreground: 30 100% 13%;
+    --accent: 331 100% 45%;
+    --accent-foreground: 0 0% 100%;
 
-    --destructive: 6 75% 84%;
-    --destructive-foreground: 0 100% 2%;
+    --destructive: 5 100% 84%;
+    --destructive-foreground: 356 100% 21%;
 
-    --border: 30 15% 20%;
-    --input: 0 0% 16.5%;
-    --ring: 43 100% 50%;
+    --border: 265 73% 9%;
+    --input: 265 42% 16%;
+    --ring: 184 100% 49%;
 
     --radius: 0.75rem;
 
-    --sidebar-background: 0 0% 11%;
-    --sidebar-foreground: 20 4% 89%;
-    --sidebar-primary: 43 100% 50%;
-    --sidebar-primary-foreground: 30 100% 13%;
-    --sidebar-accent: 60 13% 16%;
-    --sidebar-accent-foreground: 20 4% 89%;
-    --sidebar-border: 30 15% 20%;
-    --sidebar-ring: 43 100% 50%;
+    --sidebar-background: 265 51% 13%;
+    --sidebar-foreground: 270 100% 93%;
+    --sidebar-primary: 284 100% 50%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 265 42% 16%;
+    --sidebar-accent-foreground: 270 100% 93%;
+    --sidebar-border: 265 73% 9%;
+    --sidebar-ring: 184 100% 49%;
 
-    --viewer-bg: 0 0% 7.5%;
-    --toolbar-bg: 0 0% 11%;
-    --book-spine: 43 100% 50%;
+    --viewer-bg: 265 61% 11%;
+    --toolbar-bg: 265 73% 9%;
+    --book-spine: 284 100% 50%;
 
     /* M3 surface tokens */
-    --surface-container-lowest: 0 0% 5.5%;
-    --surface-container-low: 0 0% 11%;
-    --surface-container: 0 0% 12.5%;
-    --surface-container-high: 0 0% 16.5%;
-    --surface-container-highest: 0 0% 20.8%;
-    --outline: 30 15% 54%;
-    --outline-variant: 30 20% 25.5%;
-    --on-surface-variant: 36 18% 74%;
-    --primary-container: 43 100% 50%;
-    --on-primary-container: 30 100% 21.5%;
-    --secondary-container: 60 29% 16.5%;
-    --on-secondary-container: 58 20% 73.5%;
-    --error-container: 0 100% 29%;
-    --on-error-container: 6 100% 91%;
-    --tertiary: 192 100% 85%;
-    --tertiary-container: 189 100% 50%;
-    --primary-fixed-dim: 43 97% 49%;
+    --surface-container-lowest: 265 73% 9%;
+    --surface-container-low: 266 45% 15%;
+    --surface-container: 265 42% 16%;
+    --surface-container-high: 264 35% 21%;
+    --surface-container-highest: 263 28% 25%;
+    --outline: 292 9% 59%;
+    --outline-variant: 289 13% 30%;
+    --on-surface-variant: 291 18% 80%;
+    --primary-container: 284 100% 50%;
+    --on-primary-container: 0 0% 100%;
+    --secondary-container: 265 35% 18%;
+    --on-secondary-container: 186 100% 91%;
+    --error-container: 356 100% 29%;
+    --on-error-container: 5 100% 91%;
+    --tertiary: 286 100% 85%;
+    --tertiary-container: 284 100% 50%;
+    --primary-fixed-dim: 284 100% 50%;
   }
 
   .dark {
