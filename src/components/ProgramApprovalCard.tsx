@@ -44,12 +44,18 @@ const verdictLabel = (v?: ProgramProposal["verifier"]) => {
 const ProgramApprovalCard: React.FC<{ proposal: ProgramProposal }> = ({ proposal }) => {
   const [state, setState] = useState<"pending" | "approving" | "approved" | "rejected">("pending");
   const [showCode, setShowCode] = useState(false);
+  const [carryState, setCarryState] = useState(false);
   const { chatToolPermissions, setChatToolPermission, loaded: settingsLoaded } = useChatSettings();
   const runOn = chatToolPermissions?.[RUN_PROGRAM] === true;
 
   const secrets = proposal.manifest?.secrets || [];
   const exfilRisk = proposal.exfilRisk === true || (secrets.length > 0 && proposal.manifest?.network === "allowlist");
   const v = verdictLabel(proposal.verifier);
+  // A NEW version of a persist lineage starts with a FRESH /state unless the
+  // user explicitly carries the previous version's state forward (it may hold
+  // anything the old code wrote, including secret material). v1 has no prior
+  // state, so the choice only exists from v2 on.
+  const carryChoice = proposal.manifest?.persist === true && proposal.version > 1;
 
   const onApprove = async () => {
     setState("approving");
@@ -58,7 +64,7 @@ const ProgramApprovalCard: React.FC<{ proposal: ProgramProposal }> = ({ proposal
       if (proposal.fingerprint && fp !== proposal.fingerprint) {
         throw new Error("The program changed since this card was shown — review it again in Settings → Program Foundry.");
       }
-      await approveProgram(proposal.program_id, fp);
+      await approveProgram(proposal.program_id, fp, carryChoice && carryState ? "carry" : undefined);
       setState("approved");
 
       // Approval has succeeded on the server. Everything below is best-effort and
@@ -120,6 +126,15 @@ const ProgramApprovalCard: React.FC<{ proposal: ProgramProposal }> = ({ proposal
         <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-2 text-[11px] text-on-surface">
           ⚠ This program has BOTH secrets and network access. It could send a secret out to an allowed host. Approve only if you trust the exact code below.
         </div>
+      )}
+      {carryChoice && state === "pending" && (
+        <label className="flex items-start gap-2 text-[11px] text-on-surface-variant cursor-pointer">
+          <input type="checkbox" checked={carryState} onChange={(e) => setCarryState(e.target.checked)} className="mt-0.5" />
+          <span>
+            Carry the previous version's stored state forward. Off (default) = this version starts with an empty /state;
+            on = it inherits everything the old code wrote there.
+          </span>
+        </label>
       )}
       <div className="text-xs text-on-surface-variant">
         <span className="font-semibold text-foreground">Checks: </span>
