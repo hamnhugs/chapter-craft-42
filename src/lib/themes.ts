@@ -1,7 +1,7 @@
 // Theme registry. Each theme defines HSL token overrides applied to :root
 // via the ThemeProvider, plus optional fonts loaded from Google Fonts.
 
-export type ThemeId = "amber-editorial" | "dexters-lab" | "fruit-stripe" | "aurora";
+export type ThemeId = "dexters-lab" | "fruit-stripe" | "aurora";
 
 export interface ThemeDef {
   id: ThemeId;
@@ -19,52 +19,6 @@ export interface ThemeDef {
 }
 
 export const THEMES: ThemeDef[] = [
-  {
-    id: "amber-editorial",
-    name: "Amber Editorial",
-    description: "Warm cream & amber on charcoal. Default reading aesthetic.",
-    swatch: ["#131313", "#ffe2ab", "#ffb800"],
-    fonts: {
-      headline: "'Newsreader', Georgia, serif",
-      body: "'Inter', system-ui, sans-serif",
-      googleFontsHref:
-        "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;0,6..72,800;1,6..72,400;1,6..72,600;1,6..72,700&display=swap",
-    },
-    tokens: {
-      "--background": "0 0% 7.5%",
-      "--foreground": "20 4% 89%",
-      "--card": "0 0% 16.5%",
-      "--card-foreground": "20 4% 89%",
-      "--popover": "0 0% 12.5%",
-      "--popover-foreground": "20 4% 89%",
-      "--primary": "38 100% 83%",
-      "--primary-foreground": "30 100% 13%",
-      "--secondary": "58 22% 71%",
-      "--secondary-foreground": "60 33% 8%",
-      "--muted": "0 0% 16.5%",
-      "--muted-foreground": "36 18% 67%",
-      "--accent": "43 100% 50%",
-      "--accent-foreground": "30 100% 13%",
-      "--destructive": "6 75% 84%",
-      "--destructive-foreground": "0 100% 2%",
-      "--border": "30 15% 20%",
-      "--input": "0 0% 16.5%",
-      "--ring": "43 100% 50%",
-      "--surface-container-lowest": "0 0% 5.5%",
-      "--surface-container-low": "0 0% 11%",
-      "--surface-container": "0 0% 12.5%",
-      "--surface-container-high": "0 0% 16.5%",
-      "--surface-container-highest": "0 0% 20.8%",
-      "--outline": "30 15% 54%",
-      "--outline-variant": "30 20% 25.5%",
-      "--on-surface-variant": "36 18% 74%",
-      "--primary-container": "43 100% 50%",
-      "--on-primary-container": "30 100% 21.5%",
-      "--viewer-bg": "0 0% 7.5%",
-      "--toolbar-bg": "0 0% 11%",
-      "--book-spine": "43 100% 50%",
-    },
-  },
   {
     id: "dexters-lab",
     name: "Dexter's Laboratory",
@@ -233,7 +187,7 @@ export const THEMES: ThemeDef[] = [
   },
 ];
 
-export const DEFAULT_THEME: ThemeId = "amber-editorial";
+export const DEFAULT_THEME: ThemeId = "dexters-lab";
 
 export function getTheme(id: ThemeId): ThemeDef {
   return THEMES.find((t) => t.id === id) ?? THEMES[0];
