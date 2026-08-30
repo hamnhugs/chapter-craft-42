@@ -51,6 +51,9 @@ interface AppState {
   loadChapterText: (chapterId: string) => Promise<string>;
   /** Fetch every chapter's text for one book on demand. */
   loadBookChapterText: (bookId: string) => Promise<void>;
+  /** Patch freshly generated chapter gists into library state (catalog mode).
+   *  DB writes happen in chapterGists.ts; this only mirrors them locally. */
+  applyChapterGists: (gistById: Record<string, string>) => void;
 
   refreshWikis: () => Promise<void>;
   setActiveWiki: (wikiId: string) => Promise<void>;
@@ -312,14 +315,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // Chapters and shelf membership load concurrently and patch state
       // INDEPENDENTLY — they touch disjoint fields, and gating one behind
       // the other would delay whichever resolves first for no reason.
-      void fetchAllRows((from, to) =>
-        supabase
-          .from("chapters")
-          .select("id, book_id, name, start_page, end_page, created_at")
-          .eq("user_id", user.id)
-          .order("created_at", { ascending: true })
-          .range(from, to)
-      ).then((chapterRows) => {
+      // First read IS the probe (house law — no HEAD probes): ask for the
+      // gist column; a 42703 means the Stage-1 catalog migration isn't
+      // applied yet, so retry without it and this session runs a gistless
+      // catalog. Any other error keeps the existing degradation (books stay,
+      // chapters are an enhancement).
+      const loadChapterRows = async () => {
+        const withGist = await fetchAllRows((from, to) =>
+          supabase
+            .from("chapters")
+            .select("id, book_id, name, start_page, end_page, created_at, gist")
+            .eq("user_id", user.id)
+            .order("created_at", { ascending: true })
+            .range(from, to)
+        );
+        if (!withGist.error || (withGist.error as any)?.code !== "42703") return withGist;
+        return fetchAllRows((from, to) =>
+          supabase
+            .from("chapters")
+            .select("id, book_id, name, start_page, end_page, created_at")
+            .eq("user_id", user.id)
+            .order("created_at", { ascending: true })
+            .range(from, to)
+        );
+      };
+      void loadChapterRows().then((chapterRows) => {
         if (cancelled) return;
 
         if (chapterRows.error) {
@@ -336,6 +356,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             startPage: chapter.start_page,
             endPage: chapter.end_page,
             textContent: "",
+            gist: chapter.gist ?? null,
           });
           return acc;
         }, {});
@@ -377,18 +398,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         { event: "INSERT", schema: "public", table: "books", filter: `user_id=eq.${user.id}` },
         async (payload) => {
           const b: any = payload.new;
-          const { data: chapterRows } = await supabase
+          // Same first-read-is-the-probe fallback as the startup load.
+          // "gist" is cast until Lovable's applied migration regenerates
+          // types.ts — same convention as every other pre-apply column.
+          let chapterRows: any[] | null = null;
+          let chErr: any = null;
+          ({ data: chapterRows, error: chErr } = (await supabase
             .from("chapters")
-            .select("id, name, start_page, end_page")
+            .select("id, name, start_page, end_page, gist" as any)
             .eq("book_id", b.id)
             .eq("user_id", b.user_id)
-            .order("created_at", { ascending: true });
+            .order("created_at", { ascending: true })) as any);
+          if (chErr && chErr.code === "42703") {
+            ({ data: chapterRows } = (await supabase
+              .from("chapters")
+              .select("id, name, start_page, end_page")
+              .eq("book_id", b.id)
+              .eq("user_id", b.user_id)
+              .order("created_at", { ascending: true })) as any);
+          }
           const chapters: Chapter[] = (chapterRows || []).map((c: any) => ({
             id: c.id,
             name: c.name,
             startPage: c.start_page,
             endPage: c.end_page,
             textContent: "",
+            gist: c.gist ?? null,
           }));
 
           setBooks((prev) => {
@@ -903,6 +938,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [user, books]);
 
 
+  /** Mirror freshly written gists into state so the catalog updates without a
+   *  reload. Touches only the named chapter ids; everything else is untouched. */
+  const applyChapterGists = useCallback((gistById: Record<string, string>) => {
+    setBooks((prev) =>
+      prev.map((b) =>
+        b.chapters.some((c) => gistById[c.id] !== undefined)
+          ? { ...b, chapters: b.chapters.map((c) => (gistById[c.id] !== undefined ? { ...c, gist: gistById[c.id] } : c)) }
+          : b
+      )
+    );
+  }, []);
+
   const activeWiki = wikis.find((w) => w.id === activeWikiId);
   const activeWikis = activeWikiIds
     .map((id) => wikis.find((w) => w.id === id))
@@ -929,6 +976,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setActiveTab: navigateTab,
         addChapter,
         updateChapter,
+        applyChapterGists,
         removeChapter,
         updateBookTitle,
         updateBookTags,

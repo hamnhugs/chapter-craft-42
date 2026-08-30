@@ -4,6 +4,11 @@ export interface Chapter {
   startPage: number;
   endPage: number;
   textContent: string;
+  /** One-line model-generated summary (catalog mode). Untrusted text —
+   *  every prompt/tool door sanitizes it on read. Absent until the user
+   *  generates the book's catalog (and until the gist migration is applied,
+   *  which every reader feature-detects). */
+  gist?: string | null;
 }
 
 export interface BookDocument {

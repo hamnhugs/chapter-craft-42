@@ -31,6 +31,7 @@ import { buildFocusBlock, type UsedFocusItem } from "@/lib/chatFocus";
 import {
   bookContextStore, selectContextBooks, hydrateBooksForContext,
   buildBookContextBlock, bookContextCharBudget, type UsedBookContext,
+  type BookContextMode,
 } from "@/lib/chatBooks";
 import { toast } from "sonner";
 import { isEmbeddingModel, isBatchOnlyModel } from "@/lib/utils";
@@ -1232,7 +1233,17 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // appear, deleted ones drop). Hydration happens HERE, below the
       // pre-flight gates, so an error turn never pays for whole-book fetches.
       bookContextStore.init(userIdRef.current);
-      let contextBooks = selectContextBooks(books, bookContextStore.get(), activeBookId ?? null);
+      const bookSelection = bookContextStore.get();
+      let contextBooks = selectContextBooks(books, bookSelection, activeBookId ?? null);
+      // Catalog mode rides on the persisted selection (Card Catalog Stage 1).
+      // A model that can NEVER call tools gets full text regardless — a
+      // catalog is a map to text it has no way to fetch, and its footer's
+      // "read the chapter" framing would be an unactionable instruction
+      // (review-confirmed). This is the PERMANENT gate only: a transient
+      // image-turn tool drop keeps the catalog — its bytes stay stable, its
+      // wording claims no fetch capability, and the tools return next turn.
+      let bookCtxMode: BookContextMode =
+        bookSelection.mode === "catalog" && providerSupportsTools ? "catalog" : "full";
       // FALLBACK, not a default: with no shelf/book selection the active book
       // normally stays OUT of context — the model reads it on demand with
       // `get_chapter_text` (Stage 0 removed the inline Chapter Contents that
@@ -1244,7 +1255,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // the one path that still gets text to a model that cannot ask for it.
       if (contextBooks.length === 0 && activeBookId && !offeredNames.has("get_chapter_text")) {
         const active = books.find((b) => b.id === activeBookId);
-        if (active) contextBooks = [active];
+        if (active) {
+          contextBooks = [active];
+          bookCtxMode = "full";
+        }
       }
       // The turn's AbortController exists BEFORE hydration, and the fetches
       // carry its signal — otherwise the Stop button is dead for the whole
@@ -1254,11 +1268,17 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       let bookBlock: ReturnType<typeof buildBookContextBlock> = null;
       if (contextBooks.length > 0) {
         try {
-          const hydrated = await hydrateBooksForContext(contextBooks, { signal: turnSignal });
+          // Catalog mode needs no text: the spine (with gists) is already in
+          // state, so the whole-book hydration fetch is skipped entirely —
+          // the mode's latency win is real, not only a token win.
+          const hydrated = bookCtxMode === "catalog"
+            ? contextBooks
+            : await hydrateBooksForContext(contextBooks, { signal: turnSignal });
           bookBlock = buildBookContextBlock(hydrated, {
             voiceMode: isVoice,
             offeredTools: [...offeredNames],
             totalCharBudget: bookContextCharBudget(model),
+            mode: bookCtxMode,
           });
         } catch (e) {
           if (turnSignal.aborted) {

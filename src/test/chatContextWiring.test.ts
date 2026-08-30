@@ -549,11 +549,53 @@ describe("Stage 0: the active-book fallback block (review finding)", () => {
   });
 
   it("sits between the selector and hydration, so the fallback book hydrates and budgets like any other", () => {
-    const selAt = CTX.indexOf("selectContextBooks(books, bookContextStore.get()");
+    const selAt = CTX.indexOf("selectContextBooks(books, bookSelection");
     const fbAt = CTX.indexOf('!offeredNames.has("get_chapter_text")');
     const hydrateAt = CTX.indexOf("await hydrateBooksForContext(contextBooks");
     expect(selAt).toBeGreaterThan(-1);
     expect(fbAt).toBeGreaterThan(selAt);
     expect(hydrateAt).toBeGreaterThan(fbAt);
+  });
+});
+
+describe("Stage 1: catalog mode wiring", () => {
+  it("catalog mode skips whole-book hydration and rides the same builder", () => {
+    const at = CTX.indexOf('bookCtxMode === "catalog"');
+    expect(at).toBeGreaterThan(-1);
+    const hydrateAt = CTX.indexOf("await hydrateBooksForContext(contextBooks");
+    // The ternary chooses BEFORE hydration: contextBooks direct in catalog mode.
+    expect(at).toBeLessThan(hydrateAt);
+    expect(CTX).toMatch(/^\s*mode: bookCtxMode,$/m);
+  });
+
+  it("the no-tools fallback forces full text — a catalog is useless to a model that cannot fetch", () => {
+    const fbAt = CTX.indexOf('!offeredNames.has("get_chapter_text")');
+    const forceAt = CTX.indexOf('bookCtxMode = "full";');
+    expect(fbAt).toBeGreaterThan(-1);
+    expect(forceAt).toBeGreaterThan(fbAt);
+    // …and within the same fallback block, before hydration.
+    expect(forceAt).toBeLessThan(CTX.indexOf("await hydrateBooksForContext(contextBooks"));
+  });
+});
+
+describe("Stage 1 review: catalog requires a model that can fetch", () => {
+  it("permanently tool-less models force full text even with a non-empty selection", () => {
+    expect(CTX).toContain('bookSelection.mode === "catalog" && providerSupportsTools ? "catalog" : "full"');
+  });
+
+  it("the empty-selection force sits INSIDE the fallback block — not hoisted, not duplicated", () => {
+    // A hoisted unconditional `bookCtxMode = "full"` would kill catalog mode
+    // app-wide while the old substring pin stayed green (review finding).
+    const occurrences = CTX.match(/bookCtxMode = "full";/g) || [];
+    expect(occurrences).toHaveLength(1);
+    const ifAt = CTX.indexOf('if (contextBooks.length === 0 && activeBookId && !offeredNames.has("get_chapter_text"))');
+    expect(ifAt).toBeGreaterThan(-1);
+    // Bound the containing block by its closing brace: find the assignment
+    // between the if-opener and the next `}` that closes the inner guard.
+    const assignAt = CTX.indexOf('bookCtxMode = "full";');
+    expect(assignAt).toBeGreaterThan(ifAt);
+    const blockEnd = CTX.indexOf("\n      }", assignAt);
+    expect(blockEnd).toBeGreaterThan(-1);
+    expect(assignAt).toBeLessThan(blockEnd + 10);
   });
 });

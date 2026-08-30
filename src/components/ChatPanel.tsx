@@ -1066,13 +1066,15 @@ const ChatPanel: React.FC = () => {
                       {b.title}
                       {b.state === "full"
                         ? " · full text"
-                        : b.state === "excerpt"
-                          ? ` · ${b.chaptersSent}/${b.chaptersTotal} chapters`
-                          : b.state === "outline"
-                            ? " · chapter map only"
-                            : b.note
-                              ? ` · not sent (${b.note})`
-                              : " · not sent"}
+                        : b.state === "catalog"
+                          ? ` · catalog · ${b.chaptersSent}/${b.chaptersTotal} chapters mapped`
+                          : b.state === "excerpt"
+                            ? ` · ${b.chaptersSent}/${b.chaptersTotal} chapters`
+                            : b.state === "outline"
+                              ? " · chapter map only"
+                              : b.note
+                                ? ` · not sent (${b.note})`
+                                : " · not sent"}
                     </span>
                   ))}
                 </div>

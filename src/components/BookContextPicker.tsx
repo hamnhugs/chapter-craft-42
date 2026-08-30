@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/hooks/useAuth";
+import { useChatSettings } from "@/hooks/useChatSettings";
 import { listFolders, type BookFolder } from "@/lib/bookFolders";
 import {
   bookContextStore, selectContextBooks, isEmptySelection,
-  BOOK_CONTEXT_MAX_BOOKS,
+  BOOK_CONTEXT_MAX_BOOKS, type BookContextMode,
 } from "@/lib/chatBooks";
+import { acquireGistRun, generateBookGists, releaseGistRun } from "@/lib/chapterGists";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { toast } from "sonner";
 
@@ -18,10 +20,13 @@ const BookContextPicker: React.FC<{
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }> = ({ open, onOpenChange }) => {
-  const { books, activeBookId } = useApp();
+  const { books, activeBookId, applyChapterGists } = useApp();
   const { user } = useAuth();
+  const { selectedModel, apiKey, geminiApiKey, nvidiaKeyLast4 } = useChatSettings();
   const [shelves, setShelves] = useState<BookFolder[]>([]);
+  const [gistProgress, setGistProgress] = useState<string | null>(null);
   const selection = useSyncExternalStore(bookContextStore.subscribe, bookContextStore.get);
+  const mode: BookContextMode = selection.mode === "catalog" ? "catalog" : "full";
 
   useEffect(() => {
     bookContextStore.init(user?.id ?? null);
@@ -53,6 +58,76 @@ const BookContextPicker: React.FC<{
     () => selectContextBooks(books, selection, activeBookId ?? null),
     [books, selection, activeBookId],
   );
+
+  const gistCoverage = useMemo(() => {
+    let have = 0;
+    let total = 0;
+    for (const b of effective) {
+      for (const c of b.chapters) {
+        total++;
+        if ((c.gist || "").trim()) have++;
+      }
+    }
+    return { have, total };
+  }, [effective]);
+
+  // Generates with the user's own selected chat model + key — an explicit,
+  // user-initiated spend (a few cents per book), never automatic.
+  const runGists = async () => {
+    if (gistProgress) return;
+    // Chapterless books have nothing to summarize — and "every chapter
+    // already has a summary" would be a lie about zero chapters.
+    if (gistCoverage.total === 0) {
+      toast.info("No chapters isolated yet — open a book and isolate its chapters first");
+      return;
+    }
+    const targets = effective.filter((b) => b.chapters.some((c) => !(c.gist || "").trim()));
+    if (targets.length === 0) {
+      toast.info("Every chapter already has a summary");
+      return;
+    }
+    // Module-scope lock: component state dies on a tab switch while the run
+    // keeps going — without this, a remounted picker's button double-spends.
+    if (!acquireGistRun()) {
+      toast.info("Summaries are already being generated — hang on");
+      return;
+    }
+    setGistProgress("Starting…");
+    try {
+      let written = 0;
+      let failed = 0;
+      for (const b of targets) {
+        const res = await generateBookGists(
+          b,
+          { model: selectedModel, keys: { apiKey, geminiApiKey, nvidiaKeyLast4 } },
+          (msg) => setGistProgress(`${(b.title || "Untitled").slice(0, 24)}: ${msg}`),
+        );
+        // Apply BEFORE surfacing any stop error: everything in res.written is
+        // already in the DB, and state must mirror it or they diverge.
+        applyChapterGists(res.written);
+        written += Object.keys(res.written).length;
+        failed += res.failed;
+        if (res.stopError) {
+          toast.error(res.stopError);
+          if (written > 0) toast.info(`${written} summar${written === 1 ? "y" : "ies"} were saved before the stop.`);
+          return;
+        }
+      }
+      if (written > 0) {
+        toast.success(
+          `Catalog updated — ${written} chapter summar${written === 1 ? "y" : "ies"}` +
+          (failed ? `, ${failed} failed (run again to retry)` : ""),
+        );
+      } else {
+        toast.error(failed ? "The model returned no usable summaries — try again or switch models" : "Nothing to summarize");
+      }
+    } catch (e: any) {
+      toast.error(e?.message || "Couldn't generate summaries");
+    } finally {
+      releaseGistRun();
+      setGistProgress(null);
+    }
+  };
 
   const isChecked = (id: string) =>
     selection.shelfId ? !selection.excludedIds.includes(id) : selection.bookIds.includes(id);
@@ -87,12 +162,57 @@ const BookContextPicker: React.FC<{
         <DialogHeader>
           <DialogTitle className="font-headline text-2xl text-primary">Books in context</DialogTitle>
           <DialogDescription>
-            The checked books' text is sent with every message so the AI can quote and cite them.
-            Load a shelf to keep it in sync — books you add to the shelf join the conversation automatically.
+            {mode === "catalog"
+              ? "Each message carries the checked books' chapter catalogs (titles + one-line summaries); the AI reads a chapter's text only when it needs it. Cheap and fast."
+              : "The checked books' text rides with every message, up to the context budget — very large books degrade to honest excerpts, and the reply's receipt shows exactly what was sent."}
+            {" "}Load a shelf to keep it in sync — books you add to the shelf join the conversation automatically.
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant">How books ride</label>
+            <div className="grid grid-cols-2 gap-1 rounded-lg bg-surface-container-high p-1">
+              {(
+                [
+                  ["full", "Full text", "everything, every message"],
+                  ["catalog", "Catalog", "summaries + fetch on demand"],
+                ] as const
+              ).map(([value, label, hint]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => bookContextStore.set({ ...selection, mode: value })}
+                  className={`rounded-md px-2 py-1.5 text-left transition-colors ${
+                    mode === value ? "bg-primary-container/60 text-foreground" : "text-on-surface-variant hover:bg-surface-container-highest"
+                  }`}
+                >
+                  <span className="block text-xs font-semibold">{label}</span>
+                  <span className="block text-[10px] opacity-80">{hint}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {mode === "catalog" && (
+            <div className="flex items-center justify-between gap-3 rounded-lg bg-surface-container-high px-3 py-2">
+              <span className="min-w-0 truncate text-[11px] text-on-surface-variant">
+                {gistProgress ??
+                  (gistCoverage.total === 0
+                    ? "The loaded books have no chapters yet."
+                    : `${gistCoverage.have}/${gistCoverage.total} chapters have summaries.`)}
+              </span>
+              <button
+                type="button"
+                onClick={runGists}
+                disabled={!!gistProgress || effective.length === 0}
+                className="shrink-0 text-[11px] font-bold uppercase tracking-widest text-primary disabled:opacity-50"
+              >
+                {gistProgress ? "Working…" : "Generate summaries"}
+              </button>
+            </div>
+          )}
+
           <div className="flex flex-col gap-1.5">
             <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant">Shelf</label>
             <select
