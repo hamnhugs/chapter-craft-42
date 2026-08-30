@@ -16,9 +16,9 @@ import { GEMINI_FEATURED } from "@/lib/geminiCatalog";
  *  - FIRST MESSAGE ON THE WIRE: long documents go at the top with the query
  *    at the end (Anthropic long-context guidance, ~+30% on multi-document
  *    inputs; Lost in the Middle, TACL'24). Placing it BEFORE the main system
- *    prompt also makes it the app's only byte-stable prefix — the main prompt
- *    regenerates fence nonces every build, so anything after it never gets a
- *    provider prefix-cache hit.
+ *    prompt also makes it the LONGEST byte-stable prefix — the main prompt's
+ *    fences are session-stable since Stage 0, but its retrieval section still
+ *    varies per query, so bytes after it only cache while the query repeats.
  *  - ONE CONTIGUOUS BLOCK PER BOOK, never interleaved, each with a stable
  *    ordinal + book_id and chapter markers in reading order (LOFT
  *    corpus-in-context; OP-RAG's original-order finding). When more than one

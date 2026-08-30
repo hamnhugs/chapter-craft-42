@@ -1109,8 +1109,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Pinned workspace focus — resolved fresh from the store at every send
       // (pins are references, not snapshots: an edited item is never stale, a
       // deleted one silently drops). It rides as its OWN system message: the
-      // main prompt churns every build (per-build fence nonces), so a
-      // separate byte-stable block is the only cache-friendly placement, and
+      // main prompt still varies per query (its retrieval section), so a
+      // separate byte-stable block is the cache-friendly placement, and
       // the summaryNote message below proves multi-system payloads work on
       // all three providers.
       // The SAME frozen roster the prompt and the wire got, for the same
@@ -1232,7 +1232,20 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // appear, deleted ones drop). Hydration happens HERE, below the
       // pre-flight gates, so an error turn never pays for whole-book fetches.
       bookContextStore.init(userIdRef.current);
-      const contextBooks = selectContextBooks(books, bookContextStore.get(), activeBookId ?? null);
+      let contextBooks = selectContextBooks(books, bookContextStore.get(), activeBookId ?? null);
+      // FALLBACK, not a default: with no shelf/book selection the active book
+      // normally stays OUT of context — the model reads it on demand with
+      // `get_chapter_text` (Stage 0 removed the inline Chapter Contents that
+      // used to ride here). But when THIS turn carries no `get_chapter_text`
+      // (a model without function calling, or an image turn that drops
+      // tools), on-demand reading does not exist, and a reading question
+      // about the open book would reach the model with neither the text nor
+      // any way to fetch it. Only then does the active book ride as a block —
+      // the one path that still gets text to a model that cannot ask for it.
+      if (contextBooks.length === 0 && activeBookId && !offeredNames.has("get_chapter_text")) {
+        const active = books.find((b) => b.id === activeBookId);
+        if (active) contextBooks = [active];
+      }
       // The turn's AbortController exists BEFORE hydration, and the fetches
       // carry its signal — otherwise the Stop button is dead for the whole
       // whole-book download stall and the provider request fires anyway.
@@ -1263,9 +1276,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // The book block is the FIRST message on the wire: long documents at
       // the top with the query at the end (the position-bias literature), and
-      // — because the main prompt regenerates fence nonces every build — the
-      // only placement where an unchanged book selection forms a byte-stable
-      // prefix that provider-side caching can hit.
+      // the longest byte-stable prefix on the request. The main prompt's
+      // fences are session-stable now (Stage 0), but its retrieval section
+      // still varies per query — so the block AHEAD of it is what
+      // provider-side prefix caching reliably hits, and the adapter is told
+      // exactly how many leading messages are stable (cacheStablePrefixCount).
       const workingMessages: any[] = [
         ...(bookBlock?.message ? [{ role: "system", content: bookBlock.message }] : []),
         { role: "system", content: systemPrompt },
@@ -1388,6 +1403,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             signal: abortRef.current.signal,
             apiKey: providerKey(turnProviderId, providerKeys),
             extraBody: nvInfo?.extraBody,
+            // Only the book block qualifies: it is byte-stable per selection.
+            // The focus block is stable too but sits AFTER the query-varying
+            // main prompt, where a breakpoint can never be reached by a read.
+            cacheStablePrefixCount: bookBlock?.message ? 1 : 0,
           });
 
           for await (const ev of stream) {

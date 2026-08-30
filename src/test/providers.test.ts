@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describeModel, isNvidiaModel, localModelId, modelProvider, providerLabel, resolveModel, NVIDIA_PREFIX } from "@/lib/providers/registry";
+import { openrouterAdapter, withCacheBreakpoint } from "@/lib/providers/openrouterAdapter";
+import type { ChatStreamRequest } from "@/lib/providers/types";
 import { ThoughtRouter, ToolCallIndexer, mapFinishReason } from "@/lib/providers/sse";
 import { isChatworthyNvidiaModel, namespacedNvidiaId, nvidiaModelInfo, nvidiaNoThinkingBody, NVIDIA_FEATURED, NVIDIA_STARTER_MODEL, SHARED_WITH_OPENROUTER } from "@/lib/nvidiaCatalog";
 import { isEmbeddingModel } from "@/lib/utils";
@@ -286,5 +288,96 @@ describe("nvidia-chat relay function source", () => {
 
   it("uses 428 for the no-key case — a status NVIDIA never sends", () => {
     expect(doc).toContain('"no_key", 428');
+  });
+});
+
+describe("OpenRouter cache breakpoint (Stage 0)", () => {
+  // Anthropic bills cached prefix reads at 0.1x, but only below an explicit
+  // cache_control marker. The transform must mark EXACTLY the last byte-stable
+  // leading message (the book block) and change nothing else on the wire —
+  // for any other provider, any other message, any non-string content.
+  const mkReq = (over: Partial<ChatStreamRequest> = {}): ChatStreamRequest =>
+    ({
+      model: "anthropic/claude-sonnet-4.5",
+      messages: [
+        { role: "system", content: "BOOK BLOCK" },
+        { role: "system", content: "MAIN PROMPT" },
+      ],
+      cacheStablePrefixCount: 1,
+      ...over,
+    }) as ChatStreamRequest;
+
+  it("marks exactly the last stable message, as a content-part array", () => {
+    const out = withCacheBreakpoint(mkReq()) as any[];
+    expect(out[0].content).toEqual([{ type: "text", text: "BOOK BLOCK", cache_control: { type: "ephemeral" } }]);
+    expect(out[0].role).toBe("system");
+    expect(out[1].content).toBe("MAIN PROMPT");
+  });
+
+  it("non-Anthropic models get the untouched array — no wire-shape change at all", () => {
+    const req = mkReq({ model: "deepseek/deepseek-v4-flash" });
+    expect(withCacheBreakpoint(req)).toBe(req.messages);
+  });
+
+  it("a zero/absent count means no marker even on Anthropic", () => {
+    const zero = mkReq({ cacheStablePrefixCount: 0 });
+    expect(withCacheBreakpoint(zero)).toBe(zero.messages);
+    const absent = mkReq({ cacheStablePrefixCount: undefined });
+    expect(withCacheBreakpoint(absent)).toBe(absent.messages);
+  });
+
+  it("never rewrites non-string content — an image part array is not the book block", () => {
+    const req = mkReq({ messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: "x" } }] }] });
+    expect(withCacheBreakpoint(req)).toBe(req.messages);
+  });
+
+  it("an anthropic stream request carries the breakpoint ON THE WIRE — a behavioral check a dead wire cannot pass", async () => {
+    // Review finding: source-substring pins stay green when the wired line is
+    // commented out. This drives the real streamChat through a fetch mock and
+    // asserts the OUTGOING BODY, which only the live transform can produce.
+    const captured: any[] = [];
+    const fakeRes = {
+      ok: true,
+      body: { getReader: () => ({ read: async () => ({ done: true, value: undefined }), cancel: async () => {} }) },
+    } as unknown as Response;
+    const origFetch = globalThis.fetch;
+    (globalThis as any).fetch = async (_url: unknown, init: any) => {
+      captured.push(JSON.parse(init.body));
+      return fakeRes;
+    };
+    try {
+      const drive = async (model: string) => {
+        captured.length = 0;
+        const gen = openrouterAdapter.streamChat({
+          model,
+          apiKey: "test-key",
+          cacheStablePrefixCount: 1,
+          messages: [
+            { role: "system", content: "BOOK BLOCK" },
+            { role: "user", content: "hi" },
+          ],
+        } as ChatStreamRequest);
+        for await (const _ev of gen) { /* drain to completion */ }
+        return captured[0];
+      };
+      const anth = await drive("anthropic/claude-sonnet-4.5");
+      expect(anth.messages[0].content).toEqual([
+        { type: "text", text: "BOOK BLOCK", cache_control: { type: "ephemeral" } },
+      ]);
+      expect(anth.messages[1].content).toBe("hi");
+      const ds = await drive("deepseek/deepseek-v4-flash");
+      expect(ds.messages[0].content).toBe("BOOK BLOCK");
+    } finally {
+      (globalThis as any).fetch = origFetch;
+    }
+  });
+
+  it("the pipeline flags only the book block as stable — pinned to a LIVE line a comment cannot satisfy", () => {
+    const ctx = readFileSync(resolve(process.cwd(), "src", "context", "ChatContext.tsx"), "utf8");
+    expect(ctx).toMatch(/^\s*cacheStablePrefixCount: bookBlock\?\.message \? 1 : 0,$/m);
+    expect(ctx).not.toMatch(/^\s*\/\/+\s*cacheStablePrefixCount:/m);
+    const adapter = readFileSync(resolve(process.cwd(), "src", "lib", "providers", "openrouterAdapter.ts"), "utf8");
+    expect(adapter).toMatch(/^\s*messages: withCacheBreakpoint\(req\),$/m);
+    expect(adapter).not.toMatch(/^\s*\/\/+\s*messages: withCacheBreakpoint/m);
   });
 });

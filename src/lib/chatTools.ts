@@ -508,12 +508,13 @@ export const CHAT_TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "get_chapter_text",
-      description: "Fetch the extracted text for a chapter. Use when you need to quote or analyse exact wording.",
+      description: "Fetch the extracted text for a chapter. Use when you need to quote or analyse exact wording. Long chapters: page through with offset + max_chars — the result reports total_chars and, when more remains, next_offset.",
       parameters: {
         type: "object",
         properties: {
           chapter_id: { type: "string" },
           max_chars: { type: "number", description: "Optional cap on returned characters (default 8000)." },
+          offset: { type: "number", description: "Optional start position in characters (default 0) — for reading beyond the first max_chars of a long chapter, or jumping to a known position." },
         },
         required: ["chapter_id"],
       },
@@ -2306,6 +2307,13 @@ export async function executeChatTool(
           };
         }
         const text = chapter.textContent || (deps.loadChapterText ? await deps.loadChapterText(chapter.id) : "");
+        // Seek support (Stage 0): a chapter is readable PAST its head. Clamp
+        // into [0, length] so a stale/overshot offset serves an honest empty
+        // window (truncated:false) instead of erroring the model into recovery.
+        const totalChars = text.length;
+        const offset = Math.min(Math.max(0, Math.floor(Number(args.offset) || 0)), totalChars);
+        const body = text.slice(offset, offset + maxChars);
+        const end = offset + body.length;
         return {
           result: {
             id: chapter.id,
@@ -2316,8 +2324,11 @@ export async function executeChatTool(
             book_title: (bookTitle || "Untitled").slice(0, 80),
             start_page: chapter.startPage,
             end_page: chapter.endPage,
-            text: text.slice(0, maxChars),
-            truncated: text.length > maxChars,
+            text: body,
+            offset,
+            total_chars: totalChars,
+            truncated: end < totalChars,
+            ...(end < totalChars ? { next_offset: end } : {}),
             ...(matchNote ? { note: matchNote } : {}),
           },
           event: { name, summary: `Read "${chapter.name}" from ${bookTitle}`, ok: true },

@@ -40,6 +40,29 @@ function upstreamText(raw: string): string {
   }
 }
 
+/** Anthropic models bill cached prefix reads at 0.1x, but ONLY below an
+ *  explicit cache_control breakpoint, which OpenRouter passes through inside
+ *  content-part arrays. The pipeline says how many LEADING messages are
+ *  byte-stable across turns (today: the book block); the LAST of them gets
+ *  the marker, which caches everything up to it — tools included, since
+ *  Anthropic's cache hierarchy is tools→system→messages.
+ *
+ *  Anthropic-only on purpose: other OpenRouter providers either cache
+ *  implicitly off byte-stability alone (OpenAI, DeepSeek, Gemini) or ignore
+ *  the field, and none of them need the string→array content rewrite — so
+ *  nobody else's wire shape changes at all. Non-string content (an image
+ *  turn's part array) is left untouched: it is never the stable book block. */
+export function withCacheBreakpoint(req: ChatStreamRequest): unknown[] {
+  const n = req.cacheStablePrefixCount || 0;
+  if (n <= 0 || !req.model.startsWith("anthropic/")) return req.messages;
+  const i = n - 1;
+  const m = req.messages[i] as any;
+  if (!m || typeof m.content !== "string" || !m.content) return req.messages;
+  const out = req.messages.slice();
+  out[i] = { ...m, content: [{ type: "text", text: m.content, cache_control: { type: "ephemeral" } }] };
+  return out;
+}
+
 async function throwOrError(res: Response): Promise<never> {
   const raw = await res.text().catch(() => "");
   const detail = upstreamText(raw);
@@ -75,7 +98,7 @@ export const openrouterAdapter: ChatProviderAdapter = {
       headers: orHeaders(req.apiKey),
       body: JSON.stringify({
         model: req.model,
-        messages: req.messages,
+        messages: withCacheBreakpoint(req),
         ...(req.tools ? { tools: req.tools, tool_choice: "auto" } : {}),
         stream: true,
         // OpenRouter reserves the MAXIMUM possible reply against the balance

@@ -498,7 +498,7 @@ describe("book context block: built from the frozen roster, first on the wire, h
     expect(call).toContain("offeredTools: [...offeredNames]");
   });
 
-  it("rides FIRST in workingMessages — before the nonce-churning main prompt", () => {
+  it("rides FIRST in workingMessages — ahead of the query-varying main prompt", () => {
     const wmAt = CTX.indexOf("const workingMessages: any[] = [");
     const wm = CTX.slice(wmAt, CTX.indexOf("];", wmAt));
     const bookIdx = wm.indexOf("bookBlock?.message");
@@ -530,5 +530,30 @@ describe("book context block: built from the frozen roster, first on the wire, h
     const controllerAt = CTX.indexOf("abortRef.current = new AbortController()");
     expect(controllerAt).toBeGreaterThan(-1);
     expect(controllerAt).toBeLessThan(hydrateAt);
+  });
+});
+
+describe("Stage 0: the active-book fallback block (review finding)", () => {
+  // Deleting the inline Chapter Contents left one flow with NO path to the
+  // open book's text: empty book-context selection + a turn that carries no
+  // get_chapter_text (a model without function calling, or an image turn that
+  // drops tools). The fallback puts the active book into the context block
+  // for exactly that conjunction — and must never fire when a selection
+  // exists or the tool rides.
+  it("fires only on an empty selection AND a turn without get_chapter_text", () => {
+    const at = CTX.indexOf('!offeredNames.has("get_chapter_text")');
+    expect(at).toBeGreaterThan(-1);
+    const guard = CTX.slice(CTX.lastIndexOf("if (", at), at);
+    expect(guard).toContain("contextBooks.length === 0");
+    expect(guard).toContain("activeBookId");
+  });
+
+  it("sits between the selector and hydration, so the fallback book hydrates and budgets like any other", () => {
+    const selAt = CTX.indexOf("selectContextBooks(books, bookContextStore.get()");
+    const fbAt = CTX.indexOf('!offeredNames.has("get_chapter_text")');
+    const hydrateAt = CTX.indexOf("await hydrateBooksForContext(contextBooks");
+    expect(selAt).toBeGreaterThan(-1);
+    expect(fbAt).toBeGreaterThan(selAt);
+    expect(hydrateAt).toBeGreaterThan(fbAt);
   });
 });

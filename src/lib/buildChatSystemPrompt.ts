@@ -73,10 +73,13 @@ export interface BuiltPrompt {
 // Retrieved memory text can originate from OCR, book chapters, or web results —
 // content an attacker may control. Injected into the system prompt unfenced, a
 // crafted entry can forge prompt sections ("## Tool Permissions…") or fake the
-// app's own [Attached image …] convention. Fences carry a per-build random
-// nonce so the wrapped text cannot fabricate its own boundary, and the
-// sanitizer strips the nonce, the bracket convention, and line-leading heading
-// markers from the wrapped text.
+// app's own [Attached image …] convention. Fences carry a SESSION-STABLE
+// nonce (SESSION_PROMPT_NONCE below — per-build randomness was retired for
+// prefix caching in Stage 0), so the boundary defense is NOT unguessability:
+// it is the sanitizers' fixpoint nonce strip plus the nonce-independent
+// fence-marker defang, both pinned by promptFencing.test.ts. The sanitizer
+// strips the nonce, the bracket convention, and line-leading heading markers
+// from the wrapped text.
 
 export function buildFenceNonce(): string {
   try {
@@ -91,6 +94,17 @@ export function buildFenceNonce(): string {
 export function fenced(text: string, nonce: string): string {
   return `<<<data:${nonce}>>>${text}<<<end:${nonce}>>>`;
 }
+
+/** ONE nonce per app session, shared by every fence the system prompt draws.
+ *  Per-BUILD nonces made every prompt byte-unique, which defeated provider
+ *  prefix caching for the entire suffix after the first fence — the largest
+ *  avoidable cost in the app (Stage 0 of the Card Catalog redesign). A
+ *  session-stable nonce is model-visible, so — exactly like the focus and
+ *  book blocks that already work this way — its safety rests on the
+ *  sanitizers' FIXPOINT nonce strip plus the nonce-independent fence-marker
+ *  defang (both pinned by promptFencing.test.ts); never weaken either
+ *  without revisiting every call site of this constant. */
+const SESSION_PROMPT_NONCE = buildFenceNonce();
 
 // The app's own attachment notes start with "[Attached image". A literal
 // match is trivially evaded ("[Attached  image", "[Attached-image", a tab or
@@ -220,35 +234,6 @@ const RUN_PROGRAM_SIGNATURE_LINE = /^\s*Signature:\s*run_program\s*\(/;
 export function stripRunProgramSignature(content: string): string {
   if (!content.includes("run_program")) return content;
   return content.split("\n").filter((line) => !RUN_PROGRAM_SIGNATURE_LINE.test(line)).join("\n");
-}
-
-// Words that signal the user is talking about their reading material, so the
-// full chapter text is worth its token cost in the prompt.
-const READING_WORDS =
-  /\b(book|books|chapter|chapters|page|pages|read|reading|passage|paragraph|quote|quotes|summar\w*|author|plot|character\w*|theme\w*|story|text|excerpt|section|wrote|writes|writing)\b/i;
-
-const STOPWORDS = new Set([
-  "this", "that", "with", "from", "what", "when", "where", "which", "does",
-  "have", "about", "tell", "your", "please", "would", "could", "should",
-  "there", "their", "they", "them", "then", "than", "into", "like", "just",
-  "know", "want", "need", "make", "more", "some", "very", "also", "been",
-  "were", "will", "give", "show", "explain", "help",
-]);
-
-/**
- * Decide whether the active book's chapter text is relevant to the current
- * question. Full chapter text costs thousands of tokens per message and —
- * per the "context rot" research — actively distracts the model when it's
- * unrelated to the query. The model always has the `get_chapter_text` tool
- * to pull the text on demand, so omitting it here loses nothing.
- */
-function isChapterContextRelevant(query: string | undefined, book: BookDocument): boolean {
-  if (!query || !query.trim()) return true; // no signal — keep legacy behavior
-  if (READING_WORDS.test(query)) return true;
-  const qTokens = query.toLowerCase().match(/[a-z][a-z'-]{3,}/g) || [];
-  const bookText = `${book.title} ${book.chapters.map((c) => c.name).join(" ")}`.toLowerCase();
-  const bookTokens = new Set(bookText.match(/[a-z][a-z'-]{3,}/g) || []);
-  return qTokens.some((t) => !STOPWORDS.has(t) && bookTokens.has(t));
 }
 
 // Section order follows two research findings:
@@ -410,7 +395,12 @@ export async function buildChatSystemPrompt({
     ...(curateClauses.length === 0 ? [] : [
       "Beyond answering, you can actively tend the user's memory with your tools: " +
       (curateClauses.length < 2 ? curateClauses[0] : `${curateClauses.slice(0, -1).join("; ")}; and ${curateClauses[curateClauses.length - 1]}`) +
-      ". The system already auto-captures knowledge from conversation, so do this sparingly — only when it adds real, lasting value, never bulk-saving chit-chat — and briefly say when you've saved, corrected, or linked something.",
+      // TRUTH: nothing auto-captures conversation text (extraction is the
+      // user's Save-to-neuron button; only generated media self-save). The old
+      // sentence claimed otherwise, which both misinformed the model and
+      // suppressed deliberate captures — a described-but-absent capability in
+      // the exact prompt that pins the rule against those.
+      ". Nothing is captured from conversation automatically — text is saved only when the user taps Save to neuron or when you act — so when a genuinely important, durable fact surfaces, capture it; never bulk-save chit-chat, and briefly say when you've saved, corrected, or linked something.",
     ]),
     ...ifTools(["get_memory_history"], "Memory has a TIME AXIS: when the user asks what they used to believe, what changed, when something changed, or wants to audit a correction, call `get_memory_history` on the entry — it returns every version with the dates it was believed and why it was replaced. Superseded versions never appear in normal retrieval, only there."),
   ];
@@ -720,35 +710,17 @@ export async function buildChatSystemPrompt({
   ];
   if (catalogTail.length > 0) parts.push(catalogTail.join(" "));
 
+  // No inline chapter text here — ever. The active book's full text used to be
+  // inlined (12k chars/chapter) whenever the query looked reading-flavored,
+  // which DUPLICATED the book-context block that already carries the same book
+  // budgeted and fenced, and made the prompt vary with which chapters happened
+  // to be hydrated in client state (same question, different bytes per device).
+  // The catalog above lists the active book's chapter ids, and the on-demand
+  // line names the fetch path when this turn actually carries the tool.
+  // Removed in Stage 0 of the Card Catalog redesign.
   if (selectedBook) {
     parts.push("", `## Currently Active Book: "${selectedBook.title}" (id: ${selectedBook.id})`);
     parts.push(`File: ${selectedBook.fileName} | Pages: ${selectedBook.pageCount}`);
-    if (selectedBook.chapters.length > 0) {
-      if (isChapterContextRelevant(latestUserQuery, selectedBook)) {
-        parts.push("", "### Chapter Contents");
-        selectedBook.chapters.forEach((ch) => {
-          parts.push(`#### ${ch.name} (pages ${ch.startPage}–${ch.endPage})`);
-          if (ch.textContent) {
-            const chapterCap = voiceMode ? 3000 : 12000;
-            const text = ch.textContent.length > chapterCap ? ch.textContent.slice(0, chapterCap) + "\n\n[...truncated]" : ch.textContent;
-            parts.push(text);
-          } else {
-            parts.push(has("get_chapter_text")
-              ? `(Text not loaded here — call \`get_chapter_text\` with id ${ch.id} to read it.)`
-              : "(Text not loaded here.)");
-          }
-          parts.push("");
-        });
-
-      } else {
-        parts.push(
-          "",
-          "### Chapter Contents",
-          "(Full chapter text omitted — the current question doesn't appear to reference this book." +
-            clause(["get_chapter_text"], " If you DO need the text, call `get_chapter_text` with the chapter id.") + ")",
-        );
-      }
-    }
   }
 
   // Conversation memory (cross-session summary + key facts)
@@ -795,7 +767,7 @@ export async function buildChatSystemPrompt({
       try {
         const approved = (await listTools({ status: "approved" })).filter((t) => !t.superseded_by);
         const roster = rankToolsForQuery(approved, latestUserQuery || "", FOUNDRY_ROSTER_LIMIT);
-        const toolNonce = buildFenceNonce();
+        const toolNonce = SESSION_PROMPT_NONCE;
         const abilities = commaAnd([
           ...(canForge ? ["forge reusable tools for yourself (`forge_tool`)"] : []),
           ...(canRun ? ["run approved ones (`run_tool`)"] : []),
@@ -975,7 +947,7 @@ export async function buildChatSystemPrompt({
         } catch { /* table may not exist yet — notes are optional */ }
         // Untrusted-content fence: entry text can originate from OCR, book
         // chapters, or web results. See sanitizeBlock/sanitizeInline.
-        const nonce = buildFenceNonce();
+        const nonce = SESSION_PROMPT_NONCE;
         parts.push(
           "",
           `## Retrieved Knowledge (${retrieval.nodes.length} nodes, ${retrieval.edges.length} edges — most relevant first)`,
@@ -1069,7 +1041,7 @@ export async function buildChatSystemPrompt({
         // it gets the SAME fence + sanitizer — entry text can originate from OCR,
         // imported chapters, web results or Toolshed cards, and a raw title/body
         // here is the identical prompt-structure injection the primary path fences.
-        const fbNonce = buildFenceNonce();
+        const fbNonce = SESSION_PROMPT_NONCE;
         parts.push(
           "",
           "## Your Knowledge Wiki (fallback)",

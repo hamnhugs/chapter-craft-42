@@ -249,3 +249,51 @@ describe("book-block headers carry chapter ids unconditionally", () => {
     expect(withTool!.message).toBe(without!.message);
   });
 });
+
+describe("get_chapter_text paging (Stage 0 seek support)", () => {
+  // A chapter long enough that one head window cannot cover it — offsets are
+  // what make locator-style reads ("the passage around char 40,000") possible.
+  const LONG = "0123456789".repeat(120); // 1,200 chars
+  const longBooks = [...BOOKS, mkBook("book-long", "Long Form", [ch("ch-long", "The Long Chapter", 1, LONG)])];
+  const longDeps = () => deps({ books: longBooks });
+
+  it("offset + max_chars serves the exact window with paging metadata", async () => {
+    const { result, event } = await call({ chapter_id: "ch-long", offset: 500, max_chars: 500 }, longDeps());
+    expect(event.ok).toBe(true);
+    const r = result as any;
+    expect(r.text).toBe(LONG.slice(500, 1000));
+    expect(r.offset).toBe(500);
+    expect(r.total_chars).toBe(1200);
+    expect(r.truncated).toBe(true);
+    expect(r.next_offset).toBe(1000);
+  });
+
+  it("the final page reports truncated:false and carries no next_offset", async () => {
+    const { result } = await call({ chapter_id: "ch-long", offset: 1000, max_chars: 500 }, longDeps());
+    const r = result as any;
+    expect(r.text).toBe(LONG.slice(1000));
+    expect(r.truncated).toBe(false);
+    expect(r.next_offset).toBeUndefined();
+  });
+
+  it("an overshot offset clamps to the end — an honest empty window, never an error", async () => {
+    const { result, event } = await call({ chapter_id: "ch-long", offset: 99999 }, longDeps());
+    expect(event.ok).toBe(true);
+    const r = result as any;
+    expect(r.text).toBe("");
+    expect(r.offset).toBe(1200);
+    expect(r.truncated).toBe(false);
+    expect(r.next_offset).toBeUndefined();
+  });
+
+  it("negative and junk offsets read from the start — the legacy shape is preserved", async () => {
+    const neg = (await call({ chapter_id: "ch-long", offset: -50, max_chars: 500 }, longDeps())).result as any;
+    expect(neg.offset).toBe(0);
+    expect(neg.text).toBe(LONG.slice(0, 500));
+    const junk = (await call({ chapter_id: "ch-a1", offset: "banana" })).result as any;
+    expect(junk.offset).toBe(0);
+    expect(junk.text).toBe("Chapter A1 body text.");
+    expect(junk.truncated).toBe(false);
+    expect(junk.total_chars).toBe("Chapter A1 body text.".length);
+  });
+});

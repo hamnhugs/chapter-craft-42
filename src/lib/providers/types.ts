@@ -65,6 +65,14 @@ export interface ChatStreamRequest {
   extraBody?: Record<string, unknown>;
   /** OpenRouter only: the user's API key. */
   apiKey?: string;
+  /** How many LEADING messages form a byte-stable prefix across turns (today:
+   *  the book-context block, so 0 or 1). An adapter MAY mark the last of them
+   *  as an explicit cache breakpoint for providers that price cached prefix
+   *  reads (Anthropic bills them at 0.1x but only below a cache_control
+   *  marker); adapters without such a wire feature ignore this. Never count a
+   *  message that changes per turn — a breakpoint on churning bytes buys
+   *  cache WRITES (1.25x) with no reads, strictly worse than nothing. */
+  cacheStablePrefixCount?: number;
 }
 
 export interface ChatCompleteRequest {

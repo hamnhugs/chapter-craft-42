@@ -430,8 +430,13 @@ describe("the additive contract: omitting offeredTools changes nothing", () => {
   // Re-captured 2026-08-20: the search_wiki bullet's "studied/ingested"
   // became "studied or saved" when book digestion was removed (same length,
   // new digest).
-  const BASELINE_LENGTH = 23794;
-  const BASELINE_DIGEST = "3d1dfa2e";
+  // Re-captured 2026-08-27 (Card Catalog Stage 0): the memory-curation
+  // sentence was made truthful — nothing auto-captures conversation text, and
+  // the prompt no longer claims it does (+64 chars). The inline Chapter
+  // Contents section was also removed, but this fixed input carries no books,
+  // so only the sentence moved these numbers.
+  const BASELINE_LENGTH = 23858;
+  const BASELINE_DIGEST = "15c2e52f";
   const fnv1a = (s: string) => {
     let h = 0x811c9dc5;
     for (let i = 0; i < s.length; i++) {
