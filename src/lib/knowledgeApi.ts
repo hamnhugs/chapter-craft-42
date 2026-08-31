@@ -19,6 +19,11 @@ export interface KnowledgeEntry {
    *  that replaced this one. NULL = this is the living version. */
   superseded_by?: string | null;
   supersede_reason?: string | null;
+  /** Card Catalog Stage 2 (card_locators migration; absent pre-migration).
+   *  Raw jsonb — parse with cardLocators.parseLocators, never trust shape. */
+  locators?: unknown;
+  aliases?: string[] | null;
+  author?: string | null;
   created_at: string;
   updated_at: string;
 }

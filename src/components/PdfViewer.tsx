@@ -6,6 +6,7 @@ import { useApp } from "@/context/AppContext";
 import { Chapter } from "@/types/library";
 import ChapterNameDialog from "@/components/ChapterNameDialog";
 import ChapterManageDialog from "@/components/ChapterManageDialog";
+import CaptureQuoteDialog from "@/components/CaptureQuoteDialog";
 import { toast } from "sonner";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
@@ -33,6 +34,22 @@ const PdfViewer: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  // ── Quote capture (Card Catalog Stage 2 — PDF text layer only) ──────────
+  // A selection in the page container surfaces a "Save quote" affordance;
+  // the dialog anchors it into the chapter's extracted text as a verified
+  // locator (or says honestly that it couldn't). HTML books render in a
+  // sandboxed iframe with no pdf.js text layer — scoped out (design §6).
+  const [selectionCapture, setSelectionCapture] = useState<string>("");
+  const [captureOpen, setCaptureOpen] = useState(false);
+  const readSelection = useCallback(() => {
+    if (captureOpen) return;
+    const sel = window.getSelection();
+    const text = sel && !sel.isCollapsed ? sel.toString().trim() : "";
+    // 12+ chars: below that, anchoring is ambiguous noise (QUOTE_MIN is 8;
+    // a little headroom keeps accidental drags from flashing the affordance).
+    setSelectionCapture(text.length >= 12 && containerRef.current?.contains(sel?.anchorNode ?? null) ? text : "");
+  }, [captureOpen]);
 
   // --- Read aloud ---
   const readCurrentPage = useCallback(async () => {
@@ -355,7 +372,13 @@ const PdfViewer: React.FC = () => {
           title={book.title}
         />
       ) : (
-        <div ref={containerRef} className="flex-1 overflow-auto bg-background flex justify-center py-6 scrollbar-thin" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+        <div
+          ref={containerRef}
+          className="flex-1 overflow-auto bg-background flex justify-center py-6 scrollbar-thin"
+          onTouchStart={handleTouchStart}
+          onTouchEnd={(e) => { handleTouchEnd(e); setTimeout(readSelection, 50); }}
+          onMouseUp={() => setTimeout(readSelection, 0)}
+        >
           <Document
             file={fileUrl}
             onLoadSuccess={onDocumentLoadSuccess}
@@ -364,6 +387,19 @@ const PdfViewer: React.FC = () => {
           >
             <Page pageNumber={currentPage} scale={scale} renderTextLayer={true} renderAnnotationLayer={true} />
           </Document>
+        </div>
+      )}
+
+      {/* Floating quote-capture affordance — PDF only, selection active */}
+      {!isHtmlBook && selectionCapture && !captureOpen && (
+        <div className="fixed bottom-40 md:bottom-20 left-1/2 -translate-x-1/2 z-40">
+          <button
+            onClick={() => setCaptureOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-primary-container text-on-primary-container rounded-full shadow-xl font-bold text-sm active:scale-95 transition-all"
+          >
+            <span className="material-symbols-outlined text-base" style={{ fontVariationSettings: "'FILL' 1" }}>bookmark_add</span>
+            Save quote to neuron
+          </button>
         </div>
       )}
 
@@ -403,6 +439,13 @@ const PdfViewer: React.FC = () => {
         onEdit={(chapterId, newName) => updateChapter(book.id, chapterId, newName)}
         onDelete={(chapterId) => removeChapter(book.id, chapterId)}
         onClose={() => setManageChaptersOpen(false)}
+      />
+      <CaptureQuoteDialog
+        open={captureOpen}
+        onClose={() => { setCaptureOpen(false); setSelectionCapture(""); }}
+        book={book}
+        page={currentPage}
+        selectionText={selectionCapture}
       />
     </div>
   );

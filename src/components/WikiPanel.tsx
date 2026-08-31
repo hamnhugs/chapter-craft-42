@@ -39,6 +39,7 @@ import {
 import { Loader2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import GeneratedImage from "@/components/GeneratedImage";
+import EntryLocatorPanel from "@/components/EntryLocatorPanel";
 import { fetchImagesForEntries, deleteImageAttachment, type ImageAttachmentRow } from "@/lib/imageGen";
 import { requestSettingsSection } from "@/lib/settingsNav";
 import { useReflexEnabled } from "@/lib/reflex";
@@ -1280,6 +1281,13 @@ const WikiPanel: React.FC = () => {
                   </div>
                 </div>
                 <div className="prose prose-lg prose-invert max-w-none"><ReactMarkdown urlTransform={safeUrlTransform} components={safeMarkdownComponents}>{selectedEntry.content}</ReactMarkdown></div>
+                <EntryLocatorPanel
+                  entry={selectedEntry}
+                  onLocatorsChanged={(locators) => {
+                    setSelectedEntry((prev) => (prev ? { ...prev, locators } : prev));
+                    setEntries((prev) => prev.map((e) => (e.id === selectedEntry.id ? { ...e, locators } : e)));
+                  }}
+                />
                 {entryImages.length > 0 && (
                   <div className="border-t border-outline-variant/10 pt-6">
                     <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant mb-4">Attached Images</h3>
