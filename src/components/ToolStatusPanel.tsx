@@ -117,6 +117,10 @@ const ToolStatusPanel: React.FC<{
      *  "we did not run it" are opposite answers to the only question this
      *  panel exists to answer truthfully. */
     recoveredNotRun?: number;
+    /** The turn's LAST request ran with no tools attached (toolless retry
+     *  after the budget-exhausted forced round) — disclosed so "offered N"
+     *  stays a true statement about the requests it describes. */
+    toollessRetry?: boolean;
   };
   /** How many tools the user has approved in the Tool Foundry, when the host
    *  knows. Undefined means unknown — settings still loading, foundry setup not
@@ -262,6 +266,12 @@ const ToolStatusPanel: React.FC<{
                     {lastTurn.recoveredNotRun === 1
                       ? "One call arrived written into the reply as text; it did not run."
                       : `${lastTurn.recoveredNotRun} calls arrived written into the reply as text; they did not run.`}
+                  </>
+                )}
+                {lastTurn.toollessRetry && (
+                  <>
+                    {" "}
+                    The reading budget ran out before an answer, so the final request carried no tools — the reply was written from what had already been read.
                   </>
                 )}
               </p>
