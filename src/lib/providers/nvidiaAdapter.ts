@@ -146,7 +146,7 @@ export const nvidiaAdapter: ChatProviderAdapter = {
       {
         model: req.model,
         messages: req.messages,
-        ...(req.tools ? { tools: req.tools, tool_choice: "auto" } : {}),
+        ...(req.tools ? { tools: req.tools, tool_choice: req.toolChoice ?? "auto" } : {}),
         stream: true,
         ...(req.extraBody || {}),
       },

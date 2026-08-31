@@ -599,3 +599,25 @@ describe("Stage 1 review: catalog requires a model that can fetch", () => {
     expect(assignAt).toBeLessThan(blockEnd + 10);
   });
 });
+
+describe("forced answer round after the tool budget (live-line pins)", () => {
+  // Behavior lives in runToolLoop's twin tests (e2HarnessCore.test.ts); these
+  // pin that ChatContext carries the same wiring, on lines a comment cannot
+  // satisfy.
+  const ctx = readFileSync(resolve(process.cwd(), "src", "context", "ChatContext.tsx"), "utf8");
+  it("the loop runs one round past MAX_TOOL_ITERATIONS", () => {
+    expect(ctx).toMatch(/^\s*for \(let iteration = 0; iteration <= MAX_TOOL_ITERATIONS; iteration\+\+\) \{$/m);
+    expect(ctx).toMatch(/^\s*const finalRound = iteration === MAX_TOOL_ITERATIONS;$/m);
+  });
+  it("the final round pins tool_choice none and stays terminal", () => {
+    expect(ctx).toMatch(/^\s*toolChoice: finalRound \? "none" : undefined,$/m);
+    expect(ctx).toMatch(/^\s*if \(finalRound\) \{\s*\n\s*break;/m);
+  });
+  it("the budget note names no tool", () => {
+    const m = /\[Tool budget for this reply is spent[^\]]*\]/.exec(ctx);
+    expect(m).toBeTruthy();
+    for (const name of ["get_chapter_text", "get_book", "list_books", "search_wiki", "run_tool"]) {
+      expect(m![0]).not.toContain(name);
+    }
+  });
+});

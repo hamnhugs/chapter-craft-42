@@ -1390,7 +1390,26 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       let textCallNoteSent = false;
 
       try {
-        for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+        // `<=`: one round PAST the tool budget is the FORCED ANSWER ROUND.
+        // Reaching iteration MAX_TOOL_ITERATIONS means every prior round
+        // ended in executed tool calls — the model was still researching when
+        // the budget ran out, and exiting here handed the user an empty or
+        // trailing-narration reply (measured in the E2 catalog A/B: 6 of 40
+        // catalog answers came back BLANK this way — 5 rounds of
+        // get_chapter_text, then nothing). The final round keeps the tools
+        // DECLARED on the wire (so no prompt sentence names a tool the
+        // request doesn't carry — the tool-truth law) but sends
+        // tool_choice:"none" plus a truthful budget note, so the model must
+        // answer in prose from what it has already read.
+        for (let iteration = 0; iteration <= MAX_TOOL_ITERATIONS; iteration++) {
+          const finalRound = iteration === MAX_TOOL_ITERATIONS;
+          if (finalRound) {
+            workingMessages.push({
+              role: "system",
+              content:
+                "[Tool budget for this reply is spent — no further tool calls will execute this turn. Answer the user's message now from what has already been read and returned above; say plainly if something needed could not be read in time.]",
+            });
+          }
           capSegStart = assistantText.length;
           const { adapter, localId } = resolveModel(model);
 
@@ -1420,6 +1439,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             model: localId,
             messages: workingMessages,
             tools: toolDefs,
+            // Final round: declared-but-not-invokable — see the loop header.
+            toolChoice: finalRound ? "none" : undefined,
             signal: abortRef.current.signal,
             apiKey: providerKey(turnProviderId, providerKeys),
             extraBody: nvInfo?.extraBody,
@@ -1651,6 +1672,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // one extra round, not five, and a model that keeps writing the same
           // prose call has already been told.
           if ((toolCalls.length === 0 && (!textCallNoted || textCallNoteSent)) || streamCutShort) {
+            break;
+          }
+          // The forced answer round is terminal no matter what came back: the
+          // budget note just told the model no further calls will execute, so
+          // executing one a provider emitted despite tool_choice:"none" would
+          // make the app's own sentence false — and there is no later round
+          // to return the result to anyway.
+          if (finalRound) {
             break;
           }
 

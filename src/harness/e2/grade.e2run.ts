@@ -179,6 +179,9 @@ describe.skipIf(!ready)("E2 grade phase", () => {
         } catch (e: any) {
           row = { qid: q.id, mode, type: q.type, score: 0, maxScore: q.type === "synthesis" ? 5 : 1, by: "error", notes: String(e?.message || e) };
         }
+        // Grade rows inherit the answer row's run identity — loadGrades
+        // filters on it, so an unstamped row is invisible to the report.
+        row = { ...row, model: a.model, fixtureSha: a.fixtureSha, questionsSha: a.questionsSha };
         appendFileSync(GRADES, JSON.stringify(row) + "\n");
         if (row.by === "error") console.warn(`[e2] grade ${key} ERROR: ${row.notes}`);
         else console.log(`[e2] grade ${key}: ${row.score}/${row.maxScore} (${row.by})`);

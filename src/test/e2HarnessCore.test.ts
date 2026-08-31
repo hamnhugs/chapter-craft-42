@@ -93,6 +93,27 @@ describe("quote verification (E3 mechanics)", () => {
     expect(spans[0].length).toBeGreaterThan(600);
   });
 
+  it("blockquote spans shed wrapping quote glyphs and trailing citations (the 50%-rate bug)", () => {
+    const checks = verifyQuotes(
+      '> "compiled by hand for forty-one years, and the compiler never" (Book A, ch. 1)',
+      BOOKS,
+    );
+    expect(checks).toHaveLength(1);
+    expect(checks[0].verified).toBe(true);
+  });
+
+  it("a quoted chapter name is attribution, not a quote claim", () => {
+    const checks = verifyQuotes('That line is from "One" — see also "Chapter 12: The Ebb and Flow of Tides".', BOOKS);
+    expect(checks).toHaveLength(0);
+  });
+
+  it("the same quote via regex AND blockquote counts once", () => {
+    const answer = 'The book says "compiled by hand for forty-one years, and the compiler never".\n> compiled by hand for forty-one years, and the compiler never';
+    const checks = verifyQuotes(answer, BOOKS);
+    expect(checks).toHaveLength(1);
+    expect(checks[0].verified).toBe(true);
+  });
+
   it("quote questions with zero extractable spans fall back to key-overlap on the raw answer", () => {
     const key = { chapter_id: "a1", text: "compiled by hand for forty-one years, and the compiler never once missed a morning reading" };
     const unpunctuated = quoteQuestionScore(
@@ -225,7 +246,45 @@ describe("tool loop (scripted adapter)", () => {
     expect(res.iterations).toBe(1);
   });
 
-  it("stops at the app's iteration cap and says so", async () => {
+  it("after the tool budget, the forced answer round runs with tool_choice none + the budget note", async () => {
+    // The E2 run measured 6/40 catalog answers coming back BLANK when the
+    // budget ran out mid-research; the forced answer round is the fix,
+    // mirrored from ChatContext.
+    const seen: Array<{ toolChoice?: string; hasNote: boolean }> = [];
+    let executions = 0;
+    const adapter: ChatProviderAdapter = {
+      id: "openrouter",
+      async *streamChat(req) {
+        seen.push({
+          toolChoice: req.toolChoice,
+          hasNote: (req.messages as any[]).some((m) => m.role === "system" && /Tool budget for this reply is spent/.test(m.content)),
+        });
+        if (req.toolChoice === "none") {
+          // A provider ignoring the pin: emits BOTH text and a call.
+          yield { type: "text", delta: "Final answer from what I read." } as ChatStreamEvent;
+          yield { type: "tool_call_delta", index: 0, id: "x", name: "get_book", argsDelta: "{}" } as ChatStreamEvent;
+          yield { type: "finish", reason: "stop" } as ChatStreamEvent;
+          return;
+        }
+        yield { type: "tool_call_delta", index: 0, id: "c", name: "get_book", argsDelta: "{}" } as ChatStreamEvent;
+        yield { type: "finish", reason: "tool_calls" } as ChatStreamEvent;
+      },
+      async completeChat() { return ""; },
+    };
+    const res = await runToolLoop({
+      adapter, model: "m", apiKey: "k", cacheStablePrefixCount: 0, messages: [], tools: [],
+      executeTool: async () => { executions++; return { result: { ok: true }, event: { name: "get_book", summary: "", ok: true } }; },
+    });
+    expect(res.iterations).toBe(E2_MAX_TOOL_ITERATIONS + 1);
+    expect(res.finish).toBe("answered_after_cap");
+    expect(res.text).toContain("Final answer from what I read.");
+    // Tool rounds executed the budget; the final round's stray call did NOT.
+    expect(executions).toBe(E2_MAX_TOOL_ITERATIONS);
+    expect(seen.slice(0, E2_MAX_TOOL_ITERATIONS).every((s) => s.toolChoice === undefined && !s.hasNote)).toBe(true);
+    expect(seen[E2_MAX_TOOL_ITERATIONS]).toEqual({ toolChoice: "none", hasNote: true });
+  });
+
+  it("a final round that still produces no prose records max_iterations", async () => {
     const adapter = scriptedAdapter([[
       { type: "tool_call_delta", index: 0, id: "c", name: "get_book", argsDelta: "{}" },
       { type: "finish", reason: "tool_calls" },
@@ -234,7 +293,7 @@ describe("tool loop (scripted adapter)", () => {
       adapter, model: "m", apiKey: "k", cacheStablePrefixCount: 0, messages: [], tools: [],
       executeTool: async () => ({ result: { ok: true }, event: { name: "get_book", summary: "", ok: true } }),
     });
-    expect(res.iterations).toBe(E2_MAX_TOOL_ITERATIONS);
+    expect(res.iterations).toBe(E2_MAX_TOOL_ITERATIONS + 1);
     expect(res.finish).toBe("max_iterations");
   });
 });

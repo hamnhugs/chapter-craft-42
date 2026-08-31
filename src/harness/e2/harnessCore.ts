@@ -137,7 +137,19 @@ export function extractQuotedSpans(answer: string, minLen = 20): string[] {
   while ((m = re.exec(answer)) !== null) spans.push(m[1]);
   for (const line of answer.split("\n")) {
     const bq = /^\s*>\s?(.+)$/.exec(line);
-    if (bq) spans.push(bq[1].trim());
+    if (!bq) continue;
+    // A blockquote line is the model's PRESENTATION of a quote, not its
+    // exact bytes: strip the wrapping quote glyphs and any trailing
+    // parenthetical citation ("(Book 1, ch. 4)") before treating the rest as
+    // the claimed span. Measured on the first live run: every blockquote span
+    // carried its own quote marks, so the same quote counted twice — once
+    // clean via the regex (verified) and once wrapped (failed) — dragging
+    // both arms' E3 rates toward 50% for punctuation, not content.
+    const t = bq[1].trim()
+      .replace(/^["“”'‘’\s]+/, "")
+      .replace(/\s*[(（][^()（）]{0,80}[)）]\s*$/, "")
+      .replace(/["“”'‘’\s]+$/, "");
+    spans.push(t);
   }
   return [...new Set(spans.filter((s) => s.trim().length >= minLen))];
 }
@@ -151,9 +163,21 @@ export interface QuoteCheck {
 
 /** Every claimed quote checked against the actual chapter text of the given
  *  books (the E3 mechanical gate). A span verifies when it is a substring of
- *  any chapter at any normalization level. */
+ *  any chapter at any normalization level. Quoted ATTRIBUTIONS — a chapter
+ *  name or book title in quotes ('the quote is from "Ch 2: Functions &
+ *  Graphs"') — are not quote claims and are excluded up front; counting them
+ *  charged both arms an E3 miss for citing sources by name (measured on the
+ *  first live run). */
 export function verifyQuotes(answer: string, books: BookDocument[], minLen = 20): QuoteCheck[] {
-  const spans = extractQuotedSpans(answer, minLen);
+  const names = new Set(
+    books
+      .flatMap((b) => [b.title, ...b.chapters.map((c) => c.name)])
+      .map((n) => normalizeForMatch(n || "", "deep").toLowerCase()),
+  );
+  const spans = extractQuotedSpans(answer, minLen).filter((s) => {
+    const n = normalizeForMatch(s, "deep").toLowerCase();
+    return !names.has(n) && !/^ch(apter)?\s*\d+\s*[:.]/.test(n);
+  });
   const haystacks = {
     strict: books.flatMap((b) => b.chapters.map((c) => c.textContent)),
     ws: [] as string[],
@@ -195,8 +219,11 @@ export interface LoopResult {
   sentChars: number[];
   /** "cut_short" = the provider ended the stream on length/content_filter;
    *  accumulated tool calls were DROPPED, mirroring ChatContext's
-   *  streamCutShort handling — and the truncation is visible in the row. */
-  finish: "ok" | "max_iterations" | "cut_short";
+   *  streamCutShort handling — and the truncation is visible in the row.
+   *  "answered_after_cap" = the tool budget was spent and the FORCED ANSWER
+   *  ROUND (tool_choice:"none" + budget note, mirroring ChatContext) produced
+   *  prose; "max_iterations" = even that round produced none. */
+  finish: "ok" | "max_iterations" | "cut_short" | "answered_after_cap";
 }
 
 export interface RunLoopOpts {
@@ -224,7 +251,18 @@ export async function runToolLoop(opts: RunLoopOpts): Promise<LoopResult> {
   const toolTrace: ToolTraceEntry[] = [];
   const sentChars: number[] = [];
 
-  for (let iteration = 0; iteration < E2_MAX_TOOL_ITERATIONS; iteration++) {
+  // `<=`: one round past the tool budget is the forced answer round —
+  // tool_choice:"none" + a truthful budget note, mirroring ChatContext (the
+  // E2 run measured 6/40 catalog answers coming back BLANK without it).
+  for (let iteration = 0; iteration <= E2_MAX_TOOL_ITERATIONS; iteration++) {
+    const finalRound = iteration === E2_MAX_TOOL_ITERATIONS;
+    if (finalRound) {
+      messages.push({
+        role: "system",
+        content:
+          "[Tool budget for this reply is spent — no further tool calls will execute this turn. Answer the user's message now from what has already been read and returned above; say plainly if something needed could not be read in time.]",
+      });
+    }
     sentChars.push(JSON.stringify(messages).length);
     let iterText = "";
     let cutShort = false;
@@ -234,6 +272,7 @@ export async function runToolLoop(opts: RunLoopOpts): Promise<LoopResult> {
       model: opts.model,
       messages,
       tools: opts.tools,
+      toolChoice: finalRound ? "none" : undefined,
       apiKey: opts.apiKey,
       signal: opts.signal,
       cacheStablePrefixCount: opts.cacheStablePrefixCount,
@@ -257,6 +296,11 @@ export async function runToolLoop(opts: RunLoopOpts): Promise<LoopResult> {
     // JSON into a recovery round it never grants — mirror that, and make the
     // truncation visible in the row (review finding: it used to record "ok").
     if (cutShort) return { text, reasoning, toolTrace, iterations: iteration + 1, sentChars, finish: "cut_short" };
+    // Forced answer round is terminal regardless of what came back — a call
+    // emitted past tool_choice:"none" never executes (ChatContext parity).
+    if (finalRound) {
+      return { text, reasoning, toolTrace, iterations: iteration + 1, sentChars, finish: iterText ? "answered_after_cap" : "max_iterations" };
+    }
     const calls = Object.keys(acc)
       .map(Number)
       .sort((a, b) => a - b)

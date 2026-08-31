@@ -416,3 +416,36 @@ describe("completeChat forwards extraBody (the dead-pin bug)", () => {
     }
   });
 });
+
+describe("toolChoice pass-through (the forced answer round's wire)", () => {
+  it("sends tool_choice none when asked, auto by default — behavioral", async () => {
+    const captured: any[] = [];
+    const fakeRes = {
+      ok: true,
+      body: { getReader: () => ({ read: async () => ({ done: true, value: undefined }), cancel: async () => {} }) },
+    } as unknown as Response;
+    const origFetch = globalThis.fetch;
+    (globalThis as any).fetch = async (_url: unknown, init: any) => {
+      captured.push(JSON.parse(init.body));
+      return fakeRes;
+    };
+    try {
+      const drive = async (toolChoice?: "auto" | "none") => {
+        captured.length = 0;
+        const gen = openrouterAdapter.streamChat({
+          model: "google/gemini-3.7-flash",
+          apiKey: "k",
+          tools: [{ type: "function", function: { name: "t", parameters: {} } }],
+          toolChoice,
+          messages: [{ role: "user", content: "hi" }],
+        } as ChatStreamRequest);
+        for await (const _ev of gen) { /* drain */ }
+        return captured[0];
+      };
+      expect((await drive("none")).tool_choice).toBe("none");
+      expect((await drive(undefined)).tool_choice).toBe("auto");
+    } finally {
+      (globalThis as any).fetch = origFetch;
+    }
+  });
+});

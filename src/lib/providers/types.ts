@@ -60,6 +60,11 @@ export interface ChatStreamRequest {
   /** OpenAI tool definitions. Omit (undefined) to send no tools at all —
    *  NVIDIA 400s when tools reach a model without function-calling. */
   tools?: unknown[];
+  /** "none" = tools stay DECLARED on the wire (so no prompt sentence names a
+   *  tool the request doesn't carry) but the model must answer in prose this
+   *  round. Used for the forced answer round after the tool-iteration budget
+   *  is spent; default "auto". Ignored when `tools` is omitted. */
+  toolChoice?: "auto" | "none";
   signal?: AbortSignal;
   /** Provider-specific request extras (e.g. NVIDIA's chat_template_kwargs). */
   extraBody?: Record<string, unknown>;

@@ -112,7 +112,7 @@ export const geminiAdapter: ChatProviderAdapter = {
       body: JSON.stringify({
         model: req.model,
         messages: mergeSystemMessages(req.messages),
-        ...(req.tools ? { tools: req.tools, tool_choice: "auto" } : {}),
+        ...(req.tools ? { tools: req.tools, tool_choice: req.toolChoice ?? "auto" } : {}),
         stream: true,
         ...(req.extraBody || {}),
       }),

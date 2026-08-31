@@ -99,7 +99,7 @@ export const openrouterAdapter: ChatProviderAdapter = {
       body: JSON.stringify({
         model: req.model,
         messages: withCacheBreakpoint(req),
-        ...(req.tools ? { tools: req.tools, tool_choice: "auto" } : {}),
+        ...(req.tools ? { tools: req.tools, tool_choice: req.toolChoice ?? "auto" } : {}),
         stream: true,
         // OpenRouter reserves the MAXIMUM possible reply against the balance
         // before running. Omitting this made it reserve its ~65k default, so
