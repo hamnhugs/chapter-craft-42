@@ -605,13 +605,17 @@ describe("forced answer round after the tool budget (live-line pins)", () => {
   // pin that ChatContext carries the same wiring, on lines a comment cannot
   // satisfy.
   const ctx = readFileSync(resolve(process.cwd(), "src", "context", "ChatContext.tsx"), "utf8");
-  it("the loop runs one round past MAX_TOOL_ITERATIONS", () => {
-    expect(ctx).toMatch(/^\s*for \(let iteration = 0; iteration <= MAX_TOOL_ITERATIONS; iteration\+\+\) \{$/m);
+  it("the loop runs up to two rounds past MAX_TOOL_ITERATIONS (forced answer + toolless retry)", () => {
+    expect(ctx).toMatch(/^\s*for \(let iteration = 0; iteration <= MAX_TOOL_ITERATIONS \+ 1; iteration\+\+\) \{$/m);
     expect(ctx).toMatch(/^\s*const finalRound = iteration === MAX_TOOL_ITERATIONS;$/m);
+    expect(ctx).toMatch(/^\s*const toollessRound = iteration === MAX_TOOL_ITERATIONS \+ 1;$/m);
   });
-  it("the final round pins tool_choice none and stays terminal", () => {
+  it("the final round pins tool_choice none; the toolless retry strips tools and is terminal", () => {
     expect(ctx).toMatch(/^\s*toolChoice: finalRound \? "none" : undefined,$/m);
-    expect(ctx).toMatch(/^\s*if \(finalRound\) \{\s*\n\s*break;/m);
+    expect(ctx).toMatch(/^\s*tools: toollessRound \? undefined : toolDefs,$/m);
+    expect(ctx).toMatch(/^\s*messages: toollessRound && toollessMessages \? toollessMessages : workingMessages,$/m);
+    expect(ctx).toMatch(/^\s*if \(toollessRound\) \{\s*\n\s*break;/m);
+    expect(ctx).toMatch(/No tools are attached to this request/);
   });
   it("the budget note names no tool", () => {
     const m = /\[Tool budget for this reply is spent[^\]]*\]/.exec(ctx);

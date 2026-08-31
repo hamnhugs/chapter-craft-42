@@ -145,10 +145,19 @@ export function extractQuotedSpans(answer: string, minLen = 20): string[] {
     // carried its own quote marks, so the same quote counted twice — once
     // clean via the regex (verified) and once wrapped (failed) — dragging
     // both arms' E3 rates toward 50% for punctuation, not content.
-    const t = bq[1].trim()
-      .replace(/^["“”'‘’\s]+/, "")
-      .replace(/\s*[(（][^()（）]{0,80}[)）]\s*$/, "")
-      .replace(/["“”'‘’\s]+$/, "");
+    // Wrappers nest in any order — `> **"…"** (Book A, ch. 1)` was measured
+    // live — so strip quote glyphs, emphasis markers, and one trailing
+    // parenthetical citation to a FIXPOINT rather than in a fixed pass order
+    // (a fixed order left a trailing quote glyph behind the emphasis).
+    let t = bq[1].trim();
+    for (;;) {
+      const before = t;
+      t = t
+        .replace(/^[*_"“”'‘’\s]+/, "")
+        .replace(/\s*[(（][^()（）]{0,80}[)）]\s*$/, "")
+        .replace(/[*_"“”'‘’\s]+$/, "");
+      if (t === before) break;
+    }
     spans.push(t);
   }
   return [...new Set(spans.filter((s) => s.trim().length >= minLen))];
@@ -217,6 +226,10 @@ export interface LoopResult {
   /** Chars of the serialized message array at each iteration's send — the
    *  cost signal (tokens ≈ chars/4, the app convention). */
   sentChars: number[];
+  /** Native finish reasons seen, one entry per finish event — the raw
+   *  provider vocabulary (STOP/MAX_TOKENS/...), for diagnosing rounds that
+   *  stream successfully yet deliver no content. */
+  finishNatives: string[];
   /** "cut_short" = the provider ended the stream on length/content_filter;
    *  accumulated tool calls were DROPPED, mirroring ChatContext's
    *  streamCutShort handling — and the truncation is visible in the row.
@@ -248,14 +261,23 @@ export async function runToolLoop(opts: RunLoopOpts): Promise<LoopResult> {
   const messages = [...opts.messages];
   let text = "";
   let reasoning = "";
+  const finishNatives: string[] = [];
   const toolTrace: ToolTraceEntry[] = [];
   const sentChars: number[] = [];
 
-  // `<=`: one round past the tool budget is the forced answer round —
-  // tool_choice:"none" + a truthful budget note, mirroring ChatContext (the
-  // E2 run measured 6/40 catalog answers coming back BLANK without it).
-  for (let iteration = 0; iteration <= E2_MAX_TOOL_ITERATIONS; iteration++) {
+  // `<=` +1: one round past the tool budget is the forced answer round —
+  // tool_choice:"none" + a truthful budget note — and one past THAT is the
+  // toolless retry, reached only on calls-without-prose (wire-measured:
+  // tool_choice:"none" is advisory on some provider paths). Mirrors
+  // ChatContext exactly (the E2 run measured 6/40 catalog answers coming
+  // back BLANK without this).
+  let toollessTried = false;
+  let toollessMessages: unknown[] | null = null;
+  const preLoop = [...opts.messages];
+  const resultTexts: string[] = [];
+  for (let iteration = 0; iteration <= E2_MAX_TOOL_ITERATIONS + 1; iteration++) {
     const finalRound = iteration === E2_MAX_TOOL_ITERATIONS;
+    const toollessRound = iteration === E2_MAX_TOOL_ITERATIONS + 1;
     if (finalRound) {
       messages.push({
         role: "system",
@@ -270,8 +292,10 @@ export async function runToolLoop(opts: RunLoopOpts): Promise<LoopResult> {
 
     const stream = opts.adapter.streamChat({
       model: opts.model,
-      messages,
-      tools: opts.tools,
+      // Toolless retry: a rebuilt, call-history-free conversation (ChatContext
+      // parity — see its loop header for the wire-measured why).
+      messages: toollessRound && toollessMessages ? toollessMessages : messages,
+      tools: toollessRound ? undefined : opts.tools,
       toolChoice: finalRound ? "none" : undefined,
       apiKey: opts.apiKey,
       signal: opts.signal,
@@ -285,8 +309,9 @@ export async function runToolLoop(opts: RunLoopOpts): Promise<LoopResult> {
         if (ev.id) slot.id = ev.id;
         if (ev.name) slot.name = ev.name;
         if (ev.argsDelta) slot.args += ev.argsDelta;
-      } else if (ev.type === "finish" && (ev.reason === "length" || ev.reason === "content_filter")) {
-        cutShort = true;
+      } else if (ev.type === "finish") {
+        finishNatives.push(ev.native || ev.reason);
+        if (ev.reason === "length" || ev.reason === "content_filter") cutShort = true;
       }
     }
 
@@ -295,18 +320,45 @@ export async function runToolLoop(opts: RunLoopOpts): Promise<LoopResult> {
     // discards them (ChatContext streamCutShort) instead of executing invalid
     // JSON into a recovery round it never grants — mirror that, and make the
     // truncation visible in the row (review finding: it used to record "ok").
-    if (cutShort) return { text, reasoning, toolTrace, iterations: iteration + 1, sentChars, finish: "cut_short" };
-    // Forced answer round is terminal regardless of what came back — a call
-    // emitted past tool_choice:"none" never executes (ChatContext parity).
-    if (finalRound) {
-      return { text, reasoning, toolTrace, iterations: iteration + 1, sentChars, finish: iterText ? "answered_after_cap" : "max_iterations" };
-    }
+    if (cutShort) return { text, reasoning, toolTrace, iterations: iteration + 1, sentChars, finishNatives, finish: "cut_short" };
     const calls = Object.keys(acc)
       .map(Number)
       .sort((a, b) => a - b)
       .map((i) => acc[i])
       .filter((c) => c.name);
-    if (calls.length === 0) return { text, reasoning, toolTrace, iterations: iteration + 1, sentChars, finish: "ok" };
+    // Forced answer round never executes calls (ChatContext parity):
+    // calls-without-prose earns the one toolless retry; anything else ends.
+    if (finalRound) {
+      if (!iterText && calls.length > 0 && !toollessTried) {
+        toollessTried = true;
+        const NOTES_BUDGET = 80_000;
+        const notes: string[] = [];
+        let used = 0;
+        for (let i = resultTexts.length - 1; i >= 0; i--) {
+          const t = resultTexts[i];
+          if (used + t.length > NOTES_BUDGET) break;
+          notes.unshift(`--- read ${i + 1} ---\n${t}`);
+          used += t.length;
+        }
+        toollessMessages = [
+          ...preLoop,
+          ...(notes.length > 0
+            ? [{ role: "system", content: "[Research notes — text this turn's reads returned:]\n\n" + notes.join("\n\n") }]
+            : []),
+          {
+            role: "system",
+            content:
+              "[No tools are attached to this request — the reading budget was spent. Reply to the user now in prose, using only the research notes above; say plainly if what was needed could not be read in time.]",
+          },
+        ];
+        continue;
+      }
+      return { text, reasoning, toolTrace, iterations: iteration + 1, sentChars, finishNatives, finish: iterText ? "answered_after_cap" : "max_iterations" };
+    }
+    if (toollessRound) {
+      return { text, reasoning, toolTrace, iterations: iteration + 1, sentChars, finishNatives, finish: iterText ? "answered_after_cap" : "max_iterations" };
+    }
+    if (calls.length === 0) return { text, reasoning, toolTrace, iterations: iteration + 1, sentChars, finishNatives, finish: "ok" };
 
     messages.push({
       role: "assistant",
@@ -327,11 +379,12 @@ export async function runToolLoop(opts: RunLoopOpts): Promise<LoopResult> {
         modelResult = Object.fromEntries(Object.entries(result as Record<string, unknown>).filter(([k]) => !k.startsWith("__")));
       }
       const content = JSON.stringify(modelResult).slice(0, E2_TOOL_RESULT_SLICE);
+      resultTexts.push(content);
       toolTrace.push({ name: t.name!, args: (t.args || "").slice(0, 400), ok: event.ok, resultChars: content.length, summary: event.summary });
       messages.push({ role: "tool", tool_call_id: t.id || `call_${iteration}_${i}`, name: t.name, content });
     }
   }
-  return { text, reasoning, toolTrace, iterations: E2_MAX_TOOL_ITERATIONS, sentChars, finish: "max_iterations" };
+  return { text, reasoning, toolTrace, iterations: E2_MAX_TOOL_ITERATIONS, sentChars, finishNatives, finish: "max_iterations" };
 }
 
 // ── Answer rows + checkpointing ────────────────────────────────────────────
@@ -347,6 +400,11 @@ export interface AnswerRow {
   iterations: number;
   sentChars: number[];
   finish: string;
+  /** Native finish vocabulary per round + total reasoning size — kept for
+   *  diagnosing content-less rounds (a stream can finish STOP having spent
+   *  everything on reasoning). */
+  finishNatives?: string[];
+  reasoningChars?: number;
   ms: number;
   fixtureSha: string;
   questionsSha: string;

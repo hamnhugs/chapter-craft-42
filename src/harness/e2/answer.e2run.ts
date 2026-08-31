@@ -188,6 +188,7 @@ describe.skipIf(!ready)("E2 answer phase", () => {
               row = {
                 qid: q.id, mode, model: MODEL, answer: res.text, toolTrace: res.toolTrace,
                 iterations: res.iterations, sentChars: res.sentChars, finish: res.finish,
+                finishNatives: res.finishNatives, reasoningChars: res.reasoning.length,
                 ms: Date.now() - started, fixtureSha, questionsSha, at: new Date().toISOString(),
               };
               break;

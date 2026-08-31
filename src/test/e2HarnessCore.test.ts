@@ -93,6 +93,15 @@ describe("quote verification (E3 mechanics)", () => {
     expect(spans[0].length).toBeGreaterThan(600);
   });
 
+  it("bold-wrapped blockquote quotes extract cleanly (measured live: > **\"...\"**)", () => {
+    const checks = verifyQuotes(
+      '> **"compiled by hand for forty-one years, and the compiler never"** (Book A, ch. 1)',
+      BOOKS,
+    );
+    expect(checks).toHaveLength(1);
+    expect(checks[0].verified).toBe(true);
+  });
+
   it("blockquote spans shed wrapping quote glyphs and trailing citations (the 50%-rate bug)", () => {
     const checks = verifyQuotes(
       '> "compiled by hand for forty-one years, and the compiler never" (Book A, ch. 1)',
@@ -284,7 +293,51 @@ describe("tool loop (scripted adapter)", () => {
     expect(seen[E2_MAX_TOOL_ITERATIONS]).toEqual({ toolChoice: "none", hasNote: true });
   });
 
-  it("a final round that still produces no prose records max_iterations", async () => {
+  it("calls-WITHOUT-prose on the forced round earns one toolless retry (wire-measured: tool_choice none is advisory)", async () => {
+    const seen: Array<{ toolChoice?: string; hasTools: boolean; hasStripNote: boolean; hasCallHistory: boolean; hasNotes: boolean }> = [];
+    let executions = 0;
+    const adapter: ChatProviderAdapter = {
+      id: "openrouter",
+      async *streamChat(req) {
+        seen.push({
+          toolChoice: req.toolChoice,
+          hasTools: req.tools !== undefined,
+          hasStripNote: (req.messages as any[]).some((m) => m.role === "system" && /No tools are attached to this request/.test(m.content)),
+          hasCallHistory: (req.messages as any[]).some((m) => m.role === "tool" || m.tool_calls),
+          hasNotes: (req.messages as any[]).some((m) => m.role === "system" && /Research notes/.test(m.content)),
+        });
+        if (req.tools === undefined) {
+          yield { type: "text", delta: "Answer from what I read, at last." } as ChatStreamEvent;
+          yield { type: "finish", reason: "stop" } as ChatStreamEvent;
+          return;
+        }
+        // Every tooled round — INCLUDING the tool_choice:"none" one — emits
+        // only a call, the measured gemini-via-OpenRouter behavior.
+        yield { type: "tool_call_delta", index: 0, id: "c", name: "get_book", argsDelta: "{}" } as ChatStreamEvent;
+        yield { type: "finish", reason: "tool_calls" } as ChatStreamEvent;
+      },
+      async completeChat() { return ""; },
+    };
+    const res = await runToolLoop({
+      adapter, model: "m", apiKey: "k", cacheStablePrefixCount: 0, messages: [], tools: [],
+      executeTool: async () => { executions++; return { result: { ok: true }, event: { name: "get_book", summary: "", ok: true } }; },
+    });
+    expect(res.iterations).toBe(E2_MAX_TOOL_ITERATIONS + 2);
+    expect(res.finish).toBe("answered_after_cap");
+    expect(res.text).toContain("Answer from what I read, at last.");
+    expect(executions).toBe(E2_MAX_TOOL_ITERATIONS);
+    const last = seen[seen.length - 1];
+    expect(last.hasTools).toBe(false);
+    expect(last.hasStripNote).toBe(true);
+    // The retry must not CONTINUE the calling conversation: no tool_calls or
+    // tool-result messages ride (wire-measured, the model imitates them even
+    // with zero tools declared) — the reads ride as research notes instead.
+    expect(last.hasCallHistory).toBe(false);
+    expect(last.hasNotes).toBe(true);
+    expect(seen[seen.length - 2].hasCallHistory).toBe(true);
+  });
+
+  it("a run that stays proseless through the toolless retry records max_iterations", async () => {
     const adapter = scriptedAdapter([[
       { type: "tool_call_delta", index: 0, id: "c", name: "get_book", argsDelta: "{}" },
       { type: "finish", reason: "tool_calls" },
@@ -293,7 +346,7 @@ describe("tool loop (scripted adapter)", () => {
       adapter, model: "m", apiKey: "k", cacheStablePrefixCount: 0, messages: [], tools: [],
       executeTool: async () => ({ result: { ok: true }, event: { name: "get_book", summary: "", ok: true } }),
     });
-    expect(res.iterations).toBe(E2_MAX_TOOL_ITERATIONS + 1);
+    expect(res.iterations).toBe(E2_MAX_TOOL_ITERATIONS + 2);
     expect(res.finish).toBe("max_iterations");
   });
 });

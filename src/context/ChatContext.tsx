@@ -1401,8 +1401,29 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // request doesn't carry — the tool-truth law) but sends
         // tool_choice:"none" plus a truthful budget note, so the model must
         // answer in prose from what it has already read.
-        for (let iteration = 0; iteration <= MAX_TOOL_ITERATIONS; iteration++) {
+        //
+        // ...and one round past THAT is the TOOLLESS RETRY, reached only when
+        // the forced round comes back calls-without-prose. Wire-measured (E2,
+        // google/gemini-3.7-flash via OpenRouter): tool_choice:"none" is
+        // advisory on some provider paths, and the model even emitted calls
+        // on a request carrying ZERO tool definitions — five rounds of
+        // call/result exchanges teach it "this is a calling conversation",
+        // and it pattern-continues regardless of the wire (the app's own
+        // roster-omission-is-fabrication law, observed from the other side).
+        // So the retry does not merely strip tools — it stops CONTINUING that
+        // conversation: a rebuilt message list with the pre-loop context and
+        // the user's question, the reads repackaged as research notes, and no
+        // call-shaped history to imitate. That knowingly bends the letter of
+        // the tool-truth law for one bounded round — the prompt was built
+        // when tools WERE carried — after two budget notes have re-scoped the
+        // turn; the alternative is a certainly-empty reply, which is its own
+        // lie about what was read.
+        let toollessTried = false;
+        let toollessMessages: any[] | null = null;
+        const preLoopMessages = [...workingMessages];
+        for (let iteration = 0; iteration <= MAX_TOOL_ITERATIONS + 1; iteration++) {
           const finalRound = iteration === MAX_TOOL_ITERATIONS;
+          const toollessRound = iteration === MAX_TOOL_ITERATIONS + 1;
           if (finalRound) {
             workingMessages.push({
               role: "system",
@@ -1437,8 +1458,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           const stream = adapter.streamChat({
             model: localId,
-            messages: workingMessages,
-            tools: toolDefs,
+            // Toolless retry: a rebuilt, call-history-free conversation with
+            // nothing left to call or imitate — see the loop header.
+            messages: toollessRound && toollessMessages ? toollessMessages : workingMessages,
+            tools: toollessRound ? undefined : toolDefs,
             // Final round: declared-but-not-invokable — see the loop header.
             toolChoice: finalRound ? "none" : undefined,
             signal: abortRef.current.signal,
@@ -1674,12 +1697,43 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if ((toolCalls.length === 0 && (!textCallNoted || textCallNoteSent)) || streamCutShort) {
             break;
           }
-          // The forced answer round is terminal no matter what came back: the
-          // budget note just told the model no further calls will execute, so
-          // executing one a provider emitted despite tool_choice:"none" would
-          // make the app's own sentence false — and there is no later round
-          // to return the result to anyway.
+          // The forced answer round never executes calls: the budget note
+          // just told the model none will run, and executing one a provider
+          // emitted despite tool_choice:"none" would make the app's own
+          // sentence false. Calls-without-prose earns the one toolless retry
+          // (see the loop header); anything else ends the turn here.
           if (finalRound) {
+            if (!iterText && toolCalls.length > 0 && !toollessTried) {
+              toollessTried = true;
+              // Reads-as-notes, newest first under a hard budget — the last
+              // windows are where the hunt converged. turnToolResultText is
+              // the MODEL-VISIBLE text of each result (the salvage barrier's
+              // copy), so the notes carry exactly what the model already saw.
+              const NOTES_BUDGET = 80_000;
+              const notes: string[] = [];
+              let used = 0;
+              for (let i = turnToolResultText.length - 1; i >= 0; i--) {
+                const t = turnToolResultText[i];
+                if (used + t.length > NOTES_BUDGET) break;
+                notes.unshift(`--- read ${i + 1} ---\n${t}`);
+                used += t.length;
+              }
+              toollessMessages = [
+                ...preLoopMessages,
+                ...(notes.length > 0
+                  ? [{ role: "system", content: `[Research notes — text this turn's reads returned:]\n\n${notes.join("\n\n")}` }]
+                  : []),
+                {
+                  role: "system",
+                  content:
+                    "[No tools are attached to this request — the reading budget was spent. Reply to the user now in prose, using only the research notes above; say plainly if what was needed could not be read in time.]",
+                },
+              ];
+              continue;
+            }
+            break;
+          }
+          if (toollessRound) {
             break;
           }
 
