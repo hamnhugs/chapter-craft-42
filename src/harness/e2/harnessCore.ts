@@ -1,0 +1,436 @@
+import type { BookDocument } from "@/types/library";
+import type { ChatProviderAdapter } from "@/lib/providers/types";
+
+/**
+ * E2 harness core — the quality gate for flipping the book-context default
+ * from "full" to "catalog" (Card Catalog redesign §8, experiments E2/E3).
+ *
+ * Everything in this file is PURE relative to the network: message-loop
+ * mechanics, quote verification, checkpointing, and report math. The runner
+ * files (*.e2run.ts, executed only via vitest.e2.config.ts) wire it to the
+ * REAL app builders (buildChatSystemPrompt / buildBookContextBlock), the REAL
+ * openrouterAdapter, and the REAL executeChatTool — the harness re-implements
+ * none of the product; it only replays ChatContext's assembly and loop
+ * (src/context/ChatContext.tsx) outside React.
+ *
+ * Fairness contract (both arms identical except the book block's mode):
+ *  - same system prompt bytes, same roster, same tools on the wire;
+ *  - same fixture books served to get_chapter_text/get_book;
+ *  - same model, same provider defaults, questions interleaved
+ *    full/catalog so provider drift lands evenly;
+ *  - MAX_TOOL_ITERATIONS and the 24k tool-result slice mirror the app.
+ *
+ * Data files live under e2-data/ (gitignored: the user's book text and the
+ * question keys derived from it must never reach the repo).
+ */
+
+// ── Question set ───────────────────────────────────────────────────────────
+
+export type E2QuestionType = "needle" | "quote" | "synthesis" | "routing";
+
+export interface E2Question {
+  id: string;
+  type: E2QuestionType;
+  /** The book the answer lives in ("both" only for routing questions). */
+  book_id: string;
+  question: string;
+  key: {
+    /** Canonical short answer (needle/routing) — what a grader must see. */
+    expected?: string;
+    /** Mechanical acceptors: case-insensitive substrings of a normalized
+     *  answer. Any hit = correct without a judge call. */
+    accept?: string[];
+    /** Author-verified verbatim span (quote questions): must exist in the
+     *  chapter EXACTLY (validator-enforced), and a correct answer quotes a
+     *  part of it. */
+    quote?: { chapter_id: string; text: string };
+    /** Rubric key points (synthesis): the judge scores coverage of these. */
+    points?: string[];
+    /** Where the fact lives — provenance for the report, not for grading. */
+    chapter_id?: string;
+  };
+  /** Author note: why this question / where it came from. */
+  notes?: string;
+}
+
+export interface QuestionValidationIssue {
+  id: string;
+  problem: string;
+}
+
+/** Mechanical validation of the fixed set — every quote key must verbatim-
+ *  match its chapter (strict, no normalization: these keys double as the E3
+ *  ground truth), every id must resolve, every type must carry its key. */
+export function validateQuestions(questions: E2Question[], books: BookDocument[]): QuestionValidationIssue[] {
+  const issues: QuestionValidationIssue[] = [];
+  const seen = new Set<string>();
+  const bookById = new Map(books.map((b) => [b.id, b]));
+  for (const q of questions) {
+    if (seen.has(q.id)) issues.push({ id: q.id, problem: "duplicate id" });
+    seen.add(q.id);
+    if (q.book_id !== "both" && !bookById.has(q.book_id)) {
+      issues.push({ id: q.id, problem: `unknown book_id ${q.book_id}` });
+      continue;
+    }
+    const inBook = (chapterId: string): { ok: boolean; text: string } => {
+      for (const b of books) {
+        const c = b.chapters.find((ch) => ch.id === chapterId);
+        if (c) return { ok: q.book_id === "both" || b.id === q.book_id, text: c.textContent };
+      }
+      return { ok: false, text: "" };
+    };
+    if (q.type === "quote") {
+      if (!q.key.quote) { issues.push({ id: q.id, problem: "quote question without key.quote" }); continue; }
+      const { ok, text } = inBook(q.key.quote.chapter_id);
+      if (!ok) issues.push({ id: q.id, problem: "quote chapter_id not in the claimed book" });
+      else if (!text.includes(q.key.quote.text)) issues.push({ id: q.id, problem: "quote key is NOT a verbatim span of its chapter" });
+      if ((q.key.quote?.text || "").length < 40) issues.push({ id: q.id, problem: "quote key too short to be discriminating (<40 chars)" });
+    }
+    if (q.type === "needle") {
+      if (!q.key.expected || !q.key.accept?.length) issues.push({ id: q.id, problem: "needle question needs expected + accept[]" });
+      if (q.key.chapter_id && !inBook(q.key.chapter_id).ok) issues.push({ id: q.id, problem: "needle chapter_id not in the claimed book" });
+      // The acceptor must actually appear in the source chapter — an acceptor
+      // the book never says can only be satisfied by coincidence.
+      if (q.key.chapter_id && q.key.accept?.length) {
+        const { text } = inBook(q.key.chapter_id);
+        const norm = normalizeForMatch(text, "deep").toLowerCase();
+        if (!q.key.accept.some((a) => norm.includes(normalizeForMatch(a, "deep").toLowerCase()))) {
+          issues.push({ id: q.id, problem: "no acceptor appears in the source chapter (deep-normalized)" });
+        }
+      }
+    }
+    if (q.type === "synthesis" && !q.key.points?.length) issues.push({ id: q.id, problem: "synthesis question needs key.points" });
+    if (q.type === "routing" && !q.key.accept?.length) issues.push({ id: q.id, problem: "routing question needs accept[]" });
+  }
+  return issues;
+}
+
+// ── Quote verification (E3, mechanical) ────────────────────────────────────
+
+/** Normalization ladder. "strict" is identity; "ws" collapses whitespace and
+ *  unifies quote/dash glyphs; "deep" additionally joins hyphenated line
+ *  breaks (PDF extraction artifact). Verification reports the WEAKEST level
+ *  that matched, so the report can state strict and deep rates separately. */
+export function normalizeForMatch(s: string, level: "strict" | "ws" | "deep"): string {
+  if (level === "strict") return s;
+  let t = s
+    .replace(/[‘’‚‛]/g, "'")
+    .replace(/[“”„‟]/g, '"')
+    .replace(/[‐-―−]/g, "-")
+    .replace(/­/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (level === "deep") t = t.replace(/- /g, "");
+  return t;
+}
+
+/** Pull the spans an answer presents AS QUOTES: double-quoted runs (straight
+ *  or curly) and markdown blockquote lines. Short fragments (<20 chars) are
+ *  ignored — they are phrase mentions, not quote claims. */
+export function extractQuotedSpans(answer: string, minLen = 20): string[] {
+  const spans: string[] = [];
+  const re = /["“]([^"“”]{5,600}?)["”]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(answer)) !== null) spans.push(m[1]);
+  for (const line of answer.split("\n")) {
+    const bq = /^\s*>\s?(.+)$/.exec(line);
+    if (bq) spans.push(bq[1].trim());
+  }
+  return [...new Set(spans.filter((s) => s.trim().length >= minLen))];
+}
+
+export interface QuoteCheck {
+  span: string;
+  verified: boolean;
+  /** The weakest normalization that produced the match. */
+  level?: "strict" | "ws" | "deep";
+}
+
+/** Every claimed quote checked against the actual chapter text of the given
+ *  books (the E3 mechanical gate). A span verifies when it is a substring of
+ *  any chapter at any normalization level. */
+export function verifyQuotes(answer: string, books: BookDocument[], minLen = 20): QuoteCheck[] {
+  const spans = extractQuotedSpans(answer, minLen);
+  const haystacks = {
+    strict: books.flatMap((b) => b.chapters.map((c) => c.textContent)),
+    ws: [] as string[],
+    deep: [] as string[],
+  };
+  haystacks.ws = haystacks.strict.map((t) => normalizeForMatch(t, "ws"));
+  haystacks.deep = haystacks.strict.map((t) => normalizeForMatch(t, "deep"));
+  return spans.map((span) => {
+    for (const level of ["strict", "ws", "deep"] as const) {
+      const needle = normalizeForMatch(span, level);
+      if (needle.length >= minLen && haystacks[level].some((h) => h.includes(needle))) {
+        return { span, verified: true, level };
+      }
+    }
+    return { span, verified: false };
+  });
+}
+
+// ── The tool loop (ChatContext's loop, outside React) ──────────────────────
+
+export const E2_MAX_TOOL_ITERATIONS = 5; // MUST mirror ChatContext.MAX_TOOL_ITERATIONS
+export const E2_TOOL_RESULT_SLICE = 24_000; // MUST mirror the app's slice
+
+export interface ToolTraceEntry {
+  name: string;
+  args: string;
+  ok: boolean;
+  resultChars: number;
+  summary: string;
+}
+
+export interface LoopResult {
+  text: string;
+  reasoning: string;
+  toolTrace: ToolTraceEntry[];
+  iterations: number;
+  /** Chars of the serialized message array at each iteration's send — the
+   *  cost signal (tokens ≈ chars/4, the app convention). */
+  sentChars: number[];
+  finish: "ok" | "max_iterations";
+}
+
+export interface RunLoopOpts {
+  adapter: ChatProviderAdapter;
+  model: string;
+  apiKey: string;
+  messages: unknown[];
+  tools: unknown[] | undefined;
+  cacheStablePrefixCount: number;
+  executeTool: (name: string, rawArgs: string) => Promise<{ result: unknown; event: { name: string; summary: string; ok: boolean } }>;
+  signal?: AbortSignal;
+}
+
+/** Drive one conversation to completion through a provider adapter, executing
+ *  tool calls exactly as ChatContext does: accumulate tool_call_deltas by
+ *  index, push the assistant tool_calls message, execute, push each result
+ *  JSON-sliced at 24k, iterate up to the app's cap. The salvage pass for
+ *  text-written calls is deliberately absent (documented harness deviation —
+ *  native-tool-calling models on OpenRouter; a run that ends with prose call
+ *  syntax simply ends). */
+export async function runToolLoop(opts: RunLoopOpts): Promise<LoopResult> {
+  const messages = [...opts.messages];
+  let text = "";
+  let reasoning = "";
+  const toolTrace: ToolTraceEntry[] = [];
+  const sentChars: number[] = [];
+
+  for (let iteration = 0; iteration < E2_MAX_TOOL_ITERATIONS; iteration++) {
+    sentChars.push(JSON.stringify(messages).length);
+    let iterText = "";
+    const acc: Record<number, { id?: string; name?: string; args: string }> = {};
+
+    const stream = opts.adapter.streamChat({
+      model: opts.model,
+      messages,
+      tools: opts.tools,
+      apiKey: opts.apiKey,
+      signal: opts.signal,
+      cacheStablePrefixCount: opts.cacheStablePrefixCount,
+    });
+    for await (const ev of stream) {
+      if (ev.type === "text") iterText += ev.delta;
+      else if (ev.type === "reasoning") reasoning += ev.delta;
+      else if (ev.type === "tool_call_delta") {
+        const slot = (acc[ev.index] ||= { args: "" });
+        if (ev.id) slot.id = ev.id;
+        if (ev.name) slot.name = ev.name;
+        if (ev.argsDelta) slot.args += ev.argsDelta;
+      }
+    }
+
+    text += (text && iterText ? "\n" : "") + iterText;
+    const calls = Object.keys(acc)
+      .map(Number)
+      .sort((a, b) => a - b)
+      .map((i) => acc[i])
+      .filter((c) => c.name);
+    if (calls.length === 0) return { text, reasoning, toolTrace, iterations: iteration + 1, sentChars, finish: "ok" };
+
+    messages.push({
+      role: "assistant",
+      content: iterText || null,
+      tool_calls: calls.map((t, i) => ({
+        id: t.id || `call_${iteration}_${i}`,
+        type: "function",
+        function: { name: t.name, arguments: t.args || "{}" },
+      })),
+    });
+    for (let i = 0; i < calls.length; i++) {
+      const t = calls[i];
+      const { result, event } = await opts.executeTool(t.name!, t.args || "{}");
+      // Strip the app's __-prefixed UI side channels before the model sees
+      // the result — same as ChatContext.
+      let modelResult: unknown = result;
+      if (result && typeof result === "object" && Object.keys(result as object).some((k) => k.startsWith("__"))) {
+        modelResult = Object.fromEntries(Object.entries(result as Record<string, unknown>).filter(([k]) => !k.startsWith("__")));
+      }
+      const content = JSON.stringify(modelResult).slice(0, E2_TOOL_RESULT_SLICE);
+      toolTrace.push({ name: t.name!, args: (t.args || "").slice(0, 400), ok: event.ok, resultChars: content.length, summary: event.summary });
+      messages.push({ role: "tool", tool_call_id: t.id || `call_${iteration}_${i}`, name: t.name, content });
+    }
+  }
+  return { text, reasoning, toolTrace, iterations: E2_MAX_TOOL_ITERATIONS, sentChars, finish: "max_iterations" };
+}
+
+// ── Answer rows + checkpointing ────────────────────────────────────────────
+
+export type E2Mode = "full" | "catalog";
+
+export interface AnswerRow {
+  qid: string;
+  mode: E2Mode;
+  model: string;
+  answer: string;
+  toolTrace: ToolTraceEntry[];
+  iterations: number;
+  sentChars: number[];
+  finish: string;
+  ms: number;
+  fixtureSha: string;
+  questionsSha: string;
+  at: string;
+  error?: string;
+}
+
+export function rowKey(r: { qid: string; mode: string }): string {
+  return `${r.qid}::${r.mode}`;
+}
+
+/** Successful rows win; an error row is retried on the next run. */
+export function completedKeys(rows: AnswerRow[]): Set<string> {
+  return new Set(rows.filter((r) => !r.error).map(rowKey));
+}
+
+// ── Grading ────────────────────────────────────────────────────────────────
+
+export interface GradeRow {
+  qid: string;
+  mode: E2Mode;
+  type: E2QuestionType;
+  /** needle/routing/quote-content: 1 correct, 0 wrong; synthesis: 0..5. */
+  score: number;
+  maxScore: number;
+  /** How the score was decided. */
+  by: "accept-list" | "quote-verify" | "judge" | "error";
+  quoteChecks?: QuoteCheck[];
+  judgeRaw?: string;
+  notes?: string;
+}
+
+/** Mechanical accept-list check on a deep-normalized, lowercased answer. */
+export function acceptListHit(answer: string, accept: string[] | undefined): boolean {
+  if (!accept?.length) return false;
+  const hay = normalizeForMatch(answer, "deep").toLowerCase();
+  return accept.some((a) => hay.includes(normalizeForMatch(a, "deep").toLowerCase()));
+}
+
+/** Do two texts share any ≥`shingle`-char contiguous run (deep-normalized)?
+ *  Cheap LCS stand-in: 40-char shingles of `a` at stride 20, substring-tested
+ *  against `b`. Catches "the model quoted a superset/subset of the key span"
+ *  without full LCS machinery. */
+export function sharesRun(a: string, b: string, shingle = 40): boolean {
+  const na = normalizeForMatch(a, "deep");
+  const nb = normalizeForMatch(b, "deep");
+  if (na.length < shingle || nb.length < shingle) {
+    const [s, l] = na.length <= nb.length ? [na, nb] : [nb, na];
+    return s.length >= 20 && l.includes(s);
+  }
+  for (let i = 0; i + shingle <= na.length; i += 20) {
+    if (nb.includes(na.slice(i, i + shingle))) return true;
+  }
+  return false;
+}
+
+/** Quote-question correctness, fully mechanical: the answer must present at
+ *  least one span that (a) verifies verbatim against the books (E3) and
+ *  (b) overlaps the author-verified key passage — a real quote from the wrong
+ *  paragraph is grounded but not an answer. */
+export function quoteQuestionScore(
+  answer: string,
+  keyQuote: { chapter_id: string; text: string },
+  books: BookDocument[],
+): { score: 0 | 1; checks: QuoteCheck[] } {
+  const checks = verifyQuotes(answer, books);
+  const hit = checks.some((c) => c.verified && sharesRun(c.span, keyQuote.text));
+  return { score: hit ? 1 : 0, checks };
+}
+
+export interface ModeStats {
+  needleCorrect: number;
+  needleTotal: number;
+  quoteCorrect: number;
+  quoteTotal: number;
+  quoteSpansVerified: number;
+  quoteSpansTotal: number;
+  synthesisMean: number;
+  synthesisTotal: number;
+  routingCorrect: number;
+  routingTotal: number;
+}
+
+export interface E2Report {
+  full: ModeStats;
+  catalog: ModeStats;
+  criteria: {
+    needleParity: boolean;
+    quoteParity: boolean;
+    quoteVerifyRate: number;
+    quoteVerifyPass: boolean;
+    synthesisRegressionPct: number;
+    synthesisPass: boolean;
+    verdict: "FLIP" | "HOLD";
+  };
+}
+
+const PARITY_TOLERANCE = 0.0625; // one question of sixteen — stated in the report
+
+function emptyStats(): ModeStats {
+  return { needleCorrect: 0, needleTotal: 0, quoteCorrect: 0, quoteTotal: 0, quoteSpansVerified: 0, quoteSpansTotal: 0, synthesisMean: 0, synthesisTotal: 0, routingCorrect: 0, routingTotal: 0 };
+}
+
+/** §8 criteria: parity-or-better on needle + quotes (within one-question
+ *  tolerance), ≥95% of claimed quote spans mechanically verified (E3), and
+ *  ≤10% regression on synthesis. */
+export function buildReport(grades: GradeRow[]): E2Report {
+  const stats: Record<E2Mode, ModeStats> = { full: emptyStats(), catalog: emptyStats() };
+  const synthSum: Record<E2Mode, number> = { full: 0, catalog: 0 };
+  for (const g of grades) {
+    const s = stats[g.mode];
+    if (!s) continue;
+    if (g.type === "needle") { s.needleTotal++; s.needleCorrect += g.score >= 1 ? 1 : 0; }
+    if (g.type === "routing") { s.routingTotal++; s.routingCorrect += g.score >= 1 ? 1 : 0; }
+    if (g.type === "quote") {
+      s.quoteTotal++;
+      s.quoteCorrect += g.score >= 1 ? 1 : 0;
+      for (const qc of g.quoteChecks || []) { s.quoteSpansTotal++; if (qc.verified) s.quoteSpansVerified++; }
+    }
+    if (g.type === "synthesis") { s.synthesisTotal++; synthSum[g.mode] += g.score; }
+  }
+  for (const mode of ["full", "catalog"] as const) {
+    stats[mode].synthesisMean = stats[mode].synthesisTotal ? synthSum[mode] / stats[mode].synthesisTotal : 0;
+  }
+  const rate = (c: number, t: number) => (t ? c / t : 0);
+  const needleParity = rate(stats.catalog.needleCorrect, stats.catalog.needleTotal) >= rate(stats.full.needleCorrect, stats.full.needleTotal) - PARITY_TOLERANCE;
+  const quoteParity = rate(stats.catalog.quoteCorrect, stats.catalog.quoteTotal) >= rate(stats.full.quoteCorrect, stats.full.quoteTotal) - PARITY_TOLERANCE;
+  const catalogSpanRate = rate(stats.catalog.quoteSpansVerified, stats.catalog.quoteSpansTotal);
+  const synthesisRegressionPct = stats.full.synthesisMean > 0 ? Math.max(0, (stats.full.synthesisMean - stats.catalog.synthesisMean) / stats.full.synthesisMean) * 100 : 0;
+  const quoteVerifyPass = catalogSpanRate >= 0.95;
+  const synthesisPass = synthesisRegressionPct <= 10;
+  return {
+    full: stats.full,
+    catalog: stats.catalog,
+    criteria: {
+      needleParity,
+      quoteParity,
+      quoteVerifyRate: catalogSpanRate,
+      quoteVerifyPass,
+      synthesisRegressionPct,
+      synthesisPass,
+      verdict: needleParity && quoteParity && quoteVerifyPass && synthesisPass ? "FLIP" : "HOLD",
+    },
+  };
+}

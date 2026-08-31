@@ -190,10 +190,25 @@ export async function generateBookGists(
     try {
       reply = await adapter.completeChat({
         model: localId,
-        maxTokens: 120 * batch.length + 100,
+        // 320/chapter + 1200: sized to THINKING MODELS, measured live
+        // (2026-08-31, google/gemini-3.7-flash on OpenRouter). The old
+        // 120n+100 budget died at MAX_TOKENS — the model spent its whole
+        // allowance on reasoning (~600 tokens observed at the cap) before the
+        // first content byte, so every batch yielded one truncated `1|` line
+        // and all other chapters "failed to parse", forever, run after run.
+        // A reasoning pin is NOT the fix here: OpenRouter's unified
+        // `reasoning: {enabled:false}` came back 400 "Reasoning is mandatory
+        // for this endpoint and cannot be disabled" on this very model
+        // (wire-captured), which would break every batch outright. Headroom
+        // is the robust fix — thinking stays bounded in practice, content
+        // needs ~60 tokens/line, and the leftover reservation costs nothing.
+        maxTokens: 320 * batch.length + 1_200,
         apiKey: providerKey(provider, settings.keys),
         // Same pin as the background summarizer: a reasoning model must not
-        // spend the whole budget thinking before writing a single line.
+        // spend the whole budget thinking before writing a single line. NVIDIA
+        // exposes a real off-switch via chat template kwargs; OpenRouter has
+        // no universally safe equivalent (see the budget note above), so
+        // OpenRouter runs rely on headroom instead.
         extraBody: provider === "nvidia" ? nvidiaNoThinkingBody(localId) : undefined,
         messages: [
           {

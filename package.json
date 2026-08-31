@@ -10,7 +10,9 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "e2:answer": "vitest run --config vitest.e2.config.ts src/harness/e2/answer.e2run.ts",
+    "e2:grade": "vitest run --config vitest.e2.config.ts src/harness/e2/grade.e2run.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

@@ -26,3 +26,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# E2 harness private data: the user's book text, question keys, run outputs,
+# and the local env file. Never commit book content.
+e2-data/
+.env.e2.local

@@ -381,3 +381,38 @@ describe("OpenRouter cache breakpoint (Stage 0)", () => {
     expect(adapter).not.toMatch(/^\s*\/\/+\s*messages: withCacheBreakpoint/m);
   });
 });
+
+describe("completeChat forwards extraBody (the dead-pin bug)", () => {
+  it("spreads extraBody into the outgoing JSON body, like streamChat always did", async () => {
+    // streamChat spread req.extraBody from day one; completeChat silently
+    // dropped it, so every caller-side pin on this provider was a no-op
+    // (found 2026-08-31 while chasing gist batches dying at MAX_TOKENS).
+    // Behavioral on purpose — a source pin stays green when the spread is
+    // commented out. The payload is a neutral wire param: what callers may
+    // SAY through this seam is their contract, not the adapter's.
+    const captured: any[] = [];
+    const origFetch = globalThis.fetch;
+    (globalThis as any).fetch = async (_url: unknown, init: any) => {
+      captured.push(JSON.parse(init.body));
+      return {
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: "1| fine" } }] }),
+      } as unknown as Response;
+    };
+    try {
+      const text = await openrouterAdapter.completeChat({
+        model: "google/gemini-3.7-flash",
+        apiKey: "test-key",
+        maxTokens: 2320,
+        extraBody: { top_p: 0.9 },
+        messages: [{ role: "user", content: "hi" }],
+      });
+      expect(text).toBe("1| fine");
+      expect(captured[0].top_p).toBe(0.9);
+      expect(captured[0].max_tokens).toBe(2320);
+      expect(captured[0].stream).toBe(false);
+    } finally {
+      (globalThis as any).fetch = origFetch;
+    }
+  });
+});

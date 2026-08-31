@@ -156,6 +156,10 @@ export const openrouterAdapter: ChatProviderAdapter = {
         stream: false,
         ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
         messages: req.messages,
+        // streamChat forwards extraBody; completeChat silently dropped it,
+        // which turned every caller-side pin (e.g. reasoning off for gist
+        // generation) into a no-op on this provider.
+        ...(req.extraBody || {}),
       }),
       signal: req.signal,
     });
