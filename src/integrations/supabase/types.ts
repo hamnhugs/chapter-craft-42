@@ -1033,8 +1033,10 @@ export type Database = {
       }
       knowledge_entries: {
         Row: {
+          aliases: string[] | null
           archived: boolean
           atomicity_warning: string | null
+          author: string | null
           confidence: number
           content: string
           created_at: string
@@ -1049,6 +1051,7 @@ export type Database = {
           is_index: boolean
           last_retrieved_at: string | null
           linked_wiki_id: string | null
+          locators: Json | null
           maturity: string
           next_review_at: string | null
           pending_changes: Json
@@ -1071,8 +1074,10 @@ export type Database = {
           wiki_id: string | null
         }
         Insert: {
+          aliases?: string[] | null
           archived?: boolean
           atomicity_warning?: string | null
+          author?: string | null
           confidence?: number
           content?: string
           created_at?: string
@@ -1087,6 +1092,7 @@ export type Database = {
           is_index?: boolean
           last_retrieved_at?: string | null
           linked_wiki_id?: string | null
+          locators?: Json | null
           maturity?: string
           next_review_at?: string | null
           pending_changes?: Json
@@ -1109,8 +1115,10 @@ export type Database = {
           wiki_id?: string | null
         }
         Update: {
+          aliases?: string[] | null
           archived?: boolean
           atomicity_warning?: string | null
+          author?: string | null
           confidence?: number
           content?: string
           created_at?: string
@@ -1125,6 +1133,7 @@ export type Database = {
           is_index?: boolean
           last_retrieved_at?: string | null
           linked_wiki_id?: string | null
+          locators?: Json | null
           maturity?: string
           next_review_at?: string | null
           pending_changes?: Json
@@ -2963,8 +2972,10 @@ export type Database = {
       entries_for_wiki: {
         Args: { target_wiki_id: string }
         Returns: {
+          aliases: string[] | null
           archived: boolean
           atomicity_warning: string | null
+          author: string | null
           confidence: number
           content: string
           created_at: string
@@ -2979,6 +2990,7 @@ export type Database = {
           is_index: boolean
           last_retrieved_at: string | null
           linked_wiki_id: string | null
+          locators: Json | null
           maturity: string
           next_review_at: string | null
           pending_changes: Json
@@ -3022,6 +3034,7 @@ export type Database = {
           valid_to: string
         }[]
       }
+      entry_locators_merge: { Args: { _add: Json; _id: string }; Returns: Json }
       find_contradictions: {
         Args: { entry_id: string }
         Returns: {
