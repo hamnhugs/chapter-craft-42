@@ -2,9 +2,27 @@ import { describe, it, expect } from "vitest";
 import {
   buildBookContextBlock, selectContextBooks, bookContextStore,
   BOOK_CONTEXT_MAX_BOOKS, BOOK_TOTAL_CHAR_BUDGET, EMPTY_BOOK_SELECTION,
+  resolveBookContextMode, DEFAULT_BOOK_CONTEXT_MODE,
   type BookContextSelection,
 } from "@/lib/chatBooks";
 import type { BookDocument, Chapter } from "@/types/library";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+
+/** All non-test source files, for source lints. */
+function walkSrc(dir = join(__dirname, ".."), out: string[] = []): string[] {
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    const st = statSync(p);
+    if (st.isDirectory()) {
+      if (name === "test" || name === "harness" || name === "node_modules") continue;
+      walkSrc(p, out);
+    } else if (/\.(ts|tsx)$/.test(name) && !/\.(test|spec)\./.test(name)) {
+      out.push(p);
+    }
+  }
+  return out;
+}
 
 // Same contract as chatFocus.test.ts: the block builder takes an injectable
 // nonce so serialization is deterministic under test.
@@ -421,7 +439,11 @@ describe("mode survives whole-record selection writers (review finding)", () => 
     bookContextStore.init(null);
     bookContextStore.set({ shelfId: null, bookIds: ["b1"], excludedIds: [], mode: "catalog" });
     bookContextStore.set({ shelfId: null, bookIds: ["b1"], excludedIds: [], mode: "full" });
-    expect(bookContextStore.get().mode).toBeUndefined(); // "full" is the default — stored as absent
+    // Stage 2: "full" persists EXPLICITLY (no longer coerced to absence).
+    // Once the default flips to catalog, a stored "full" is the user's
+    // opt-out — storing it as absence would flip exactly the users who
+    // deliberately chose otherwise (review finding).
+    expect(bookContextStore.get().mode).toBe("full");
     bookContextStore.set({ shelfId: null, bookIds: ["b1"], excludedIds: [], mode: "catalog" });
     bookContextStore.clear();
     expect(bookContextStore.get().mode).toBeUndefined();
@@ -506,5 +528,35 @@ describe("review residuals: receipts and budgets", () => {
     // Four 12k-capped books bind on the 36k total; voice must bind on 18k.
     expect(text.message!.length).toBeGreaterThan(30_000);
     expect(voice.message!.length).toBeLessThan(21_000);
+  });
+});
+
+describe("Stage 2: THE one mode resolution (resolveBookContextMode)", () => {
+  it("resolves the full matrix", () => {
+    // Absent mode → the default constant (currently "full"; the flip commit
+    // changes DEFAULT_BOOK_CONTEXT_MODE and nothing else).
+    expect(resolveBookContextMode({}, true)).toBe(DEFAULT_BOOK_CONTEXT_MODE);
+    expect(resolveBookContextMode({ mode: "catalog" }, true)).toBe("catalog");
+    expect(resolveBookContextMode({ mode: "full" }, true)).toBe("full");
+    // A model that can never call tools forces full — a catalog is a map to
+    // text it has no way to fetch.
+    expect(resolveBookContextMode({ mode: "catalog" }, false)).toBe("full");
+    expect(resolveBookContextMode({}, false)).toBe("full");
+  });
+
+  it("no inline mode coercion exists outside chatBooks.ts (source lint)", () => {
+    // The picker/ChatContext/receipts must all go through the helper — an
+    // inline `mode === "catalog" ? … : …` is a second mode authority that
+    // drifts from the first the day the default flips (review finding).
+    const files = walkSrc();
+    const offenders: string[] = [];
+    for (const f of files) {
+      if (/chatBooks\.ts$/.test(f)) continue;
+      const text = readFileSync(f, "utf8");
+      if (/\.mode === "catalog" \?/.test(text) || /mode \?\? "(full|catalog)"/.test(text)) {
+        offenders.push(f);
+      }
+    }
+    expect(offenders, "resolve book-context mode ONLY through resolveBookContextMode").toEqual([]);
   });
 });

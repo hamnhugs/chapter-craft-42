@@ -200,6 +200,16 @@ const RECOVERY_ALLOWED = [
   // Reads chapter text through deps.loadChapterText. Returns the user's own
   // words to the model; nothing is stored, nothing is focused.
   "get_chapter_text",
+  // Searches chapter text in memory (plus a scoped read-only prefilter
+  // SELECT); serves verbatim fenced excerpts of the user's own books.
+  // Writes nothing, changes no scope.
+  "search_book_text",
+  // read_span is DELIBERATELY ABSENT despite being a reading tool: each
+  // dereference bumps the card's vibrancy — a DB write that changes what
+  // later turns retrieve and rank. That fails both membership rules above,
+  // and via this recovery path an injection-steered reply could pump a
+  // poisoned card's retrieval standing with no roster on the wire. A quoted
+  // read_span call is refused, never run.
 
   // ── Knowledge ──
   // SELECT over knowledge_entries, scoped to the loaded neurons, results

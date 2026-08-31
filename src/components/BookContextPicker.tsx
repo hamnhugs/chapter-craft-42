@@ -4,7 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { listFolders, type BookFolder } from "@/lib/bookFolders";
 import {
-  bookContextStore, selectContextBooks, isEmptySelection,
+  bookContextStore, selectContextBooks, isEmptySelection, resolveBookContextMode,
   BOOK_CONTEXT_MAX_BOOKS, type BookContextMode,
 } from "@/lib/chatBooks";
 import { acquireGistRun, generateBookGists, releaseGistRun } from "@/lib/chapterGists";
@@ -26,7 +26,10 @@ const BookContextPicker: React.FC<{
   const [shelves, setShelves] = useState<BookFolder[]>([]);
   const [gistProgress, setGistProgress] = useState<string | null>(null);
   const selection = useSyncExternalStore(bookContextStore.subscribe, bookContextStore.get);
-  const mode: BookContextMode = selection.mode === "catalog" ? "catalog" : "full";
+  // The ONE mode resolution (chatBooks) — the picker must show what will
+  // actually ride. `true` = preference view; the send path applies the
+  // provider-capability gate on top.
+  const mode: BookContextMode = resolveBookContextMode(selection, true);
 
   useEffect(() => {
     bookContextStore.init(user?.id ?? null);

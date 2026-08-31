@@ -26,13 +26,20 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 // retrieved node set it and reset it in afterEach. The factory closes over the
 // binding and only reads it at call time, well after module init.
 let retrievalPayload: { nodes: any[]; edges: any[] } = { nodes: [], edges: [] };
+// Stage 2 enrichment: tests that exercise locator cards set this map; the
+// default empty map renders the pre-Stage-2 prompt byte-for-byte.
+let cardPointersPayload = new Map<string, any>();
 vi.mock("@/lib/knowledgeApi", () => ({
   fetchKnowledgeEntries: async () => [],
   fetchConversationMemory: async () => null,
   retrieveKnowledge: async () => retrievalPayload,
   filterSupersededNodes: async (nodes: unknown[]) => nodes,
+  fetchCardPointers: async () => cardPointersPayload,
 }));
-afterEach(() => { retrievalPayload = { nodes: [], edges: [] }; });
+afterEach(() => {
+  retrievalPayload = { nodes: [], edges: [] };
+  cardPointersPayload = new Map();
+});
 vi.mock("@/lib/imageGen", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/imageGen")>()),
   fetchImagesForEntries: async () => [],
@@ -435,8 +442,12 @@ describe("the additive contract: omitting offeredTools changes nothing", () => {
   // the prompt no longer claims it does (+64 chars). The inline Chapter
   // Contents section was also removed, but this fixed input carries no books,
   // so only the sentence moved these numbers.
-  const BASELINE_LENGTH = 23858;
-  const BASELINE_DIGEST = "15c2e52f";
+  // Re-captured 2026-08-31 (Card Catalog Stage 2): the Library-catalog tail
+  // gained the gated search_book_text guidance (search before quoting, copy
+  // excerpts byte-for-byte) — +215 chars on the default build, which carries
+  // every tool.
+  const BASELINE_LENGTH = 24073;
+  const BASELINE_DIGEST = "ccdfda4c";
   const fnv1a = (s: string) => {
     let h = 0x811c9dc5;
     for (let i = 0; i < s.length; i++) {
@@ -501,5 +512,90 @@ describe("copy invariant: the gating introduces no permission or safety vocabula
     }
     // The gating really does author new clauses — otherwise this passes vacuously.
     expect(checked).toBeGreaterThan(5);
+  });
+});
+
+describe("Stage 2: locator cards keep the property and its mirror", () => {
+  // A retrieved card WITH locators — the new prompt surface: entry ids,
+  // locator lines (untrusted quotes inside the fence), the gated read_span
+  // sentence, and the gated full-fetch tail on clipped bodies.
+  const NODE = {
+    id: "entry-loc-1",
+    title: "Law of Sines",
+    content: "Side-to-sine ratios hold in every triangle. ".repeat(40), // > 1200 chars → clips
+    entry_type: "concept",
+    score: 1, hop: 0, via: null, from_seed: "entry-loc-1",
+  };
+  const POINTERS = new Map([[
+    "entry-loc-1",
+    {
+      locators: [{
+        chapter_id: "ch-loc-1", char_start: 5, char_end: 45, page: 3,
+        quote: "ratios hold across every triangle",
+        book_id: "b1", book_title: "Applied Trig", chapter_name: "Foundations",
+      }],
+      aliases: ["sine rule"],
+      author: "user",
+    },
+  ]]);
+  const arm = () => {
+    retrievalPayload = { nodes: [NODE], edges: [] };
+    cardPointersPayload = POINTERS as any;
+  };
+
+  it("the property holds across offered subsets with a locator card in context", async () => {
+    for (const [setName, offeredTools] of OFFERED_SETS) {
+      arm();
+      const { prompt } = await build({ latestUserQuery: "the law of sines", offeredTools });
+      const offeredSet = new Set(offeredTools);
+      for (const named of toolsNamedIn(prompt)) {
+        expect(offeredSet.has(named), `[${setName}] locator-card build names off-wire '${named}'`).toBe(true);
+      }
+    }
+  });
+
+  it("the mirror: read_span guidance rides when offered, and only then", async () => {
+    arm();
+    const withIt = await build({ latestUserQuery: "the law of sines", offeredTools: ALL_TOOLS });
+    expect(withIt.prompt).toContain("read_span");
+    expect(withIt.prompt).toContain("cite exact passages");
+    arm();
+    const withoutIt = await build({ latestUserQuery: "the law of sines", offeredTools: ALL_TOOLS.filter((t) => t !== "read_span") });
+    expect(withoutIt.prompt).not.toContain("read_span");
+  });
+
+  it("locator DATA prints regardless of the roster — ids are data, verbs are gated", async () => {
+    arm();
+    const { prompt } = await build({ latestUserQuery: "the law of sines", offeredTools: [] });
+    expect(prompt).toContain("entry_id: entry-loc-1");
+    expect(prompt).toContain("chapter_id: ch-loc-1");
+    expect(prompt).toContain("ratios hold across every triangle");
+    expect(prompt).toContain("Locators (exact passages this card cites):");
+    // …and the locator line sits INSIDE the memory fence (never-obey cover).
+    const fenceOpen = prompt.indexOf("<<<memory:");
+    const locAt = prompt.indexOf("Locators (exact passages");
+    const fenceClose = prompt.indexOf("<<<end:", locAt);
+    expect(fenceOpen).toBeGreaterThan(-1);
+    expect(locAt).toBeGreaterThan(fenceOpen);
+    expect(fenceClose).toBeGreaterThan(locAt);
+  });
+
+  it("pointer-card bodies clip at the card tier with the full-fetch tail gated on search_wiki", async () => {
+    arm();
+    const withWiki = await build({ latestUserQuery: "the law of sines", offeredTools: ALL_TOOLS });
+    expect(withWiki.prompt).toContain("…truncated —");
+    expect(withWiki.prompt).toContain("search_wiki with entry_id fetches the full entry");
+    arm();
+    const noWiki = await build({ latestUserQuery: "the law of sines", offeredTools: ALL_TOOLS.filter((t) => t !== "search_wiki") });
+    expect(noWiki.prompt).toContain("…truncated —");
+    expect(noWiki.prompt).not.toContain("fetches the full entry");
+  });
+
+  it("each rendered card joins the salvage inbound list, quotes included", async () => {
+    arm();
+    const { inboundCards } = await build({ latestUserQuery: "the law of sines", offeredTools: ALL_TOOLS });
+    expect(inboundCards.length).toBe(1);
+    expect(inboundCards[0]).toContain("Law of Sines");
+    expect(inboundCards[0]).toContain("ratios hold across every triangle");
   });
 });

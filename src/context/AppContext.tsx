@@ -49,6 +49,7 @@ interface AppState {
   loadBookFile: (bookId: string) => Promise<string>;
   /** Fetch one chapter's text on demand (not loaded at startup). */
   loadChapterText: (chapterId: string) => Promise<string>;
+  loadChapterTextStrict: (chapterId: string) => Promise<{ ok: boolean; text?: string; error?: string }>;
   /** Fetch every chapter's text for one book on demand. */
   loadBookChapterText: (bookId: string) => Promise<void>;
   /** Patch freshly generated chapter gists into library state (catalog mode).
@@ -912,6 +913,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return text;
   }, [user, books]);
 
+  /** loadChapterText with a TYPED failure channel. The legacy loader returns
+   *  "" for BOTH "load failed" and "chapter truly empty", which makes any
+   *  consumer that must be honest about the difference lie on a network blip
+   *  (Stage 2 law: a locator write must reject as "couldn't verify — retry",
+   *  never as "quote not found"; read_span must say "couldn't read", never
+   *  emit a drift claim). Same cache-back behavior as the legacy loader. */
+  const loadChapterTextStrict = useCallback(async (chapterId: string): Promise<{ ok: true; text: string } | { ok: false; error: string }> => {
+    if (!user || !chapterId) return { ok: false, error: "not signed in or missing chapter id" };
+    const cached = books.flatMap((b) => b.chapters).find((c) => c.id === chapterId);
+    if (cached?.textContent) return { ok: true, text: cached.textContent };
+    const { data, error } = await supabase
+      .from("chapters")
+      .select("text_content")
+      .eq("id", chapterId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (error) return { ok: false, error: error.message || "failed to load chapter text" };
+    if (!data) return { ok: false, error: "chapter not found" };
+    const text = (data as any).text_content || "";
+    if (text) {
+      setBooks((prev) =>
+        prev.map((b) => ({
+          ...b,
+          chapters: b.chapters.map((c) => (c.id === chapterId ? { ...c, textContent: text } : c)),
+        }))
+      );
+    }
+    return { ok: true, text };
+  }, [user, books]);
+
   /** Hydrate every chapter of one book with its text (auto-tagging needs
    *  excerpts across the whole book). */
   const loadBookChapterText = useCallback(async (bookId: string): Promise<void> => {
@@ -986,6 +1017,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         getActiveBook,
         loadBookFile,
         loadChapterText,
+        loadChapterTextStrict,
         loadBookChapterText,
 
         refreshWikis,

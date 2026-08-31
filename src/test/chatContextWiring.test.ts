@@ -154,6 +154,12 @@ describe("tool calls emitted as prose", () => {
     expect(call).toContain("trimmed");
     expect(call).toContain("focusBlock.message");
     expect(call).toContain("turnToolResultText");
+    // Stage 2: retrieved memory cards join per card (their bodies and
+    // locator QUOTES are persisted untrusted text riding in the system
+    // prompt; one entry per card keeps every card inside the salvage
+    // module's per-source comparison share — a single big string would
+    // leave its own tail uncompared).
+    expect(call).toContain("...(inboundCards ?? [])");
   });
 
   it("does not salvage from a reply the provider cut short", () => {
@@ -580,7 +586,12 @@ describe("Stage 1: catalog mode wiring", () => {
 
 describe("Stage 1 review: catalog requires a model that can fetch", () => {
   it("permanently tool-less models force full text even with a non-empty selection", () => {
-    expect(CTX).toContain('bookSelection.mode === "catalog" && providerSupportsTools ? "catalog" : "full"');
+    // Stage 2 centralized the resolution: ChatContext must go through THE
+    // one helper (chatBooks.resolveBookContextMode) with the provider's
+    // standing capability — an inline coercion here would be a second mode
+    // authority that can drift from the picker's (review-pinned).
+    expect(CTX).toContain("resolveBookContextMode(bookSelection, providerSupportsTools)");
+    expect(CTX).not.toMatch(/bookSelection\.mode === "catalog" \?/);
   });
 
   it("the empty-selection force sits INSIDE the fallback block — not hoisted, not duplicated", () => {

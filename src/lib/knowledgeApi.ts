@@ -657,6 +657,49 @@ export async function filterSupersededNodes<T extends { id: string }>(nodes: T[]
   }
 }
 
+// ── Card pointers (Stage 2 enrichment) ──────────────────────────────────────
+// The deployed knowledge-retrieve edge fn predates the locator columns, so
+// the client enriches retrieved nodes with ONE batched select. Runs AFTER
+// filterSupersededNodes (retired rows never enrich) and degrades exactly like
+// it: any failure returns an empty map and the prompt renders as before.
+// First-read-is-the-probe: a missing-schema error caches "missing" via
+// cardLocators so later sends skip the fetch entirely.
+
+export interface CardPointerRow {
+  locators: import("@/lib/cardLocators").CardLocator[];
+  aliases: string[];
+  author: string | null;
+}
+
+export async function fetchCardPointers(ids: string[]): Promise<Map<string, CardPointerRow>> {
+  const out = new Map<string, CardPointerRow>();
+  if (ids.length === 0) return out;
+  const { cardSchemaKnownMissing, noteCardSchema, isCardSchemaMissing, parseLocators } = await import("@/lib/cardLocators");
+  if (cardSchemaKnownMissing()) return out;
+  try {
+    const { data, error } = await supabase
+      .from("knowledge_entries")
+      .select("id, locators, aliases, author" as any)
+      .in("id", ids);
+    if (error) {
+      if (isCardSchemaMissing(error)) noteCardSchema("missing");
+      return out;
+    }
+    noteCardSchema("present");
+    for (const r of (data as any[]) || []) {
+      const locators = parseLocators(r.locators);
+      const aliases = Array.isArray(r.aliases) ? r.aliases.filter((a: unknown): a is string => typeof a === "string") : [];
+      const author = typeof r.author === "string" ? r.author : null;
+      if (locators.length > 0 || aliases.length > 0 || author) {
+        out.set(r.id as string, { locators, aliases, author });
+      }
+    }
+    return out;
+  } catch {
+    return out;
+  }
+}
+
 export async function createWikiPointerEntry(input: {
   wiki_id: string;
   linked_wiki_id: string;

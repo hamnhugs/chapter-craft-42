@@ -79,6 +79,31 @@ export type BookContextState = "full" | "excerpt" | "outline" | "catalog" | "omi
  *  with text fetched per chapter on demand. */
 export type BookContextMode = "full" | "catalog";
 
+/** What an ABSENT stored mode resolves to for tool-capable providers. The
+ *  Card Catalog default flip (Stage 2, gated on the frozen E2 rerun passing)
+ *  is exactly this one constant changing to "catalog" — nothing else. */
+export const DEFAULT_BOOK_CONTEXT_MODE: BookContextMode = "full";
+
+/**
+ * THE one mode resolution — sendMessage, the picker, and every receipt read
+ * this same function, so a pre-send surface can never disagree with what
+ * actually rides (review-pinned: no inline `mode === "catalog" ? … : …`
+ * coercions anywhere else).
+ *
+ * `providerToolCapable` is the PERMANENT capability gate only: a model that
+ * can never call tools gets full text regardless — a catalog is a map to
+ * text it has no way to fetch. A TRANSIENT image-turn tool drop keeps the
+ * catalog (its bytes are stable and claim no fetch capability); callers pass
+ * the provider's standing capability, not this turn's roster.
+ */
+export function resolveBookContextMode(
+  sel: Pick<BookContextSelection, "mode">,
+  providerToolCapable: boolean,
+): BookContextMode {
+  if (!providerToolCapable) return "full";
+  return sel.mode === "catalog" ? "catalog" : sel.mode === "full" ? "full" : DEFAULT_BOOK_CONTEXT_MODE;
+}
+
 export interface UsedBookContext {
   id: string;
   title: string;
@@ -598,9 +623,14 @@ function sanitizeStored(raw: unknown): BookContextSelection {
     shelfId: typeof o.shelfId === "string" && o.shelfId ? o.shelfId : null,
     bookIds: ids(o.bookIds),
     excludedIds: ids(o.excludedIds),
-    // Anything but the literal "catalog" coerces to the default; a stored
-    // junk value must never invent a third mode.
-    ...(o.mode === "catalog" ? { mode: "catalog" as const } : {}),
+    // Only the two known literals survive; junk must never invent a third
+    // mode. "full" persists EXPLICITLY (since Stage 2): once the default
+    // flips to catalog, a stored "full" is the user's opt-out — storing it
+    // as absence would flip exactly the users who deliberately chose
+    // otherwise. (Known bounded exposure: an OLD bundle's sanitizer still
+    // strips "full" on its own writes until tabs cycle — the Phase-4
+    // stale-client acceptance class.)
+    ...(o.mode === "catalog" ? { mode: "catalog" as const } : o.mode === "full" ? { mode: "full" as const } : {}),
   };
 }
 

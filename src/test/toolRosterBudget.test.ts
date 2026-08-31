@@ -34,7 +34,16 @@ import { CHAT_TOOL_DEFINITIONS } from "@/lib/chatTools";
 // verb — so it earns roster slots the same way the Tool Foundry's did, and the
 // same deliberate speed bump applies: every other tool got slightly harder to
 // select, which the description quality of these five has to earn back.
-const ROSTER_BUDGET = 73;
+//
+// +2 (Card Catalog Stage 2): search_book_text and read_span — the two reading
+// primitives the MEASURED E2 quote gap demands (catalog mode lost exact-quote
+// retrieval 6/11 vs 8/11, every loss a deep-sentence seek a 5-round budget
+// couldn't make; docs/stage2-card-pointers.md). Neither is a sibling of an
+// existing verb: one finds exact wording, one dereferences a memory card's
+// verified pointers. The cost is accepted against a hard check: the frozen E2
+// set is rerun with these on the roster, and if the quote criteria still
+// fail, they haven't earned their slots and the catalog default stays held.
+const ROSTER_BUDGET = 75;
 
 describe("the tool roster stays within its stated budget", () => {
   it(`ships at most ${ROSTER_BUDGET} tools`, () => {

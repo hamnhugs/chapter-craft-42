@@ -30,7 +30,7 @@ import { extractCodeBlocks, excludeArtifactDuplicates } from "@/lib/workspaceFil
 import { buildFocusBlock, type UsedFocusItem } from "@/lib/chatFocus";
 import {
   bookContextStore, selectContextBooks, hydrateBooksForContext,
-  buildBookContextBlock, bookContextCharBudget, type UsedBookContext,
+  buildBookContextBlock, bookContextCharBudget, resolveBookContextMode, type UsedBookContext,
   type BookContextMode,
 } from "@/lib/chatBooks";
 import { toast } from "sonner";
@@ -418,7 +418,7 @@ function loadRollingSummary(uid: string): RollingSummary {
 
 export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
-  const { books, activeBookId, activeWiki, activeWikiId, activeWikis, wikis, addChapter, updateChapter, removeChapter, updateBookTitle, loadChapterText, setActiveBookSilent } = useApp();
+  const { books, activeBookId, activeWiki, activeWikiId, activeWikis, wikis, addChapter, updateChapter, removeChapter, updateBookTitle, loadChapterText, loadChapterTextStrict, setActiveBookSilent } = useApp();
 
   const { apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, selectedModel, setSelectedModel, savedModels, addModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, maxReplySentences, autoShowMemoryImages, chatToolPermissions, visionModel, imageModelPrimary, imageModelFallback,
     videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold,
@@ -1062,7 +1062,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ? CHAT_TOOL_DEFINITIONS.filter((t: any) => offeredNames.has(t.function.name))
         : undefined;
 
-      const { prompt: systemPrompt, usedMemories, memoryImages } = await buildChatSystemPrompt({
+      const { prompt: systemPrompt, usedMemories, memoryImages, inboundCards } = await buildChatSystemPrompt({
         books,
         selectedBook,
         deepResearch,
@@ -1247,8 +1247,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // (review-confirmed). This is the PERMANENT gate only: a transient
       // image-turn tool drop keeps the catalog — its bytes stay stable, its
       // wording claims no fetch capability, and the tools return next turn.
-      let bookCtxMode: BookContextMode =
-        bookSelection.mode === "catalog" && providerSupportsTools ? "catalog" : "full";
+      let bookCtxMode: BookContextMode = resolveBookContextMode(bookSelection, providerSupportsTools);
       // FALLBACK, not a default: with no shelf/book selection the active book
       // normally stays OUT of context — the model reads it on demand with
       // `get_chapter_text` (Stage 0 removed the inline Chapter Contents that
@@ -1662,6 +1661,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 // call-shaped JSON (a technical manual, this app's own docs)
                 // must not have its quotes executed as authored calls.
                 ...(bookBlock?.message ? [bookBlock.message] : []),
+                // Retrieved memory cards are inbound too (Stage 2): card
+                // bodies and locator QUOTES are persisted untrusted text now
+                // riding in the system prompt — a call shape transcribed out
+                // of one must never execute as authored. One entry PER CARD,
+                // not the whole prompt: the module compares each source's
+                // head within a per-source share, so a single big source
+                // would leave its own tail (where deep cards sit) uncovered.
+                ...(inboundCards ?? []),
                 ...turnToolResultText.slice().reverse(),
               ],
             });
@@ -1844,6 +1851,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               removeChapter,
               updateBookTitle,
               loadChapterText,
+              loadChapterTextStrict,
               burplexityApiToken,
               tavilyApiKey,
               userId: user?.id ?? null,
@@ -2257,7 +2265,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // foundryReady are the raw inputs computeToolGates now takes (it draws the
     // opt-in and availability distinction itself, so the pre-combined
     // forgeEnabled/runEnabled are no longer read here).
-    [apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, autoShowMemoryImages, foundryEnabled, forgeOptIn, runOptIn, foundryReady, chatToolPermissions, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, updateBookTitle, loadChapterText, setActiveBookSilent]
+    [apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, autoShowMemoryImages, foundryEnabled, forgeOptIn, runOptIn, foundryReady, chatToolPermissions, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, updateBookTitle, loadChapterText, loadChapterTextStrict, setActiveBookSilent]
   );
 
 
