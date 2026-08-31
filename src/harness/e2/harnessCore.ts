@@ -405,6 +405,15 @@ export async function runToolLoop(opts: RunLoopOpts): Promise<LoopResult> {
  *  largely ungisted, and that configuration was never measured by the
  *  original A/B (review-HIGH). Its criteria decide the flip's SHAPE —
  *  unconditional vs gisted-books-only. */
+/** The reading pathway under test — ONE declaration shared by both phases.
+ *  The grade phase derives its prose-call metric from the same list, so the
+ *  two can never drift (review finding: it still measured the old 3-tool
+ *  roster and could not see the tool the rerun exists to evaluate). */
+export const E2_ROSTER = ["list_books", "get_book", "get_chapter_text", "search_book_text"] as const;
+
+/** Every arm the rerun answers and grades. */
+export const E2_MODES = ["full", "catalog", "catalog_nogist"] as const;
+
 export type E2Mode = "full" | "catalog" | "catalog_nogist";
 
 export interface AnswerRow {
@@ -507,10 +516,11 @@ export interface GradeRow {
   judgeRaw?: string;
   notes?: string;
   /** Run identity, copied from the answer row — grade rows from another
-   *  model/fixture/question state are stale and never count. */
+   *  model/fixture/question/ROSTER state are stale and never count. */
   model?: string;
   fixtureSha?: string;
   questionsSha?: string;
+  rosterSha?: string;
 }
 
 /** Mechanical accept-list check on a deep-normalized, lowercased answer. */

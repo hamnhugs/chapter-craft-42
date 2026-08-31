@@ -1020,16 +1020,17 @@ export async function buildChatSystemPrompt({
               : node.content || "";
           // Card-shaped clip (Stage 2): a pointer card's body is a gloss —
           // the passage itself lives in the book and read_span serves it, so
-          // the clip is honest at 1200. Unanchored notes (the entire legacy
-          // corpus on day one) keep more body because the body IS their
-          // value; tool/program cards keep the full 4000 (functional docs).
-          // Every clip is escapable: search_wiki entry_id fetches the whole
-          // entry — named only when this turn carries the tool.
-          const maxLen = isSelfBuilt
+          // clipping it at 1200 costs nothing the model cannot fetch.
+          // UNANCHORED notes keep the pre-Stage-2 4000: on day one that is
+          // 100% of every existing user's corpus, their body IS their value,
+          // and nothing measured justifies shrinking it (review finding — a
+          // silent 40% cut to the whole legacy wiki is not a Stage 2 goal).
+          // Tool/program cards keep 4000 as functional docs. Every clip is
+          // escapable: search_wiki entry_id fetches the whole entry — named
+          // only when this turn carries the tool.
+          const maxLen = isSelfBuilt || !hasLocs
             ? (voiceMode ? 1200 : 4000)
-            : hasLocs
-              ? (voiceMode ? 700 : 1200)
-              : (voiceMode ? 1200 : 2400);
+            : (voiceMode ? 700 : 1200);
           const text = body.length > maxLen
             ? body.slice(0, maxLen) +
               `\n[…truncated — ${body.length - maxLen} more chars${has("search_wiki") ? "; search_wiki with entry_id fetches the full entry" : ""}]`
@@ -1047,7 +1048,10 @@ export async function buildChatSystemPrompt({
                   const bt = l.book_title ? `"${sanitizeInline(l.book_title, nonce, 60)}" · ` : "";
                   const cn = l.chapter_name ? `"${sanitizeInline(l.chapter_name, nonce, 60)}" · ` : "";
                   const st = l.stance ? ` · ${sanitizeInline(l.stance, nonce, 24)}` : "";
-                  return `→ ${bt}${cn}p.${l.page} · chapter_id: ${l.chapter_id} · chars ${l.char_start}–${l.char_end}${st} · "${sanitizeInline(l.quote, nonce, 120)}"`;
+                  // EVERY stored field is sanitized here, chapter_id included:
+                  // it is stored text, not an app-authored constant, so it
+                  // gets the same fence-marker defang as its neighbours.
+                  return `→ ${bt}${cn}p.${l.page} · chapter_id: ${sanitizeInline(l.chapter_id, nonce, 64)} · chars ${l.char_start}–${l.char_end}${st} · "${sanitizeInline(l.quote, nonce, 120)}"`;
                 })
                 .join("\n")
             : "";

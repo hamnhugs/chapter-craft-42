@@ -1282,6 +1282,7 @@ const WikiPanel: React.FC = () => {
                 </div>
                 <div className="prose prose-lg prose-invert max-w-none"><ReactMarkdown urlTransform={safeUrlTransform} components={safeMarkdownComponents}>{selectedEntry.content}</ReactMarkdown></div>
                 <EntryLocatorPanel
+                  key={selectedEntry.id}
                   entry={selectedEntry}
                   onLocatorsChanged={(locators) => {
                     setSelectedEntry((prev) => (prev ? { ...prev, locators } : prev));

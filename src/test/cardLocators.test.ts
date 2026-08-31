@@ -57,7 +57,7 @@ const {
   parseLocators, resolveLocatorInput, verifyStoredLocator, mergeLocators,
   normalizeAliases, registerKey, locatorKey,
   isCardSchemaMissing, cardSchemaKnownMissing, noteCardSchema, resetCardLocatorAvailability,
-  writeCardFields, mergeLocatorsViaRpc, bumpVibrancy,
+  writeCardFields, mergeLocatorsViaRpc, bumpVibrancy, cardSchemaKnownPresent,
   MAX_LOCATORS_PER_CARD, SPAN_MAX,
 } = await import("@/lib/cardLocators");
 
@@ -292,5 +292,52 @@ describe("bumpVibrancy — isolated, best-effort", () => {
     expect(dbState.updates.length).toBe(0);
     dbState.selectResult = { data: null, error: { code: "42703", message: "no vibrancy column" } };
     await expect(bumpVibrancy("e1")).resolves.toBeUndefined();
+  });
+});
+
+describe("review fixes: containment, honest merge counts, and the ilike probe", () => {
+  it("clips chapter_id like every other stored field — it reaches the prompt too", () => {
+    const parsed = parseLocators([{
+      chapter_id: "c".repeat(500),
+      char_start: 0, char_end: 5, quote: "abcdefgh",
+    }]);
+    expect(parsed[0].chapter_id.length).toBeLessThanOrEqual(64);
+  });
+
+  it("reports what LANDED, not what was supplied", async () => {
+    const a = { chapter_id: "c", char_start: 0, char_end: 8, page: 1, quote: "abcdefgh" };
+    const b = { chapter_id: "c", char_start: 10, char_end: 18, page: 1, quote: "ijklmnop" };
+    // The card already holds `a`; the caller supplies both.
+    dbState.rpcResult = { data: [a, b], error: null };
+    const r = await mergeLocatorsViaRpc("e1", [a, b], [a]);
+    expect(r.ok).toBe(true);
+    expect(r.added).toBe(1);
+    expect(r.duplicates).toBe(1);
+    expect(r.capped).toBe(0);
+  });
+
+  it("counts a cap refusal instead of calling it added", async () => {
+    const held = Array.from({ length: 8 }, (_, i) => ({ chapter_id: "c", char_start: i * 10, char_end: i * 10 + 8, page: 1, quote: "abcdefgh" }));
+    const extra = { chapter_id: "c", char_start: 900, char_end: 908, page: 1, quote: "zzzzzzzz" };
+    dbState.rpcResult = { data: held, error: null }; // server refused the 9th
+    const r = await mergeLocatorsViaRpc("e1", [extra], held);
+    expect(r.added).toBe(0);
+    expect(r.capped).toBe(1);
+  });
+
+  it("without a known-before set, no count is claimed at all", async () => {
+    const a = { chapter_id: "c", char_start: 0, char_end: 8, page: 1, quote: "abcdefgh" };
+    dbState.rpcResult = { data: [a], error: null };
+    const r = await mergeLocatorsViaRpc("e1", [a]);
+    expect(r.ok).toBe(true);
+    expect(r.added).toBeUndefined();
+  });
+
+  it("cardSchemaKnownPresent is FALSE until a real read answers — unknown is not present", () => {
+    resetCardLocatorAvailability();
+    expect(cardSchemaKnownPresent()).toBe(false);
+    expect(cardSchemaKnownMissing()).toBe(false); // unknown is neither
+    noteCardSchema("present");
+    expect(cardSchemaKnownPresent()).toBe(true);
   });
 });

@@ -297,12 +297,14 @@ flip HOLDs.
     composed from sanitizeInline'd fields so a quote can never break the
     fence. `entry_id` + author stay in the header OUTSIDE the fence
     (actionable data, the attached-image-note precedent);
-  - clip (R): pointer cards 1200 chars (voice 700) — the pointer makes the
-    clip honest; unanchored notes 2400 (voice 1200) — gentler, because the
-    legacy corpus is 100% unanchored on day one and its value lives in the
-    body; tool/program cards keep 4000 (functional docs; signature-stripping
-    laws untouched). Honest `[…truncated — N more chars; fetch the full
-    entry with search_wiki entry_id]` tail, fetch clause gated on wire,
+  - clip: pointer cards 1200 chars (voice 700) — the pointer makes the clip
+    honest, since read_span serves the passage. UNANCHORED notes keep the
+    pre-Stage-2 4000 (voice 1200): on day one that is 100% of every existing
+    user's corpus, their body IS their value, and nothing measured justifies
+    shrinking it (impl-review finding — an earlier 2400 would have been a
+    silent 40% cut to every legacy wiki). Tool/program cards keep 4000.
+    Honest `[…truncated — N more chars; fetch the full entry with
+    search_wiki entry_id]` tail, fetch clause gated on wire, all three tiers
     pinned by tests.
 - `search_wiki`:
   - gains `entry_id` param — fetch ONE entry in full (the escalation path
@@ -456,6 +458,36 @@ layer (R)):
   deploy can revert the opt-out until tabs cycle (Phase-4 acceptance class).
   Voice turns inherit the mode (halved budgets + tool-round latency) —
   unmeasured by the text harness; documented, watched post-flip.
+
+## 8b. THE RESULT (2026-08-31) — FLIP, gist-aware
+
+The frozen 40-question set, rerun on google/gemini-3.7-flash across all three
+arms (120 answers, 0 errors, single model + single rosterSha):
+
+| criterion (§8 gate) | full | catalog | catalog_nogist |
+|---|---|---|---|
+| needle | 14/15 | **15/15** | 15/15 |
+| exact-quote | 10/11 | **11/11** | 7/11 |
+| E3 spans verified | 15/17 (88.2%) | **16/16 (100%)** | 12/12 (100%) |
+| synthesis (of 5) | 4.909 | 4.818 (−1.85%) | 4.909 |
+| routing | 3/3 | 3/3 | 3/3 |
+| **verdict** | — | **FLIP** | **HOLD** |
+
+Catalog does not merely reach parity — it BEATS full text on the metric that
+blocked it (quote 11/11 vs 8/11 before, and vs full's 10/11 now), at 33× less
+first-send data (10.5k vs 346k chars), 10× less total, and the same latency.
+Quote scores are mechanical (`by=quote-verify`), not judge-decided.
+
+**The third arm changed the flip's shape.** Ungisted catalog HOLDs on quote
+parity (7/11), and the mechanism is visible in the traces: without gists the
+model has no routing signal, so it reads the WRONG chapter (trig-q2 re-read
+Ch 5 three times), reads NOTHING at all (trig-q3), or searches unnarrowed
+(sigil-q4, 14 chapters). With gists it searches once and reads the right
+chapter. This is "summaries route, raw text answers" (ReadAgent), measured.
+
+⇒ **The flip is gist-aware**: a book rides catalog only when it HAS a
+catalog; ungisted books keep full text, and the gist nudge carries the
+migration. That resolution is Stage 2's remaining build step.
 
 ## 9. Self-critique / open risks
 

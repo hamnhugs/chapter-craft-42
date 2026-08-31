@@ -21,6 +21,7 @@ import { resolve } from "node:path";
  */
 import {
   acceptListHit, buildReport, matchesRun, parseJsonlSafe, proseCallSuspect, quoteQuestionScore, rowKey, verifyQuotes,
+  E2_MODES, E2_ROSTER,
   type AnswerRow, type E2Mode, type E2Question, type GradeRow, type RunIdentity,
 } from "@/harness/e2/harnessCore";
 import type { BookDocument } from "@/types/library";
@@ -65,12 +66,16 @@ function loadAnswers(): { rows: Map<string, AnswerRow>; identity: RunIdentity | 
   const current = parseJsonlSafe<AnswerRow>(readFileSync(ANSWERS, "utf8"))
     .filter((r) => !r.error && r.fixtureSha === fixtureSha && r.questionsSha === questionsSha && qById.has(r.qid));
   const models = [...new Set(current.map((r) => r.model))];
+  const rosters = [...new Set(current.map((r) => r.rosterSha || "(none)"))];
+  if (rosters.length > 1) {
+    throw new Error(`answers.jsonl holds rows from ${rosters.length} tool rosters (${rosters.join(", ")}) for the current question set — a mixed-roster A/B is invalid. Delete the stale rows or rerun the answer phase.`);
+  }
   if (models.length > 1) {
     throw new Error(`answers.jsonl holds rows from ${models.length} models (${models.join(", ")}) for the current question set — a mixed-model A/B is invalid. Delete the stale rows or rerun the answer phase on one model.`);
   }
   const out = new Map<string, AnswerRow>();
   for (const r of current) out.set(rowKey(r), r);
-  return { rows: out, identity: models.length ? { model: models[0], fixtureSha, questionsSha } : null };
+  return { rows: out, identity: models.length ? { model: models[0], fixtureSha, questionsSha, rosterSha: current[0]?.rosterSha } : null };
 }
 
 function loadGrades(id: RunIdentity | null): Map<string, GradeRow> {
@@ -181,7 +186,7 @@ describe.skipIf(!ready)("E2 grade phase", () => {
         }
         // Grade rows inherit the answer row's run identity — loadGrades
         // filters on it, so an unstamped row is invisible to the report.
-        row = { ...row, model: a.model, fixtureSha: a.fixtureSha, questionsSha: a.questionsSha };
+        row = { ...row, model: a.model, fixtureSha: a.fixtureSha, questionsSha: a.questionsSha, rosterSha: a.rosterSha };
         appendFileSync(GRADES, JSON.stringify(row) + "\n");
         if (row.by === "error") console.warn(`[e2] grade ${key} ERROR: ${row.notes}`);
         else console.log(`[e2] grade ${key}: ${row.score}/${row.maxScore} (${row.by})`);
@@ -196,7 +201,7 @@ describe.skipIf(!ready)("E2 grade phase", () => {
     // let stale rows pad past the threshold while current pairs were missing
     // (review finding: renamed questions double-counted, removed ones voted).
     const missing = questions
-      .flatMap((q) => (["full", "catalog"] as const).map((m) => rowKey({ qid: q.id, mode: m })))
+      .flatMap((q) => E2_MODES.map((m) => rowKey({ qid: q.id, mode: m })))
       .filter((k) => !gradeMap.has(k));
     if (missing.length > 0) {
       console.warn(`[e2] report deferred — ungraded pairs: ${missing.join(", ")}`);
@@ -206,7 +211,7 @@ describe.skipIf(!ready)("E2 grade phase", () => {
     const report = buildReport([...gradeMap.values()]);
     const ans = [...answers.values()];
     const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
-    const ROSTER = ["list_books", "get_book", "get_chapter_text"] as const;
+    const ROSTER = E2_ROSTER;
     const agg = (mode: E2Mode) => {
       const rowsM = ans.filter((r) => r.mode === mode);
       // Informational E3-wide readout: quote spans claimed ANYWHERE (all
@@ -234,7 +239,7 @@ describe.skipIf(!ready)("E2 grade phase", () => {
     const out = {
       report,
       run: { identity, judge: JUDGE, meta, note: "routing questions are informational — they gate nothing in the verdict (§8)" },
-      cost: { full: agg("full"), catalog: agg("catalog") },
+      cost: { full: agg("full"), catalog: agg("catalog"), catalog_nogist: agg("catalog_nogist") },
       at: new Date().toISOString(),
     };
     writeFileSync(resolve(DATA, "report.json"), JSON.stringify(out, null, 2));

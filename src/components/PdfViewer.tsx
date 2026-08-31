@@ -390,9 +390,15 @@ const PdfViewer: React.FC = () => {
         </div>
       )}
 
-      {/* Floating quote-capture affordance — PDF only, selection active */}
+      {/* Floating quote-capture affordance — PDF only, selection active.
+          Its own lane ABOVE the "Currently Reading" card (which is
+          bottom-24/md:bottom-6 and ~88px tall) and a higher z-index: the two
+          floaters previously shared a bottom band with this one painted
+          first, so the card covered the entry point to the whole capture
+          flow (review finding — it was unclickable in the normal reading
+          state, where a chapter is selected). */}
       {!isHtmlBook && selectionCapture && !captureOpen && (
-        <div className="fixed bottom-40 md:bottom-20 left-1/2 -translate-x-1/2 z-40">
+        <div className="fixed bottom-52 md:bottom-32 left-1/2 -translate-x-1/2 z-50">
           <button
             onClick={() => setCaptureOpen(true)}
             className="flex items-center gap-2 px-4 py-2 bg-primary-container text-on-primary-container rounded-full shadow-xl font-bold text-sm active:scale-95 transition-all"

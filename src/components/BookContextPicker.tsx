@@ -29,7 +29,10 @@ const BookContextPicker: React.FC<{
   // The ONE mode resolution (chatBooks) — the picker must show what will
   // actually ride. `true` = preference view; the send path applies the
   // provider-capability gate on top.
-  const mode: BookContextMode = resolveBookContextMode(selection, true);
+  // Named for what it is: the RESOLVED mode from the one authority, read
+  // for display. The source lint forbids a bare `mode ===` comparison so a
+  // second, drifting coercion cannot be introduced here (review finding).
+  const effectiveMode: BookContextMode = resolveBookContextMode(selection, true);
 
   useEffect(() => {
     bookContextStore.init(user?.id ?? null);
@@ -165,7 +168,7 @@ const BookContextPicker: React.FC<{
         <DialogHeader>
           <DialogTitle className="font-headline text-2xl text-primary">Books in context</DialogTitle>
           <DialogDescription>
-            {mode === "catalog"
+            {effectiveMode === "catalog"
               ? "Each message carries the checked books' chapter catalogs (titles + one-line summaries); the AI reads a chapter's text only when it needs it. Cheap and fast."
               : "The checked books' text rides with every message, up to the context budget — very large books degrade to honest excerpts, and the reply's receipt shows exactly what was sent."}
             {" "}Load a shelf to keep it in sync — books you add to the shelf join the conversation automatically.
@@ -187,7 +190,7 @@ const BookContextPicker: React.FC<{
                   type="button"
                   onClick={() => bookContextStore.set({ ...selection, mode: value })}
                   className={`rounded-md px-2 py-1.5 text-left transition-colors ${
-                    mode === value ? "bg-primary-container/60 text-foreground" : "text-on-surface-variant hover:bg-surface-container-highest"
+                    effectiveMode === value ? "bg-primary-container/60 text-foreground" : "text-on-surface-variant hover:bg-surface-container-highest"
                   }`}
                 >
                   <span className="block text-xs font-semibold">{label}</span>
@@ -197,7 +200,7 @@ const BookContextPicker: React.FC<{
             </div>
           </div>
 
-          {mode === "catalog" && (
+          {effectiveMode === "catalog" && (
             <div className="flex items-center justify-between gap-3 rounded-lg bg-surface-container-high px-3 py-2">
               <span className="min-w-0 truncate text-[11px] text-on-surface-variant">
                 {gistProgress ??

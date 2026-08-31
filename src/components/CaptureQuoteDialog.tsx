@@ -151,9 +151,14 @@ const CaptureQuoteDialog: React.FC<CaptureQuoteDialogProps> = ({ open, onClose, 
       // Register lookup before minting (once, at save): adding a location to
       // an existing card beats a new card. Surfaced as a choice, not done
       // silently — the user decides.
+      // Surfaced whenever a card by this label exists — INCLUDING the
+      // unanchored path. Skipping the check when the selection didn't anchor
+      // meant the flow most likely to mint a duplicate was the one that
+      // never warned about one (review finding); the "add location" action
+      // is what needs an anchor, not the warning.
       if (!registerMatch) {
         const matches = await findRegisterMatches(activeWikiId, title, []);
-        if (matches.length > 0 && loc) {
+        if (matches.length > 0) {
           setRegisterMatch(matches[0]);
           setSaving(false);
           return;
@@ -192,12 +197,17 @@ const CaptureQuoteDialog: React.FC<CaptureQuoteDialogProps> = ({ open, onClose, 
     if (!registerMatch || anchor.status !== "anchored") return;
     setSaving(true);
     try {
-      const merged = await mergeLocatorsViaRpc(registerMatch.id, [anchor.locator]);
+      const merged = await mergeLocatorsViaRpc(registerMatch.id, [anchor.locator], registerMatch.locators);
       if (!merged.ok) {
         toast.error(merged.missingSchema ? CARD_SCHEMA_MISSING_NOTE : merged.error || "Couldn't add the location.");
         return;
       }
-      toast.success(`Added this location to "${registerMatch.title}" (${(merged.locators || []).length} total).`);
+      // What LANDED, not what was sent: the merge dedupes and caps.
+      if ((merged.added ?? 1) === 0) {
+        toast.info(`"${registerMatch.title}" already points at that passage — nothing was added.`);
+      } else {
+        toast.success(`Added this location to "${registerMatch.title}" (${(merged.locators || []).length} total).`);
+      }
       try { window.dispatchEvent(new Event("knowledge-entries-changed")); } catch { /* best effort */ }
       onClose();
     } catch (e: any) {
@@ -257,13 +267,18 @@ const CaptureQuoteDialog: React.FC<CaptureQuoteDialogProps> = ({ open, onClose, 
                 Adding this location to it usually beats minting a duplicate.
               </p>
               <div className="flex gap-2">
-                <Button size="sm" onClick={handleAddToExisting} disabled={saving}>
+                <Button size="sm" onClick={handleAddToExisting} disabled={saving || anchor.status !== "anchored"}>
                   Add location to it
                 </Button>
                 <Button size="sm" variant="outline" onClick={handleSave} disabled={saving}>
                   Create a separate card anyway
                 </Button>
               </div>
+              {anchor.status !== "anchored" && (
+                <p className="text-[11px] text-on-surface-variant">
+                  This selection isn't anchored, so there's no location to add — you can still create a separate card.
+                </p>
+              )}
             </div>
           )}
         </div>

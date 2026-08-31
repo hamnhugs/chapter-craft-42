@@ -107,35 +107,69 @@ describe("prefilterToken — the provable-superset server prefilter", () => {
   // lowercase-containment for [a-z0-9] tokens, so this property IS the
   // guarantee that the prefilter can never drop a chapter the authority
   // would match.
-  it("JS-match(text) ⇒ lower(text) contains token — adversarial corpus", () => {
-    const queries = [
-      "the law of sines",
-      "won't stop believing",
-      "half - remembered dream",
-      "modem occultists",
-      "f(x) = x^2 + 1",
-      "Desirable Difficulty",
-    ];
-    const texts = [
-      "…states that the law of\nsines applies…",
-      "she won’t stop believing tonight",
-      "a half — remembered dream",
-      "most MODEM\n\nocCULTists agree",
-      "we define f(x) = x^2 + 1 for all x",
-      "embrace desirable difficulty when studying",
-      "no match lives here at all",
-    ];
-    for (const q of queries) {
-      const n = normalizeSearchQuery(q)!;
-      const token = prefilterToken(n);
-      if (!token) continue; // no-token queries degrade to fetch-all — vacuously safe
-      const js = buildSearchPattern(n);
-      for (const t of texts) {
-        const jsHit = searchChapterText(t, js).matches.length > 0;
-        if (jsHit) {
-          expect(t.toLowerCase().includes(token), `token "${token}" for query "${q}" in ${JSON.stringify(t)}`).toBe(true);
-        }
+  it("GENERATED property: JS-match(text) ⇒ lower(text) contains token, over 600 perturbed pairs", () => {
+    // A real differential property, not a hand-authored table: every pair is
+    // built by perturbing a seeded phrase along the axes that actually
+    // diverge between the two engines — fold-affected glyphs, whitespace runs
+    // and newlines, case, and regex metacharacters. Deterministic PRNG, so a
+    // failure is reproducible from the seed.
+    let seed = 0x2f6e2b1;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const pick = (xs: any[]) => xs[Math.floor(rnd() * xs.length) % xs.length];
+    const WORDS = ["law", "sines", "modem", "occultists", "difficulty", "won't", "half-life", "f(x)", "x^2", "ratio", "wave"];
+    const SPACES = [" ", "\n", "\n\n", "\t", "  ", " ", " "];
+    const CURLY: Record<string, string[]> = {
+      "'": ["'", "’", "ʼ"],
+      '"': ['"', "“", "”"],
+      "-": ["-", "‐", "–", "—"],
+    };
+    const twist = (s: string) => s.replace(/['"-]/g, (c) => pick(CURLY[c] || [c]));
+    const flipCase = (s: string) =>
+      [...s].map((c) => (rnd() < 0.3 ? (c === c.toLowerCase() ? c.toUpperCase() : c.toLowerCase()) : c)).join("");
+
+    let checked = 0;
+    let hits = 0;
+    for (let i = 0; i < 600; i++) {
+      const n = 2 + Math.floor(rnd() * 3);
+      const words = Array.from({ length: n }, () => pick(WORDS));
+      const query = words.join(" ");
+      const normalized = normalizeSearchQuery(query);
+      if (!normalized) continue;
+      const token = prefilterToken(normalized);
+      // A no-token query degrades to reading every unloaded chapter, which is
+      // a superset by construction — its contract is pinned separately below.
+      if (!token) continue;
+      const shouldMatch = rnd() < 0.6;
+      const body = shouldMatch
+        ? "prefix " + flipCase(twist(words.join(pick(SPACES)))) + " suffix"
+        : "nothing relevant " + pick(WORDS) + " here at all";
+      checked++;
+      const js = buildSearchPattern(normalized);
+      if (searchChapterText(body, js).matches.length > 0) {
+        hits++;
+        // THE GUARANTEE: the server prefilter (ilike '%token%' — plain
+        // case-insensitive containment) can never exclude a chapter the JS
+        // authority would match.
+        expect(
+          body.toLowerCase().includes(token),
+          `pair ${i}: token "${token}" for query "${query}" missing from ${JSON.stringify(body)}`,
+        ).toBe(true);
       }
+    }
+    // The property must not pass vacuously.
+    expect(checked).toBeGreaterThan(300);
+    expect(hits).toBeGreaterThan(50);
+  });
+
+  it("a no-token query is the documented fetch-everything degradation, not a silent miss", () => {
+    // The class the old fixed table skipped with `continue`: queries whose
+    // ASCII runs are all under 3 chars. The contract is that prefilterToken
+    // returns null so the caller reads every unloaded chapter AND says it
+    // could not narrow — never that the query quietly matches nothing.
+    for (const q of ["。。 、、 ——", "a b c"]) {
+      const n = normalizeSearchQuery(q);
+      if (!n) continue;
+      expect(prefilterToken(n)).toBeNull();
     }
   });
 });

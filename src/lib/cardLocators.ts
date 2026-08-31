@@ -91,6 +91,15 @@ export function cardSchemaKnownMissing(): boolean {
   return cardSchemaState === false;
 }
 
+/** True only once a real read/write has CONFIRMED the columns exist. The
+ *  difference from !cardSchemaKnownMissing() matters for anything that
+ *  should stand down until it knows: before the first probe the state is
+ *  UNKNOWN, and a teaching gate armed on unknown demands a locator the
+ *  database may not be able to store (review finding). */
+export function cardSchemaKnownPresent(): boolean {
+  return cardSchemaState === true;
+}
+
 /** Callers report what their REAL read/write just learned. Only definitive
  *  outcomes change the cache; transient failures leave it re-probeable. */
 export function noteCardSchema(outcome: "present" | "missing"): void {
@@ -116,7 +125,11 @@ export function parseLocators(raw: unknown): CardLocator[] {
   for (const v of raw) {
     if (!v || typeof v !== "object") continue;
     const o = v as Record<string, unknown>;
-    const chapterId = typeof o.chapter_id === "string" ? o.chapter_id : "";
+    // chapter_id is UNTRUSTED like every other stored field — it reaches the
+    // prompt as a rendered locator line. It is clipped here (and sanitized at
+    // every render site) so a hostile stored value cannot carry structure:
+    // review finding, it was the one field that skipped containment.
+    const chapterId = typeof o.chapter_id === "string" ? o.chapter_id.trim().slice(0, 64) : "";
     const start = typeof o.char_start === "number" && Number.isFinite(o.char_start) ? Math.floor(o.char_start) : -1;
     const end = typeof o.char_end === "number" && Number.isFinite(o.char_end) ? Math.floor(o.char_end) : -1;
     const quote = typeof o.quote === "string" ? o.quote : "";
@@ -199,7 +212,9 @@ export function resolveLocatorInput(input: LocatorInput, ctx: LocatorChapterCtx)
     }
     return {
       ok: true,
-      occurrences: 1,
+      // The real count inside the given span — reporting a hard 1 would hide
+      // ambiguity the caller is entitled to hear about (design §2).
+      occurrences: hit.occurrences,
       locator: {
         chapter_id: ctx.chapter.id,
         char_start: givenStart,
@@ -339,13 +354,29 @@ export async function writeCardFields(
 export interface MergeViaRpcResult {
   ok: boolean;
   locators?: CardLocator[];
+  /** How many of the supplied locators actually LANDED. The RPC dedupes by
+   *  span and caps at 8, so the supplied count is not an outcome — reporting
+   *  it as one told users "anchored to 3 passages" when zero were added
+   *  (review finding). Computed by diffing span keys across the merge. */
+  added?: number;
+  /** Supplied locators already present on the card. */
+  duplicates?: number;
+  /** Supplied locators the per-card cap refused. */
+  capped?: number;
   missingSchema?: boolean;
   error?: string;
 }
 
 /** Merge validated locators into an EXISTING entry atomically (server-side
  *  dedupe + cap under a row lock — concurrent adds commute). */
-export async function mergeLocatorsViaRpc(entryId: string, additions: CardLocator[]): Promise<MergeViaRpcResult> {
+export async function mergeLocatorsViaRpc(
+  entryId: string,
+  additions: CardLocator[],
+  /** The card's locators as the caller last saw them. Supplied where the
+   *  caller already holds them, so the outcome can be reported honestly
+   *  without a second read; omitted, `added` is simply not claimed. */
+  knownBefore?: CardLocator[],
+): Promise<MergeViaRpcResult> {
   if (cardSchemaKnownMissing()) return { ok: false, missingSchema: true, error: CARD_SCHEMA_MISSING_NOTE };
   const { data, error } = await supabase.rpc("entry_locators_merge" as any, {
     _id: entryId,
@@ -362,7 +393,24 @@ export async function mergeLocatorsViaRpc(entryId: string, additions: CardLocato
     return { ok: false, missingSchema: false, error: error.message };
   }
   noteCardSchema("present");
-  return { ok: true, locators: parseLocators(data) };
+  const merged = parseLocators(data);
+  // Outcome by span-key diff against the merged truth the server returned:
+  // present after and absent before = added; present before = duplicate;
+  // absent after = the cap refused it.
+  const after = new Set(merged.map(locatorKey));
+  const before = new Set((knownBefore || []).map(locatorKey));
+  let added = 0, duplicates = 0, capped = 0;
+  for (const l of additions) {
+    const k = locatorKey(l);
+    if (before.has(k)) duplicates++;
+    else if (after.has(k)) added++;
+    else capped++;
+  }
+  return {
+    ok: true,
+    locators: merged,
+    ...(knownBefore ? { added, duplicates, capped } : {}),
+  };
 }
 
 export interface RegisterMatch {
@@ -376,12 +424,16 @@ export interface RegisterMatch {
   matchedOn: "title" | "alias";
 }
 
-/** Escape ilike wildcards so the pattern is an EXACT (case-insensitive)
- *  string match — escaping, not stripping: a title containing % must match
- *  itself, never act as a wildcard (a wildcard here could merge into the
- *  wrong card). */
-function escapeIlikeExact(s: string): string {
-  return s.replace(/[\\%_]/g, (c) => `\\${c}`);
+/** ilike as a case-folding PROBE only — exactness is guaranteed client-side
+ *  below, because escaping alone cannot deliver it: PostgREST maps `*` to
+ *  `%` AFTER URL decoding and no escape survives that (`\*` becomes `\%`).
+ *  So `*` is mapped to `_` (one position, matches the literal `*`) exactly
+ *  as resolveScene does — this repo's settled convention for the identical
+ *  bug (src/lib/scenesApi.ts). Without it a card titled `*` would ilike-match
+ *  every card in the wiki, and the register would offer a merge into the
+ *  wrong one. */
+function escapeIlikeProbe(s: string): string {
+  return s.replace(/([\\%_])/g, "\\$1").replace(/\*/g, "_");
 }
 
 /**
@@ -415,7 +467,7 @@ export async function findRegisterMatches(
       .from("knowledge_entries")
       .select(columns)
       .eq("wiki_id", wikiId)
-      .ilike("title", escapeIlikeExact(titleKey))
+      .ilike("title", escapeIlikeProbe(titleKey))
       .limit(6);
     return q;
   };

@@ -10,7 +10,12 @@ import type { BookDocument } from "@/types/library";
  * test that asserts "no network" can also assert the route log is empty.
  */
 
-interface RouteCall { table: string; op: "select" | "update" | "rpc"; cols?: string; payload?: any; fn?: string }
+/** Filters are RECORDED, not discarded: a fake that throws away `.eq/.in/.is`
+ *  arguments cannot see a missing scope filter, which is exactly how two
+ *  unscoped fetches shipped past the first round of these tests (review
+ *  finding). Assertions can now name the rows a query would have touched. */
+type Filter = [op: string, col: string, value: unknown];
+interface RouteCall { table: string; op: "select" | "update" | "rpc"; cols?: string; payload?: any; fn?: string; filters: Filter[] }
 const db: {
   log: RouteCall[];
   route: (c: RouteCall) => { data?: any; error?: any };
@@ -21,16 +26,18 @@ const db: {
 
 vi.mock("@/integrations/supabase/client", () => {
   const make = (table: string) => {
-    const call: RouteCall = { table, op: "select" };
+    const call: RouteCall = { table, op: "select", filters: [] };
     const resolve = () => {
       db.log.push(call);
       const r = db.route(call) || {};
       return { data: r.data ?? null, error: r.error ?? null };
     };
+    const record = (op: string) => (col: any, value?: any) => { call.filters.push([op, String(col), value]); return b; };
     const b: any = {
       select: (cols?: string) => { call.op = call.op === "update" ? call.op : "select"; call.cols = String(cols ?? ""); return b; },
       update: (payload: any) => { call.op = "update"; call.payload = payload; return b; },
-      eq: () => b, in: () => b, is: () => b, ilike: () => b, overlaps: () => b, order: () => b, range: () => b,
+      eq: record("eq"), in: record("in"), is: record("is"), ilike: record("ilike"), overlaps: record("overlaps"),
+      order: () => b, range: () => b,
       limit: () => Promise.resolve(resolve()),
       maybeSingle: () => Promise.resolve(resolve()),
       then: (res: any, rej: any) => Promise.resolve(resolve()).then(res, rej),
@@ -41,7 +48,7 @@ vi.mock("@/integrations/supabase/client", () => {
     supabase: {
       from: (table: string) => make(table),
       rpc: (fn: string, args: any) => {
-        const call: RouteCall = { table: "(rpc)", op: "rpc", fn, payload: args };
+        const call: RouteCall = { table: "(rpc)", op: "rpc", fn, payload: args, filters: [] };
         db.log.push(call);
         const r = db.route(call) || {};
         return Promise.resolve({ data: r.data ?? null, error: r.error ?? null });
@@ -379,7 +386,7 @@ describe("create_memory_entry — the locator gate and the register", () => {
       if (c.table === "knowledge_entries" && c.op === "select") {
         return { data: [{ id: "old-1", title: "Law of Sines", content: "gloss", author: "assistant", locators: [], aliases: [] }] };
       }
-      if (c.op === "rpc" && c.fn === "entry_locators_merge") return { data: [{ chapter_id: "ch-t1", char_start: 1, char_end: 9, page: 1, quote: "abcdefgh" }] };
+      if (c.op === "rpc" && c.fn === "entry_locators_merge") return { data: c.payload._add };
       return null;
     });
     const { result } = await executeChatTool(
@@ -430,10 +437,18 @@ describe("create_memory_entry — the locator gate and the register", () => {
 });
 
 describe("update_memory_entry — add_locators", () => {
-  it("anchors an existing card without touching its fields", async () => {
+  it("anchors an existing card without touching its fields, and reports what LANDED", async () => {
     db.route = (c) => {
+      // The card's prior locators — read before the merge so the result can
+      // report additions honestly rather than echoing the supplied count.
+      if (c.table === "knowledge_entries" && c.op === "select" && (c.cols || "").includes("locators")) {
+        return { data: { locators: [] } };
+      }
+      // The real RPC returns the MERGED array (existing + accepted adds),
+      // so the fake echoes the payload — otherwise the caller's
+      // added/duplicate diff is measured against fiction.
       if (c.op === "rpc" && c.fn === "entry_locators_merge") {
-        return { data: [{ chapter_id: "ch-t1", char_start: 1, char_end: 9, page: 1, quote: "abcdefgh" }] };
+        return { data: c.payload._add };
       }
       return { data: null };
     };
@@ -457,5 +472,114 @@ describe("update_memory_entry — add_locators", () => {
     expect(event.ok).toBe(false);
     expect(result.details.join(" ")).toContain("quote not found");
     expect(db.log.filter((c) => c.op === "rpc")).toHaveLength(0);
+  });
+});
+
+describe("scope and provenance filters are actually applied (the fake records them)", () => {
+  const LOC = {
+    chapter_id: "ch-t1", char_start: 0, char_end: 40, page: 1,
+    quote: "Early filler prose about triangles",
+    book_id: "book-trig", book_title: "Applied Trigonometry", chapter_name: "Foundations",
+  };
+
+  it("read_span reads superseded_by, and does NOT bump a retired card's recall", async () => {
+    db.route = (c) => {
+      if (c.table === "knowledge_entries" && c.op === "select" && (c.cols || "").includes("locators")) {
+        return { data: { id: "e1", title: "Retired claim", locators: [LOC], superseded_by: "e2" } };
+      }
+      return { data: null };
+    };
+    const { result } = await executeChatTool("read_span", { entry_id: "e1" }, deps());
+    // The fetch asks for the lineage column…
+    const fetch = db.log.find((c) => c.table === "knowledge_entries" && (c.cols || "").includes("locators"))!;
+    expect(fetch.cols).toContain("superseded_by");
+    expect(fetch.filters).toContainEqual(["eq", "id", "e1"]);
+    // …the result says the card is history…
+    expect(result.superseded).toBe(true);
+    expect(result.superseded_note).toContain("RETIRED");
+    // …and nothing wrote vibrancy back.
+    expect(db.log.filter((c) => c.op === "update")).toHaveLength(0);
+  });
+
+  it("search_wiki entry_id labels a retired version instead of serving it as current truth", async () => {
+    db.route = (c) => {
+      if (c.table === "knowledge_entries" && c.op === "select") {
+        return { data: { id: "e1", title: "Old", content: "the old claim", entry_type: "fact", confidence: 0.8, superseded_by: "e2" } };
+      }
+      return { data: null };
+    };
+    const { result } = await executeChatTool("search_wiki", { entry_id: "e1" }, deps());
+    expect(result.entry.superseded).toBe(true);
+    expect(result.entry.superseded_by).toBe("e2");
+    expect(result.entry.superseded_note).toContain("RETIRED");
+  });
+
+  it("search_book_text's prefilter is scoped to the in-play books and uses the ilike token", async () => {
+    const textless = [mkBook("book-cat", "Catalog", [ch("cc1", "One", 1, 9, "")])];
+    db.route = (c) => (c.table === "chapters" ? { data: [] } : { data: null });
+    bookContextStore.set({ shelfId: null, bookIds: ["book-cat"], excludedIds: [] });
+    await executeChatTool(
+      "search_book_text",
+      { query: "the law of sines" },
+      deps({ books: textless, loadChapterTextStrict: async () => ({ ok: true, text: "" }) }),
+    );
+    const probe = db.log.find((c) => c.table === "chapters")!;
+    expect(probe.filters).toContainEqual(["in", "book_id", ["book-cat"]]);
+    expect(probe.filters).toContainEqual(["ilike", "text_content", "%sines%"]);
+  });
+
+  it("a no-token query says narrowing could not run, and never calls the leftovers 'matched'", async () => {
+    const many = mkBook("book-cat", "Catalog", Array.from({ length: 9 }, (_, i) => ch(`n${i}`, `C${i}`, i + 1, i + 1, "")));
+    bookContextStore.set({ shelfId: null, bookIds: ["book-cat"], excludedIds: [] });
+    const { result } = await executeChatTool(
+      "search_book_text",
+      { query: "。。 、、 ——" }, // no ASCII run of 3+, so the server cannot narrow
+      deps({ books: [many], loadChapterTextStrict: async () => ({ ok: true, text: "nothing here" }) }),
+    );
+    expect(db.log.filter((c) => c.table === "chapters")).toHaveLength(0);
+    expect(result.note).toContain("no plain word the server can narrow on");
+    expect(result.chapters_not_searched).toBe(3); // 9 candidates, 6 read
+    expect(result.chapters_matched_not_searched).toBeUndefined();
+    expect(result.chapters_not_searched_reason).toContain("never tested");
+  });
+
+  it("read_span refuses to call a truncated window verified when the quote falls outside it", async () => {
+    // A 6000-char span whose quote sits at the very end: the 4000-char serve
+    // window cannot contain it, so the tool must re-anchor rather than assert.
+    const long = "x".repeat(5800) + "THE QUOTED SENTENCE LIVES HERE" + "y".repeat(400);
+    const book = mkBook("b", "Long", [ch("chL", "Long", 1, 9, long)]);
+    db.route = (c) => {
+      if (c.table === "knowledge_entries" && c.op === "select" && (c.cols || "").includes("locators")) {
+        return { data: { id: "e1", title: "Deep quote", locators: [{
+          chapter_id: "chL", char_start: 0, char_end: 5990, page: 1, quote: "THE QUOTED SENTENCE LIVES HERE",
+        }] } };
+      }
+      return { data: null };
+    };
+    const { result } = await executeChatTool("read_span", { entry_id: "e1" }, deps({ books: [book] }));
+    const s = result.spans[0];
+    expect(s.verified).toBe(true);
+    expect(s.span).toContain("THE QUOTED SENTENCE LIVES HERE");
+    expect(s.note).toBeTruthy(); // it says the served window moved
+  });
+
+  it("read_span keeps context inside the call budget", async () => {
+    const text = "z".repeat(200) + "ANCHOR PHRASE HERE" + "w".repeat(200);
+    const book = mkBook("b", "Ctx", [ch("chC", "Ctx", 1, 9, text)]);
+    const eight = Array.from({ length: 8 }, (_, i) => ({
+      chapter_id: "chC", char_start: 200, char_end: 218, page: 1, quote: "ANCHOR PHRASE HERE", stance: `s${i}`,
+    }));
+    db.route = (c) => {
+      if (c.table === "knowledge_entries" && c.op === "select" && (c.cols || "").includes("locators")) {
+        return { data: { id: "e1", title: "Many", locators: eight } };
+      }
+      return { data: null };
+    };
+    const { result } = await executeChatTool("read_span", { entry_id: "e1", context_chars: 1000 }, deps({ books: [book] }));
+    const served = result.spans.reduce((n: number, s: any) => {
+      const raw = (x?: string) => (x ? x.replace(/<<<[^>]+>>>/g, "").length : 0);
+      return n + raw(s.span) + raw(s.context_before) + raw(s.context_after);
+    }, 0);
+    expect(served).toBeLessThanOrEqual(10_000);
   });
 });

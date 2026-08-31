@@ -21,10 +21,21 @@ import { join } from "node:path";
  * and isolation create NEW ids, which is exactly the invariant.
  */
 
+// Both roots that can write the chapters table: the client AND the deployed
+// edge functions. The server side owns ingest and video-to-pdf, so a lint
+// that walked only src/ left the actual owners of the table unchecked
+// (review finding).
 const SRC = join(__dirname, "..");
+const FUNCTIONS = join(__dirname, "..", "..", "supabase", "functions");
 
 function walk(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return out; // an absent root is not a failure — the other one still lints
+  }
+  for (const name of names) {
     const p = join(dir, name);
     const st = statSync(p);
     if (st.isDirectory()) {
@@ -45,7 +56,7 @@ interface UpdateSite {
 
 function chapterUpdateSites(): UpdateSite[] {
   const sites: UpdateSite[] = [];
-  for (const file of walk(SRC)) {
+  for (const file of [...walk(SRC), ...walk(FUNCTIONS)]) {
     const text = readFileSync(file, "utf8");
     let at = 0;
     for (;;) {

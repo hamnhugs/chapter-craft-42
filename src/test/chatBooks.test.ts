@@ -548,13 +548,27 @@ describe("Stage 2: THE one mode resolution (resolveBookContextMode)", () => {
     // The picker/ChatContext/receipts must all go through the helper — an
     // inline `mode === "catalog" ? … : …` is a second mode authority that
     // drifts from the first the day the default flips (review finding).
+    // Shape, not one historical spelling: ANY bare `mode === "catalog"/"full"`
+    // comparison outside the authority is a second mode decision. The
+    // picker's display read is named `effectiveMode` precisely so it does not
+    // match — renaming was cheaper than an allowlist, and it says which value
+    // is being read (review finding: the old leading-dot pattern let the
+    // picker's own coercion through).
     const files = walkSrc();
     const offenders: string[] = [];
     for (const f of files) {
       if (/chatBooks\.ts$/.test(f)) continue;
+      if (/[\\/]harness[\\/]/.test(f)) continue; // the E2 runner maps arm → block mode
       const text = readFileSync(f, "utf8");
-      if (/\.mode === "catalog" \?/.test(text) || /mode \?\? "(full|catalog)"/.test(text)) {
-        offenders.push(f);
+      // Only files that actually consume the book-context module can be
+      // making a book-context mode decision — `mode === "full"` in Lean Mode
+      // is a different axis entirely.
+      if (!text.includes("@/lib/chatBooks")) continue;
+      for (const line of text.split("\n")) {
+        if (line.trim().startsWith("//") || line.trim().startsWith("*")) continue;
+        if (/(?<!effective)\bmode\s*===\s*"(catalog|full)"/.test(line) || /mode \?\? "(full|catalog)"/.test(line)) {
+          offenders.push(`${f}: ${line.trim().slice(0, 80)}`);
+        }
       }
     }
     expect(offenders, "resolve book-context mode ONLY through resolveBookContextMode").toEqual([]);

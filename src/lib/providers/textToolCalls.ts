@@ -468,11 +468,33 @@ function inboundHaystacks(inbound: string | readonly string[] | undefined): stri
   const sources = typeof inbound === "string" ? [inbound] : inbound;
   const count = Math.min(sources.length, MAX_INBOUND_SOURCES);
   if (count === 0) return [];
-  const share = Math.max(MIN_INBOUND_SHARE, Math.floor(MAX_INBOUND / count));
-  const out: string[] = [];
+  // SIZE-AWARE SPLIT. An equal share per source made the barrier weaker for
+  // the sources that need it most as soon as many SMALL sources joined the
+  // list (Stage 2 adds one per retrieved memory card — up to 18 of ~2.6k
+  // each): the big channels (the user's message, the book block, tool
+  // results) had their compared window cut in proportion to a count that
+  // says nothing about size. So: give every source its equal share, then
+  // hand the slack left by the sources that came in UNDER it to the ones
+  // that came in over. Total work stays bounded by MAX_INBOUND; small
+  // sources are still compared in full; large sources keep the window they
+  // had before the small ones arrived. Two passes, no sorting.
+  const kept: string[] = [];
   for (let i = 0; i < count; i++) {
     const src = sources[i];
-    if (typeof src !== "string" || src.length === 0) continue;
+    if (typeof src === "string" && src.length > 0) kept.push(src);
+  }
+  if (kept.length === 0) return [];
+  const equal = Math.max(MIN_INBOUND_SHARE, Math.floor(MAX_INBOUND / kept.length));
+  let slack = 0;
+  let overflowing = 0;
+  for (const src of kept) {
+    if (src.length <= equal) slack += equal - src.length;
+    else overflowing++;
+  }
+  const bonus = overflowing > 0 ? Math.floor(slack / overflowing) : 0;
+  const share = equal + bonus;
+  const out: string[] = [];
+  for (const src of kept) {
     const cut = src.length > share ? src.slice(0, share) : src;
     // Two readings of the same source, because we do not know which one the
     // caller handed us. Both are searched; matching either rejects the span,

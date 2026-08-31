@@ -4,9 +4,10 @@ import { resolve } from "node:path";
 import { createHash } from "node:crypto";
 
 /**
- * E2 ANSWER PHASE — runs each fixed question through BOTH book-context modes
- * on the live provider, with the app's real builders, adapter, and tool
- * executor. Run explicitly (never part of the normal suite):
+ * E2 ANSWER PHASE — runs each fixed question through ALL THREE arms (full,
+ * catalog, catalog_nogist) on the live provider, with the app's real
+ * builders, adapter, and tool executor. Run explicitly (never part of the
+ * normal suite):
  *
  *   npx vitest run --config vitest.e2.config.ts src/harness/e2/answer.e2run.ts
  *
@@ -15,22 +16,22 @@ import { createHash } from "node:crypto";
  * skips completed (question, mode) pairs, so provider deaths cost nothing.
  *
  * Harness deviations from the live app, all mode-neutral (documented in the
- * E2 report): 3-tool roster (list_books/get_book/get_chapter_text) instead
- * of the full 73; knowledge/focus/memory surfaces empty; single-turn
- * conversations; no text-call salvage pass; the fixture library IS the whole
- * library.
+ * E2 report): the 4-tool reading roster (list_books / get_book /
+ * get_chapter_text / search_book_text) instead of the full 75 — read_span
+ * stays out because the fixtures carry no wiki cards; knowledge/focus/memory
+ * surfaces empty; single-turn conversations; no text-call salvage pass; the
+ * fixture library IS the whole library.
  */
 
 // ── Hermetic mocks (the stage0PromptStability pattern) ─────────────────────
-// The supabase client THROWS: the ONLY paths allowed to leave this process
-// are the provider calls the experiment exists to make. Mirrors the
-// write-tool throws in toolDeps — a Stage-2 path that would touch the live
-// DB from a test run (e.g. search_book_text's prefilter firing because a
-// fixture chapter lost its text) must die loudly, not leak network
-// (review-HIGH: the certifying rerun must not silently exercise — or skip —
-// server paths).
+// The supabase client COUNTS AND THROWS: the only network the certifying run
+// may touch is the provider itself. It counts because a throw alone cannot
+// fail the run — executeChatTool wraps its whole switch in a catch that turns
+// any throw into an ordinary tool-error result (review finding), so the
+// counter is what the assertion at the end of the file actually reads.
+let dbCalls = 0;
 vi.mock("@/integrations/supabase/client", () => {
-  const die = () => { throw new Error("network reached the E2 harness (supabase)"); };
+  const die = () => { dbCalls++; throw new Error("network reached the E2 harness (supabase)"); };
   return { supabase: { from: die, rpc: die, auth: { getSession: die } } };
 });
 vi.mock("@/lib/knowledgeApi", () => ({
@@ -57,7 +58,7 @@ const { buildChatSystemPrompt } = await import("@/lib/buildChatSystemPrompt");
 const { buildBookContextBlock, bookContextCharBudget, bookContextStore, selectContextBooks } = await import("@/lib/chatBooks");
 const { CHAT_TOOL_DEFINITIONS, executeChatTool } = await import("@/lib/chatTools");
 const { openrouterAdapter } = await import("@/lib/providers/openrouterAdapter");
-const { runToolLoop, completedKeys, rowKey, validateQuestions, parseJsonlSafe } = await import("@/harness/e2/harnessCore");
+const { runToolLoop, completedKeys, rowKey, validateQuestions, parseJsonlSafe, E2_ROSTER, E2_MODES } = await import("@/harness/e2/harnessCore");
 import type { AnswerRow, E2Mode, E2Question, RunIdentity } from "@/harness/e2/harnessCore";
 import type { BookDocument } from "@/types/library";
 
@@ -93,12 +94,12 @@ const questionsSha = ready ? createHash("sha256").update(readFileSync(questionsP
 // search_book_text joins for the Stage 2 rerun (BOTH-arms fairness: full may
 // improve too — parity−1 on a level field is the honest gate). read_span
 // stays out: fixtures carry no wiki cards, so it would be dead roster weight.
-const ROSTER = ["list_books", "get_book", "get_chapter_text", "search_book_text"] as const;
+const ROSTER = E2_ROSTER;
 // The three arms. catalog_nogist = the catalog block rebuilt over
 // gist-STRIPPED books — what a legacy user with ungisted books gets if the
 // default flips; never measured by the original A/B (review-HIGH). Its
 // verdict decides the flip's SHAPE, not the §8 gate itself.
-const MODES = ["full", "catalog", "catalog_nogist"] as const;
+const MODES = E2_MODES;
 const toolDefs = [...(CHAT_TOOL_DEFINITIONS as readonly any[])].filter((t) => (ROSTER as readonly string[]).includes(t.function.name));
 // Roster identity: the definitions ARE part of what the experiment measures
 // (guidance text included) — a changed roster must never resume over the
@@ -268,6 +269,15 @@ describe.skipIf(!ready)("E2 answer phase", () => {
     const have = completedKeys(rows, identity);
     const missing = questions.flatMap((q) => MODES.map((m) => rowKey({ qid: q.id, mode: m }))).filter((k) => !have.has(k));
     expect(missing, `rerun the answer phase to retry: ${missing.join(", ")}`).toEqual([]);
+  });
+
+  it("no run touched the database — every byte the arms sent went to the provider", () => {
+    // The counter, not the throw: executeChatTool swallows throws into tool
+    // errors, so a leaked server path would otherwise show up only as a
+    // slightly worse answer. If this trips, a Stage-2 path (most likely
+    // search_book_text's prefilter, on a fixture chapter that lost its text)
+    // ran against the live DB and the run is not hermetic.
+    expect(dbCalls, "the harness must never reach supabase — fixtures serve every read").toBe(0);
   });
 });
 
