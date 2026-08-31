@@ -565,11 +565,14 @@ describe("Stage 0: the active-book fallback block (review finding)", () => {
 });
 
 describe("Stage 1: catalog mode wiring", () => {
-  it("catalog mode skips whole-book hydration and rides the same builder", () => {
-    const at = CTX.indexOf('bookCtxMode === "catalog"');
+  it("hydration is skipped only when EVERY selected book has a catalog", () => {
+    // Gist-aware flip (E2 rerun): a book with no catalog still rides full
+    // text, so it still needs its text fetched. The decision must be made
+    // BEFORE the fetch, and must consult bookHasCatalog — skipping on the
+    // mode alone would starve the text tier of the very books that need it.
+    const at = CTX.indexOf("const needsText = bookCtxMode !== \"catalog\" || !contextBooks.every(bookHasCatalog)");
     expect(at).toBeGreaterThan(-1);
     const hydrateAt = CTX.indexOf("await hydrateBooksForContext(contextBooks");
-    // The ternary chooses BEFORE hydration: contextBooks direct in catalog mode.
     expect(at).toBeLessThan(hydrateAt);
     expect(CTX).toMatch(/^\s*mode: bookCtxMode,$/m);
   });

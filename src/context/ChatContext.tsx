@@ -30,7 +30,7 @@ import { extractCodeBlocks, excludeArtifactDuplicates } from "@/lib/workspaceFil
 import { buildFocusBlock, type UsedFocusItem } from "@/lib/chatFocus";
 import {
   bookContextStore, selectContextBooks, hydrateBooksForContext,
-  buildBookContextBlock, bookContextCharBudget, resolveBookContextMode, type UsedBookContext,
+  buildBookContextBlock, bookContextCharBudget, resolveBookContextMode, bookHasCatalog, type UsedBookContext,
   type BookContextMode,
 } from "@/lib/chatBooks";
 import { toast } from "sonner";
@@ -1274,10 +1274,15 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
           // Catalog mode needs no text: the spine (with gists) is already in
           // state, so the whole-book hydration fetch is skipped entirely —
-          // the mode's latency win is real, not only a token win.
-          const hydrated = bookCtxMode === "catalog"
-            ? contextBooks
-            : await hydrateBooksForContext(contextBooks, { signal: turnSignal });
+          // the mode's latency win is real, not only a token win. But the
+          // flip is GIST-AWARE (E2 rerun): a book with no catalog still
+          // rides full text, so it still needs hydrating. Skipping the fetch
+          // only when EVERY selected book has a catalog keeps the win where
+          // it was measured and never starves the text tier.
+          const needsText = bookCtxMode !== "catalog" || !contextBooks.every(bookHasCatalog);
+          const hydrated = needsText
+            ? await hydrateBooksForContext(contextBooks, { signal: turnSignal })
+            : contextBooks;
           bookBlock = buildBookContextBlock(hydrated, {
             voiceMode: isVoice,
             offeredTools: [...offeredNames],

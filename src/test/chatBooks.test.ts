@@ -465,10 +465,38 @@ describe("catalog fixes from the adversarial review", () => {
     expect(before.message).not.toContain("k chars");
   });
 
-  it("a gistless catalog never claims summaries it doesn't have", () => {
-    const r = buildBookContextBlock([cbook("ng-1", "Bare", [gc2("One", 0), gc2("Two", 0)])], { mode: "catalog" }, NONCE)!;
-    expect(r.message!).toContain("where the user has generated them");
+  it("a book with NO catalog rides full text even in catalog mode (the E2 rerun's gist-aware flip)", () => {
+    // Measured 2026-08-31: an ungisted catalog lost exact-quote retrieval
+    // (7/11 vs full text's 10/11) because bare titles give the model nothing
+    // to route on. So catalog mode means catalog WHERE ONE EXISTS.
+    const r = buildBookContextBlock([cbook("ng-1", "Bare", [gc2("One", 500), gc2("Two", 500)])], { mode: "catalog" }, NONCE)!;
+    expect(r.used[0].state).toBe("full");
+    expect(r.message!).not.toContain("CHAPTER CATALOG");
     expect(r.message!).not.toMatch(/…and (0|-\d+) more/);
+  });
+
+  it("a MIXED selection serializes each book at its own tier, and says so once at the top", () => {
+    const withGists = cbook("g-1", "Catalogued", [gc2("One", 500, "A summary."), gc2("Two", 500, "Another.")]);
+    const without = cbook("ng-2", "Bare", [gc2("One", 500), gc2("Two", 500)]);
+    const r = buildBookContextBlock([withGists, without], { mode: "catalog" }, NONCE)!;
+    const states = Object.fromEntries(r.used.map((u) => [u.id, u.state]));
+    expect(states["g-1"]).toBe("catalog");
+    expect(states["ng-2"]).toBe("full");
+    // The header must be true of BOTH halves — neither "text is NOT included"
+    // nor "ground answers in the fenced text" is true of a mixed block.
+    expect(r.message!).toContain("They ride DIFFERENTLY");
+    expect(r.message!).not.toContain("own text is NOT included in this message");
+    expect(r.message!).toContain("Where only a catalog is included");
+  });
+
+  it("an all-catalog selection is byte-identical to the configuration E2 measured", () => {
+    // The flip must not move the bytes the experiment certified: with every
+    // book catalogued, the wording and budgets are exactly what they were.
+    const books = [cbook("c-1", "One", [gc2("A", 500, "Sum A.")]), cbook("c-2", "Two", [gc2("B", 500, "Sum B.")])];
+    const r = buildBookContextBlock(books, { mode: "catalog" }, NONCE)!;
+    expect(r.message!).toContain("## Book context (catalog)");
+    expect(r.message!).toContain("where the user has generated them");
+    expect(r.used.every((u) => u.state === "catalog")).toBe(true);
   });
 
   it("the catalog footer makes no fetch-capability claims (truthful on tool-less turns)", () => {

@@ -448,14 +448,31 @@ layer (R)):
   opt-outs accumulate BEFORE the default changes (today "full" is stored as
   absence — the users with the strongest opt-out signal would otherwise be
   flipped against it).
-- On PASS, the flip commit: the helper's absent-mode default becomes catalog
-  for tool-capable providers (tool-less models keep forcing full; transient
-  image-turn drops keep catalog exactly as today); picker default reflects
-  catalog and renders the forced-full state explicitly; gist-nudge UX for
-  ungisted books; full text stays one toggle away and remains the escalation
-  path. Known bounded exposure, accepted: an OLD bundle's sanitizeStored
-  strips `mode:"full"` on its own writes, so a stale tab open across the
-  deploy can revert the opt-out until tabs cycle (Phase-4 acceptance class).
+- **FLIPPED (2026-08-31), gist-aware.** `DEFAULT_BOOK_CONTEXT_MODE` is now
+  `"catalog"`, so an absent stored mode resolves to catalog for tool-capable
+  providers (tool-less models keep forcing full; transient image-turn drops
+  keep catalog exactly as today). The shape follows §8b's evidence rather
+  than the mode alone:
+  - `bookHasCatalog(book)` — at least one chapter with a gist — decides
+    PER BOOK. A book with a catalog rides catalog; a book WITHOUT one keeps
+    its full-text tier, because an ungisted catalog measurably loses
+    exact-quote retrieval. Mixed selections serialize each book at its own
+    tier; the section headers already state per-book state, and the top-level
+    header/footer gain a third (mixed) wording, since "the text is NOT
+    included" and "ground answers in the fenced text" are each false of half
+    a mixed block.
+  - **The all-catalog case is byte-identical to the measured configuration**
+    (budgets and wording unchanged), pinned by
+    `src/harness/e2/blockcheck.e2run.ts`, which calibrates against the run
+    manifest rather than a hardcoded number.
+  - Hydration is skipped only when EVERY selected book has a catalog — a
+    book that will ride text still needs its text.
+  - The picker names the subject of the nudge ("N books without a catalog
+    ride as full text"), and full text stays one toggle away as the
+    escalation path.
+  Known bounded exposure, accepted: an OLD bundle's sanitizeStored strips
+  `mode:"full"` on its own writes, so a stale tab open across the deploy can
+  revert an explicit opt-out until tabs cycle (Phase-4 acceptance class).
   Voice turns inherit the mode (halved budgets + tool-round latency) —
   unmeasured by the text harness; documented, watched post-flip.
 

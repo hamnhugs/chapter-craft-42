@@ -4,7 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { listFolders, type BookFolder } from "@/lib/bookFolders";
 import {
-  bookContextStore, selectContextBooks, isEmptySelection, resolveBookContextMode,
+  bookContextStore, selectContextBooks, isEmptySelection, resolveBookContextMode, bookHasCatalog,
   BOOK_CONTEXT_MAX_BOOKS, type BookContextMode,
 } from "@/lib/chatBooks";
 import { acquireGistRun, generateBookGists, releaseGistRun } from "@/lib/chapterGists";
@@ -63,6 +63,13 @@ const BookContextPicker: React.FC<{
   const effective = useMemo(
     () => selectContextBooks(books, selection, activeBookId ?? null),
     [books, selection, activeBookId],
+  );
+
+  /** Selected books that would ride full text under catalog mode because
+   *  they have no catalog yet — the gist-nudge's actual subject. */
+  const uncatalogued = useMemo(
+    () => effective.filter((b) => b.chapters.length > 0 && !bookHasCatalog(b)),
+    [effective],
   );
 
   const gistCoverage = useMemo(() => {
@@ -206,7 +213,12 @@ const BookContextPicker: React.FC<{
                 {gistProgress ??
                   (gistCoverage.total === 0
                     ? "The loaded books have no chapters yet."
-                    : `${gistCoverage.have}/${gistCoverage.total} chapters have summaries.`)}
+                    : uncatalogued.length > 0
+                      // The flip is gist-aware: a book with no catalog rides
+                      // as full text, because a bare title map measurably
+                      // loses exact-quote retrieval. Say which books that is.
+                      ? `${uncatalogued.length} book${uncatalogued.length === 1 ? "" : "s"} without a catalog ride as full text — ${gistCoverage.have}/${gistCoverage.total} chapters summarized.`
+                      : `${gistCoverage.have}/${gistCoverage.total} chapters have summaries.`)}
               </span>
               <button
                 type="button"
