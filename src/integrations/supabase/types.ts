@@ -471,6 +471,7 @@ export type Database = {
           book_id: string
           created_at: string
           end_page: number
+          gist: string | null
           id: string
           name: string
           start_page: number
@@ -481,6 +482,7 @@ export type Database = {
           book_id: string
           created_at?: string
           end_page: number
+          gist?: string | null
           id?: string
           name: string
           start_page: number
@@ -491,6 +493,7 @@ export type Database = {
           book_id?: string
           created_at?: string
           end_page?: number
+          gist?: string | null
           id?: string
           name?: string
           start_page?: number
