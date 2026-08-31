@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
-import { readFileSync, existsSync, appendFileSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync, appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createHash } from "node:crypto";
 
@@ -45,8 +45,8 @@ const { buildChatSystemPrompt } = await import("@/lib/buildChatSystemPrompt");
 const { buildBookContextBlock, bookContextCharBudget, bookContextStore, selectContextBooks } = await import("@/lib/chatBooks");
 const { CHAT_TOOL_DEFINITIONS, executeChatTool } = await import("@/lib/chatTools");
 const { openrouterAdapter } = await import("@/lib/providers/openrouterAdapter");
-const { runToolLoop, completedKeys, rowKey, validateQuestions } = await import("@/harness/e2/harnessCore");
-import type { AnswerRow, E2Mode, E2Question } from "@/harness/e2/harnessCore";
+const { runToolLoop, completedKeys, rowKey, validateQuestions, parseJsonlSafe } = await import("@/harness/e2/harnessCore");
+import type { AnswerRow, E2Mode, E2Question, RunIdentity } from "@/harness/e2/harnessCore";
 import type { BookDocument } from "@/types/library";
 
 // ── Environment & data ─────────────────────────────────────────────────────
@@ -77,8 +77,12 @@ const questions: E2Question[] = ready ? JSON.parse(readFileSync(questionsPath, "
 const fixtureSha = ready ? createHash("sha256").update(readFileSync(fixturesPath)).digest("hex").slice(0, 16) : "";
 const questionsSha = ready ? createHash("sha256").update(readFileSync(questionsPath)).digest("hex").slice(0, 16) : "";
 
+// Resume honors RUN IDENTITY: rows from another model or another
+// fixture/question state are stale, not "done" — a model switch mid-run must
+// re-answer both arms, never mix models within a question (review finding).
+const identity: RunIdentity = { model: MODEL, fixtureSha, questionsSha };
 const done = existsSync(ANSWERS)
-  ? completedKeys(readFileSync(ANSWERS, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as AnswerRow))
+  ? completedKeys(parseJsonlSafe<AnswerRow>(readFileSync(ANSWERS, "utf8")), identity)
   : new Set<string>();
 
 // The harness roster: the reading pathway under test, identical in both arms.
@@ -116,6 +120,7 @@ describe.skipIf(!ready)("E2 answer phase", () => {
     bookContextStore.set({ shelfId: null, bookIds: books.map((b) => b.id), excludedIds: [] });
     const ordered = selectContextBooks(books, bookContextStore.get(), null);
     expect(ordered.map((b) => b.id)).toEqual(books.map((b) => b.id).sort());
+    const meta: Record<string, unknown> = { model: MODEL, fixtureSha, questionsSha, at: new Date().toISOString() };
     for (const mode of ["full", "catalog"] as const) {
       const built = buildBookContextBlock(ordered, {
         offeredTools: [...ROSTER],
@@ -126,7 +131,12 @@ describe.skipIf(!ready)("E2 answer phase", () => {
       blocks[mode] = built!.message!;
       const states = built!.used.map((u) => `${u.title.slice(0, 24)}:${u.state}(${u.chaptersSent}/${u.chaptersTotal})`);
       console.log(`[e2] block ${mode}: ${blocks[mode].length} chars — ${states.join(" · ")}`);
+      meta[`block_${mode}`] = { chars: blocks[mode].length, used: built!.used };
     }
+    // The run manifest: which model answered, over which bytes, with which
+    // block states — report.json folds this in so the decision artifact says
+    // what was actually measured (review observation: it recorded neither).
+    writeFileSync(resolve(DATA, "meta.json"), JSON.stringify(meta, null, 2));
   });
 
   for (const q of questions) {
@@ -154,40 +164,58 @@ describe.skipIf(!ready)("E2 answer phase", () => {
           { role: "user", content: q.question },
         ];
         const started = Date.now();
+        // One abort budget for the whole question, well inside the vitest
+        // timeout: a provider hang must abort HERE so the row still gets
+        // appended — a vitest kill after spend but before the append makes
+        // every rerun re-pay the same question (review finding).
+        const controller = new AbortController();
+        const killer = setTimeout(() => controller.abort(), 450_000);
         let row: AnswerRow;
         let attempt = 0;
-        for (;;) {
-          try {
-            const res = await runToolLoop({
-              adapter: openrouterAdapter,
-              model: MODEL,
-              apiKey: API_KEY,
-              messages,
-              tools: toolDefs,
-              cacheStablePrefixCount: 1,
-              executeTool: (name, rawArgs) => executeChatTool(name, rawArgs, toolDeps as any),
-            });
-            row = {
-              qid: q.id, mode, model: MODEL, answer: res.text, toolTrace: res.toolTrace,
-              iterations: res.iterations, sentChars: res.sentChars, finish: res.finish,
-              ms: Date.now() - started, fixtureSha, questionsSha, at: new Date().toISOString(),
-            };
-            break;
-          } catch (e: any) {
-            const code = e?.code as string | undefined;
-            if (attempt < 2 && (code === "rate_limit" || code === "network" || code === "server" || code === "upstream")) {
-              attempt++;
-              console.warn(`[e2] ${key}: ${code} — retry ${attempt} in ${attempt * 15}s`);
-              await sleep(attempt * 15_000);
-              continue;
+        try {
+          for (;;) {
+            try {
+              const res = await runToolLoop({
+                adapter: openrouterAdapter,
+                model: MODEL,
+                apiKey: API_KEY,
+                messages,
+                tools: toolDefs,
+                cacheStablePrefixCount: 1,
+                signal: controller.signal,
+                executeTool: (name, rawArgs) => executeChatTool(name, rawArgs, toolDeps as any),
+              });
+              row = {
+                qid: q.id, mode, model: MODEL, answer: res.text, toolTrace: res.toolTrace,
+                iterations: res.iterations, sentChars: res.sentChars, finish: res.finish,
+                ms: Date.now() - started, fixtureSha, questionsSha, at: new Date().toISOString(),
+              };
+              break;
+            } catch (e: any) {
+              const code = e?.code as string | undefined;
+              // Retry what is genuinely transient: provider rate/upstream/server
+              // trouble, and code-LESS failures (raw network TypeErrors — the
+              // adapter only throws coded auth/no_key/credits/rate_limit/
+              // bad_request/upstream; review finding: the old list named codes
+              // it never throws and missed the code-less class). Auth/credits/
+              // bad_request are permanent; an aborted budget records as timeout.
+              const permanent = code === "auth" || code === "no_key" || code === "credits" || code === "bad_request";
+              if (attempt < 2 && !permanent && !controller.signal.aborted) {
+                attempt++;
+                console.warn(`[e2] ${key}: ${code || e?.name || "network"} — retry ${attempt} in ${attempt * 15}s`);
+                await sleep(attempt * 15_000);
+                continue;
+              }
+              row = {
+                qid: q.id, mode, model: MODEL, answer: "", toolTrace: [], iterations: 0, sentChars: [],
+                finish: "error", ms: Date.now() - started, fixtureSha, questionsSha, at: new Date().toISOString(),
+                error: controller.signal.aborted ? "timeout: question budget (450s) exceeded" : `${code || "error"}: ${e?.message || e}`,
+              };
+              break;
             }
-            row = {
-              qid: q.id, mode, model: MODEL, answer: "", toolTrace: [], iterations: 0, sentChars: [],
-              finish: "error", ms: Date.now() - started, fixtureSha, questionsSha, at: new Date().toISOString(),
-              error: `${code || "error"}: ${e?.message || e}`,
-            };
-            break;
           }
+        } finally {
+          clearTimeout(killer);
         }
         appendFileSync(ANSWERS, JSON.stringify(row) + "\n");
         if (row.error) console.warn(`[e2] ${key} recorded ERROR row: ${row.error}`);
@@ -198,10 +226,8 @@ describe.skipIf(!ready)("E2 answer phase", () => {
   }
 
   it("all question×mode pairs have a successful answer row", () => {
-    const rows = existsSync(ANSWERS)
-      ? readFileSync(ANSWERS, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as AnswerRow)
-      : [];
-    const have = completedKeys(rows);
+    const rows = existsSync(ANSWERS) ? parseJsonlSafe<AnswerRow>(readFileSync(ANSWERS, "utf8")) : [];
+    const have = completedKeys(rows, identity);
     const missing = questions.flatMap((q) => (["full", "catalog"] as const).map((m) => rowKey({ qid: q.id, mode: m }))).filter((k) => !have.has(k));
     expect(missing, `rerun the answer phase to retry: ${missing.join(", ")}`).toEqual([]);
   });

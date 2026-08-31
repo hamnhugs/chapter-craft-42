@@ -20,10 +20,11 @@ import { resolve } from "node:path";
  * e2-data/grades.jsonl; emits e2-data/report.json + report.md at the end.
  */
 import {
-  acceptListHit, buildReport, quoteQuestionScore, rowKey,
-  type AnswerRow, type E2Mode, type E2Question, type GradeRow,
+  acceptListHit, buildReport, matchesRun, parseJsonlSafe, proseCallSuspect, quoteQuestionScore, rowKey, verifyQuotes,
+  type AnswerRow, type E2Mode, type E2Question, type GradeRow, type RunIdentity,
 } from "@/harness/e2/harnessCore";
 import type { BookDocument } from "@/types/library";
+import { createHash } from "node:crypto";
 
 const ROOT = process.cwd();
 const DATA = resolve(ROOT, "e2-data");
@@ -51,61 +52,78 @@ const ready = existsSync(fixturesPath) && existsSync(questionsPath) && existsSyn
 const books: BookDocument[] = ready ? JSON.parse(readFileSync(fixturesPath, "utf8")) : [];
 const questions: E2Question[] = ready ? JSON.parse(readFileSync(questionsPath, "utf8")) : [];
 const qById = new Map(questions.map((q) => [q.id, q]));
+const fixtureSha = ready ? createHash("sha256").update(readFileSync(fixturesPath)).digest("hex").slice(0, 16) : "";
+const questionsSha = ready ? createHash("sha256").update(readFileSync(questionsPath)).digest("hex").slice(0, 16) : "";
 
-/** Latest successful answer per (qid, mode). */
-function loadAnswers(): Map<string, AnswerRow> {
-  const out = new Map<string, AnswerRow>();
-  for (const line of readFileSync(ANSWERS, "utf8").split("\n").filter(Boolean)) {
-    const r = JSON.parse(line) as AnswerRow;
-    if (!r.error) out.set(rowKey(r), r);
+/** Latest successful answer per (qid, mode) — CURRENT fixture/question bytes
+ *  only, and exactly ONE answer model across the board. Stale rows (edited
+ *  questions, re-exported fixtures) would be graded against keys they never
+ *  saw; mixed models would compare arms across models (review finding: the
+ *  recorded shas/model were never checked). Returns the run identity so
+ *  grade rows inherit it. */
+function loadAnswers(): { rows: Map<string, AnswerRow>; identity: RunIdentity | null } {
+  const current = parseJsonlSafe<AnswerRow>(readFileSync(ANSWERS, "utf8"))
+    .filter((r) => !r.error && r.fixtureSha === fixtureSha && r.questionsSha === questionsSha && qById.has(r.qid));
+  const models = [...new Set(current.map((r) => r.model))];
+  if (models.length > 1) {
+    throw new Error(`answers.jsonl holds rows from ${models.length} models (${models.join(", ")}) for the current question set — a mixed-model A/B is invalid. Delete the stale rows or rerun the answer phase on one model.`);
   }
-  return out;
+  const out = new Map<string, AnswerRow>();
+  for (const r of current) out.set(rowKey(r), r);
+  return { rows: out, identity: models.length ? { model: models[0], fixtureSha, questionsSha } : null };
 }
 
-function loadGrades(): Map<string, GradeRow> {
+function loadGrades(id: RunIdentity | null): Map<string, GradeRow> {
   const out = new Map<string, GradeRow>();
-  if (!existsSync(GRADES)) return out;
-  for (const line of readFileSync(GRADES, "utf8").split("\n").filter(Boolean)) {
-    const g = JSON.parse(line) as GradeRow;
-    if (g.by !== "error") out.set(rowKey(g), g);
+  if (!existsSync(GRADES) || !id) return out;
+  for (const g of parseJsonlSafe<GradeRow>(readFileSync(GRADES, "utf8"))) {
+    if (g.by !== "error" && qById.has(g.qid) && matchesRun(g, id)) out.set(rowKey(g), g);
   }
   return out;
 }
 
 async function judgeCall(prompt: string): Promise<string> {
-  for (let attempt = 0; ; attempt++) {
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${API_KEY}` },
-      body: JSON.stringify({
-        model: JUDGE,
-        stream: false,
-        temperature: 0,
-        // Mandatory-reasoning models (measured on this account's default)
-        // spend hundreds of tokens thinking before the JSON appears.
-        max_tokens: 2_000,
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are a strict, terse exam grader. Judge ONLY against the reference material given. " +
-              "Answer length must not influence the grade. Reply with a single JSON object and nothing else.",
-          },
-          { role: "user", content: prompt },
-        ],
-      }),
-    });
-    const body = await res.text();
-    if (!res.ok) {
-      if (attempt < 2 && (res.status === 429 || res.status >= 500)) {
-        await new Promise((r) => setTimeout(r, (attempt + 1) * 15_000));
-        continue;
+  // Mandatory-reasoning models (measured on this account's default) spend
+  // hundreds of tokens thinking before the JSON appears; if 2k still comes
+  // back contentless, one escalation to 6k prevents the permanent
+  // error-row/re-pay loop a fixed cap would create (review finding).
+  const caps = [2_000, 6_000];
+  for (let capIdx = 0; capIdx < caps.length; capIdx++) {
+    for (let attempt = 0; ; attempt++) {
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${API_KEY}` },
+        body: JSON.stringify({
+          model: JUDGE,
+          stream: false,
+          temperature: 0,
+          max_tokens: caps[capIdx],
+          messages: [
+            {
+              role: "system",
+              content:
+                "You are a strict, terse exam grader. Judge ONLY against the reference material given. " +
+                "Answer length must not influence the grade. Reply with a single JSON object and nothing else.",
+            },
+            { role: "user", content: prompt },
+          ],
+        }),
+      });
+      const body = await res.text();
+      if (!res.ok) {
+        if (attempt < 2 && (res.status === 429 || res.status >= 500)) {
+          await new Promise((r) => setTimeout(r, (attempt + 1) * 15_000));
+          continue;
+        }
+        throw new Error(`judge ${res.status}: ${body.slice(0, 300)}`);
       }
-      throw new Error(`judge ${res.status}: ${body.slice(0, 300)}`);
+      const data = JSON.parse(body);
+      const content = String(data?.choices?.[0]?.message?.content || "");
+      if (content.trim() || capIdx === caps.length - 1) return content;
+      break; // contentless at this cap — escalate once
     }
-    const data = JSON.parse(body);
-    return String(data?.choices?.[0]?.message?.content || "");
   }
+  return "";
 }
 
 function parseJudgeJson(raw: string): any {
@@ -115,8 +133,10 @@ function parseJudgeJson(raw: string): any {
 }
 
 describe.skipIf(!ready)("E2 grade phase", () => {
-  const answers = ready ? loadAnswers() : new Map<string, AnswerRow>();
-  const graded = ready ? loadGrades() : new Map<string, GradeRow>();
+  const loaded = ready ? loadAnswers() : { rows: new Map<string, AnswerRow>(), identity: null };
+  const answers = loaded.rows;
+  const identity = loaded.identity;
+  const graded = ready ? loadGrades(identity) : new Map<string, GradeRow>();
 
   for (const q of questions) {
     for (const mode of ["full", "catalog"] as const) {
@@ -135,7 +155,7 @@ describe.skipIf(!ready)("E2 grade phase", () => {
               const raw = await judgeCall(
                 `Question a reader asked about a book:\n${q.question}\n\n` +
                 `Reference answer (ground truth from the book):\n${q.key.expected}\n\n` +
-                `Candidate answer to grade:\n---\n${a.answer.slice(0, 6000)}\n---\n\n` +
+                `Candidate answer to grade:\n---\n${a.answer.slice(0, 20000)}\n---\n\n` +
                 `Does the candidate answer state the reference fact correctly (paraphrase is fine; extra correct context is fine; a wrong, missing, or evasive core fact is not)? ` +
                 `Reply JSON: {"correct": true|false, "why": "<one sentence>"}`,
               );
@@ -147,7 +167,7 @@ describe.skipIf(!ready)("E2 grade phase", () => {
               `Question a reader asked about a book:\n${q.question}\n\n` +
               `Key points a full-credit answer must cover (from the book):\n` +
               q.key.points!.map((p, i) => `${i + 1}. ${p}`).join("\n") +
-              `\n\nCandidate answer to grade:\n---\n${a.answer.slice(0, 8000)}\n---\n\n` +
+              `\n\nCandidate answer to grade:\n---\n${a.answer.slice(0, 20000)}\n---\n\n` +
               `Score 0-5: 5 = all key points covered accurately; subtract for each key point missing, wrong, or contradicted; 0 = off-topic or fabricated. ` +
               `Reply JSON: {"score": <0-5>, "why": "<one sentence>"}`,
             );
@@ -168,28 +188,52 @@ describe.skipIf(!ready)("E2 grade phase", () => {
   }
 
   it("emits the report when every pair is graded", () => {
-    const rows = [...loadGrades().values()];
-    const expected = questions.length * 2;
-    if (rows.length < expected) {
-      console.warn(`[e2] report deferred: ${rows.length}/${expected} graded (rerun to retry error rows)`);
-      expect(rows.length, "rerun the grade phase until all pairs are graded").toBe(expected);
+    const gradeMap = loadGrades(identity);
+    // EVERY current (question, mode) pair must be present — a row-count gate
+    // let stale rows pad past the threshold while current pairs were missing
+    // (review finding: renamed questions double-counted, removed ones voted).
+    const missing = questions
+      .flatMap((q) => (["full", "catalog"] as const).map((m) => rowKey({ qid: q.id, mode: m })))
+      .filter((k) => !gradeMap.has(k));
+    if (missing.length > 0) {
+      console.warn(`[e2] report deferred — ungraded pairs: ${missing.join(", ")}`);
+      expect(missing, "rerun the grade phase until all pairs are graded").toEqual([]);
       return;
     }
-    const report = buildReport(rows);
-    // Cost/latency readout from the answer rows, per mode.
-    const ans = [...loadAnswers().values()];
+    const report = buildReport([...gradeMap.values()]);
+    const ans = [...answers.values()];
+    const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+    const ROSTER = ["list_books", "get_book", "get_chapter_text"] as const;
     const agg = (mode: E2Mode) => {
       const rowsM = ans.filter((r) => r.mode === mode);
-      const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+      // Informational E3-wide readout: quote spans claimed ANYWHERE (all
+      // question types), verified against the fixtures — the gating rate in
+      // the report covers quote questions; this covers the rest.
+      let spans = 0, verified = 0;
+      for (const r of rowsM) for (const c of verifyQuotes(r.answer, books)) { spans++; if (c.verified) verified++; }
       return {
         n: rowsM.length,
         meanFirstSendChars: Math.round(mean(rowsM.map((r) => r.sentChars[0] || 0))),
         meanTotalSentChars: Math.round(mean(rowsM.map((r) => r.sentChars.reduce((a, b) => a + b, 0)))),
         meanToolCalls: +mean(rowsM.map((r) => r.toolTrace.length)).toFixed(2),
         meanMs: Math.round(mean(rowsM.map((r) => r.ms))),
+        cutShort: rowsM.filter((r) => r.finish === "cut_short").length,
+        maxIterations: rowsM.filter((r) => r.finish === "max_iterations").length,
+        // The salvage-pass deviation, made measurable: answers whose prose
+        // looks like an unexecuted roster call (production would salvage).
+        proseCallSuspects: rowsM.filter((r) => proseCallSuspect(r.answer, ROSTER)).length,
+        allSpanVerifyRate: spans ? +(verified / spans).toFixed(4) : null,
+        allSpansChecked: spans,
       };
     };
-    const out = { report, cost: { full: agg("full"), catalog: agg("catalog") }, judge: JUDGE, at: new Date().toISOString() };
+    const metaPath = resolve(DATA, "meta.json");
+    const meta = existsSync(metaPath) ? JSON.parse(readFileSync(metaPath, "utf8")) : null;
+    const out = {
+      report,
+      run: { identity, judge: JUDGE, meta, note: "routing questions are informational — they gate nothing in the verdict (§8)" },
+      cost: { full: agg("full"), catalog: agg("catalog") },
+      at: new Date().toISOString(),
+    };
     writeFileSync(resolve(DATA, "report.json"), JSON.stringify(out, null, 2));
     console.log("[e2] report:", JSON.stringify(out, null, 2));
     expect(report.criteria.verdict).toMatch(/FLIP|HOLD/);

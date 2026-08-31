@@ -100,7 +100,7 @@ export function validateQuestions(questions: E2Question[], books: BookDocument[]
       }
     }
     if (q.type === "synthesis" && !q.key.points?.length) issues.push({ id: q.id, problem: "synthesis question needs key.points" });
-    if (q.type === "routing" && !q.key.accept?.length) issues.push({ id: q.id, problem: "routing question needs accept[]" });
+    if (q.type === "routing" && (!q.key.accept?.length || !q.key.expected)) issues.push({ id: q.id, problem: "routing question needs accept[] + expected (the judge fallback interpolates expected)" });
   }
   return issues;
 }
@@ -129,7 +129,10 @@ export function normalizeForMatch(s: string, level: "strict" | "ws" | "deep"): s
  *  ignored — they are phrase mentions, not quote claims. */
 export function extractQuotedSpans(answer: string, minLen = 20): string[] {
   const spans: string[] = [];
-  const re = /["“]([^"“”]{5,600}?)["”]/g;
+  // 2000-char cap, not 600: an answer that over-quotes a whole passage inline
+  // must still extract, or a verbatim correct answer scores zero (review
+  // finding — the old cap silently produced zero spans past 600 chars).
+  const re = /["“]([^"“”]{5,2000}?)["”]/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(answer)) !== null) spans.push(m[1]);
   for (const line of answer.split("\n")) {
@@ -190,7 +193,10 @@ export interface LoopResult {
   /** Chars of the serialized message array at each iteration's send — the
    *  cost signal (tokens ≈ chars/4, the app convention). */
   sentChars: number[];
-  finish: "ok" | "max_iterations";
+  /** "cut_short" = the provider ended the stream on length/content_filter;
+   *  accumulated tool calls were DROPPED, mirroring ChatContext's
+   *  streamCutShort handling — and the truncation is visible in the row. */
+  finish: "ok" | "max_iterations" | "cut_short";
 }
 
 export interface RunLoopOpts {
@@ -221,6 +227,7 @@ export async function runToolLoop(opts: RunLoopOpts): Promise<LoopResult> {
   for (let iteration = 0; iteration < E2_MAX_TOOL_ITERATIONS; iteration++) {
     sentChars.push(JSON.stringify(messages).length);
     let iterText = "";
+    let cutShort = false;
     const acc: Record<number, { id?: string; name?: string; args: string }> = {};
 
     const stream = opts.adapter.streamChat({
@@ -239,10 +246,17 @@ export async function runToolLoop(opts: RunLoopOpts): Promise<LoopResult> {
         if (ev.id) slot.id = ev.id;
         if (ev.name) slot.name = ev.name;
         if (ev.argsDelta) slot.args += ev.argsDelta;
+      } else if (ev.type === "finish" && (ev.reason === "length" || ev.reason === "content_filter")) {
+        cutShort = true;
       }
     }
 
     text += (text && iterText ? "\n" : "") + iterText;
+    // A length/filter-cut stream may hold half-written calls; production
+    // discards them (ChatContext streamCutShort) instead of executing invalid
+    // JSON into a recovery round it never grants — mirror that, and make the
+    // truncation visible in the row (review finding: it used to record "ok").
+    if (cutShort) return { text, reasoning, toolTrace, iterations: iteration + 1, sentChars, finish: "cut_short" };
     const calls = Object.keys(acc)
       .map(Number)
       .sort((a, b) => a - b)
@@ -300,9 +314,51 @@ export function rowKey(r: { qid: string; mode: string }): string {
   return `${r.qid}::${r.mode}`;
 }
 
-/** Successful rows win; an error row is retried on the next run. */
-export function completedKeys(rows: AnswerRow[]): Set<string> {
-  return new Set(rows.filter((r) => !r.error).map(rowKey));
+/** The identity of a run: same model, same fixture bytes, same question
+ *  bytes. Rows from any other identity are STALE — resuming across a model
+ *  switch would mix arms across models within one question, and resuming
+ *  across a fixture/question edit would grade old answers against new keys
+ *  (review finding: nothing checked the recorded shas). */
+export interface RunIdentity {
+  model: string;
+  fixtureSha: string;
+  questionsSha: string;
+}
+
+export function matchesRun(r: { model?: string; fixtureSha?: string; questionsSha?: string }, id: RunIdentity): boolean {
+  return r.model === id.model && r.fixtureSha === id.fixtureSha && r.questionsSha === id.questionsSha;
+}
+
+/** Successful rows OF THIS RUN IDENTITY win; error rows and rows from any
+ *  other model/fixture/question state are retried or ignored. */
+export function completedKeys(rows: AnswerRow[], id?: RunIdentity): Set<string> {
+  return new Set(rows.filter((r) => !r.error && (!id || matchesRun(r, id))).map(rowKey));
+}
+
+/** Parse JSONL tolerantly: a torn final line (crash mid-append) is skipped —
+ *  the checkpoint design already tolerates a missing row by re-running it —
+ *  instead of bricking every later phase at collection time. */
+export function parseJsonlSafe<T>(content: string): T[] {
+  const out: T[] = [];
+  for (const line of content.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      out.push(JSON.parse(line) as T);
+    } catch {
+      // torn/corrupt line — skip; its (qid, mode) simply reruns
+    }
+  }
+  return out;
+}
+
+/** Does an answer's prose LOOK like an unexecuted tool call against the
+ *  roster? The harness deliberately omits production's text-call salvage
+ *  pass; this makes that deviation's incidence measurable per mode instead
+ *  of invisible (review finding: such runs recorded finish:"ok"). */
+export function proseCallSuspect(answer: string, rosterNames: readonly string[]): boolean {
+  if (/<tool_call|<function_call|\[TOOL_CALL\]/i.test(answer)) return true;
+  return rosterNames.some((n) =>
+    new RegExp(`"name"\\s*:\\s*"${n}"|\\b${n}\\s*\\(`, "i").test(answer));
 }
 
 // ── Grading ────────────────────────────────────────────────────────────────
@@ -319,6 +375,11 @@ export interface GradeRow {
   quoteChecks?: QuoteCheck[];
   judgeRaw?: string;
   notes?: string;
+  /** Run identity, copied from the answer row — grade rows from another
+   *  model/fixture/question state are stale and never count. */
+  model?: string;
+  fixtureSha?: string;
+  questionsSha?: string;
 }
 
 /** Mechanical accept-list check on a deep-normalized, lowercased answer. */
@@ -329,9 +390,12 @@ export function acceptListHit(answer: string, accept: string[] | undefined): boo
 }
 
 /** Do two texts share any ≥`shingle`-char contiguous run (deep-normalized)?
- *  Cheap LCS stand-in: 40-char shingles of `a` at stride 20, substring-tested
- *  against `b`. Catches "the model quoted a superset/subset of the key span"
- *  without full LCS machinery. */
+ *  Cheap LCS stand-in: shingles of EACH side tested against the other, stride
+ *  10. Bidirectional because one-directional shingling of only `a` misses
+ *  genuine 40–59-char overlaps that start mid-shingle (review-verified blind
+ *  spot: a verified span carrying a 45-char true overlap behind 30 chars of
+ *  adjacent text returned false). Catches "the model quoted a
+ *  superset/subset/straddle of the key span" without full LCS machinery. */
 export function sharesRun(a: string, b: string, shingle = 40): boolean {
   const na = normalizeForMatch(a, "deep");
   const nb = normalizeForMatch(b, "deep");
@@ -339,10 +403,14 @@ export function sharesRun(a: string, b: string, shingle = 40): boolean {
     const [s, l] = na.length <= nb.length ? [na, nb] : [nb, na];
     return s.length >= 20 && l.includes(s);
   }
-  for (let i = 0; i + shingle <= na.length; i += 20) {
-    if (nb.includes(na.slice(i, i + shingle))) return true;
-  }
-  return false;
+  const oneWay = (x: string, y: string): boolean => {
+    for (let i = 0; ; i += 10) {
+      const end = Math.min(i + shingle, x.length);
+      if (y.includes(x.slice(end - shingle, end))) return true;
+      if (end === x.length) return false;
+    }
+  };
+  return oneWay(na, nb) || oneWay(nb, na);
 }
 
 /** Quote-question correctness, fully mechanical: the answer must present at
@@ -355,7 +423,13 @@ export function quoteQuestionScore(
   books: BookDocument[],
 ): { score: 0 | 1; checks: QuoteCheck[] } {
   const checks = verifyQuotes(answer, books);
-  const hit = checks.some((c) => c.verified && sharesRun(c.span, keyQuote.text));
+  let hit = checks.some((c) => c.verified && sharesRun(c.span, keyQuote.text));
+  // Zero-extraction fallback (review finding): an answer can present the
+  // passage without extractable quote punctuation (unmarked reproduction,
+  // fragmented by interior quotes). The key IS verbatim chapter text by
+  // validator construction, so answer-shares-a-run-of-the-key preserves the
+  // E3 verbatim guarantee without any span extraction.
+  if (!hit && checks.length === 0) hit = sharesRun(answer, keyQuote.text);
   return { score: hit ? 1 : 0, checks };
 }
 
@@ -386,7 +460,12 @@ export interface E2Report {
   };
 }
 
-const PARITY_TOLERANCE = 0.0625; // one question of sixteen — stated in the report
+/** Parity tolerance is ONE QUESTION, counted — never a rate. A rate constant
+ *  (the first cut used 1/16 = 0.0625) silently becomes a ZERO-question
+ *  tolerance the moment the set has more than 16 of a type (review finding:
+ *  15 needles ⇒ one miss is 0.0667 > 0.0625 ⇒ auto-HOLD on single-question
+ *  noise, stricter than the documented §8 gate). */
+const PARITY_TOLERANCE_QUESTIONS = 1;
 
 function emptyStats(): ModeStats {
   return { needleCorrect: 0, needleTotal: 0, quoteCorrect: 0, quoteTotal: 0, quoteSpansVerified: 0, quoteSpansTotal: 0, synthesisMean: 0, synthesisTotal: 0, routingCorrect: 0, routingTotal: 0 };
@@ -414,8 +493,8 @@ export function buildReport(grades: GradeRow[]): E2Report {
     stats[mode].synthesisMean = stats[mode].synthesisTotal ? synthSum[mode] / stats[mode].synthesisTotal : 0;
   }
   const rate = (c: number, t: number) => (t ? c / t : 0);
-  const needleParity = rate(stats.catalog.needleCorrect, stats.catalog.needleTotal) >= rate(stats.full.needleCorrect, stats.full.needleTotal) - PARITY_TOLERANCE;
-  const quoteParity = rate(stats.catalog.quoteCorrect, stats.catalog.quoteTotal) >= rate(stats.full.quoteCorrect, stats.full.quoteTotal) - PARITY_TOLERANCE;
+  const needleParity = stats.catalog.needleCorrect >= stats.full.needleCorrect - PARITY_TOLERANCE_QUESTIONS;
+  const quoteParity = stats.catalog.quoteCorrect >= stats.full.quoteCorrect - PARITY_TOLERANCE_QUESTIONS;
   const catalogSpanRate = rate(stats.catalog.quoteSpansVerified, stats.catalog.quoteSpansTotal);
   const synthesisRegressionPct = stats.full.synthesisMean > 0 ? Math.max(0, (stats.full.synthesisMean - stats.catalog.synthesisMean) / stats.full.synthesisMean) * 100 : 0;
   const quoteVerifyPass = catalogSpanRate >= 0.95;

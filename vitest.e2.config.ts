@@ -24,7 +24,11 @@ export default defineConfig({
     include: ["src/harness/e2/**/*.e2run.ts"],
     fileParallelism: false,
     maxConcurrency: 1,
-    testTimeout: 600_000,
+    // Must clear the answer phase's own 450s per-question abort budget plus
+    // retries and the checkpoint append — vitest must never be the thing
+    // that kills a question AFTER the provider spend but BEFORE its row
+    // lands (that row is what makes reruns free).
+    testTimeout: 900_000,
     hookTimeout: 120_000,
   },
   resolve: {

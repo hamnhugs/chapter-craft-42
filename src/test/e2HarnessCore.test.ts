@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  acceptListHit, buildReport, completedKeys, extractQuotedSpans, normalizeForMatch,
-  quoteQuestionScore, runToolLoop, sharesRun, validateQuestions, verifyQuotes,
+  acceptListHit, buildReport, completedKeys, extractQuotedSpans, normalizeForMatch, parseJsonlSafe,
+  proseCallSuspect, quoteQuestionScore, runToolLoop, sharesRun, validateQuestions, verifyQuotes,
   E2_MAX_TOOL_ITERATIONS, E2_TOOL_RESULT_SLICE,
   type AnswerRow, type E2Question, type GradeRow,
 } from "@/harness/e2/harnessCore";
@@ -76,6 +76,34 @@ describe("quote verification (E3 mechanics)", () => {
     )).toBe(true);
     expect(sharesRun("completely unrelated text about gulls circling the pier at noon", "the tide tables of Meridian Bay")).toBe(false);
   });
+
+  it("sharesRun catches a 45-char true overlap hidden behind adjacent text (the 40-59 blind spot)", () => {
+    // Review-verified failure of the one-directional stride-20 version: a
+    // span that STRADDLES the key's start — 30 chars of adjacent chapter
+    // text, then 45 chars of genuine key overlap.
+    const key = "the compiler never once missed a morning reading in all that time, rain or shine";
+    const span = "signed by the harbormaster and " + key.slice(0, 45);
+    expect(sharesRun(span, key)).toBe(true);
+  });
+
+  it("extracts quotes longer than 600 chars (the old cap scored verbatim over-quotes zero)", () => {
+    const long = "compiled by hand for forty-one years " + "and checked every dawn without fail ".repeat(20);
+    const spans = extractQuotedSpans(`The book says "${long}" plainly.`);
+    expect(spans).toHaveLength(1);
+    expect(spans[0].length).toBeGreaterThan(600);
+  });
+
+  it("quote questions with zero extractable spans fall back to key-overlap on the raw answer", () => {
+    const key = { chapter_id: "a1", text: "compiled by hand for forty-one years, and the compiler never once missed a morning reading" };
+    const unpunctuated = quoteQuestionScore(
+      "The passage states: compiled by hand for forty-one years, and the compiler never once missed a morning reading.",
+      key, BOOKS,
+    );
+    expect(unpunctuated.checks).toHaveLength(0);
+    expect(unpunctuated.score).toBe(1);
+    const wrong = quoteQuestionScore("The passage talks about harbors and manifests generally.", key, BOOKS);
+    expect(wrong.score).toBe(0);
+  });
 });
 
 describe("accept-list matching", () => {
@@ -102,6 +130,12 @@ describe("question validation", () => {
   it("rejects a needle whose acceptors never appear in the source chapter", () => {
     const bad = [{ ...good[1], key: { expected: "x", accept: ["completely absent phrase"], chapter_id: "a1" } }];
     expect(validateQuestions(bad as E2Question[], BOOKS).map((i) => i.problem)).toContain("no acceptor appears in the source chapter (deep-normalized)");
+  });
+  it("routing questions need expected too — the judge fallback interpolates it", () => {
+    const bad: E2Question[] = [{ id: "r1", type: "routing", book_id: "both", question: "Which book?", key: { accept: ["book a"] } }];
+    expect(validateQuestions(bad, BOOKS)).toHaveLength(1);
+    const ok: E2Question[] = [{ id: "r1", type: "routing", book_id: "both", question: "Which book?", key: { accept: ["book a"], expected: "Book A" } }];
+    expect(validateQuestions(ok, BOOKS)).toEqual([]);
   });
 });
 
@@ -172,6 +206,25 @@ describe("tool loop (scripted adapter)", () => {
     expect(toolMessage).not.toContain("__images");
   });
 
+  it("drops accumulated calls when the stream was cut by length/content_filter (production parity)", async () => {
+    // Review finding: production discards calls on a cut stream
+    // (streamCutShort); executing half-written JSON granted the model a
+    // recovery round it never gets in the app — and recorded finish:"ok".
+    const adapter = scriptedAdapter([[
+      { type: "text", delta: "Half an answer" },
+      { type: "tool_call_delta", index: 0, id: "c", name: "get_book", argsDelta: '{"book_' },
+      { type: "finish", reason: "length", native: "MAX_TOKENS" },
+    ]]);
+    const executed: string[] = [];
+    const res = await runToolLoop({
+      adapter, model: "m", apiKey: "k", cacheStablePrefixCount: 0, messages: [], tools: [],
+      executeTool: async (name) => { executed.push(name); return { result: {}, event: { name, summary: "", ok: true } }; },
+    });
+    expect(executed).toEqual([]);
+    expect(res.finish).toBe("cut_short");
+    expect(res.iterations).toBe(1);
+  });
+
   it("stops at the app's iteration cap and says so", async () => {
     const adapter = scriptedAdapter([[
       { type: "tool_call_delta", index: 0, id: "c", name: "get_book", argsDelta: "{}" },
@@ -198,6 +251,41 @@ describe("checkpoint resume", () => {
     expect(done.has("q1::catalog")).toBe(true);
     expect(done.has("q2::full")).toBe(true);
   });
+
+  it("rows from another model or another fixture/question state are STALE, not done", () => {
+    // Review finding: resuming after a model switch used to mix models
+    // within one question's A/B pair; a fixture/question edit used to grade
+    // stale answers against new keys.
+    const id = { model: "m1", fixtureSha: "f1", questionsSha: "s1" };
+    const rows = [
+      { qid: "q1", mode: "full", model: "m1", fixtureSha: "f1", questionsSha: "s1" },
+      { qid: "q1", mode: "catalog", model: "m2", fixtureSha: "f1", questionsSha: "s1" },
+      { qid: "q2", mode: "full", model: "m1", fixtureSha: "OLD", questionsSha: "s1" },
+      { qid: "q2", mode: "catalog", model: "m1", fixtureSha: "f1", questionsSha: "OLD" },
+    ] as AnswerRow[];
+    const done = completedKeys(rows, id);
+    expect(done).toEqual(new Set(["q1::full"]));
+  });
+
+  it("a torn final JSONL line is skipped, never a wall", () => {
+    const rows = parseJsonlSafe<AnswerRow>(
+      '{"qid":"q1","mode":"full"}\n{"qid":"q2","mo',
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].qid).toBe("q1");
+  });
+});
+
+describe("prose-call detection (the salvage-pass deviation, counted)", () => {
+  const ROSTER = ["list_books", "get_book", "get_chapter_text"];
+  it("flags call-shaped prose against the roster", () => {
+    expect(proseCallSuspect('I will call {"name": "get_chapter_text", "arguments": {}}', ROSTER)).toBe(true);
+    expect(proseCallSuspect("<tool_call>get_book</tool_call>", ROSTER)).toBe(true);
+    expect(proseCallSuspect("Let me use get_chapter_text(chapter_id) to read it", ROSTER)).toBe(true);
+  });
+  it("does not flag ordinary prose that merely mentions reading", () => {
+    expect(proseCallSuspect("The chapter text says the tide tables were compiled by hand.", ROSTER)).toBe(false);
+  });
 });
 
 describe("report criteria (§8)", () => {
@@ -221,10 +309,24 @@ describe("report criteria (§8)", () => {
     const grades: GradeRow[] = [];
     for (let i = 0; i < 8; i++) {
       grades.push(g(`n${i}`, "full", "needle", 1));
-      grades.push(g(`n${i}`, "catalog", "needle", i < 6 ? 1 : 0)); // 25% drop
+      grades.push(g(`n${i}`, "catalog", "needle", i < 6 ? 1 : 0)); // two questions down
     }
     expect(buildReport(grades).criteria.needleParity).toBe(false);
     expect(buildReport(grades).criteria.verdict).toBe("HOLD");
+  });
+
+  it("tolerance is ONE QUESTION counted — a single miss at n=15 stays parity (the 1/16-rate bug)", () => {
+    // Review finding: a 0.0625 RATE tolerance was a zero-question tolerance
+    // for the real set (one miss of 15 = 0.0667 > 0.0625 → auto-HOLD on
+    // single-question noise). The boundary is pinned at the real set size.
+    const grades: GradeRow[] = [];
+    for (let i = 0; i < 15; i++) {
+      grades.push(g(`n${i}`, "full", "needle", 1));
+      grades.push(g(`n${i}`, "catalog", "needle", i === 0 ? 0 : 1)); // exactly one miss
+    }
+    expect(buildReport(grades).criteria.needleParity).toBe(true);
+    const worse = grades.map((r) => (r.mode === "catalog" && r.qid === "n1" ? { ...r, score: 0 } : r));
+    expect(buildReport(worse).criteria.needleParity).toBe(false);
   });
 
   it("holds when catalog's claimed quotes stop verifying (E3)", () => {

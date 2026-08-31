@@ -21,8 +21,12 @@ points), **routing** across books.
 
 ## Pass criteria (§8)
 
-- Needle + quote: catalog ≥ full − one question's tolerance (6.25%).
-- E3: ≥95% of catalog-mode claimed quote spans verify mechanically.
+- Needle + quote: catalog ≥ full − ONE QUESTION per type (counted, never a
+  rate — a rate constant becomes a zero-question tolerance the moment a type
+  has more questions than its denominator; review-caught).
+- E3 (gating): ≥95% of the quote spans claimed in catalog-mode QUOTE-question
+  answers verify mechanically. `report.json` also carries an informational
+  all-answers span-verify rate per mode.
 - Synthesis: ≤10% regression vs full.
 - Verdict `FLIP` = all pass → the default flips (full text stays as the
   escalation path); `HOLD` = fix what failed, rerun.
@@ -35,12 +39,15 @@ npm run e2:grade    # grade + report → e2-data/report.json
 ```
 
 Needs `.env.e2.local` (`OPENROUTER_API_KEY`, `E2_MODEL`, optional `E2_JUDGE`)
-and `e2-data/` (fixtures + questions). **Everything under `e2-data/` and the
+and `e2-data/` (fixtures + questions). Checkpoint resume is keyed to the RUN
+IDENTITY (model + fixture sha + question sha): switching any of them makes old
+rows stale rather than silently mixing runs, and the grade phase refuses
+mixed-model answer sets outright. **Everything under `e2-data/` and the
 env file is gitignored — the user's book text and keys derived from it must
 never reach the repo.** Harness entries are `*.e2run.ts`, collected only by
 `vitest.e2.config.ts` — the normal suite can never run them.
 
-## Deviations from the live app (all mode-neutral, by design)
+## Deviations from the live app (each mode-neutral or conservative-against-catalog, and measured)
 
 1. Roster is the 3 reading tools (`list_books`, `get_book`,
    `get_chapter_text`) instead of the full 73 — removes unrelated-tool noise;
@@ -52,7 +59,10 @@ never reach the repo.** Harness entries are `*.e2run.ts`, collected only by
 4. `loadChapterText` serves fixtures (byte-identical to the DB rows they were
    exported from).
 5. No text-written-tool-call salvage pass; a run that ends in prose call
-   syntax just ends (counted via `finish`).
+   syntax just ends. Its incidence is measured: `report.json` counts
+   `proseCallSuspects` per mode (call-shaped answer text against the roster) —
+   this deviation is anti-catalog in direction (only that arm NEEDS tool
+   calls), so a nonzero catalog count next to a HOLD verdict warrants a look.
 6. The fixture library is the whole library (the real one lists ~56 books in
    the prompt's catalog section for both arms alike).
 
