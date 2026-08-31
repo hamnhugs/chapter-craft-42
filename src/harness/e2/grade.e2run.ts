@@ -139,7 +139,7 @@ describe.skipIf(!ready)("E2 grade phase", () => {
   const graded = ready ? loadGrades(identity) : new Map<string, GradeRow>();
 
   for (const q of questions) {
-    for (const mode of ["full", "catalog"] as const) {
+    for (const mode of (["full", "catalog", "catalog_nogist"] as const)) {
       const key = rowKey({ qid: q.id, mode });
       it.skipIf(graded.has(key) || !answers.has(key))(`grade ${q.id} · ${mode}`, async () => {
         const a = answers.get(key)!;

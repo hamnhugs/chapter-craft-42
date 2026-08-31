@@ -49,10 +49,23 @@ never reach the repo.** Harness entries are `*.e2run.ts`, collected only by
 
 ## Deviations from the live app (each mode-neutral or conservative-against-catalog, and measured)
 
-1. Roster is the 3 reading tools (`list_books`, `get_book`,
-   `get_chapter_text`) instead of the full 73 — removes unrelated-tool noise;
-   the system prompt is built with the same `offeredTools` gate the app uses,
-   so it stays truthful.
+1. Roster is the reading tools (`list_books`, `get_book`, `get_chapter_text`,
+   and — since the Stage 2 rerun — `search_book_text`) instead of the full
+   75 — removes unrelated-tool noise; the system prompt is built with the
+   same `offeredTools` gate the app uses, so it stays truthful.
+   `search_book_text` rides in EVERY arm (fairness: full may improve too;
+   parity−1 on a level field is the honest gate). `read_span` deliberately
+   does NOT join: fixtures carry no wiki cards, so it would be dead roster
+   weight in all arms alike. The roster is part of the run identity
+   (`rosterSha`) — changing it re-keys the checkpoints, so a rerun can never
+   resume over a previous configuration's answers.
+1b. THE STAGE 2 RERUN ADDS A THIRD ARM, `catalog_nogist`: the catalog block
+   rebuilt over gist-stripped fixture copies. The flip changes the default
+   for legacy users whose books are largely ungisted, and that configuration
+   was never measured by the original A/B (design-review HIGH). The §8 gate
+   stays catalog-vs-full; `nogist_criteria` in report.json decides the
+   flip's SHAPE (unconditional vs gisted-books-only). The baseline
+   two-arm run is archived under `e2-data/raw/run1-baseline-20260831/`.
 2. Knowledge retrieval, conversation memory, focus, and Foundry surfaces are
    empty (the E1 hermetic-mock pattern).
 3. Single-turn conversations; no history, no rolling summary.

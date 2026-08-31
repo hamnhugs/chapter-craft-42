@@ -400,7 +400,12 @@ export async function runToolLoop(opts: RunLoopOpts): Promise<LoopResult> {
 
 // ── Answer rows + checkpointing ────────────────────────────────────────────
 
-export type E2Mode = "full" | "catalog";
+/** "catalog_nogist" (Stage 2) is the catalog arm rerun over gist-STRIPPED
+ *  fixtures: the flip changes the default for legacy users whose books are
+ *  largely ungisted, and that configuration was never measured by the
+ *  original A/B (review-HIGH). Its criteria decide the flip's SHAPE —
+ *  unconditional vs gisted-books-only. */
+export type E2Mode = "full" | "catalog" | "catalog_nogist";
 
 export interface AnswerRow {
   qid: string;
@@ -417,6 +422,9 @@ export interface AnswerRow {
   finishNatives?: string[];
   reasoningChars?: number;
   ms: number;
+  /** Hash of the offered tool definitions — part of the run identity (see
+   *  RunIdentity.rosterSha). Absent on pre-Stage-2 rows. */
+  rosterSha?: string;
   fixtureSha: string;
   questionsSha: string;
   at: string;
@@ -436,10 +444,20 @@ export interface RunIdentity {
   model: string;
   fixtureSha: string;
   questionsSha: string;
+  /** Hash of the tool definitions actually offered. Without it, a
+   *  roster/guidance change (Stage 2: search_book_text joined) would resume
+   *  over the PREVIOUS configuration's answers as if they were done — the
+   *  exact silent mix a rerun exists to prevent. Optional so pre-Stage-2
+   *  rows (which lack the field) simply read as stale. */
+  rosterSha?: string;
 }
 
-export function matchesRun(r: { model?: string; fixtureSha?: string; questionsSha?: string }, id: RunIdentity): boolean {
-  return r.model === id.model && r.fixtureSha === id.fixtureSha && r.questionsSha === id.questionsSha;
+export function matchesRun(r: { model?: string; fixtureSha?: string; questionsSha?: string; rosterSha?: string }, id: RunIdentity): boolean {
+  if (r.model !== id.model || r.fixtureSha !== id.fixtureSha || r.questionsSha !== id.questionsSha) return false;
+  // Compared only when the identity declares one — and then strictly, so a
+  // row from a different (or pre-rosterSha) configuration never resumes.
+  if (id.rosterSha !== undefined && r.rosterSha !== id.rosterSha) return false;
+  return true;
 }
 
 /** Successful rows OF THIS RUN IDENTITY win; error rows and rows from any
@@ -559,18 +577,27 @@ export interface ModeStats {
   routingTotal: number;
 }
 
+export interface ArmCriteria {
+  needleParity: boolean;
+  quoteParity: boolean;
+  quoteVerifyRate: number;
+  quoteVerifyPass: boolean;
+  synthesisRegressionPct: number;
+  synthesisPass: boolean;
+  verdict: "FLIP" | "HOLD";
+}
+
 export interface E2Report {
   full: ModeStats;
   catalog: ModeStats;
-  criteria: {
-    needleParity: boolean;
-    quoteParity: boolean;
-    quoteVerifyRate: number;
-    quoteVerifyPass: boolean;
-    synthesisRegressionPct: number;
-    synthesisPass: boolean;
-    verdict: "FLIP" | "HOLD";
-  };
+  /** Present only when the gist-stripped arm was run. */
+  catalog_nogist?: ModeStats;
+  /** The §8 gate: gisted catalog vs full. */
+  criteria: ArmCriteria;
+  /** The flip-SHAPE gate: gist-stripped catalog vs full (what legacy users
+   *  with ungisted books would actually get). Absent when the arm wasn't
+   *  run; a HOLD here with a FLIP above means "flip gisted books only". */
+  nogist_criteria?: ArmCriteria;
 }
 
 /** Parity tolerance is ONE QUESTION, counted — never a rate. A rate constant
@@ -588,8 +615,8 @@ function emptyStats(): ModeStats {
  *  tolerance), ≥95% of claimed quote spans mechanically verified (E3), and
  *  ≤10% regression on synthesis. */
 export function buildReport(grades: GradeRow[]): E2Report {
-  const stats: Record<E2Mode, ModeStats> = { full: emptyStats(), catalog: emptyStats() };
-  const synthSum: Record<E2Mode, number> = { full: 0, catalog: 0 };
+  const stats: Record<E2Mode, ModeStats> = { full: emptyStats(), catalog: emptyStats(), catalog_nogist: emptyStats() };
+  const synthSum: Record<E2Mode, number> = { full: 0, catalog: 0, catalog_nogist: 0 };
   for (const g of grades) {
     const s = stats[g.mode];
     if (!s) continue;
@@ -602,27 +629,34 @@ export function buildReport(grades: GradeRow[]): E2Report {
     }
     if (g.type === "synthesis") { s.synthesisTotal++; synthSum[g.mode] += g.score; }
   }
-  for (const mode of ["full", "catalog"] as const) {
+  for (const mode of ["full", "catalog", "catalog_nogist"] as const) {
     stats[mode].synthesisMean = stats[mode].synthesisTotal ? synthSum[mode] / stats[mode].synthesisTotal : 0;
   }
   const rate = (c: number, t: number) => (t ? c / t : 0);
-  const needleParity = stats.catalog.needleCorrect >= stats.full.needleCorrect - PARITY_TOLERANCE_QUESTIONS;
-  const quoteParity = stats.catalog.quoteCorrect >= stats.full.quoteCorrect - PARITY_TOLERANCE_QUESTIONS;
-  const catalogSpanRate = rate(stats.catalog.quoteSpansVerified, stats.catalog.quoteSpansTotal);
-  const synthesisRegressionPct = stats.full.synthesisMean > 0 ? Math.max(0, (stats.full.synthesisMean - stats.catalog.synthesisMean) / stats.full.synthesisMean) * 100 : 0;
-  const quoteVerifyPass = catalogSpanRate >= 0.95;
-  const synthesisPass = synthesisRegressionPct <= 10;
-  return {
-    full: stats.full,
-    catalog: stats.catalog,
-    criteria: {
+  // The same §8 arithmetic for any catalog-shaped arm vs full.
+  const armCriteria = (arm: ModeStats): ArmCriteria => {
+    const needleParity = arm.needleCorrect >= stats.full.needleCorrect - PARITY_TOLERANCE_QUESTIONS;
+    const quoteParity = arm.quoteCorrect >= stats.full.quoteCorrect - PARITY_TOLERANCE_QUESTIONS;
+    const spanRate = rate(arm.quoteSpansVerified, arm.quoteSpansTotal);
+    const synthesisRegressionPct = stats.full.synthesisMean > 0 ? Math.max(0, (stats.full.synthesisMean - arm.synthesisMean) / stats.full.synthesisMean) * 100 : 0;
+    const quoteVerifyPass = spanRate >= 0.95;
+    const synthesisPass = synthesisRegressionPct <= 10;
+    return {
       needleParity,
       quoteParity,
-      quoteVerifyRate: catalogSpanRate,
+      quoteVerifyRate: spanRate,
       quoteVerifyPass,
       synthesisRegressionPct,
       synthesisPass,
       verdict: needleParity && quoteParity && quoteVerifyPass && synthesisPass ? "FLIP" : "HOLD",
-    },
+    };
+  };
+  const hasNogist = Object.values(stats.catalog_nogist).some((v) => typeof v === "number" && v > 0);
+  return {
+    full: stats.full,
+    catalog: stats.catalog,
+    ...(hasNogist ? { catalog_nogist: stats.catalog_nogist } : {}),
+    criteria: armCriteria(stats.catalog),
+    ...(hasNogist ? { nogist_criteria: armCriteria(stats.catalog_nogist) } : {}),
   };
 }

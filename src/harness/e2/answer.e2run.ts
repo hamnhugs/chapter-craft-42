@@ -22,11 +22,23 @@ import { createHash } from "node:crypto";
  */
 
 // ── Hermetic mocks (the stage0PromptStability pattern) ─────────────────────
+// The supabase client THROWS: the ONLY paths allowed to leave this process
+// are the provider calls the experiment exists to make. Mirrors the
+// write-tool throws in toolDeps — a Stage-2 path that would touch the live
+// DB from a test run (e.g. search_book_text's prefilter firing because a
+// fixture chapter lost its text) must die loudly, not leak network
+// (review-HIGH: the certifying rerun must not silently exercise — or skip —
+// server paths).
+vi.mock("@/integrations/supabase/client", () => {
+  const die = () => { throw new Error("network reached the E2 harness (supabase)"); };
+  return { supabase: { from: die, rpc: die, auth: { getSession: die } } };
+});
 vi.mock("@/lib/knowledgeApi", () => ({
   fetchKnowledgeEntries: async () => [],
   fetchConversationMemory: async () => null,
   retrieveKnowledge: async () => ({ nodes: [], edges: [] }),
   filterSupersededNodes: async (nodes: unknown[]) => nodes,
+  fetchCardPointers: async () => new Map(),
 }));
 vi.mock("@/lib/imageGen", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/imageGen")>()),
@@ -77,17 +89,30 @@ const questions: E2Question[] = ready ? JSON.parse(readFileSync(questionsPath, "
 const fixtureSha = ready ? createHash("sha256").update(readFileSync(fixturesPath)).digest("hex").slice(0, 16) : "";
 const questionsSha = ready ? createHash("sha256").update(readFileSync(questionsPath)).digest("hex").slice(0, 16) : "";
 
-// Resume honors RUN IDENTITY: rows from another model or another
-// fixture/question state are stale, not "done" — a model switch mid-run must
-// re-answer both arms, never mix models within a question (review finding).
-const identity: RunIdentity = { model: MODEL, fixtureSha, questionsSha };
+// The harness roster: the reading pathway under test, identical in every arm.
+// search_book_text joins for the Stage 2 rerun (BOTH-arms fairness: full may
+// improve too — parity−1 on a level field is the honest gate). read_span
+// stays out: fixtures carry no wiki cards, so it would be dead roster weight.
+const ROSTER = ["list_books", "get_book", "get_chapter_text", "search_book_text"] as const;
+// The three arms. catalog_nogist = the catalog block rebuilt over
+// gist-STRIPPED books — what a legacy user with ungisted books gets if the
+// default flips; never measured by the original A/B (review-HIGH). Its
+// verdict decides the flip's SHAPE, not the §8 gate itself.
+const MODES = ["full", "catalog", "catalog_nogist"] as const;
+const toolDefs = [...(CHAT_TOOL_DEFINITIONS as readonly any[])].filter((t) => (ROSTER as readonly string[]).includes(t.function.name));
+// Roster identity: the definitions ARE part of what the experiment measures
+// (guidance text included) — a changed roster must never resume over the
+// previous configuration's answers.
+const rosterSha = createHash("sha256").update(JSON.stringify(toolDefs)).digest("hex").slice(0, 16);
+
+// Resume honors RUN IDENTITY: rows from another model, another
+// fixture/question state, or another ROSTER are stale, not "done" — a model
+// or roster switch mid-run must re-answer every arm, never mix
+// configurations within a question (review finding, twice).
+const identity: RunIdentity = { model: MODEL, fixtureSha, questionsSha, rosterSha };
 const done = existsSync(ANSWERS)
   ? completedKeys(parseJsonlSafe<AnswerRow>(readFileSync(ANSWERS, "utf8")), identity)
   : new Set<string>();
-
-// The harness roster: the reading pathway under test, identical in both arms.
-const ROSTER = ["list_books", "get_book", "get_chapter_text"] as const;
-const toolDefs = [...(CHAT_TOOL_DEFINITIONS as readonly any[])].filter((t) => (ROSTER as readonly string[]).includes(t.function.name));
 
 const textById = new Map(books.flatMap((b) => b.chapters.map((c) => [c.id, c.textContent] as const)));
 const toolDeps = {
@@ -103,7 +128,7 @@ const toolDeps = {
   permissionsSnapshot: {} as Record<string, boolean>,
 };
 
-const blocks: Record<E2Mode, string> = { full: "", catalog: "" };
+const blocks: Record<E2Mode, string> = { full: "", catalog: "", catalog_nogist: "" };
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -121,17 +146,29 @@ describe.skipIf(!ready)("E2 answer phase", () => {
     const ordered = selectContextBooks(books, bookContextStore.get(), null);
     expect(ordered.map((b) => b.id)).toEqual(books.map((b) => b.id).sort());
     const meta: Record<string, unknown> = { model: MODEL, fixtureSha, questionsSha, at: new Date().toISOString() };
-    for (const mode of ["full", "catalog"] as const) {
-      const built = buildBookContextBlock(ordered, {
+    // The nogist arm strips gists from COPIES — the fixture objects (and the
+    // other arms' blocks) must never see the mutation.
+    const gistless = ordered.map((b) => ({
+      ...b,
+      chapters: b.chapters.map((c) => ({ ...c, gist: null })),
+    }));
+    for (const mode of MODES) {
+      const built = buildBookContextBlock(mode === "catalog_nogist" ? gistless : ordered, {
         offeredTools: [...ROSTER],
         totalCharBudget: bookContextCharBudget(MODEL),
-        mode,
+        mode: mode === "full" ? "full" : "catalog",
       });
       expect(built?.message, `book block (${mode})`).toBeTruthy();
       blocks[mode] = built!.message!;
       const states = built!.used.map((u) => `${u.title.slice(0, 24)}:${u.state}(${u.chaptersSent}/${u.chaptersTotal})`);
       console.log(`[e2] block ${mode}: ${blocks[mode].length} chars — ${states.join(" · ")}`);
       meta[`block_${mode}`] = { chars: blocks[mode].length, used: built!.used };
+    }
+    // The nogist arm is only honest if the strip actually stripped: its block
+    // must differ from the gisted catalog whenever any fixture chapter
+    // carries a gist.
+    if (ordered.some((b) => b.chapters.some((c) => (c as any).gist))) {
+      expect(blocks.catalog_nogist).not.toBe(blocks.catalog);
     }
     // The run manifest: which model answered, over which bytes, with which
     // block states — report.json folds this in so the decision artifact says
@@ -140,7 +177,7 @@ describe.skipIf(!ready)("E2 answer phase", () => {
   });
 
   for (const q of questions) {
-    for (const mode of ["full", "catalog"] as const) {
+    for (const mode of MODES) {
       const key = rowKey({ qid: q.id, mode });
       it.skipIf(done.has(key))(`${q.id} [${q.type}] · ${mode}`, async () => {
         const { prompt } = await buildChatSystemPrompt({
@@ -186,7 +223,7 @@ describe.skipIf(!ready)("E2 answer phase", () => {
                 executeTool: (name, rawArgs) => executeChatTool(name, rawArgs, toolDeps as any),
               });
               row = {
-                qid: q.id, mode, model: MODEL, answer: res.text, toolTrace: res.toolTrace,
+                qid: q.id, mode, model: MODEL, rosterSha, answer: res.text, toolTrace: res.toolTrace,
                 iterations: res.iterations, sentChars: res.sentChars, finish: res.finish,
                 finishNatives: res.finishNatives, reasoningChars: res.reasoning.length,
                 ms: Date.now() - started, fixtureSha, questionsSha, at: new Date().toISOString(),
@@ -208,7 +245,7 @@ describe.skipIf(!ready)("E2 answer phase", () => {
                 continue;
               }
               row = {
-                qid: q.id, mode, model: MODEL, answer: "", toolTrace: [], iterations: 0, sentChars: [],
+                qid: q.id, mode, model: MODEL, rosterSha, answer: "", toolTrace: [], iterations: 0, sentChars: [],
                 finish: "error", ms: Date.now() - started, fixtureSha, questionsSha, at: new Date().toISOString(),
                 error: controller.signal.aborted ? "timeout: question budget (450s) exceeded" : `${code || "error"}: ${e?.message || e}`,
               };
@@ -229,7 +266,7 @@ describe.skipIf(!ready)("E2 answer phase", () => {
   it("all question×mode pairs have a successful answer row", () => {
     const rows = existsSync(ANSWERS) ? parseJsonlSafe<AnswerRow>(readFileSync(ANSWERS, "utf8")) : [];
     const have = completedKeys(rows, identity);
-    const missing = questions.flatMap((q) => (["full", "catalog"] as const).map((m) => rowKey({ qid: q.id, mode: m }))).filter((k) => !have.has(k));
+    const missing = questions.flatMap((q) => MODES.map((m) => rowKey({ qid: q.id, mode: m }))).filter((k) => !have.has(k));
     expect(missing, `rerun the answer phase to retry: ${missing.join(", ")}`).toEqual([]);
   });
 });
