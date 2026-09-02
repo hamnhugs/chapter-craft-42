@@ -28,6 +28,10 @@ import { toast } from "sonner";
 // local assignments map, so the two can never disagree and the PostgREST
 // 1000-row cap on un-ranged selects never applies here.
 
+/** The pile's pseudo-shelf id. Not a book_folders row and never written —
+ *  it only ever names the drill-in the unshelved books open into. */
+const UNSHELVED_ID = "__unshelved__";
+
 /** Group books by shelf id. Module scope so the two memos below share one
  *  implementation and neither closes over a per-render function. */
 function groupByShelf(source: BookDocument[]): Map<string, BookDocument[]> {
@@ -85,70 +89,110 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
     toast.success(`"${shelf.name}" loaded into chat — its books ride with every message.`);
     setActiveTab("chat");
   };
+  // The pile has no book_folders row, so it rides as a HAND-PICKED set — a
+  // snapshot, not a live membership. The toast says so rather than implying
+  // the shelf-mode contract (books added later join the conversation).
+  const chatWithBooks = (list: BookDocument[], label: string) => {
+    bookContextStore.init(user?.id ?? null);
+    bookContextStore.set({ shelfId: null, bookIds: list.map((b) => b.id), excludedIds: [] });
+    toast.success(
+      `${label} loaded into chat — ${list.length} book${list.length === 1 ? "" : "s"}, as a fixed set.`,
+    );
+    setActiveTab("chat");
+  };
+
   const [openShelfId, setOpenShelfId] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
-  // Facet filters for the All-books section only.
+  // Facet filters. These narrow the WHOLE view — shelf-card matching counts,
+  // the open shelf, and the All-books grid alike. They used to narrow only
+  // the All-books section, which left shelf cards above quoting unfiltered
+  // sizes: two different answers to "how many books" on one screen.
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [activeTags, setActiveTags] = useState<string[]>([]);
 
+  const tagged = (b: BookDocument, t: string) => (b.tags || []).includes(t);
+  const inCategory = (b: BookDocument) => (b.category || UNCATEGORIZED) === activeCategory;
+
+  // One facet-narrowed set, used by every grid and every matching count.
+  const narrowed = useMemo(() => books.filter((b) => {
+    if (activeCategory && (b.category || UNCATEGORIZED) !== activeCategory) return false;
+    return activeTags.every((t) => tagged(b, t));
+  }), [books, activeCategory, activeTags]);
+
+  /** True whenever anything is narrowing the view — search or facets. */
+  const narrowing = filtered || !!activeCategory || activeTags.length > 0;
+
   // Membership derived once per books/shelves change, not per shelf card.
   // TWO maps, deliberately: `membersByShelf` is the truth (whole library) and
-  // feeds every COUNT; `visibleByShelf` is what the active search leaves on
+  // feeds every COUNT; `visibleByShelf` is what search + facets leave on
   // screen and feeds every GRID. Keeping them separate is what stops a filter
   // from quietly restating how big a shelf is.
   const membersByShelf = useMemo(() => groupByShelf(allBooks), [allBooks]);
-  const visibleByShelf = useMemo(() => groupByShelf(books), [books]);
+  const visibleByShelf = useMemo(() => groupByShelf(narrowed), [narrowed]);
 
+  // The pile. Malone's finding is that people under-file and that forcing
+  // classification at capture is where systems get abandoned — so the books
+  // nobody has filed need a name and a place, not silent absorption into
+  // "All books". This is a computed pseudo-shelf: no row, no membership.
+  const unshelvedAll = useMemo(() => allBooks.filter((b) => b.folderIds.length === 0), [allBooks]);
+  const unshelvedVisible = useMemo(() => narrowed.filter((b) => b.folderIds.length === 0), [narrowed]);
+
+  const isUnshelved = openShelfId === UNSHELVED_ID;
   const booksOnShelf = useMemo(
-    () => (openShelfId ? visibleByShelf.get(openShelfId) || [] : []),
-    [visibleByShelf, openShelfId],
+    () => (isUnshelved ? unshelvedVisible : openShelfId ? visibleByShelf.get(openShelfId) || [] : []),
+    [isUnshelved, unshelvedVisible, visibleByShelf, openShelfId],
   );
-  /** True size of the open shelf, independent of the search query. */
-  const openShelfTotal = openShelfId ? (membersByShelf.get(openShelfId) || []).length : 0;
+  /** True size of the open shelf, independent of search and facets. */
+  const openShelfTotal = isUnshelved
+    ? unshelvedAll.length
+    : openShelfId ? (membersByShelf.get(openShelfId) || []).length : 0;
 
-  // Category chips with counts, colored like the old virtual folders.
+  // Facet chips carry QUERY PREVIEWS (Hearst): each facet's counts are taken
+  // with the OTHER facet applied, so a count never promises results that the
+  // current selection would rule out. The two are orthogonal — picking a
+  // category no longer clears tags, and tags are selectable on their own.
   const categoryChips = useMemo(() => {
     const counts = new Map<string, number>();
     for (const b of books) {
+      if (!activeTags.every((t) => tagged(b, t))) continue;
       const cat = b.category || UNCATEGORIZED;
       counts.set(cat, (counts.get(cat) || 0) + 1);
     }
     return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-  }, [books]);
+  }, [books, activeTags]);
 
-  // The search box filters the books prop, so an active category can vanish
-  // from the chip row — its chip is the only control that clears it, which
-  // would strand an invisible, unclearable filter. Drop the filter the moment
-  // its chip is gone.
-  useEffect(() => {
-    if (activeCategory && !categoryChips.some(([c]) => c === activeCategory)) {
-      setActiveCategory(null);
-      setActiveTags([]);
-    }
-  }, [categoryChips, activeCategory]);
-
-  const categoryBooks = useMemo(() => {
-    if (!activeCategory) return books;
-    return books.filter((b) => (b.category || UNCATEGORIZED) === activeCategory);
-  }, [books, activeCategory]);
-
-  // Tag chips scoped to the active category selection; most-used first.
   const tagChips = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const b of categoryBooks) {
+    for (const b of books) {
+      if (activeCategory && !inCategory(b)) continue;
       for (const t of b.tags || []) counts.set(t, (counts.get(t) || 0) + 1);
     }
     return [...counts.entries()]
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .slice(0, 24);
-  }, [categoryBooks]);
+  }, [books, activeCategory]);
 
-  const visibleBooks = useMemo(() => {
-    if (activeTags.length === 0) return categoryBooks;
-    return categoryBooks.filter((b) => activeTags.every((t) => (b.tags || []).includes(t)));
-  }, [categoryBooks, activeTags]);
+  // The search box filters the books prop, so an active facet can vanish from
+  // its chip row — and a chip is the only control that clears it, which would
+  // strand an invisible, unclearable filter. Drop each the moment its chip is
+  // gone. Tags are dropped individually now that they are not category-bound.
+  useEffect(() => {
+    if (activeCategory && !categoryChips.some(([c]) => c === activeCategory)) {
+      setActiveCategory(null);
+    }
+  }, [categoryChips, activeCategory]);
+
+  useEffect(() => {
+    if (activeTags.length === 0) return;
+    const available = new Set(tagChips.map(([t]) => t));
+    if (activeTags.some((t) => !available.has(t))) {
+      setActiveTags((prev) => prev.filter((t) => available.has(t)));
+    }
+  }, [tagChips, activeTags]);
+
+  const visibleBooks = narrowed;
 
   const handleCreate = async () => {
     const name = newName.trim();
@@ -206,10 +250,12 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
     );
   };
 
+  // Orthogonal facets: choosing a category leaves the tag selection alone.
   const pickCategory = (cat: string) => {
-    setActiveTags([]);
     setActiveCategory((prev) => (prev === cat ? null : cat));
   };
+
+  const clearFacets = () => { setActiveCategory(null); setActiveTags([]); };
 
   // A book card with the checkbox shelf-membership menu overlaid on hover.
   // onSelect preventDefault keeps the menu open across toggles — putting a
@@ -257,6 +303,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
   // Open-shelf drill-in view.
   if (openShelfId) {
     const shelf = shelves.find((f) => f.id === openShelfId);
+    const openName = isUnshelved ? "Unshelved" : shelf?.name;
     return (
       <div className="cc-container flex flex-col gap-5">
         <nav aria-label="Shelf navigation" className="flex flex-wrap items-center gap-1.5 text-sm">
@@ -269,13 +316,25 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
           </button>
           <span className="text-on-surface-variant/50" aria-hidden>/</span>
           <span className="flex min-w-0 items-center gap-1.5 px-2 py-1 font-semibold text-foreground">
-            <span className="material-symbols-outlined text-base text-primary" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden>folder_open</span>
-            <span className="truncate">{shelf?.name}</span>
+            <span className="material-symbols-outlined text-base text-primary" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden>
+              {isUnshelved ? "inbox" : "folder_open"}
+            </span>
+            <span className="truncate">{openName}</span>
             <span className="shrink-0 text-on-surface-variant font-normal">
-              ({filtered ? `${booksOnShelf.length} of ${openShelfTotal}` : openShelfTotal})
+              ({narrowing ? `${booksOnShelf.length} of ${openShelfTotal}` : openShelfTotal})
             </span>
           </span>
           <span className="ml-auto" />
+          {isUnshelved && booksOnShelf.length > 0 && (
+            <button
+              onClick={() => chatWithBooks(booksOnShelf, "Unshelved")}
+              className="inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-on-primary-container text-xs font-bold"
+              title="Load these books as chat context and open Counsel"
+            >
+              <span className="material-symbols-outlined text-sm">psychology</span>
+              Chat with these
+            </button>
+          )}
           {shelf && (
             <button
               onClick={() => chatWithShelf(shelf)}
@@ -290,9 +349,11 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
 
         {booksOnShelf.length === 0 ? (
           <div className="py-12 text-center text-on-surface-variant text-sm">
-            {filtered
-              ? "No books on this shelf match your search."
-              : "This shelf is empty — hover any book card and use the shelf menu to add it here."}
+            {narrowing
+              ? `No books here match your ${filtered ? "search" : "filters"}.`
+              : isUnshelved
+                ? "Nothing is waiting to be filed — every book is on a shelf."
+                : "This shelf is empty — hover any book card and use the shelf menu to add it here."}
           </div>
         ) : (
           <div className="book-grid">
@@ -309,8 +370,8 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
         {shelves.map((f) => {
           const members = membersByShelf.get(f.id) || [];
-          // Only computed while a search is narrowing the view.
-          const matching = filtered ? (visibleByShelf.get(f.id) || []).length : null;
+          // Computed while ANYTHING narrows the view — search or facets.
+          const matching = narrowing ? (visibleByShelf.get(f.id) || []).length : null;
           const covers = members
             .filter((b) => b.coverImageUrl)
             .slice(0, 3)
@@ -394,6 +455,43 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
             </div>
           );
         })}
+        {/* The pile. Rendered alongside real shelves because that is where a
+            user looks for "the books I haven't dealt with" — but visually
+            distinct (dashed edge, inbox glyph) since it is computed, has no
+            row, and cannot be renamed or deleted. */}
+        {unshelvedAll.length > 0 && (
+          <div className="group relative flex flex-col items-start gap-3 rounded-2xl p-5 text-left border border-dashed border-outline-variant/40 bg-surface-container-low transition-all hover:-translate-y-0.5 hover:shadow-xl">
+            <button
+              onClick={() => setOpenShelfId(UNSHELVED_ID)}
+              className="absolute inset-0"
+              aria-label={`Open Unshelved (${unshelvedAll.length} book${unshelvedAll.length === 1 ? "" : "s"})`}
+            />
+            <div className="flex items-center justify-between w-full pointer-events-none">
+              <span className="material-symbols-outlined text-4xl text-on-surface-variant" aria-hidden>inbox</span>
+              <div className="flex -space-x-2">
+                {unshelvedAll.filter((b) => b.coverImageUrl).slice(0, 3).map((b, i) => (
+                  <img
+                    key={b.id}
+                    src={b.coverImageUrl as string}
+                    alt=""
+                    className="w-7 h-10 object-cover rounded-sm border border-black/40 shadow-sm"
+                    style={{ transform: `rotate(${(i - 1) * 6}deg)` }}
+                  />
+                ))}
+              </div>
+            </div>
+            <div className="w-full min-w-0 z-10 pointer-events-none">
+              <p className="font-headline font-bold text-base text-foreground truncate w-full">Unshelved</p>
+              <p className="text-xs text-on-surface-variant mt-0.5">
+                {unshelvedAll.length} book{unshelvedAll.length === 1 ? "" : "s"}
+                {narrowing && (
+                  <span className="text-primary"> · {unshelvedVisible.length} matching</span>
+                )}
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Create card */}
         <div className="flex flex-col items-stretch gap-2 rounded-2xl p-5 border-2 border-dashed border-outline-variant/30">
           <p className="text-xs uppercase tracking-widest text-on-surface-variant">New shelf</p>
@@ -449,7 +547,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
           </div>
         )}
 
-        {activeCategory && tagChips.length > 0 && (
+        {tagChips.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mb-3">
             {tagChips.map(([tag, count]) => {
               const active = activeTags.includes(tag);
@@ -470,9 +568,9 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
                 </button>
               );
             })}
-            {activeTags.length > 0 && (
+            {(activeTags.length > 0 || activeCategory) && (
               <button
-                onClick={() => setActiveTags([])}
+                onClick={clearFacets}
                 className="px-2.5 py-1 rounded-full text-[12px] text-on-surface-variant hover:text-primary underline underline-offset-2"
               >
                 Clear filters

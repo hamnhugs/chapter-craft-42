@@ -150,3 +150,84 @@ describe("LibraryShelves counting law", () => {
     expect(host.textContent).toContain("All books (5)");
   });
 });
+
+/** Click the first button whose visible text contains `text`. */
+async function clickButton(host: HTMLElement, text: string) {
+  const btn = Array.from(host.querySelectorAll("button")).find((b) =>
+    (b.textContent || "").includes(text),
+  );
+  if (!btn) throw new Error(`no button containing ${JSON.stringify(text)}`);
+  await act(async () => {
+    btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  });
+}
+
+/** Richer fixture: two categories, overlapping tags, two unfiled books. */
+const faceted = (
+  id: string, title: string, folderIds: string[], category: string, tags: string[],
+): BookDocument => ({ ...book(id, title, folderIds), category, tags });
+
+const FACETED = [
+  faceted("b1", "Dune", ["s1"], "fiction", ["space"]),
+  faceted("b2", "Neuromancer", ["s1"], "fiction", ["cyber"]),
+  faceted("b3", "Solaris", ["s1"], "fiction", ["space"]),
+  faceted("b4", "Ubik", [], "essays", ["space"]),
+  faceted("b5", "Anathem", [], "essays", []),
+];
+
+describe("LibraryShelves facets are co-equal filters", () => {
+  it("offers tags without requiring a category first", async () => {
+    // Tags used to render only once a category was picked, which made them a
+    // CHILD of category in the UI while the data model has them independent.
+    const host = await mount({ books: FACETED, allBooks: FACETED });
+    expect(host.textContent).toContain("#space");
+    expect(host.textContent).toContain("#cyber");
+  });
+
+  it("narrows shelf-card counts too, not just the All-books grid", async () => {
+    const host = await mount({ books: FACETED, allBooks: FACETED });
+    // Before: shelf cards sat above the facets quoting unfiltered sizes, so
+    // one screen gave two different answers to "how many books".
+    expect(host.textContent).not.toContain("matching");
+    await clickButton(host, "#space");
+    expect(host.textContent).toContain("3 books");   // Sci-fi's true size
+    expect(host.textContent).toContain("2 matching"); // Dune + Solaris
+  });
+
+  it("keeps the tag selection when a category is chosen", async () => {
+    const host = await mount({ books: FACETED, allBooks: FACETED });
+    await clickButton(host, "#space");
+    await clickButton(host, "fiction");
+    // Orthogonal: both facets apply. fiction ∩ space = Dune, Solaris.
+    expect(host.textContent).toContain("All books (2 of 5)");
+  });
+
+  it("takes each facet's counts with the other facet applied", async () => {
+    const host = await mount({ books: FACETED, allBooks: FACETED });
+    await clickButton(host, "#cyber");
+    // Only Neuromancer carries #cyber, and it is fiction — so "essays" must
+    // not still advertise 2 results it could not deliver.
+    expect(host.textContent).not.toContain("essays2");
+  });
+});
+
+describe("LibraryShelves unshelved pile", () => {
+  it("gives the unfiled books a named place", async () => {
+    const host = await mount({ books: FACETED, allBooks: FACETED });
+    expect(host.textContent).toContain("Unshelved");
+    expect(host.textContent).toContain("2 books"); // Ubik + Anathem
+  });
+
+  it("stays hidden when every book is filed", async () => {
+    const allFiled = FACETED.map((b) => ({ ...b, folderIds: ["s1"] }));
+    const host = await mount({ books: allFiled, allBooks: allFiled });
+    expect(host.textContent).not.toContain("Unshelved");
+  });
+
+  it("counts the pile against the library and annotates matches", async () => {
+    const host = await mount({ books: FACETED, allBooks: FACETED });
+    await clickButton(host, "#space");
+    // Pile holds Ubik + Anathem; only Ubik carries #space.
+    expect(host.textContent).toContain("1 matching");
+  });
+});
