@@ -20,6 +20,7 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import LibraryShelves from "@/components/LibraryShelves";
+import { bookHaystack, chapterMatch, matchesAll, normalizeText, tokenize } from "@/lib/librarySearch";
 
 import LibraryList from "@/components/LibraryList";
 
@@ -57,11 +58,6 @@ class LazyErrorBoundary extends React.Component<
 
 // Matches YouTube watch/short/share links pasted or dropped onto the Vault.
 const YOUTUBE_URL_RE = /https?:\/\/(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\/\S+/i;
-
-// Search matching is case- and diacritic-insensitive; every typed token must
-// appear somewhere in the book's title, category, or tags (AND semantics).
-const normalizeText = (s: string) =>
-  s.toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
 
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -252,17 +248,31 @@ const Library: React.FC = () => {
     });
   }, [books, sortBy]);
 
-  // Instant filter-as-you-type — at library scale this is microseconds, so no
-  // debounce (a delay here only adds perceived lag). Matches title, category,
-  // and tags so typing "sci-fi" finds tagged books without a separate filter.
+  // Search reaches the CATALOG, not just the spine label. It used to match
+  // title/category/tags only, so the chapter names and the summaries the app
+  // spends the user's key generating were invisible to it — leaving exactly
+  // two ways to find anything: recall the title, or ask the assistant. Teevan
+  // et al. (CHI 2004) measured 61% of real re-finding as orienteering, the
+  // stepwise middle this had none of.
+  //
+  // Haystacks are memoized per book rather than rebuilt per keystroke: with
+  // chapter names and gists folded in, the naive version rebuilds thousands
+  // of strings on every character.
+  const haystacks = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const b of books) map.set(b.id, bookHaystack(b));
+    return map;
+  }, [books]);
+
+  // Instant filter-as-you-type — no debounce; a delay here only adds
+  // perceived lag now that the matching itself is a map lookup.
   const filteredBooks = useMemo(() => {
-    const tokens = normalizeText(query).split(/\s+/).filter(Boolean);
+    const tokens = tokenize(query);
     if (tokens.length === 0) return sortedBooks;
-    return sortedBooks.filter((b) => {
-      const hay = normalizeText([b.title, b.category || "", ...(b.tags || [])].join(" "));
-      return tokens.every((t) => hay.includes(t));
-    });
-  }, [sortedBooks, query]);
+    return sortedBooks.filter((b) => matchesAll(haystacks.get(b.id) || "", tokens));
+  }, [sortedBooks, query, haystacks]);
+
+  const queryTokens = useMemo(() => tokenize(query), [query]);
 
   // "/" focuses search (GitHub/Gmail convention), Escape clears it.
   useEffect(() => {
@@ -673,11 +683,11 @@ const Library: React.FC = () => {
                   (e.target as HTMLInputElement).blur();
                 }
               }}
-              placeholder="Search your library…  ( / )"
+              placeholder="Search titles, chapters, summaries…  ( / )"
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
-              aria-label="Search your library by title, category, or tag"
+              aria-label="Search your library by title, category, tag, chapter name, or summary"
               className="w-full pl-12 pr-12 py-3.5 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 focus:outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-on-surface-variant/60 [&::-webkit-search-cancel-button]:hidden"
             />
             {query && (
@@ -826,7 +836,7 @@ const Library: React.FC = () => {
           <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant">
             <span className="material-symbols-outlined text-6xl mb-4 opacity-25">search_off</span>
             <p className="text-lg font-headline">No books match “{query}”</p>
-            <p className="text-sm mt-1">Check the spelling or try fewer words</p>
+            <p className="text-sm mt-1">Titles, chapters and summaries were all searched — try fewer words</p>
             <button
               onClick={() => setQuery("")}
               className="mt-4 px-5 py-2 bg-primary/10 text-primary font-bold rounded-lg hover:bg-primary hover:text-on-primary-container transition-all active:scale-95"
@@ -871,6 +881,7 @@ const Library: React.FC = () => {
                 job={jobs[book.id]}
                 figJob={figJobs[book.id]}
                 catJob={catJobs[book.id]}
+                match={chapterMatch(book, queryTokens)}
                 onDetect={() => runDetect(book)}
                 onExtractFigures={() => runExtractFigures(book)}
                 onRead={() => requestBookLoad(book.id)}
@@ -915,12 +926,14 @@ const BookCard: React.FC<{
   job?: StructureJob;
   figJob?: FigureJob;
   catJob?: CatalogJob;
+  /** The chapter that answered the search, when the title did not. */
+  match?: { name: string; gist?: string | null } | null;
   onDetect: () => void;
   onExtractFigures: () => void;
   onRead: () => void;
   onRemove: () => void;
   onRename: (newTitle: string) => void;
-}> = ({ book, index, query = "", job, figJob, catJob, onDetect, onExtractFigures, onRead, onRemove, onRename }) => {
+}> = ({ book, index, query = "", job, figJob, catJob, match, onDetect, onExtractFigures, onRead, onRemove, onRename }) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(book.title);
   const renameFromMenu = useRef(false);
@@ -1033,6 +1046,31 @@ const BookCard: React.FC<{
         <p className="cc-book-meta text-on-surface-variant text-xs font-medium uppercase tracking-wider mb-2">
           {metadataText}
         </p>
+
+        {/* The book summary. Generated with the user's own key and, until
+            now, displayed nowhere — the only way to read one was to send a
+            chat message. Attributed rather than presented as book metadata:
+            readers can't reliably tell model-written summaries apart, but
+            their beliefs about authorship move their judgement of it
+            (CHI 2026), so the label is not optional. */}
+        {book.summary && (
+          <div className="cc-book-summary mb-2">
+            <p className="text-xs leading-relaxed text-on-surface-variant line-clamp-3" title={book.summary}>
+              <Highlight text={book.summary} query={query} />
+            </p>
+            <p className="text-[10px] text-on-surface-variant/60 mt-1">
+              AI summary{book.summaryModel ? ` · ${book.summaryModel}` : ""}
+            </p>
+          </div>
+        )}
+
+        {/* Why this book matched, when the title didn't say. */}
+        {match && (
+          <p className="cc-book-match text-[11px] text-primary/90 mb-2 line-clamp-2">
+            <span className="material-symbols-outlined text-[13px] align-[-2px] mr-1" aria-hidden>subdirectory_arrow_right</span>
+            <Highlight text={match.gist ? `${match.name} — ${match.gist}` : match.name} query={query} />
+          </p>
+        )}
 
         {/* Category + tags (set by Auto-tag; they drive the mind map) */}
         {(book.category || (book.tags?.length ?? 0) > 0) && (

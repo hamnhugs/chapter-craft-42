@@ -104,6 +104,18 @@ const LibraryList: React.FC<{
                   <p className="font-headline font-bold text-sm text-foreground truncate">
                     {highlight(book.title)}
                   </p>
+                  {/* The summary, where one exists — the list view is where
+                      a reader scans to choose, and a title alone is the least
+                      informative thing the app knows about a book. One line,
+                      truncated; the card view shows three. */}
+                  {book.summary && (
+                    <p
+                      className="hidden sm:block text-[11px] text-on-surface-variant/80 truncate mt-0.5"
+                      title={`AI summary: ${book.summary}`}
+                    >
+                      {book.summary}
+                    </p>
+                  )}
                   <p className="sm:hidden text-[11px] text-on-surface-variant truncate mt-0.5">
                     {book.category && (
                       <span className="capitalize" style={{ color }}>{book.category} · </span>
