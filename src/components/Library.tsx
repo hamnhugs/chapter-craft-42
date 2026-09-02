@@ -824,6 +824,7 @@ const Library: React.FC = () => {
         ) : (
           <LibraryShelves
             books={filteredBooks}
+            allBooks={sortedBooks}
             filtered={query.trim().length > 0}
             renderBook={(book, i) => (
               <BookCard

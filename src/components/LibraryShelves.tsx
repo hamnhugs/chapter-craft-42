@@ -28,8 +28,30 @@ import { toast } from "sonner";
 // local assignments map, so the two can never disagree and the PostgREST
 // 1000-row cap on un-ranged selects never applies here.
 
+/** Group books by shelf id. Module scope so the two memos below share one
+ *  implementation and neither closes over a per-render function. */
+function groupByShelf(source: BookDocument[]): Map<string, BookDocument[]> {
+  const map = new Map<string, BookDocument[]>();
+  for (const b of source) {
+    for (const folderId of b.folderIds) {
+      const list = map.get(folderId) || [];
+      list.push(b);
+      map.set(folderId, list);
+    }
+  }
+  return map;
+}
+
 interface Props {
+  /** The books to RENDER — already narrowed by the Vault search query. */
   books: BookDocument[];
+  /** The whole library, unfiltered. COUNTS come from here, never from
+   *  `books`. A shelf card is an overview surface, and an overview that
+   *  silently reports the filtered subtotal is worse than none: typing one
+   *  letter into search made a 40-book shelf read "2 books" with nothing
+   *  saying why. While a filter is active the card shows the true total AND
+   *  how many match, so neither number has to be inferred. */
+  allBooks: BookDocument[];
   renderBook: (book: BookDocument, index: number) => React.ReactNode;
   /** True while the Vault search query is filtering the books prop — empty
    *  states must not claim a shelf is empty when its books are just filtered
@@ -37,7 +59,7 @@ interface Props {
   filtered?: boolean;
 }
 
-const LibraryShelves: React.FC<Props> = ({ books, renderBook, filtered = false }) => {
+const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered = false }) => {
   const { toggleBookShelf, clearShelfLocal, multiShelf, setActiveTab } = useApp();
   const { user } = useAuth();
 
@@ -84,22 +106,19 @@ const LibraryShelves: React.FC<Props> = ({ books, renderBook, filtered = false }
   }, []);
 
   // Membership derived once per books/shelves change, not per shelf card.
-  const membersByShelf = useMemo(() => {
-    const map = new Map<string, BookDocument[]>();
-    for (const b of books) {
-      for (const folderId of b.folderIds) {
-        const list = map.get(folderId) || [];
-        list.push(b);
-        map.set(folderId, list);
-      }
-    }
-    return map;
-  }, [books]);
+  // TWO maps, deliberately: `membersByShelf` is the truth (whole library) and
+  // feeds every COUNT; `visibleByShelf` is what the active search leaves on
+  // screen and feeds every GRID. Keeping them separate is what stops a filter
+  // from quietly restating how big a shelf is.
+  const membersByShelf = useMemo(() => groupByShelf(allBooks), [allBooks]);
+  const visibleByShelf = useMemo(() => groupByShelf(books), [books]);
 
   const booksOnShelf = useMemo(
-    () => (openShelfId ? membersByShelf.get(openShelfId) || [] : []),
-    [membersByShelf, openShelfId],
+    () => (openShelfId ? visibleByShelf.get(openShelfId) || [] : []),
+    [visibleByShelf, openShelfId],
   );
+  /** True size of the open shelf, independent of the search query. */
+  const openShelfTotal = openShelfId ? (membersByShelf.get(openShelfId) || []).length : 0;
 
   // Category chips with counts, colored like the old virtual folders.
   const categoryChips = useMemo(() => {
@@ -268,7 +287,9 @@ const LibraryShelves: React.FC<Props> = ({ books, renderBook, filtered = false }
           <span className="flex min-w-0 items-center gap-1.5 px-2 py-1 font-semibold text-foreground">
             <span className="material-symbols-outlined text-base text-primary" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden>folder_open</span>
             <span className="truncate">{shelf?.name}</span>
-            <span className="shrink-0 text-on-surface-variant font-normal">({booksOnShelf.length})</span>
+            <span className="shrink-0 text-on-surface-variant font-normal">
+              ({filtered ? `${booksOnShelf.length} of ${openShelfTotal}` : openShelfTotal})
+            </span>
           </span>
           <span className="ml-auto" />
           {shelf && (
@@ -304,6 +325,8 @@ const LibraryShelves: React.FC<Props> = ({ books, renderBook, filtered = false }
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
         {shelves.map((f) => {
           const members = membersByShelf.get(f.id) || [];
+          // Only computed while a search is narrowing the view.
+          const matching = filtered ? (visibleByShelf.get(f.id) || []).length : null;
           const covers = members
             .filter((b) => b.coverImageUrl)
             .slice(0, 3)
@@ -347,7 +370,12 @@ const LibraryShelves: React.FC<Props> = ({ books, renderBook, filtered = false }
                 ) : (
                   <p className="font-headline font-bold text-base text-foreground truncate w-full">{f.name}</p>
                 )}
-                <p className="text-xs text-on-surface-variant mt-0.5">{members.length} book{members.length === 1 ? "" : "s"}</p>
+                <p className="text-xs text-on-surface-variant mt-0.5">
+                  {members.length} book{members.length === 1 ? "" : "s"}
+                  {matching !== null && (
+                    <span className="text-primary"> · {matching} matching</span>
+                  )}
+                </p>
               </div>
               {/* On a touch screen these are the ONLY route to renaming or
                   deleting a shelf, and `hover` never fires there — so
@@ -407,7 +435,7 @@ const LibraryShelves: React.FC<Props> = ({ books, renderBook, filtered = false }
       <section>
         <div className="flex items-baseline justify-between gap-3 mb-2 px-1">
           <p className="text-xs uppercase tracking-widest text-on-surface-variant">
-            All books ({visibleBooks.length}{visibleBooks.length !== books.length ? ` of ${books.length}` : ""})
+            All books ({visibleBooks.length}{visibleBooks.length !== allBooks.length ? ` of ${allBooks.length}` : ""})
           </p>
         </div>
 
