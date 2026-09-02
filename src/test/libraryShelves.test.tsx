@@ -30,19 +30,18 @@ const state = vi.hoisted(() => ({
   shelves: [] as { id: string; user_id: string; name: string; sort_index: number; created_at: string; updated_at: string }[],
 }));
 
-vi.mock("@/lib/bookFolders", () => ({
-  listFolders: vi.fn(async () => state.shelves),
-  createFolder: vi.fn(),
-  renameFolder: vi.fn(),
-  deleteFolder: vi.fn(),
-}));
-
+// The roster arrives through AppContext now, not a component-local fetch —
+// that single copy is what A-2 bought, and this mock is shaped to prove it.
 vi.mock("@/context/AppContext", () => ({
   useApp: () => ({
     toggleBookShelf: vi.fn(),
-    clearShelfLocal: vi.fn(),
     multiShelf: true,
     setActiveTab: vi.fn(),
+    shelves: state.shelves,
+    shelvesLoading: false,
+    createShelf: vi.fn(),
+    renameShelf: vi.fn(),
+    deleteShelf: vi.fn(),
   }),
 }));
 
@@ -95,8 +94,6 @@ async function mount(props: { books: BookDocument[]; allBooks: BookDocument[]; f
       }),
     );
   });
-  // Flush the listFolders() promise and its setState.
-  await act(async () => { await Promise.resolve(); });
   return host;
 }
 

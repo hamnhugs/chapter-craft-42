@@ -6,6 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Wiki, fetchWikis, fetchActiveWikiIds, loadWiki as loadWikiApi, loadWikiSet, createWiki, sessionActiveWikiIds } from "@/lib/wikisApi";
 import { fetchShelfMembership, applyShelfDelta, type ShelfDelta } from "@/lib/shelfMembership";
+import { listFolders, createFolder, renameFolder, deleteFolder, type BookFolder } from "@/lib/bookFolders";
 import { MAX_ACTIVE_NEURONS } from "@/lib/neuronAccess";
 
 type TabId = "library" | "viewer" | "chat" | "wiki" | "wikis" | "settings" | "admin";
@@ -41,7 +42,20 @@ interface AppState {
    *  the write, inverse-delta rollback on failure); in multi-shelf mode a
    *  check adds membership, in exclusive fallback it replaces it. */
   toggleBookShelf: (bookId: string, shelfId: string) => Promise<void>;
-  clearShelfLocal: (folderId: string) => void;
+  /** THE shelf roster — one copy for the whole app. Membership already had
+   *  this law (books[].folderIds); the roster did not, so the Vault and the
+   *  chat picker each fetched their own and drifted: a shelf created in one
+   *  was invisible to the other, and a shelf deleted in one lingered as a
+   *  phantom that resolved to nothing. */
+  shelves: BookFolder[];
+  /** True until the first roster load settles (success or failure). */
+  shelvesLoading: boolean;
+  createShelf: (name: string) => Promise<BookFolder>;
+  renameShelf: (id: string, name: string) => Promise<void>;
+  /** Deletes the shelf AND drops it from every book's folderIds. The DB
+   *  cascades junction rows and SET NULLs the folder_id mirror; this keeps
+   *  client state in step without a reload or per-book writes. */
+  deleteShelf: (id: string) => Promise<void>;
   /** True once the shelf-membership junction is confirmed live this session —
    *  until then shelf assignment is exclusive (one shelf per book). */
   multiShelf: boolean;
@@ -108,6 +122,8 @@ const getStoragePathsForBook = (userId: string, bookId: string, fileName: string
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [books, setBooks] = useState<BookDocument[]>([]);
   const [multiShelf, setMultiShelf] = useState(false);
+  const [shelves, setShelves] = useState<BookFolder[]>([]);
+  const [shelvesLoading, setShelvesLoading] = useState(true);
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
   const [pendingBookLoadId, setPendingBookLoadId] = useState<string | null>(null);
   // Restore-the-last-book runs once per signed-in session (guard ref).
@@ -837,6 +853,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Deleting a shelf cascades its junction rows and SET NULLs books.folder_id
   // server-side; this mirrors both into client state without per-book writes.
+  // Internal now — deleteShelf is the only caller, so no surface can drop a
+  // shelf from the books without also dropping it from the roster.
   const clearShelfLocal = useCallback((folderId: string) => {
     setBooks((prev) => prev.map((b) =>
       b.folderIds.includes(folderId)
@@ -844,6 +862,54 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         : b
     ));
   }, []);
+
+  // ── The shelf roster ────────────────────────────────────────────────────
+  // Loaded once per signed-in session and mutated in place. Every consumer
+  // reads this array; nobody else calls listFolders.
+  useEffect(() => {
+    if (!user) {
+      setShelves([]);
+      setShelvesLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setShelvesLoading(true);
+    listFolders()
+      .then((rows) => { if (!cancelled) setShelves(rows); })
+      .catch((e) => {
+        if (cancelled) return;
+        // A roster failure is not fatal — books still render, membership
+        // still resolves; only shelf NAMES are missing. Say so once.
+        console.error("Failed to load shelves:", e);
+        toast.error("Couldn't load your shelves");
+      })
+      .finally(() => { if (!cancelled) setShelvesLoading(false); });
+    return () => { cancelled = true; };
+  }, [user]);
+
+  const createShelf = useCallback(async (name: string): Promise<BookFolder> => {
+    const created = await createFolder(name);
+    // Insert in the order listFolders would return it (sort_index, then name),
+    // so the roster does not reshuffle on the next reload.
+    setShelves((prev) => [...prev, created].sort(
+      (a, b) => a.sort_index - b.sort_index || a.name.localeCompare(b.name),
+    ));
+    return created;
+  }, []);
+
+  const renameShelf = useCallback(async (id: string, name: string): Promise<void> => {
+    const trimmed = name.trim();
+    await renameFolder(id, trimmed);
+    setShelves((prev) => prev
+      .map((f) => (f.id === id ? { ...f, name: trimmed } : f))
+      .sort((a, b) => a.sort_index - b.sort_index || a.name.localeCompare(b.name)));
+  }, []);
+
+  const deleteShelf = useCallback(async (id: string): Promise<void> => {
+    await deleteFolder(id);
+    setShelves((prev) => prev.filter((f) => f.id !== id));
+    clearShelfLocal(id);
+  }, [clearShelfLocal]);
 
   const getActiveBook = useCallback(() => {
     return books.find((b) => b.id === activeBookId);
@@ -1012,7 +1078,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateBookTitle,
         updateBookTags,
         toggleBookShelf,
-        clearShelfLocal,
+        shelves,
+        shelvesLoading,
+        createShelf,
+        renameShelf,
+        deleteShelf,
         multiShelf,
         getActiveBook,
         loadBookFile,

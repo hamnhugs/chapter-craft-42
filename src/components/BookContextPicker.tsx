@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState, useSyncExternalStore } from "react
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/hooks/useAuth";
 import { useChatSettings } from "@/hooks/useChatSettings";
-import { listFolders, type BookFolder } from "@/lib/bookFolders";
 import {
   bookContextStore, selectContextBooks, isEmptySelection, resolveBookContextMode, bookHasCatalog,
   BOOK_CONTEXT_MAX_BOOKS, type BookContextMode,
@@ -20,10 +19,12 @@ const BookContextPicker: React.FC<{
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }> = ({ open, onOpenChange }) => {
-  const { books, activeBookId, applyChapterGists } = useApp();
+  // Shelves come from AppContext — the app's ONE roster. This dialog used to
+  // fetch its own on open, so a shelf created in the Vault while the picker
+  // was mounted never appeared, and a deleted one lingered as a phantom.
+  const { books, activeBookId, applyChapterGists, shelves } = useApp();
   const { user } = useAuth();
   const { selectedModel, apiKey, geminiApiKey, nvidiaKeyLast4 } = useChatSettings();
-  const [shelves, setShelves] = useState<BookFolder[]>([]);
   const [gistProgress, setGistProgress] = useState<string | null>(null);
   const selection = useSyncExternalStore(bookContextStore.subscribe, bookContextStore.get);
   // The ONE mode resolution (chatBooks) — the picker must show what will
@@ -37,13 +38,6 @@ const BookContextPicker: React.FC<{
   useEffect(() => {
     bookContextStore.init(user?.id ?? null);
   }, [user?.id]);
-
-  useEffect(() => {
-    if (!open) return;
-    listFolders().then(setShelves).catch(() => {
-      toast.error("Couldn't load your shelves");
-    });
-  }, [open]);
 
   const shelfMembers = useMemo(
     () => (selection.shelfId ? books.filter((b) => b.folderIds.includes(selection.shelfId!)) : []),

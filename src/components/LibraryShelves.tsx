@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { BookDocument } from "@/types/library";
-import { listFolders, createFolder, renameFolder, deleteFolder, BookFolder } from "@/lib/bookFolders";
+import type { BookFolder } from "@/lib/bookFolders";
 import { categoryColor, UNCATEGORIZED } from "@/lib/categoryColors";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/hooks/useAuth";
@@ -60,7 +60,13 @@ interface Props {
 }
 
 const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered = false }) => {
-  const { toggleBookShelf, clearShelfLocal, multiShelf, setActiveTab } = useApp();
+  // The roster and its mutations live in AppContext — ONE copy for the whole
+  // app. This view used to fetch its own, as did BookContextPicker, and the
+  // two drifted (a shelf created here was invisible to a mounted picker).
+  const {
+    toggleBookShelf, multiShelf, setActiveTab,
+    shelves, shelvesLoading, createShelf, renameShelf, deleteShelf,
+  } = useApp();
   const { user } = useAuth();
 
   // This view WRITES to the book-context store, so it must init it — on a
@@ -79,31 +85,13 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
     toast.success(`"${shelf.name}" loaded into chat — its books ride with every message.`);
     setActiveTab("chat");
   };
-  const [shelves, setShelves] = useState<BookFolder[]>([]);
   const [openShelfId, setOpenShelfId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [newName, setNewName] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   // Facet filters for the All-books section only.
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [activeTags, setActiveTags] = useState<string[]>([]);
-
-  useEffect(() => {
-    let cancel = false;
-    (async () => {
-      setLoading(true);
-      try {
-        const f = await listFolders();
-        if (!cancel) setShelves(f);
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Could not load shelves");
-      } finally {
-        if (!cancel) setLoading(false);
-      }
-    })();
-    return () => { cancel = true; };
-  }, []);
 
   // Membership derived once per books/shelves change, not per shelf card.
   // TWO maps, deliberately: `membersByShelf` is the truth (whole library) and
@@ -166,8 +154,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
     const name = newName.trim();
     if (!name) return;
     try {
-      const f = await createFolder(name);
-      setShelves((prev) => [...prev, f]);
+      await createShelf(name);
       setNewName("");
       toast.success(`Shelf "${name}" created`);
     } catch (e) {
@@ -179,8 +166,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
     const name = renameDraft.trim();
     if (!name) { setRenaming(null); return; }
     try {
-      await renameFolder(id, name);
-      setShelves((prev) => prev.map((f) => f.id === id ? { ...f, name } : f));
+      await renameShelf(id, name);
       setRenaming(null);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Rename failed");
@@ -192,12 +178,10 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
     if (!f) return;
     if (!window.confirm(`Delete shelf "${f.name}"? Books on it stay in your library (nothing is deleted).`)) return;
     try {
-      await deleteFolder(id);
-      setShelves((prev) => prev.filter((x) => x.id !== id));
-      // The DB cascades the junction rows (and SET NULLs the folder_id
-      // mirror) — reflect it in client state so the freed books show the
-      // change without a reload.
-      clearShelfLocal(id);
+      // deleteShelf drops the row, the roster entry, and the shelf from every
+      // book's folderIds — the DB cascades junction rows and SET NULLs the
+      // folder_id mirror, so client state must follow without a reload.
+      await deleteShelf(id);
       if (openShelfId === id) setOpenShelfId(null);
       toast.success("Shelf deleted");
     } catch (e) {
@@ -266,7 +250,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
     </div>
   );
 
-  if (loading) {
+  if (shelvesLoading) {
     return <div className="py-16 text-center text-on-surface-variant text-sm">Loading shelves…</div>;
   }
 
