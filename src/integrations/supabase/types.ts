@@ -362,6 +362,9 @@ export type Database = {
           id: string
           name: string
           sort_index: number
+          summarized_at: string | null
+          summary: string | null
+          summary_model: string | null
           updated_at: string
           user_id: string
         }
@@ -370,6 +373,9 @@ export type Database = {
           id?: string
           name: string
           sort_index?: number
+          summarized_at?: string | null
+          summary?: string | null
+          summary_model?: string | null
           updated_at?: string
           user_id: string
         }
@@ -378,6 +384,9 @@ export type Database = {
           id?: string
           name?: string
           sort_index?: number
+          summarized_at?: string | null
+          summary?: string | null
+          summary_model?: string | null
           updated_at?: string
           user_id?: string
         }
@@ -428,6 +437,9 @@ export type Database = {
           folder_id: string | null
           id: string
           page_count: number
+          summarized_at: string | null
+          summary: string | null
+          summary_model: string | null
           tags: string[]
           title: string
           user_id: string | null
@@ -440,6 +452,9 @@ export type Database = {
           folder_id?: string | null
           id?: string
           page_count?: number
+          summarized_at?: string | null
+          summary?: string | null
+          summary_model?: string | null
           tags?: string[]
           title: string
           user_id?: string | null
@@ -452,6 +467,9 @@ export type Database = {
           folder_id?: string | null
           id?: string
           page_count?: number
+          summarized_at?: string | null
+          summary?: string | null
+          summary_model?: string | null
           tags?: string[]
           title?: string
           user_id?: string | null
@@ -2076,6 +2094,7 @@ export type Database = {
           active_wiki_id: string | null
           active_wiki_ids: string[]
           auto_approve_tool_updates: boolean
+          auto_catalog_on_upload: boolean
           auto_extract_figures: boolean
           auto_read_replies: boolean
           auto_show_memory_images: boolean
@@ -2144,6 +2163,7 @@ export type Database = {
           active_wiki_id?: string | null
           active_wiki_ids?: string[]
           auto_approve_tool_updates?: boolean
+          auto_catalog_on_upload?: boolean
           auto_extract_figures?: boolean
           auto_read_replies?: boolean
           auto_show_memory_images?: boolean
@@ -2212,6 +2232,7 @@ export type Database = {
           active_wiki_id?: string | null
           active_wiki_ids?: string[]
           auto_approve_tool_updates?: boolean
+          auto_catalog_on_upload?: boolean
           auto_extract_figures?: boolean
           auto_read_replies?: boolean
           auto_show_memory_images?: boolean
@@ -3279,12 +3300,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -3308,11 +3329,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -3333,11 +3354,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -3358,11 +3379,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -3375,11 +3396,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
