@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import LibraryShelves from "@/components/LibraryShelves";
 import { bookHaystack, chapterMatch, matchesAll, normalizeText, tokenize } from "@/lib/librarySearch";
+import { seekLibrary, SEEK_FETCH_CAP, type SeekOutcome } from "@/lib/librarySeek";
 
 import LibraryList from "@/components/LibraryList";
 
@@ -108,7 +109,7 @@ const VIEW_OPTIONS: { id: ViewMode; icon: string; label: string }[] = [
 
 
 const Library: React.FC = () => {
-  const { books, addBook, removeBook, requestBookLoad, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile, applyChapterGists, applyBookSummary } = useApp();
+  const { books, addBook, removeBook, requestBookLoad, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile, applyChapterGists, applyBookSummary, loadChapterText } = useApp();
   const { apiKey, imageExtractionModel, selectedModel, geminiApiKey, nvidiaKeyLast4, autoCatalogOnUpload } = useChatSettings();
   const { user } = useAuth();
   const { isPaid, loaded: planLoaded } = usePlan();
@@ -136,6 +137,9 @@ const Library: React.FC = () => {
     return v === "list" || v === "graph" ? v : "shelves";
   });
   const [tagProgress, setTagProgress] = useState<{ done: number; total: number } | null>(null);
+  // "Where did I read that?" — the exact-text seek across every book.
+  const [seek, setSeek] = useState<SeekOutcome | null>(null);
+  const [seeking, setSeeking] = useState(false);
 
   // "From YouTube" import dialog (the former Reel tab). The dialog remounts
   // VideoTranscript each open, so initialUrl is re-read every time.
@@ -273,6 +277,36 @@ const Library: React.FC = () => {
   }, [sortedBooks, query, haystacks]);
 
   const queryTokens = useMemo(() => tokenize(query), [query]);
+
+  // A seek is about the query that produced it; editing the box invalidates
+  // it rather than leaving stale passages under a new search.
+  useEffect(() => { setSeek(null); }, [query]);
+
+  /**
+   * Search INSIDE the books, not just their metadata.
+   *
+   * bookSearch.ts has carried a reviewed, property-tested exact-text seek for
+   * a while — reachable only as a chat tool, so finding a half-remembered
+   * passage required a conversation. This is the same predicate, run from the
+   * Vault. It is a deliberate second action rather than part of the
+   * filter-as-you-type: it costs round trips and reads chapter text, which
+   * the instant filter never does.
+   */
+  const runSeek = async () => {
+    if (!user || seeking) return;
+    setSeeking(true);
+    try {
+      const outcome = await seekLibrary(books, user.id, query, { loadChapterText });
+      setSeek(outcome);
+      if (!outcome.normalizedQuery) {
+        toast("Type at least 3 characters to search inside your books.");
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't search inside your books");
+    } finally {
+      setSeeking(false);
+    }
+  };
 
   // "/" focuses search (GitHub/Gmail convention), Escape clears it.
   useEffect(() => {
@@ -700,11 +734,78 @@ const Library: React.FC = () => {
               </button>
             )}
             {query && (
-              <p className="mt-2 text-xs text-on-surface-variant" role="status">
-                {filteredBooks.length} of {books.length} book{books.length === 1 ? "" : "s"}
-              </p>
+              <div className="mt-2 flex items-center gap-3 flex-wrap">
+                <p className="text-xs text-on-surface-variant" role="status">
+                  {filteredBooks.length} of {books.length} book{books.length === 1 ? "" : "s"}
+                </p>
+                <button
+                  onClick={runSeek}
+                  disabled={seeking}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline underline-offset-2 disabled:opacity-50"
+                  title="Search the full text of every book for this exact wording"
+                >
+                  <span className={`material-symbols-outlined text-sm ${seeking ? "animate-spin" : ""}`} aria-hidden>
+                    {seeking ? "progress_activity" : "manage_search"}
+                  </span>
+                  {seeking ? "Reading your books…" : "Search inside books"}
+                </button>
+              </div>
             )}
           </div>
+        )}
+
+        {/* Passages found inside the books — the orienteering result: not
+            "this book matched" but "this sentence, on this page". */}
+        {seek && seek.normalizedQuery && (
+          <section className="bg-surface-container-low rounded-xl border border-outline-variant/10 p-5 flex flex-col gap-3">
+            <div className="flex items-baseline justify-between gap-3">
+              <p className="text-xs uppercase tracking-widest text-on-surface-variant">
+                {seek.hits.length === 0
+                  ? "No passages found"
+                  : `${seek.hits.length} passage${seek.hits.length === 1 ? "" : "s"} inside your books`}
+              </p>
+              <button
+                onClick={() => setSeek(null)}
+                className="text-xs text-on-surface-variant hover:text-primary"
+              >
+                Dismiss
+              </button>
+            </div>
+
+            {/* Coverage honesty: a capped or un-narrowed search must never let
+                an empty result read as "it isn't in your library". */}
+            {(seek.degraded || seek.notSearched > 0) && (
+              <p className="text-[11px] text-on-surface-variant/80">
+                {seek.note || `${seek.notSearched} more chapter${seek.notSearched === 1 ? "" : "s"} matched but weren't read — only ${SEEK_FETCH_CAP} are fetched per search.`}
+                {" "}Narrow the wording to see the rest.
+              </p>
+            )}
+
+            {seek.hits.length === 0 ? (
+              <p className="text-sm text-on-surface-variant">
+                Nothing matched that exact wording. The search is literal — it won't
+                correct spelling or cross a hyphenated line break.
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {seek.hits.map((h, i) => (
+                  <li key={`${h.chapterId}-${h.charStart}-${i}`}>
+                    <button
+                      onClick={() => requestBookLoad(h.bookId)}
+                      className="w-full text-left rounded-lg px-3 py-2 hover:bg-surface-container-high transition-colors"
+                    >
+                      <p className="text-[11px] text-primary font-semibold truncate">
+                        {h.bookTitle} · {h.chapterName} · p.{h.page}
+                      </p>
+                      <p className="text-xs text-on-surface-variant mt-0.5 line-clamp-2">
+                        …<Highlight text={h.excerpt} query={query} />…
+                      </p>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
         )}
 
         {/* In-flight YouTube transcript extractions — the finished book pops
