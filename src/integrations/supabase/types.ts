@@ -362,6 +362,9 @@ export type Database = {
           id: string
           name: string
           sort_index: number
+          summarized_at: string | null
+          summary: string | null
+          summary_model: string | null
           updated_at: string
           user_id: string
         }
@@ -370,6 +373,9 @@ export type Database = {
           id?: string
           name: string
           sort_index?: number
+          summarized_at?: string | null
+          summary?: string | null
+          summary_model?: string | null
           updated_at?: string
           user_id: string
         }
@@ -378,6 +384,9 @@ export type Database = {
           id?: string
           name?: string
           sort_index?: number
+          summarized_at?: string | null
+          summary?: string | null
+          summary_model?: string | null
           updated_at?: string
           user_id?: string
         }
@@ -428,6 +437,9 @@ export type Database = {
           folder_id: string | null
           id: string
           page_count: number
+          summarized_at: string | null
+          summary: string | null
+          summary_model: string | null
           tags: string[]
           title: string
           user_id: string | null
@@ -440,6 +452,9 @@ export type Database = {
           folder_id?: string | null
           id?: string
           page_count?: number
+          summarized_at?: string | null
+          summary?: string | null
+          summary_model?: string | null
           tags?: string[]
           title: string
           user_id?: string | null
@@ -452,6 +467,9 @@ export type Database = {
           folder_id?: string | null
           id?: string
           page_count?: number
+          summarized_at?: string | null
+          summary?: string | null
+          summary_model?: string | null
           tags?: string[]
           title?: string
           user_id?: string | null
@@ -2076,6 +2094,7 @@ export type Database = {
           active_wiki_id: string | null
           active_wiki_ids: string[]
           auto_approve_tool_updates: boolean
+          auto_catalog_on_upload: boolean
           auto_extract_figures: boolean
           auto_read_replies: boolean
           auto_show_memory_images: boolean
@@ -2144,6 +2163,7 @@ export type Database = {
           active_wiki_id?: string | null
           active_wiki_ids?: string[]
           auto_approve_tool_updates?: boolean
+          auto_catalog_on_upload?: boolean
           auto_extract_figures?: boolean
           auto_read_replies?: boolean
           auto_show_memory_images?: boolean
@@ -2212,6 +2232,7 @@ export type Database = {
           active_wiki_id?: string | null
           active_wiki_ids?: string[]
           auto_approve_tool_updates?: boolean
+          auto_catalog_on_upload?: boolean
           auto_extract_figures?: boolean
           auto_read_replies?: boolean
           auto_show_memory_images?: boolean
