@@ -103,7 +103,8 @@ describe("generateBookGists sends the roster", () => {
     const book = bookOf(["Method", "Results"]);
     await generateBookGists(book, { model: "test-model", keys: { apiKey: "k" } });
 
-    expect(captured).toHaveLength(1);
+    // [0] generates, [1] is the B-6 verification pass.
+    expect(captured).toHaveLength(2);
     const user = captured[0].messages.find((m) => m.role === "user")!;
     expect(user.content).toContain("Contents of the whole book (context only)");
     expect(user.content).toContain("— Method (pages 1–2)");

@@ -73,7 +73,9 @@ describe("generateBookGists thinking-model budget (live-measured 2026-08-31)", (
     });
     expect(Object.keys(res.written)).toHaveLength(2);
     expect(res.failed).toBe(0);
-    expect(captured).toHaveLength(1);
+    // Two calls now: [0] generates the batch, [1] is the B-6 verification
+    // pass. The budget pin below is about generation, so it reads captured[0].
+    expect(captured).toHaveLength(2);
     // No reasoning field: OpenRouter 400s `reasoning:{enabled:false}` on
     // mandatory-reasoning models (the user's default among them), and a pin
     // that breaks the default model is worse than the starvation it fixes.
@@ -81,6 +83,11 @@ describe("generateBookGists thinking-model budget (live-measured 2026-08-31)", (
     // The fix: 320/chapter + 1200 headroom, sized so the measured ~600-token
     // reasoning burst can never starve the content lines again.
     expect(captured[0].maxTokens).toBe(320 * 2 + 1_200);
+    // The verifier inherits the same posture. A starved verifier returns
+    // nothing, fails open, and silently disables the check — which would look
+    // exactly like it working.
+    expect(captured[1].extraBody).toBeUndefined();
+    expect(captured[1].maxTokens).toBeGreaterThan(1_000);
   });
 
   it("nvidia runs keep their own no-thinking body instead", async () => {
@@ -90,10 +97,14 @@ describe("generateBookGists thinking-model budget (live-measured 2026-08-31)", (
       model: "nvidia:nvidia/nemotron-3-super-120b-a12b",
       keys: { apiKey: "k", nvidiaKeyLast4: "1234" },
     });
-    expect(captured).toHaveLength(1);
+    expect(captured).toHaveLength(2);
     // Exact shape belongs to nvidiaCatalog's own tests; here it only must
     // not have been replaced by the OpenRouter pin.
     expect(captured[0].extraBody).not.toEqual({ reasoning: { enabled: false } });
     expect(JSON.stringify(captured[0].extraBody ?? {})).toContain("chat_template_kwargs");
+    // The verification pass carries the SAME no-thinking body. Without it the
+    // verifier spends its allowance reasoning, returns no parseable verdicts,
+    // fails open, and the check is off with nothing on screen to say so.
+    expect(JSON.stringify(captured[1].extraBody ?? {})).toContain("chat_template_kwargs");
   });
 });

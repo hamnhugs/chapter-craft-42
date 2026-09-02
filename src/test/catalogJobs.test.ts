@@ -39,7 +39,7 @@ vi.mock("@/lib/chapterGists", () => ({
     gistState.calls++;
     if (gistState.throws) throw gistState.throws;
     void book;
-    return { written: gistState.written, failed: gistState.failed, skipped: 0, stopError: gistState.stopError };
+    return { written: gistState.written, failed: gistState.failed, rejected: 0, skipped: 0, stopError: gistState.stopError };
   },
 }));
 

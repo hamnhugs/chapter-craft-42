@@ -2,6 +2,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { nvidiaNoThinkingBody } from "@/lib/nvidiaCatalog";
 import { providerConfigured, providerKey, resolveModel } from "@/lib/providers/registry";
 import { isBatchOnlyModel, isEmbeddingModel } from "@/lib/utils";
+import { verifyGists, type GistCandidate } from "@/lib/gistVerification";
 import type { BookDocument, Chapter } from "@/types/library";
 
 // Card Catalog Stage 1: one-line chapter summaries ("gists"), generated
@@ -32,6 +33,11 @@ export interface GistRunResult {
   written: Record<string, string>;
   /** Chapters the model returned no usable line for (retry-able). */
   failed: number;
+  /** Chapters whose generated line was CONTRADICTED by its own excerpt and
+   *  discarded before it could be stored (see gistVerification). Retry-able
+   *  like `failed`, and reported apart from it because the cause is
+   *  different: the model answered, it was just wrong. */
+  rejected: number;
   /** Chapters skipped because they already had a gist. */
   skipped: number;
   /** Set when the run stopped early on a DB failure. Everything in `written`
@@ -175,7 +181,9 @@ async function excerptsFor(chapters: Chapter[]): Promise<Map<string, string>> {
  * Generate + persist gists for every chapter of `book` that lacks one.
  * Throws with GIST_MIGRATION_MESSAGE when the column is missing; other DB
  * errors throw as-is. Model failures never throw — chapters the model
- * skipped are reported in `failed` and can simply be run again.
+ * skipped are reported in `failed` and can simply be run again, and ones
+ * whose generated line its own excerpt contradicted are reported in
+ * `rejected` and never stored.
  */
 export async function generateBookGists(
   book: BookDocument,
@@ -207,10 +215,11 @@ export async function generateBookGists(
 
   const todo = book.chapters.filter((c) => !(c.gist || "").trim());
   const skipped = book.chapters.length - todo.length;
-  if (todo.length === 0) return { written: {}, failed: 0, skipped };
+  if (todo.length === 0) return { written: {}, failed: 0, rejected: 0, skipped };
 
   const written: Record<string, string> = {};
   let failed = 0;
+  let rejected = 0;
   // Built once — it describes the book, not the batch.
   const roster = contextRoster(book.chapters);
 
@@ -277,10 +286,42 @@ export async function generateBookGists(
     }
 
     const byIndex = parseGistLines(reply, batch.length);
+
+    // B-6. A gist is model-authored text that then rides in model context on
+    // every send, and nothing downstream ever re-reads the chapter to check
+    // it. So each candidate is judged against its own excerpt BEFORE it can
+    // be stored — for contradiction and invented specifics only, never for
+    // "unsupported", because the excerpt is head+tail and the middle of the
+    // chapter was never shown to either model. verifyGists never throws and
+    // rejects nothing when it cannot run.
+    const candidates: GistCandidate[] = [];
+    for (let i = 0; i < batch.length; i++) {
+      const gist = byIndex.get(i + 1);
+      if (!gist) continue;
+      candidates.push({
+        chapterId: batch[i].id,
+        index: i + 1,
+        name: batch[i].name,
+        gist,
+        excerpt: excerpts.get(batch[i].id) || "",
+      });
+    }
+    let contradicted = new Set<string>();
+    if (candidates.length > 0) {
+      onProgress?.(`Checking ${candidates.length} summar${candidates.length === 1 ? "y" : "ies"}…`);
+      contradicted = (await verifyGists(candidates, settings)).rejected;
+    }
+
     for (let i = 0; i < batch.length; i++) {
       const gist = byIndex.get(i + 1);
       if (!gist) {
         failed += 1;
+        continue;
+      }
+      if (contradicted.has(batch[i].id)) {
+        // Discarded, not stored. Counted apart from `failed`: the model
+        // answered, it was just wrong, and a re-run can try again.
+        rejected += 1;
         continue;
       }
       // Cast until the applied migration regenerates types.ts.
@@ -293,11 +334,17 @@ export async function generateBookGists(
         const message = isMissingGistColumn(error)
           ? GIST_MIGRATION_MESSAGE
           : `Saving summaries failed (${(error as { message?: string }).message || "database error"}) — the ones already saved are kept.`;
-        return { written, failed: todo.length - Object.keys(written).length, skipped, stopError: message };
+        return {
+          written,
+          failed: todo.length - Object.keys(written).length - rejected,
+          rejected,
+          skipped,
+          stopError: message,
+        };
       }
       written[batch[i].id] = gist;
     }
   }
 
-  return { written, failed, skipped };
+  return { written, failed, rejected, skipped };
 }

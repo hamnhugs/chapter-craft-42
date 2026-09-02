@@ -32,6 +32,9 @@ export interface CatalogJob {
   gistsWritten?: number;
   /** Chapters the model returned nothing usable for (re-runnable). */
   gistsFailed?: number;
+  /** Chapters whose generated summary its own excerpt contradicted, so it
+   *  was discarded rather than stored. */
+  gistsRejected?: number;
   /** True once the book-level summary landed. */
   summaryWritten?: boolean;
   /** Set when the run finished but the summary was skipped for a nameable,
@@ -109,7 +112,11 @@ async function runOne(input: CatalogJobInput): Promise<void> {
     // already in the database, and leaving it out of client state diverges
     // the two until reload (the rule chapterGists earned by review).
     if (Object.keys(written).length > 0) input.onGists(written);
-    patch(input.bookId, { gistsWritten: Object.keys(written).length, gistsFailed: result.failed });
+    patch(input.bookId, {
+      gistsWritten: Object.keys(written).length,
+      gistsFailed: result.failed,
+      gistsRejected: result.rejected,
+    });
     if (result.stopError) {
       patch(input.bookId, { status: "error", progress: "", error: result.stopError });
       return;

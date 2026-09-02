@@ -1392,7 +1392,8 @@ const BookCard: React.FC<{
               <span className="truncate" title={catJob.note}>
                 {catJob.note
                   ? catJob.note
-                  : `Catalog ready${catJob.gistsWritten ? ` · ${catJob.gistsWritten} chapter${catJob.gistsWritten === 1 ? "" : "s"}` : ""}`}
+                  : `Catalog ready${catJob.gistsWritten ? ` · ${catJob.gistsWritten} chapter${catJob.gistsWritten === 1 ? "" : "s"}` : ""}` +
+                    (catJob.gistsRejected ? ` · ${catJob.gistsRejected} summary check${catJob.gistsRejected === 1 ? "" : "s"} failed` : "")}
               </span>
             </p>
           ) : catJob?.status === "error" ? (
