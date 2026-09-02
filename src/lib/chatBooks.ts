@@ -87,7 +87,14 @@ export const DEFAULT_BOOK_CONTEXT_MODE: BookContextMode = "catalog";
 /** Does this book have a catalog to ride? A catalog with no summaries is
  *  bare titles, and the E2 rerun measured that losing exact-quote retrieval
  *  outright (7/11 vs full's 10/11) because the model has nothing to route
- *  on — so "catalog mode" means catalog WHERE ONE EXISTS. */
+ *  on — so "catalog mode" means catalog WHERE ONE EXISTS.
+ *
+ *  DELIBERATELY still keyed on chapter gists alone, even though a book-level
+ *  summary is now also something to route on. The gist rule is what the
+ *  frozen E2 set actually measured; widening the gate to "gists OR summary"
+ *  is a behaviour change that belongs to the next E2 rerun, not to a commit
+ *  that cannot show a number for it. A summary-only book therefore keeps its
+ *  full-text tier today, and its summary is simply unused. */
 export function bookHasCatalog(book: Pick<BookDocument, "chapters">): boolean {
   return book.chapters.some((c) => (c.gist || "").trim().length > 0);
 }
@@ -448,15 +455,32 @@ export function buildBookContextBlock(
     // the "how to fetch" verb), so the block stays the app's byte-stable
     // cache prefix even across image-turn roster flaps.
     if (catalogMode) {
+      // The BOOK-level summary rides above the chapter map — the catalog's
+      // other level. RAPTOR (ICLR 2024) and GraphRAG both find that pooling
+      // candidates ACROSS levels beats retrieving from one, and this is the
+      // level that answers "which book" before a read is spent on "which
+      // chapter". Model-authored, so it takes the same inline sanitization a
+      // gist does, and it is byte-stable for the same reason: it changes only
+      // when the user regenerates it.
+      // Whitespace is collapsed BEFORE sanitizing, not just at write time:
+      // the map below is line-structured, and a summary carrying a newline
+      // could otherwise contribute a line shaped exactly like a chapter entry
+      // ("- ch 99: … chapter_id: …"). cleanSummary already does this on the
+      // way in; this is the read door, which is where the app's untrusted-text
+      // convention says the guarantee has to hold.
+      const summaryText = sanitizeInline((book.summary || "").replace(/\s+/g, " "), nonce, 700);
+      const summaryLine = summaryText ? `Summary: ${summaryText}\n\n` : "";
       let lines = pieces.map((p) => catalogLine(p, nonce));
       let listed = lines.length;
       let outline = lines.join("\n");
-      if (outline.length > room - 200) {
+      // The summary is charged against the same room as the map, so a long
+      // summary trims chapters rather than silently overrunning the budget.
+      if (outline.length > room - 200 - summaryLine.length) {
         // Trim only when a real cut exists: clamping into [1, length-1] can
         // never emit "…and 0 more" or a negative count on a tiny spine in a
         // nearly-spent budget (review-confirmed); a 1-chapter book that
         // slightly overshoots its room ships whole rather than lying.
-        const keep = Math.min(lines.length - 1, Math.max(3, Math.floor(lines.length * ((room - 400) / outline.length))));
+        const keep = Math.min(lines.length - 1, Math.max(3, Math.floor(lines.length * ((room - 400 - summaryLine.length) / outline.length))));
         if (keep >= 1 && keep < lines.length) {
           listed = keep;
           lines = lines.slice(0, keep);
@@ -464,7 +488,9 @@ export function buildBookContextBlock(
           outline = lines.join("\n");
         }
       }
-      const body = `[Chapter catalog — titles, pages, ids, and one-line summaries where generated. The text of this book is not in this message:]\n${outline}`;
+      const body =
+        `[Book catalog — a book-level summary where generated, then chapter titles, pages, ids, and one-line summaries. The text of this book is not in this message:]\n` +
+        `${summaryLine}${outline}`;
       spent += body.length;
       // chaptersSent counts MAP LINES LISTED here (not full-text sends): the
       // chip renders "N/M chapters mapped", so a truncated pathological spine
