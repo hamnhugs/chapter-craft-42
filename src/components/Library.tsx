@@ -100,6 +100,11 @@ const STAGGER_MAX_STEPS = 12;
 
 type ViewMode = "shelves" | "list" | "graph";
 const VIEW_KEY = "vault_view_mode";
+/** Dismissal for the resurfaced line, stamped with the day it was dismissed. */
+const RESURFACE_DISMISS_KEY = "vault_resurface_dismissed_day";
+/** Below this, a "from your library" line is just showing you what you can
+ *  already see — resurfacing needs a library big enough to forget things in. */
+const RESURFACE_MIN_BOOKS = 6;
 
 const VIEW_OPTIONS: { id: ViewMode; icon: string; label: string }[] = [
   { id: "shelves", icon: "shelves", label: "Shelves" },
@@ -109,7 +114,8 @@ const VIEW_OPTIONS: { id: ViewMode; icon: string; label: string }[] = [
 
 
 const Library: React.FC = () => {
-  const { books, addBook, removeBook, requestBookLoad, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile, applyChapterGists, applyBookSummary, loadChapterText } = useApp();
+  const { books, addBook, removeBook, requestBookLoad, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile, applyChapterGists, applyBookSummary, loadChapterText,
+    shelves, toggleBookShelf } = useApp();
   const { apiKey, imageExtractionModel, selectedModel, geminiApiKey, nvidiaKeyLast4, autoCatalogOnUpload } = useChatSettings();
   const { user } = useAuth();
   const { isPaid, loaded: planLoaded } = usePlan();
@@ -140,6 +146,14 @@ const Library: React.FC = () => {
   // "Where did I read that?" — the exact-text seek across every book.
   const [seek, setSeek] = useState<SeekOutcome | null>(null);
   const [seeking, setSeeking] = useState(false);
+  // Books from the last completed upload batch, offered a shelf while the
+  // user is still thinking about them.
+  const [justAdded, setJustAdded] = useState<string[]>([]);
+  const [filing, setFiling] = useState(false);
+  const [resurfaceDismissedDay, setResurfaceDismissedDay] = useState<number | null>(() => {
+    const v = Number(localStorage.getItem(RESURFACE_DISMISS_KEY));
+    return Number.isFinite(v) && v > 0 ? v : null;
+  });
 
   // "From YouTube" import dialog (the former Reel tab). The dialog remounts
   // VideoTranscript each open, so initialUrl is re-read every time.
@@ -277,6 +291,42 @@ const Library: React.FC = () => {
   }, [sortedBooks, query, haystacks]);
 
   const queryTokens = useMemo(() => tokenize(query), [query]);
+
+  /**
+   * One line from something you already own.
+   *
+   * A summary corpus that is only ever read when you go looking for it is
+   * still keeping, not exploitation (Whittaker, ARIST 2011) — and the books
+   * most worth resurfacing are precisely the ones you have stopped scrolling
+   * to. Deterministic per day so it is a quiet fixture rather than a slot
+   * machine that re-rolls on every render, and biased toward the OLDEST
+   * books, which are the ones the date-sorted grid buries.
+   */
+  const resurfaced = useMemo(() => {
+    if (query.trim() || books.length < RESURFACE_MIN_BOOKS) return null;
+    const day = Math.floor(Date.now() / 86_400_000);
+    if (resurfaceDismissedDay === day) return null;
+    const candidates = books
+      .filter((b) => (b.summary || "").trim() || b.chapters.some((c) => (c.gist || "").trim()))
+      .sort((a, b) => a.addedAt - b.addedAt)
+      .slice(0, Math.max(3, Math.ceil(books.length / 2)));
+    if (candidates.length === 0) return null;
+    const pick = candidates[day % candidates.length];
+    const line =
+      (pick.summary || "").trim() ||
+      (pick.chapters.find((c) => (c.gist || "").trim())?.gist || "").trim();
+    return line ? { book: pick, line } : null;
+  }, [books, query, resurfaceDismissedDay]);
+
+  const dismissResurfaced = () => {
+    const day = Math.floor(Date.now() / 86_400_000);
+    setResurfaceDismissedDay(day);
+    try {
+      localStorage.setItem(RESURFACE_DISMISS_KEY, String(day));
+    } catch {
+      // Private mode / blocked storage: the line simply returns tomorrow.
+    }
+  };
 
   // A seek is about the query that produced it; editing the box invalidates
   // it rather than leaving stale passages under a new search.
@@ -485,6 +535,7 @@ const Library: React.FC = () => {
 
           const finalBookId = await addBook(newBook, fileToUpload);
           updateUploadState(item.id, { status: "success", attempts: attempt, error: undefined });
+          addedIds.push(finalBookId);
           uploaded = true;
 
           // Auto-detect the table of contents / sections as soon as the upload
@@ -524,6 +575,8 @@ const Library: React.FC = () => {
       }
     };
 
+    // Collected across workers; surfaced once the whole batch settles.
+    const addedIds: string[] = [];
     let nextIndex = 0;
     const workerCount = Math.min(MAX_CONCURRENT_UPLOADS, queue.length);
 
@@ -538,7 +591,45 @@ const Library: React.FC = () => {
     );
 
     setIsUploading(false);
+    setJustAdded(addedIds);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  /**
+   * File the batch that just landed.
+   *
+   * Malone (TOIS 1983) and Mander et al. (CHI 1992): people under-file, and
+   * forcing classification at capture is where these systems get abandoned.
+   * So this is an OFFER at the one moment the books are still in mind, not a
+   * gate — dismissing it costs nothing and they stay in the Unshelved pile,
+   * which is now a real place rather than silent absorption into All-books.
+   */
+  const fileJustAdded = async (shelfId: string) => {
+    if (filing) return;
+    setFiling(true);
+    const ids = justAdded;
+    try {
+      // Sequential: toggleBookShelf patches optimistically and rolls back by
+      // inverse delta, and one failure should not abandon the rest.
+      let failed = 0;
+      for (const id of ids) {
+        try {
+          const book = booksRef.current.find((b) => b.id === id);
+          if (book && !book.folderIds.includes(shelfId)) await toggleBookShelf(id, shelfId);
+        } catch {
+          failed += 1;
+        }
+      }
+      const shelfName = shelves.find((f) => f.id === shelfId)?.name ?? "that shelf";
+      if (failed === 0) {
+        toast.success(`Filed ${ids.length} book${ids.length === 1 ? "" : "s"} on “${shelfName}”`);
+        setJustAdded([]);
+      } else {
+        toast.error(`${failed} of ${ids.length} couldn't be filed — the rest are on “${shelfName}”.`);
+      }
+    } finally {
+      setFiling(false);
+    }
   };
 
   const runDetect = (book: BookDocument) => {
@@ -751,6 +842,76 @@ const Library: React.FC = () => {
                 </button>
               </div>
             )}
+          </div>
+        )}
+
+        {/* A line from something already on the shelves. */}
+        {resurfaced && view !== "graph" && (
+          <div className="flex items-start gap-3 rounded-xl px-5 py-3 bg-surface-container-low/60 border border-outline-variant/10">
+            <span className="material-symbols-outlined text-on-surface-variant/70 text-lg mt-0.5" aria-hidden>
+              auto_stories
+            </span>
+            <div className="flex-1 min-w-0">
+              <p className="text-[11px] uppercase tracking-widest text-on-surface-variant/70">
+                From your library
+              </p>
+              <button
+                onClick={() => requestBookLoad(resurfaced.book.id)}
+                className="text-left mt-0.5 group/res"
+              >
+                <span className="text-sm font-headline font-bold text-primary group-hover/res:underline underline-offset-2">
+                  {resurfaced.book.title}
+                </span>
+                <span className="text-sm text-on-surface-variant"> — {resurfaced.line}</span>
+              </button>
+            </div>
+            <button
+              onClick={dismissResurfaced}
+              aria-label="Hide this for today"
+              title="Hide this for today"
+              className="cc-tap-44 shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-highest"
+            >
+              <span className="material-symbols-outlined text-lg" aria-hidden>close</span>
+            </button>
+          </div>
+        )}
+
+        {/* File-on-arrival. An offer, never a gate — see fileJustAdded. */}
+        {justAdded.length > 0 && !isUploading && (
+          <div className="flex items-center gap-3 flex-wrap bg-surface-container-low rounded-xl px-5 py-4 border border-outline-variant/10">
+            <span className="material-symbols-outlined text-primary" aria-hidden>inbox</span>
+            <p className="flex-1 min-w-[12rem] text-sm text-foreground">
+              {justAdded.length} book{justAdded.length === 1 ? "" : "s"} added.
+              {shelves.length > 0
+                ? " Put them on a shelf while they're fresh?"
+                : " Create a shelf in Shelves view to file them."}
+            </p>
+            {shelves.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    disabled={filing}
+                    className="px-4 py-2 rounded-lg bg-primary/10 text-primary text-sm font-bold hover:bg-primary hover:text-on-primary-container transition-all disabled:opacity-50"
+                  >
+                    {filing ? "Filing…" : "Choose a shelf"}
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-44 max-h-72 overflow-y-auto">
+                  {shelves.map((f) => (
+                    <DropdownMenuItem key={f.id} onSelect={() => fileJustAdded(f.id)}>
+                      <span className="material-symbols-outlined text-base mr-2 shrink-0" aria-hidden>shelves</span>
+                      <span className="truncate">{f.name}</span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+            <button
+              onClick={() => setJustAdded([])}
+              className="text-sm text-on-surface-variant hover:text-primary px-2"
+            >
+              Not now
+            </button>
           </div>
         )}
 
