@@ -90,7 +90,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
   // app. This view used to fetch its own, as did BookContextPicker, and the
   // two drifted (a shelf created here was invisible to a mounted picker).
   const {
-    toggleBookShelf, multiShelf, setActiveTab,
+    toggleBookShelf, multiShelf, setActiveTab, membershipLoaded,
     shelves, shelvesLoading, createShelf, renameShelf, deleteShelf,
   } = useApp();
   const { user } = useAuth();
@@ -445,10 +445,17 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
                 ) : (
                   <p className="font-headline font-bold text-base text-foreground truncate w-full">{f.name}</p>
                 )}
+                {/* Books load with empty folderIds and the junction read
+                    fills them, so a count rendered before that read settles
+                    is a confident zero, not a fact. Say "counting" instead. */}
                 <p className="text-xs text-on-surface-variant mt-0.5">
-                  {members.length} book{members.length === 1 ? "" : "s"}
-                  {matching !== null && (
-                    <span className="text-primary"> · {matching} matching</span>
+                  {!membershipLoaded ? "counting…" : (
+                    <>
+                      {members.length} book{members.length === 1 ? "" : "s"}
+                      {matching !== null && (
+                        <span className="text-primary"> · {matching} matching</span>
+                      )}
+                    </>
                   )}
                 </p>
               </div>
@@ -489,7 +496,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
             user looks for "the books I haven't dealt with" — but visually
             distinct (dashed edge, inbox glyph) since it is computed, has no
             row, and cannot be renamed or deleted. */}
-        {unshelvedAll.length > 0 && (
+        {membershipLoaded && unshelvedAll.length > 0 && (
           <div className="group relative flex flex-col items-start gap-3 rounded-2xl p-5 text-left border border-dashed border-outline-variant/40 bg-surface-container-low transition-all hover:-translate-y-0.5 hover:shadow-xl">
             <button
               onClick={() => setOpenShelfId(UNSHELVED_ID)}

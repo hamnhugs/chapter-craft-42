@@ -28,6 +28,7 @@ import type { BookDocument } from "@/types/library";
 
 const state = vi.hoisted(() => ({
   shelves: [] as { id: string; user_id: string; name: string; sort_index: number; created_at: string; updated_at: string }[],
+  membershipLoaded: true,
 }));
 
 // The roster arrives through AppContext now, not a component-local fetch —
@@ -37,6 +38,7 @@ vi.mock("@/context/AppContext", () => ({
     toggleBookShelf: vi.fn(),
     multiShelf: true,
     setActiveTab: vi.fn(),
+    membershipLoaded: state.membershipLoaded,
     shelves: state.shelves,
     shelvesLoading: false,
     createShelf: vi.fn(),
@@ -102,6 +104,7 @@ type Mutable = { IS_REACT_ACT_ENVIRONMENT?: boolean };
 beforeEach(() => {
   (globalThis as unknown as Mutable).IS_REACT_ACT_ENVIRONMENT = true;
   state.shelves = [shelf("s1", "Sci-fi")];
+  state.membershipLoaded = true;
   vi.clearAllMocks();
 });
 
@@ -264,5 +267,36 @@ describe("LibraryShelves pages long grids", () => {
   it("shows no control when everything already fits", async () => {
     const host = await mount({ books: ALL, allBooks: ALL });
     expect(host.textContent).not.toContain("not shown");
+  });
+});
+
+describe("LibraryShelves withholds counts until membership is known", () => {
+  /**
+   * Books now load with EMPTY folderIds and the junction read fills them —
+   * the mirror is only a fallback. That removed a window where a book on
+   * three shelves rendered as being on one, but it opens a different one: a
+   * count taken before the read settles is a confident ZERO. Neither the
+   * shelf cards nor the pile may speak during it.
+   */
+  it("says it is still counting rather than reporting zero", async () => {
+    state.membershipLoaded = false;
+    const host = await mount({ books: ALL, allBooks: ALL });
+    expect(host.textContent).toContain("counting…");
+    expect(host.textContent).not.toContain("0 books");
+  });
+
+  it("does not claim the whole library is unfiled while membership is pending", async () => {
+    // Every book looks unshelved before the junction read lands, so the pile
+    // would announce the entire library as needing filing.
+    state.membershipLoaded = false;
+    const unfiled = ALL.map((b) => ({ ...b, folderIds: [] }));
+    const host = await mount({ books: unfiled, allBooks: unfiled });
+    expect(host.textContent).not.toContain("Unshelved");
+  });
+
+  it("reports the pile once membership has settled", async () => {
+    const unfiled = ALL.map((b) => ({ ...b, folderIds: [] }));
+    const host = await mount({ books: unfiled, allBooks: unfiled });
+    expect(host.textContent).toContain("Unshelved");
   });
 });

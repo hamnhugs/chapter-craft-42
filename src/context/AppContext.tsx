@@ -59,6 +59,10 @@ interface AppState {
   /** True once the shelf-membership junction is confirmed live this session —
    *  until then shelf assignment is exclusive (one shelf per book). */
   multiShelf: boolean;
+  /** False until the first membership read settles. Shelf UI must not state
+   *  a count before this: books load with EMPTY folderIds, so a count read
+   *  early is a confident zero rather than "not known yet". */
+  membershipLoaded: boolean;
   getActiveBook: () => BookDocument | undefined;
   loadBookFile: (bookId: string) => Promise<string>;
   /** Fetch one chapter's text on demand (not loaded at startup). */
@@ -122,6 +126,7 @@ const getStoragePathsForBook = (userId: string, bookId: string, fileName: string
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [books, setBooks] = useState<BookDocument[]>([]);
   const [multiShelf, setMultiShelf] = useState(false);
+  const [membershipLoaded, setMembershipLoaded] = useState(false);
   const [shelves, setShelves] = useState<BookFolder[]>([]);
   const [shelvesLoading, setShelvesLoading] = useState(true);
   const [activeBookId, setActiveBookId] = useState<string | null>(null);
@@ -320,10 +325,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addedAt: new Date(b.created_at).getTime(),
         category: b.category || undefined,
         tags: Array.isArray(b.tags) ? b.tags : [],
-        // Fallback-mode membership; replaced wholesale by junction rows below
-        // once the shelf-membership migration is confirmed live.
-        folderIds: b.folder_id ? [b.folder_id] : [],
+        // EMPTY, deliberately. The junction read below is the authority.
+        // Seeding from the single-valued folder_id mirror meant a book on
+        // three shelves rendered as being on one — with the shelf menu's
+        // checkboxes wrong to match — for as long as that read took. The
+        // mirror is held back in `mirrorFolderId` and used only if the
+        // junction turns out to be unavailable.
+        folderIds: [],
       }));
+      const mirrorFolderId = new Map<string, string | null>(
+        bookRows.rows.map((b: any) => [b.id as string, (b.folder_id as string | null) ?? null]),
+      );
+      /** Fallback path: derive single-shelf membership from the mirror. */
+      const applyMirrorMembership = () => {
+        setBooks((prev) => prev.map((b) => {
+          if (!initialIds.has(b.id)) return b;
+          const mirror = mirrorFolderId.get(b.id);
+          return { ...b, folderIds: mirror ? [mirror] : [] };
+        }));
+      };
       // The library (and the chat's view of it) is usable from here on, even
       // if chapters never arrive.
       setBooks(dbBooks);
@@ -383,9 +403,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       void fetchShelfMembership(user.id)
         .then((membership) => {
-          // null = junction not applied yet: fallback mode, keep the
-          // folder_id-derived memberships already on the books.
-          if (cancelled || !membership) return;
+          if (cancelled) return;
+          if (!membership) {
+            // null = junction not applied yet. Fall back to the mirror we
+            // held back, so the session still shows the memberships it can
+            // represent (one shelf per book) rather than none.
+            applyMirrorMembership();
+            return;
+          }
           setMultiShelf(true);
           // Patch only books that existed when the snapshot was taken — a
           // book that arrived after (realtime INSERT, upload) keeps its own
@@ -395,13 +420,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           ));
         })
         .catch((e) => {
-          // Transient failure — not a mode change. Memberships stay as
-          // derived from folder_id; the session keeps the exclusive UI, and
-          // applyShelfDelta still lands junction rows best-effort whenever
-          // the junction isn't known-missing, so nothing written this
-          // session vanishes on the next junction-mode reload.
+          // Transient failure — not a mode change, and not a reason to show
+          // an empty library of shelves. Fall back to the mirror; the session
+          // keeps the exclusive UI, and applyShelfDelta still lands junction
+          // rows best-effort whenever the junction isn't known-missing, so
+          // nothing written this session vanishes on the next reload.
+          if (cancelled) return;
           console.error("Failed to load shelf membership:", e);
-        });
+          applyMirrorMembership();
+        })
+        .finally(() => { if (!cancelled) setMembershipLoaded(true); });
     };
     loadBooks();
 
@@ -458,6 +486,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               tags: Array.isArray(b.tags) ? b.tags : [],
               // A just-inserted book carries at most its folder_id mirror;
               // junction rows for it would be written by this same client.
+              // A just-inserted book has no junction rows yet; the mirror is
+              // all there is to go on, and for a new book it is accurate.
               folderIds: b.folder_id ? [b.folder_id] : [],
             };
 
@@ -1078,6 +1108,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateBookTitle,
         updateBookTags,
         toggleBookShelf,
+        membershipLoaded,
         shelves,
         shelvesLoading,
         createShelf,
