@@ -56,6 +56,9 @@ interface AppState {
    *  cascades junction rows and SET NULLs the folder_id mirror; this keeps
    *  client state in step without a reload or per-book writes. */
   deleteShelf: (id: string) => Promise<void>;
+  /** Patch a freshly generated shelf digest into the roster. The DB write
+   *  happens in shelfDigest.ts; this only mirrors it locally. */
+  applyShelfDigest: (shelfId: string, summary: string, model: string) => void;
   /** True once the shelf-membership junction is confirmed live this session —
    *  until then shelf assignment is exclusive (one shelf per book). */
   multiShelf: boolean;
@@ -1110,6 +1113,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     ));
   }, []);
 
+  const applyShelfDigest = useCallback((shelfId: string, summary: string, model: string) => {
+    setShelves((prev) => prev.map((f) =>
+      f.id === shelfId
+        ? { ...f, summary, summary_model: model, summarized_at: new Date().toISOString() }
+        : f
+    ));
+  }, []);
+
   const activeWiki = wikis.find((w) => w.id === activeWikiId);
   const activeWikis = activeWikiIds
     .map((id) => wikis.find((w) => w.id === id))
@@ -1148,6 +1159,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         createShelf,
         renameShelf,
         deleteShelf,
+        applyShelfDigest,
         multiShelf,
         getActiveBook,
         loadBookFile,

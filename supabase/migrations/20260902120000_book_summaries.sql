@@ -56,3 +56,28 @@ ALTER TABLE public.user_settings
 
 COMMENT ON COLUMN public.user_settings.auto_catalog_on_upload IS
   'When true, a finished upload automatically generates chapter gists and a book summary using the user''s own model key. Off by default — it spends their key.';
+
+-- ── Shelf digests ──────────────────────────────────────────────────────────
+-- The catalog's third level: book gists roll up from chapter gists, and a
+-- shelf digest rolls up from its books' summaries. A shelf card can currently
+-- show a name, a count and three cover thumbnails — nothing about what the
+-- shelf is FOR, which is the one thing its owner named it for.
+--
+-- Same contract as books.summary: nullable, additive, feature-detected on the
+-- client (42703/PGRST204), model-authored text stored raw and sanitized at
+-- every read door.
+
+ALTER TABLE public.book_folders
+  ADD COLUMN IF NOT EXISTS summary       text,
+  ADD COLUMN IF NOT EXISTS summary_model text,
+  ADD COLUMN IF NOT EXISTS summarized_at timestamptz;
+
+COMMENT ON COLUMN public.book_folders.summary IS
+  'Model-authored shelf digest, rolled up from member books'' summaries. Untrusted text: stored raw, sanitized at every read door. NULL = not yet generated.';
+COMMENT ON COLUMN public.book_folders.summary_model IS
+  'Model id that authored the shelf digest, so it is never shown as unattributed metadata.';
+COMMENT ON COLUMN public.book_folders.summarized_at IS
+  'When the digest was written. A shelf whose membership changed since is stale by comparison.';
+
+-- No new RLS policy: existing book_folders policies scope by user_id, and
+-- these are columns on that same row.

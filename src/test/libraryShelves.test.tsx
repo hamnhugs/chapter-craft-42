@@ -47,6 +47,7 @@ vi.mock("@/context/AppContext", () => ({
     deleteShelf: vi.fn(),
     applyChapterGists: vi.fn(),
     applyBookSummary: vi.fn(),
+    applyShelfDigest: vi.fn(),
   }),
 }));
 

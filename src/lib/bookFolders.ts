@@ -13,6 +13,13 @@ export interface BookFolder {
   sort_index: number;
   created_at: string;
   updated_at: string;
+  /** Model-authored shelf digest (the catalog's third level), rolled up from
+   *  member books' summaries. Undefined until the 20260902120000 migration is
+   *  applied — listFolders does `select *`, so a missing column simply never
+   *  appears rather than erroring. Untrusted text, sanitized at read doors. */
+  summary?: string | null;
+  summary_model?: string | null;
+  summarized_at?: string | null;
 }
 
 export async function listFolders(): Promise<BookFolder[]> {

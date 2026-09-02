@@ -7,6 +7,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { bookContextStore, bookHasCatalog } from "@/lib/chatBooks";
 import { catalogJobs, useCatalogJobs } from "@/lib/catalogJobs";
 import { useChatSettings } from "@/hooks/useChatSettings";
+import { acquireDigestRun, generateShelfDigest, releaseDigestRun } from "@/lib/shelfDigest";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
   DropdownMenuCheckboxItem, DropdownMenuLabel,
@@ -94,7 +95,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
   const {
     toggleBookShelf, multiShelf, setActiveTab, membershipLoaded,
     shelves, shelvesLoading, createShelf, renameShelf, deleteShelf,
-    applyChapterGists, applyBookSummary,
+    applyChapterGists, applyBookSummary, applyShelfDigest,
   } = useApp();
   const { selectedModel, apiKey, geminiApiKey, nvidiaKeyLast4 } = useChatSettings();
   const catJobs = useCatalogJobs();
@@ -133,6 +134,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
   const allBooksRef = useRef(allBooks);
   useEffect(() => { allBooksRef.current = allBooks; }, [allBooks]);
 
+  const [digesting, setDigesting] = useState<string | null>(null);
   const [openShelfId, setOpenShelfId] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -144,13 +146,11 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [activeTags, setActiveTags] = useState<string[]>([]);
 
-  const tagged = (b: BookDocument, t: string) => (b.tags || []).includes(t);
-  const inCategory = (b: BookDocument) => (b.category || UNCATEGORIZED) === activeCategory;
 
   // One facet-narrowed set, used by every grid and every matching count.
   const narrowed = useMemo(() => books.filter((b) => {
     if (activeCategory && (b.category || UNCATEGORIZED) !== activeCategory) return false;
-    return activeTags.every((t) => tagged(b, t));
+    return activeTags.every((t) => (b.tags || []).includes(t));
   }), [books, activeCategory, activeTags]);
 
   /** True whenever anything is narrowing the view — search or facets. */
@@ -210,6 +210,37 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
     );
   };
 
+  /** Roll the shelf's books up into a digest — the catalog's third level. */
+  const writeDigest = async (shelf: BookFolder, members: BookDocument[]) => {
+    if (digesting) return;
+    if (!acquireDigestRun()) {
+      toast("Another digest is still being written.");
+      return;
+    }
+    setDigesting(shelf.id);
+    try {
+      const result = await generateShelfDigest(
+        shelf,
+        members,
+        {
+          model: selectedModel,
+          keys: {
+            apiKey: apiKey || undefined,
+            geminiApiKey: geminiApiKey || undefined,
+            nvidiaKeyLast4: nvidiaKeyLast4 || undefined,
+          },
+        },
+      );
+      applyShelfDigest(shelf.id, result.summary, result.model);
+      toast.success(`Digest written for “${shelf.name}”`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't write the digest");
+    } finally {
+      releaseDigestRun();
+      setDigesting(null);
+    }
+  };
+
   const isUnshelved = openShelfId === UNSHELVED_ID;
   const booksOnShelf = useMemo(
     () => (isUnshelved ? unshelvedVisible : openShelfId ? visibleByShelf.get(openShelfId) || [] : []),
@@ -227,7 +258,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
   const categoryChips = useMemo(() => {
     const counts = new Map<string, number>();
     for (const b of books) {
-      if (!activeTags.every((t) => tagged(b, t))) continue;
+      if (!activeTags.every((t) => (b.tags || []).includes(t))) continue;
       const cat = b.category || UNCATEGORIZED;
       counts.set(cat, (counts.get(cat) || 0) + 1);
     }
@@ -237,7 +268,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
   const tagChips = useMemo(() => {
     const counts = new Map<string, number>();
     for (const b of books) {
-      if (activeCategory && !inCategory(b)) continue;
+      if (activeCategory && (b.category || UNCATEGORIZED) !== activeCategory) continue;
       for (const t of b.tags || []) counts.set(t, (counts.get(t) || 0) + 1);
     }
     return [...counts.entries()]
@@ -433,6 +464,19 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
               </>
             );
           })()}
+          {shelf && (
+            <button
+              onClick={() => writeDigest(shelf, membersByShelf.get(shelf.id) || [])}
+              disabled={digesting === shelf.id}
+              className="inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-container-high text-foreground text-xs font-bold border border-outline-variant/20 hover:bg-surface-container-highest disabled:opacity-50"
+              title="Summarize what this shelf is about, from its books' summaries (uses your model key)"
+            >
+              <span className={`material-symbols-outlined text-sm ${digesting === shelf.id ? "animate-spin" : ""}`} aria-hidden>
+                {digesting === shelf.id ? "progress_activity" : "summarize"}
+              </span>
+              {digesting === shelf.id ? "Writing…" : shelf.summary ? "Rewrite digest" : "Write digest"}
+            </button>
+          )}
           {isUnshelved && booksOnShelf.length > 0 && (
             <button
               onClick={() => chatWithBooks(booksOnShelf, "Unshelved")}
@@ -454,6 +498,15 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
             </button>
           )}
         </nav>
+
+        {shelf?.summary && (
+          <div className="rounded-xl bg-surface-container-low/60 border border-outline-variant/10 px-5 py-3">
+            <p className="text-sm text-on-surface-variant leading-relaxed">{shelf.summary}</p>
+            <p className="text-[10px] text-on-surface-variant/60 mt-1">
+              AI digest{shelf.summary_model ? ` · ${shelf.summary_model}` : ""}
+            </p>
+          </div>
+        )}
 
         {booksOnShelf.length === 0 ? (
           <div className="py-12 text-center text-on-surface-variant text-sm">
@@ -539,6 +592,17 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
                     </>
                   )}
                 </p>
+                {/* The digest — what this shelf is FOR. A card could
+                    previously show a name, a count and three covers, none of
+                    which says why the shelf exists. */}
+                {f.summary && (
+                  <p
+                    className="text-[11px] leading-snug text-on-surface-variant/80 mt-1.5 line-clamp-3"
+                    title={`AI digest: ${f.summary}`}
+                  >
+                    {f.summary}
+                  </p>
+                )}
               </div>
               {/* On a touch screen these are the ONLY route to renaming or
                   deleting a shelf, and `hover` never fires there — so
