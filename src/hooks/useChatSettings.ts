@@ -65,6 +65,10 @@ interface ChatSettings {
    *  capabilities and green tests apply without a manual approval tap.
    *  New tools and capability changes always ask. Default OFF. */
   autoApproveToolUpdates: boolean;
+  /** Generate chapter gists + a book summary automatically when an upload
+   *  finishes chapterizing. OFF by default: the run spends the user's own
+   *  model key, and nothing should start doing that unasked. */
+  autoCatalogOnUpload: boolean;
   /** Optional override model used for chat turns that include image attachments. Falls back to selectedModel if empty. */
   visionModel: string;
   /** Vision model that describes figures extracted from uploaded documents. "" = built-in default. */
@@ -126,6 +130,7 @@ const defaults: ChatSettings = {
   maxReplySentences: 0,
   autoShowMemoryImages: true,
   autoApproveToolUpdates: false,
+  autoCatalogOnUpload: false,
   visionModel: "",
   imageExtractionModel: "",
   imageModelPrimary: "",
@@ -269,6 +274,7 @@ function rowToSettings(data: any): ChatSettings {
       : 0,
     autoShowMemoryImages: data.auto_show_memory_images !== false,
     autoApproveToolUpdates: data.auto_approve_tool_updates === true,
+    autoCatalogOnUpload: data.auto_catalog_on_upload === true,
     visionModel: data.vision_model || "",
     imageExtractionModel: data.image_extraction_model || "",
     imageModelPrimary: data.image_model_primary || "",
@@ -322,7 +328,7 @@ function ensureLoaded(userId: string | null) {
       "deep_research_model", "voice_model", "tts_rate", "hands_free_tts_rate", "auto_read_replies",
       "wiki_model", "custom_system_prompt", "burplexity_api_token", "inworld_api_key",
       "inworld_enabled", "inworld_voice_id", "access_all_neurons", "max_reply_sentences",
-      "auto_show_memory_images", "auto_approve_tool_updates", "vision_model",
+      "auto_show_memory_images", "auto_approve_tool_updates", "auto_catalog_on_upload", "vision_model",
       "image_extraction_model", "image_model_primary", "image_model_fallback", "image_quality",
       "image_size", "saved_image_models", "chat_tool_permissions", "video_model_primary",
       "saved_video_models", "video_default_duration", "video_default_resolution",
@@ -345,7 +351,7 @@ function ensureLoaded(userId: string | null) {
     // prevent.
     const OPTIONAL_READ = [
       "gemini_api_key", "tavily_api_key", "lean_mode", "nvidia_key_last4",
-      "auto_show_memory_images", "auto_approve_tool_updates", "access_all_neurons",
+      "auto_show_memory_images", "auto_approve_tool_updates", "auto_catalog_on_upload", "access_all_neurons",
       "max_reply_sentences", "image_extraction_model",
       "video_model_primary", "saved_video_models", "video_default_duration",
       "video_default_resolution", "video_default_aspect", "video_generate_audio",
@@ -394,6 +400,7 @@ const SETTING_LABEL: Partial<Record<keyof ChatSettings, string>> = {
   wikiModel: "the neuron model",
   customSystemPrompt: "your custom instructions",
   autoApproveToolUpdates: "Tool Foundry auto-approval",
+  autoCatalogOnUpload: "Auto-catalog on upload",
   accessAllNeurons: "the neuron access setting",
   maxReplySentences: "the reply-length cap",
   imageModelPrimary: "the image model",
@@ -450,6 +457,7 @@ function persistSettings(userId: string, next: ChatSettings, changed?: Array<key
       max_reply_sentences: next.maxReplySentences || 0,
       auto_show_memory_images: next.autoShowMemoryImages,
       auto_approve_tool_updates: next.autoApproveToolUpdates,
+      auto_catalog_on_upload: next.autoCatalogOnUpload,
       vision_model: next.visionModel || null,
       image_extraction_model: next.imageExtractionModel || null,
       image_model_primary: next.imageModelPrimary || null,
@@ -485,7 +493,7 @@ function persistSettings(userId: string, next: ChatSettings, changed?: Array<key
     // column and retry so one new column never breaks every settings save.
     // PostgREST reports ONE missing column per attempt (alphabetically
     // first), so keep retrying until no optional column is named.
-    const optionalColumns = ["access_all_neurons", "max_reply_sentences", "auto_show_memory_images", "auto_approve_tool_updates", "image_extraction_model",
+    const optionalColumns = ["access_all_neurons", "max_reply_sentences", "auto_show_memory_images", "auto_approve_tool_updates", "auto_catalog_on_upload", "image_extraction_model",
       "video_model_primary", "saved_video_models", "video_default_duration", "video_default_resolution",
       "video_default_aspect", "video_generate_audio", "video_confirm_threshold",
       "video_identity_scale", "video_qc_enabled", "video_motion_model",
@@ -734,6 +742,7 @@ export function useChatSettings() {
     setMaxReplySentences: (n: number) => update({ maxReplySentences: Math.max(0, Math.min(12, Math.floor(Number(n) || 0))) }),
     setAutoShowMemoryImages: (v: boolean) => update({ autoShowMemoryImages: v }),
     setAutoApproveToolUpdates: (v: boolean) => update({ autoApproveToolUpdates: v }),
+    setAutoCatalogOnUpload: (v: boolean) => update({ autoCatalogOnUpload: v }),
     setVisionModel: (m: string) => update({ visionModel: m }),
     setImageExtractionModel: (m: string) => update({ imageExtractionModel: m }),
     setImageModelPrimary: (m: string) => update({ imageModelPrimary: m }),

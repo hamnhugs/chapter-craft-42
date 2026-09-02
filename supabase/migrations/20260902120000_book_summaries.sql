@@ -36,3 +36,23 @@ COMMENT ON COLUMN public.books.summarized_at IS
 -- No index: `summary` is never a filter predicate server-side. Vault search
 -- over summaries runs client-side against already-loaded rows (the library is
 -- in memory), matching how title/category/tag search already works.
+
+-- ── Auto-catalog at ingest ─────────────────────────────────────────────────
+-- Catalog generation is manual today and buried in the chat picker, which is
+-- why so many books carry no gists at all. This opts a user into running it
+-- automatically when an upload finishes chapterizing.
+--
+-- DEFAULT FALSE deliberately: the run spends the user's own model key, and
+-- nothing should start spending it without them saying so. The Settings
+-- toggle is the opt-in.
+--
+-- The client's settings save carries an optional-column cascade, and
+-- auto_catalog_on_upload is registered in it, so a bundle that ships before
+-- this migration lands strips the column and saves the rest rather than
+-- failing the whole row.
+
+ALTER TABLE public.user_settings
+  ADD COLUMN IF NOT EXISTS auto_catalog_on_upload boolean NOT NULL DEFAULT false;
+
+COMMENT ON COLUMN public.user_settings.auto_catalog_on_upload IS
+  'When true, a finished upload automatically generates chapter gists and a book summary using the user''s own model key. Off by default — it spends their key.';

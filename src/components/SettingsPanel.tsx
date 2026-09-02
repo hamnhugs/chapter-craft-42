@@ -207,12 +207,12 @@ const SettingsPanel: React.FC = () => {
     handsFreeTtsRate, maxReplySentences,
     autoReadReplies, wikiModel, customSystemPrompt, burplexityApiToken,
     inworldApiKey, inworldEnabled, inworldVoiceId, accessAllNeurons, loaded,
-    imageExtractionModel,
+    imageExtractionModel, autoCatalogOnUpload,
     saveApiKey, saveNvidiaKey, setGeminiApiKey, setTavilyApiKey, setLeanMode, addModel, removeModel, setSelectedModel, setDeepResearchModel,
     setVoiceModel, setVisionModel, setTtsRate, setHandsFreeTtsRate, setMaxReplySentences, setAutoReadReplies, setWikiModel,
     setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey,
     setInworldEnabled, setInworldVoiceId, setAccessAllNeurons,
-    setImageExtractionModel,
+    setImageExtractionModel, setAutoCatalogOnUpload,
   } = useChatSettings();
 
   const [newModelInput, setNewModelInput] = useState("");
@@ -1211,6 +1211,26 @@ const SettingsPanel: React.FC = () => {
                   </div>
                 </div>
                 <Hint>A hard limit — the reply is cut at the last full sentence and generation stops there (shorter = cheaper). Bullets count as sentences; code blocks don't. Digest and Deep Research are exempt.</Hint>
+              </div>
+
+              <div>
+                <FieldLabel>Book catalog</FieldLabel>
+                <div className="mt-1.5 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Catalog new books automatically</p>
+                    <p className="text-xs text-on-surface-variant">
+                      After an upload finishes detecting chapters, write a one-line summary for each
+                      chapter and a short summary for the book. That catalog is what the assistant
+                      routes on, and what your book cards show.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={autoCatalogOnUpload}
+                    onCheckedChange={setAutoCatalogOnUpload}
+                    aria-label="Catalog new books automatically"
+                  />
+                </div>
+                <Hint>Off by default because it uses your own model key — roughly one short call per eight chapters, plus one for the book. You can always catalog a book by hand from the book-context picker in Counsel.</Hint>
               </div>
 
               <div>

@@ -7,6 +7,7 @@ import { useChatSettings } from "@/hooks/useChatSettings";
 import { usePlan } from "@/hooks/usePlan";
 import { openPricing } from "@/components/PricingDialog";
 import { structureJobs, useStructureJobs, StructureJob } from "@/lib/structureJobs";
+import { catalogJobs, useCatalogJobs, CatalogJob } from "@/lib/catalogJobs";
 import { figureJobs, useFigureJobs, FigureJob } from "@/lib/figureJobs";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { autoTagBooks } from "@/lib/autoTag";
@@ -111,13 +112,19 @@ const VIEW_OPTIONS: { id: ViewMode; icon: string; label: string }[] = [
 
 
 const Library: React.FC = () => {
-  const { books, addBook, removeBook, requestBookLoad, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile } = useApp();
-  const { apiKey, imageExtractionModel } = useChatSettings();
+  const { books, addBook, removeBook, requestBookLoad, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile, applyChapterGists, applyBookSummary } = useApp();
+  const { apiKey, imageExtractionModel, selectedModel, geminiApiKey, nvidiaKeyLast4, autoCatalogOnUpload } = useChatSettings();
   const { user } = useAuth();
   const { isPaid, loaded: planLoaded } = usePlan();
   const { isAdmin, loaded: adminLoaded } = useIsAdmin();
   const jobs = useStructureJobs();
+  const catJobs = useCatalogJobs();
   const figJobs = useFigureJobs();
+  // The catalog run resolves the book at RUN time, not enqueue time —
+  // chapters land in between, and a captured object would summarize an empty
+  // book.
+  const booksRef = useRef(books);
+  useEffect(() => { booksRef.current = books; }, [books]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const [sortBy, setSortBy] = useState<"date" | "name">("date");
@@ -215,6 +222,28 @@ const Library: React.FC = () => {
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
   }, []);
+
+  /**
+   * Queue chapter gists + a book summary for a freshly chapterized book.
+   *
+   * Opt-in (Settings → auto-catalog): the run spends the user's own model
+   * key, so nothing starts it unasked. This is the fix for catalog generation
+   * being manual and buried in the chat picker, which is why most books carry
+   * no catalog at all.
+   */
+  const enqueueCatalog = (bookId: string) => {
+    if (!autoCatalogOnUpload) return;
+    catalogJobs.enqueue({
+      bookId,
+      getBook: () => booksRef.current.find((b) => b.id === bookId),
+      settings: {
+        model: selectedModel,
+        keys: { apiKey: apiKey || undefined, geminiApiKey: geminiApiKey || undefined, nvidiaKeyLast4: nvidiaKeyLast4 || undefined },
+      },
+      onGists: applyChapterGists,
+      onSummary: applyBookSummary,
+    });
+  };
 
   const sortedBooks = useMemo(() => {
     return [...books].sort((a, b) => {
@@ -431,6 +460,7 @@ const Library: React.FC = () => {
               load: async () => ({ file: fileToUpload }),
               apiKey: apiKey || undefined,
               deps: { addChapter, removeChapter },
+              onComplete: () => enqueueCatalog(finalBookId),
             });
           }
         } catch (error) {
@@ -491,6 +521,9 @@ const Library: React.FC = () => {
       apiKey: apiKey || undefined,
       replaceChapters: book.chapters.length > 0 ? book.chapters : undefined,
       deps: { addChapter, removeChapter },
+      // A re-detect INSERTS new chapter ids, so whatever gists existed no
+      // longer point at anything. Re-cataloging is the only way back.
+      onComplete: () => enqueueCatalog(book.id),
     });
   };
 
@@ -837,6 +870,7 @@ const Library: React.FC = () => {
                 query={query}
                 job={jobs[book.id]}
                 figJob={figJobs[book.id]}
+                catJob={catJobs[book.id]}
                 onDetect={() => runDetect(book)}
                 onExtractFigures={() => runExtractFigures(book)}
                 onRead={() => requestBookLoad(book.id)}
@@ -880,12 +914,13 @@ const BookCard: React.FC<{
   query?: string;
   job?: StructureJob;
   figJob?: FigureJob;
+  catJob?: CatalogJob;
   onDetect: () => void;
   onExtractFigures: () => void;
   onRead: () => void;
   onRemove: () => void;
   onRename: (newTitle: string) => void;
-}> = ({ book, index, query = "", job, figJob, onDetect, onExtractFigures, onRead, onRemove, onRename }) => {
+}> = ({ book, index, query = "", job, figJob, catJob, onDetect, onExtractFigures, onRead, onRemove, onRename }) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(book.title);
   const renameFromMenu = useRef(false);
@@ -1040,6 +1075,30 @@ const BookCard: React.FC<{
             <p className="flex items-center gap-1.5 text-xs text-destructive">
               <span className="material-symbols-outlined text-sm">error</span>
               <span className="truncate" title={job.error}>{job.error || "Detection failed"}</span>
+            </p>
+          ) : null}
+          {/* Catalog run (chapter gists + book summary). Shown here because
+              this is where its result appears — the summary lands on this
+              card. A missing migration reads as a note, not an error: the
+              gists did land and are useful without it. */}
+          {catJob?.status === "queued" || catJob?.status === "running" ? (
+            <p className="flex items-center gap-1.5 text-xs text-primary">
+              <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>
+              <span className="truncate">{catJob.progress || "Building catalog…"}</span>
+            </p>
+          ) : catJob?.status === "done" ? (
+            <p className="flex items-center gap-1.5 text-xs text-primary">
+              <span className="material-symbols-outlined text-sm">menu_book</span>
+              <span className="truncate" title={catJob.note}>
+                {catJob.note
+                  ? catJob.note
+                  : `Catalog ready${catJob.gistsWritten ? ` · ${catJob.gistsWritten} chapter${catJob.gistsWritten === 1 ? "" : "s"}` : ""}`}
+              </span>
+            </p>
+          ) : catJob?.status === "error" ? (
+            <p className="flex items-center gap-1.5 text-xs text-destructive">
+              <span className="material-symbols-outlined text-sm">error</span>
+              <span className="truncate" title={catJob.error}>{catJob.error || "Catalog failed"}</span>
             </p>
           ) : null}
           {extracting ? (

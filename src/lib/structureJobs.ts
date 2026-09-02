@@ -27,6 +27,10 @@ interface JobInput {
   model?: string;
   replaceChapters?: Chapter[];
   deps: SaveDeps;
+  /** Called once, after chapters are saved. The hook the catalog run hangs
+   *  off: gists can only be written for chapters that exist. Never called on
+   *  failure. */
+  onComplete?: (savedCount: number) => void;
 }
 
 let jobs: Record<string, StructureJob> = {};
@@ -76,6 +80,14 @@ async function runNext() {
       savedCount: result.saved,
       method: result.method,
     });
+    // After the patch, so a listener that reacts to "done" sees final state.
+    try {
+      input.onComplete?.(result.saved);
+    } catch (e) {
+      // A follow-on scheduling failure must not mark detection as failed —
+      // the chapters are saved either way.
+      console.error("Post-detection hook failed:", e);
+    }
   } catch (e: any) {
     console.error("Structure detection failed:", e);
     patch(input.bookId, {
