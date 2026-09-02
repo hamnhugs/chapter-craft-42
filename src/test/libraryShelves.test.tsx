@@ -55,8 +55,9 @@ vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1" } }) }));
 
 vi.mock("@/lib/chatBooks", () => ({
   bookContextStore: { init: vi.fn(), set: vi.fn() },
-  // The real gate: a book rides catalog mode only when it HAS gists.
-  bookHasCatalog: (b: { chapters: { gist?: string | null }[] }) =>
+  // Mirrors the real gate: chapter gists OR a book-level summary.
+  bookHasCatalog: (b: { chapters: { gist?: string | null }[]; summary?: string | null }) =>
+    (b.summary || "").trim().length > 0 ||
     b.chapters.some((c) => (c.gist || "").trim().length > 0),
 }));
 

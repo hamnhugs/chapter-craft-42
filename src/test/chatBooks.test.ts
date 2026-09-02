@@ -428,10 +428,22 @@ describe("catalog mode (Card Catalog Stage 1)", () => {
     expect(withSummary.used[0].chaptersSent).toBeLessThanOrEqual(plain.used[0].chaptersSent);
   });
 
-  it("a summary alone does not buy catalog mode — that gate is still measured on gists", () => {
-    // Widening bookHasCatalog to "gists OR summary" is a behaviour change
-    // that belongs to the next E2 rerun, not to an unmeasured commit.
+  it("a summary alone is enough to ride catalog mode", () => {
+    // Widened on the owner's call: a book summary routes at the coarser level
+    // ("is the answer in this book at all") and is the difference between a
+    // spine label and a back cover. The chapter map rides unannotated, and
+    // the fetch loop can still reach any chapter's text.
     const b = summarized(catBook("cb-s6", "Theta", [gc("One", 900)]), "A summary with no gists behind it.");
+    const r = buildBookContextBlock([b], { mode: "catalog" }, NONCE)!;
+    expect(r.used[0].state).toBe("catalog");
+    expect(r.message).toContain("Summary: A summary with no gists behind it.");
+    expect(r.message).toContain('- ch 1: "One"');
+  });
+
+  it("a book with neither gists nor a summary still rides full text", () => {
+    // The measured floor stays: bare titles gave the model nothing to route
+    // on and lost exact-quote retrieval outright.
+    const b = catBook("cb-s7", "Iota", [gc("One", 900)]);
     const r = buildBookContextBlock([b], { mode: "catalog" }, NONCE)!;
     expect(r.used[0].state).not.toBe("catalog");
   });

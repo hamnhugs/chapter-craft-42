@@ -84,18 +84,25 @@ export type BookContextMode = "full" | "catalog";
  *  is exactly this one constant changing to "catalog" — nothing else. */
 export const DEFAULT_BOOK_CONTEXT_MODE: BookContextMode = "catalog";
 
-/** Does this book have a catalog to ride? A catalog with no summaries is
- *  bare titles, and the E2 rerun measured that losing exact-quote retrieval
- *  outright (7/11 vs full's 10/11) because the model has nothing to route
- *  on — so "catalog mode" means catalog WHERE ONE EXISTS.
+/** Does this book have a catalog to ride? A catalog with NOTHING written
+ *  about it is bare titles, and the E2 rerun measured that losing exact-quote
+ *  retrieval outright (7/11 vs full's 10/11) because the model has no routing
+ *  signal at all — so "catalog mode" means catalog WHERE ONE EXISTS.
  *
- *  DELIBERATELY still keyed on chapter gists alone, even though a book-level
- *  summary is now also something to route on. The gist rule is what the
- *  frozen E2 set actually measured; widening the gate to "gists OR summary"
- *  is a behaviour change that belongs to the next E2 rerun, not to a commit
- *  that cannot show a number for it. A summary-only book therefore keeps its
- *  full-text tier today, and its summary is simply unused. */
-export function bookHasCatalog(book: Pick<BookDocument, "chapters">): boolean {
+ *  "One exists" means chapter gists OR a book-level summary. Gists are what
+ *  the frozen E2 set measured, and they remain the stronger signal — they say
+ *  WHICH chapter to open, which is what the exact-quote questions turned on.
+ *  A book summary routes at the coarser level ("is the answer in this book at
+ *  all") and, unlike bare titles, is something to route on: it is the
+ *  difference between a spine label and a back cover. A book carrying only a
+ *  summary therefore rides catalog with its chapter map unannotated, and can
+ *  still reach any chapter's text through the fetch loop.
+ *
+ *  Deliberately widened ahead of the next E2 rerun, on the owner's call. If
+ *  that rerun shows summary-only books underperforming their full-text tier,
+ *  this is the one line to revert. */
+export function bookHasCatalog(book: Pick<BookDocument, "chapters" | "summary">): boolean {
+  if ((book.summary || "").trim().length > 0) return true;
   return book.chapters.some((c) => (c.gist || "").trim().length > 0);
 }
 
