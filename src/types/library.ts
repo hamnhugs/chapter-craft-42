@@ -24,6 +24,17 @@ export interface BookDocument {
   category?: string;
   /** Free-form topic tags assigned by auto-tag (mind map edges + search). */
   tags?: string[];
+  /** Model-authored book-level summary — the catalog layer ABOVE chapter
+   *  gists. Untrusted text, same contract as Chapter.gist: stored raw, every
+   *  prompt/tool door sanitizes it on read. Absent until generated, and
+   *  absent for the whole session if the books.summary migration
+   *  (20260902120000) has not been applied — every reader feature-detects. */
+  summary?: string | null;
+  /** Model id that authored `summary`. Surfaced in the UI so a summary is
+   *  never shown as unattributed book metadata. */
+  summaryModel?: string | null;
+  /** When `summary` was written (epoch ms), for staleness against chapters. */
+  summarizedAt?: number | null;
   /** User-managed shelf ids (book_folders.id), non-exclusive; empty when
    *  unshelved. Junction mode loads them in deterministic (book, shelf)
    *  order; books.folder_id survives only as a BEST-EFFORT single-shelf

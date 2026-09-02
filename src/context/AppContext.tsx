@@ -73,6 +73,9 @@ interface AppState {
   /** Patch freshly generated chapter gists into library state (catalog mode).
    *  DB writes happen in chapterGists.ts; this only mirrors them locally. */
   applyChapterGists: (gistById: Record<string, string>) => void;
+  /** Patch a freshly generated book summary into library state. The DB write
+   *  happens in bookSummary.ts; this only mirrors it locally. */
+  applyBookSummary: (bookId: string, summary: string, model: string) => void;
 
   refreshWikis: () => Promise<void>;
   setActiveWiki: (wikiId: string) => Promise<void>;
@@ -298,14 +301,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // real library) and threw the whole library away if it failed — which is
     // how the chat ended up reporting "no books" while the Vault had 50.
     const loadBooks = async () => {
-      const bookRows = await fetchAllRows((from, to) =>
-        supabase
-          .from("books")
-          .select("id, title, file_name, page_count, cover_image_url, created_at, category, tags, folder_id")
-          .eq("user_id", user.id)
-          .order("created_at", { ascending: false })
-          .range(from, to)
-      );
+      // First read IS the probe (house law — no HEAD probes): ask for the
+      // summary columns; a 42703 means the book-summary migration
+      // (20260902120000) isn't applied yet, so retry without them and this
+      // session runs a summary-less catalog. Same shape as the chapters.gist
+      // feature-detect below.
+      const BOOK_COLUMNS =
+        "id, title, file_name, page_count, cover_image_url, created_at, category, tags, folder_id";
+      const loadBookRows = async () => {
+        const withSummary = await fetchAllRows((from, to) =>
+          supabase
+            .from("books")
+            .select(`${BOOK_COLUMNS}, summary, summary_model, summarized_at`)
+            .eq("user_id", user.id)
+            .order("created_at", { ascending: false })
+            .range(from, to)
+        );
+        if (!withSummary.error || (withSummary.error as any)?.code !== "42703") return withSummary;
+        return fetchAllRows((from, to) =>
+          supabase
+            .from("books")
+            .select(BOOK_COLUMNS)
+            .eq("user_id", user.id)
+            .order("created_at", { ascending: false })
+            .range(from, to)
+        );
+      };
+      const bookRows = await loadBookRows();
 
       if (cancelled) return;
 
@@ -325,6 +347,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addedAt: new Date(b.created_at).getTime(),
         category: b.category || undefined,
         tags: Array.isArray(b.tags) ? b.tags : [],
+        summary: b.summary ?? null,
+        summaryModel: b.summary_model ?? null,
+        summarizedAt: b.summarized_at ? new Date(b.summarized_at).getTime() : null,
         // EMPTY, deliberately. The junction read below is the authority.
         // Seeding from the single-valued folder_id mirror meant a book on
         // three shelves rendered as being on one — with the shelf menu's
@@ -1077,6 +1102,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   }, []);
 
+  const applyBookSummary = useCallback((bookId: string, summary: string, model: string) => {
+    setBooks((prev) => prev.map((b) =>
+      b.id === bookId
+        ? { ...b, summary, summaryModel: model, summarizedAt: Date.now() }
+        : b
+    ));
+  }, []);
+
   const activeWiki = wikis.find((w) => w.id === activeWikiId);
   const activeWikis = activeWikiIds
     .map((id) => wikis.find((w) => w.id === id))
@@ -1104,6 +1137,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addChapter,
         updateChapter,
         applyChapterGists,
+        applyBookSummary,
         removeChapter,
         updateBookTitle,
         updateBookTags,

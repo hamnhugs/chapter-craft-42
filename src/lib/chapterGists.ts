@@ -66,7 +66,7 @@ export function excerptOf(text: string): string {
 /** A chapter name is a LABEL inside the numbered prompt's structural line —
  *  whitespace collapses and quotes soften so a hostile rename can never
  *  fabricate an extra `#N "…"` entry (review finding). */
-function labelOf(name: string, fallback: string): string {
+export function labelOf(name: string, fallback: string): string {
   const n = (name || "").replace(/\s+/g, " ").replace(/["“”]/g, "'").trim().slice(0, 120);
   return n || fallback;
 }
