@@ -29,6 +29,7 @@ import type { BookDocument } from "@/types/library";
 const state = vi.hoisted(() => ({
   shelves: [] as { id: string; user_id: string; name: string; sort_index: number; created_at: string; updated_at: string }[],
   membershipLoaded: true,
+  enqueued: [] as unknown[],
 }));
 
 // The roster arrives through AppContext now, not a component-local fetch —
@@ -44,6 +45,8 @@ vi.mock("@/context/AppContext", () => ({
     createShelf: vi.fn(),
     renameShelf: vi.fn(),
     deleteShelf: vi.fn(),
+    applyChapterGists: vi.fn(),
+    applyBookSummary: vi.fn(),
   }),
 }));
 
@@ -51,6 +54,20 @@ vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1" } }) }));
 
 vi.mock("@/lib/chatBooks", () => ({
   bookContextStore: { init: vi.fn(), set: vi.fn() },
+  // The real gate: a book rides catalog mode only when it HAS gists.
+  bookHasCatalog: (b: { chapters: { gist?: string | null }[] }) =>
+    b.chapters.some((c) => (c.gist || "").trim().length > 0),
+}));
+
+vi.mock("@/hooks/useChatSettings", () => ({
+  useChatSettings: () => ({
+    selectedModel: "test-model", apiKey: "k", geminiApiKey: "", nvidiaKeyLast4: "",
+  }),
+}));
+
+vi.mock("@/lib/catalogJobs", () => ({
+  catalogJobs: { enqueue: (i: unknown) => state.enqueued.push(i) },
+  useCatalogJobs: () => ({}),
 }));
 
 vi.mock("sonner", () => ({
@@ -105,6 +122,7 @@ beforeEach(() => {
   (globalThis as unknown as Mutable).IS_REACT_ACT_ENVIRONMENT = true;
   state.shelves = [shelf("s1", "Sci-fi")];
   state.membershipLoaded = true;
+  state.enqueued = [];
   vi.clearAllMocks();
 });
 
@@ -153,6 +171,18 @@ describe("LibraryShelves counting law", () => {
     expect(host.textContent).toContain("All books (5)");
   });
 });
+
+/** Click the first button whose aria-label starts with `label`. Shelf cards
+ *  open via a text-less overlay button, so text matching cannot reach them. */
+async function clickLabelled(host: HTMLElement, label: string) {
+  const btn = Array.from(host.querySelectorAll("button")).find((b) =>
+    (b.getAttribute("aria-label") || "").startsWith(label),
+  );
+  if (!btn) throw new Error(`no button labelled ${JSON.stringify(label)}`);
+  await act(async () => {
+    btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  });
+}
 
 /** Click the first button whose visible text contains `text`. */
 async function clickButton(host: HTMLElement, text: string) {
@@ -298,5 +328,52 @@ describe("LibraryShelves withholds counts until membership is known", () => {
     const unfiled = ALL.map((b) => ({ ...b, folderIds: [] }));
     const host = await mount({ books: unfiled, allBooks: unfiled });
     expect(host.textContent).toContain("Unshelved");
+  });
+});
+
+describe("LibraryShelves catalog readiness", () => {
+  const gisted = (id: string, title: string, hasGist: boolean): BookDocument => ({
+    ...book(id, title, ["s1"]),
+    chapters: [{
+      id: `${id}-c1`, name: "One", startPage: 1, endPage: 2,
+      textContent: "", gist: hasGist ? "A gist." : null,
+    }],
+  });
+
+  /** Two catalogued, one not — all on the Sci-fi shelf. */
+  const MIXED = [gisted("g1", "Dune", true), gisted("g2", "Solaris", true), gisted("g3", "Ubik", false)];
+
+  const openShelf = (host: HTMLElement) => clickLabelled(host, "Open Sci-fi");
+
+  it("says how much of the shelf can actually ride catalog mode", async () => {
+    // "Chat with this shelf" is the headline action and said nothing about
+    // whether the shelf could ride the compact map or would fall back to the
+    // expensive full-text path the Card Catalog exists to avoid.
+    const host = await mount({ books: MIXED, allBooks: MIXED });
+    await openShelf(host);
+    expect(host.textContent).toContain("2 of 3 catalogued");
+  });
+
+  it("offers to catalog only the books that lack one", async () => {
+    const host = await mount({ books: MIXED, allBooks: MIXED });
+    await openShelf(host);
+    await clickButton(host, "Catalog the rest");
+    expect(state.enqueued).toHaveLength(1);
+    expect((state.enqueued[0] as { bookId: string }).bookId).toBe("g3");
+  });
+
+  it("offers nothing when the whole shelf is catalogued", async () => {
+    const all = [gisted("g1", "Dune", true), gisted("g2", "Solaris", true)];
+    const host = await mount({ books: all, allBooks: all });
+    await openShelf(host);
+    expect(host.textContent).toContain("2 of 2 catalogued");
+    expect(host.textContent).not.toContain("Catalog the rest");
+  });
+
+  it("counts readiness against the shelf, not the search results", async () => {
+    // Same law as every other count on this surface.
+    const host = await mount({ books: [MIXED[0]], allBooks: MIXED, filtered: true });
+    await openShelf(host);
+    expect(host.textContent).toContain("2 of 3 catalogued");
   });
 });

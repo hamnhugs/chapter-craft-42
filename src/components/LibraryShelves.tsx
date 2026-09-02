@@ -1,10 +1,12 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { BookDocument } from "@/types/library";
 import type { BookFolder } from "@/lib/bookFolders";
 import { categoryColor, UNCATEGORIZED } from "@/lib/categoryColors";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/hooks/useAuth";
-import { bookContextStore } from "@/lib/chatBooks";
+import { bookContextStore, bookHasCatalog } from "@/lib/chatBooks";
+import { catalogJobs, useCatalogJobs } from "@/lib/catalogJobs";
+import { useChatSettings } from "@/hooks/useChatSettings";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
   DropdownMenuCheckboxItem, DropdownMenuLabel,
@@ -92,7 +94,10 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
   const {
     toggleBookShelf, multiShelf, setActiveTab, membershipLoaded,
     shelves, shelvesLoading, createShelf, renameShelf, deleteShelf,
+    applyChapterGists, applyBookSummary,
   } = useApp();
+  const { selectedModel, apiKey, geminiApiKey, nvidiaKeyLast4 } = useChatSettings();
+  const catJobs = useCatalogJobs();
   const { user } = useAuth();
 
   // This view WRITES to the book-context store, so it must init it — on a
@@ -122,6 +127,11 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
     );
     setActiveTab("chat");
   };
+
+  // Catalog runs resolve their book at RUN time — the shelf may have changed
+  // by the time the queue reaches it.
+  const allBooksRef = useRef(allBooks);
+  useEffect(() => { allBooksRef.current = allBooks; }, [allBooks]);
 
   const [openShelfId, setOpenShelfId] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
@@ -160,6 +170,45 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
   // "All books". This is a computed pseudo-shelf: no row, no membership.
   const unshelvedAll = useMemo(() => allBooks.filter((b) => b.folderIds.length === 0), [allBooks]);
   const unshelvedVisible = useMemo(() => narrowed.filter((b) => b.folderIds.length === 0), [narrowed]);
+
+  /**
+   * "Chat with this shelf" is the shelf's headline action, and it said
+   * nothing about whether the shelf could actually ride catalog mode. Books
+   * without a catalog fall back to full text per bookHasCatalog, which is the
+   * expensive path and the one the whole Card Catalog exists to avoid — so
+   * the readiness belongs next to the button that commits to it.
+   */
+  const catalogReadiness = (list: BookDocument[]) => ({
+    ready: list.filter(bookHasCatalog).length,
+    total: list.length,
+  });
+
+  const catalogShelf = (list: BookDocument[]) => {
+    const missing = list.filter((b) => !bookHasCatalog(b) && b.chapters.length > 0);
+    if (missing.length === 0) {
+      toast("Every book here that has chapters already has a catalog.");
+      return;
+    }
+    for (const b of missing) {
+      catalogJobs.enqueue({
+        bookId: b.id,
+        getBook: () => allBooksRef.current.find((x) => x.id === b.id),
+        settings: {
+          model: selectedModel,
+          keys: {
+            apiKey: apiKey || undefined,
+            geminiApiKey: geminiApiKey || undefined,
+            nvidiaKeyLast4: nvidiaKeyLast4 || undefined,
+          },
+        },
+        onGists: applyChapterGists,
+        onSummary: applyBookSummary,
+      });
+    }
+    toast.success(
+      `Cataloguing ${missing.length} book${missing.length === 1 ? "" : "s"} — they run one at a time, and progress shows on each card.`,
+    );
+  };
 
   const isUnshelved = openShelfId === UNSHELVED_ID;
   const booksOnShelf = useMemo(
@@ -352,6 +401,38 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
             </span>
           </span>
           <span className="ml-auto" />
+          {(() => {
+            const source = isUnshelved ? unshelvedAll : (membersByShelf.get(openShelfId!) || []);
+            const { ready, total } = catalogReadiness(source);
+            if (total === 0) return null;
+            const running = source.some((b) => {
+              const j = catJobs[b.id];
+              return j?.status === "queued" || j?.status === "running";
+            });
+            return (
+              <>
+                <span
+                  className="shrink-0 text-xs text-on-surface-variant"
+                  title="Books with a catalog ride the compact chapter map in chat; the rest fall back to full text."
+                >
+                  {ready} of {total} catalogued
+                </span>
+                {ready < total && (
+                  <button
+                    onClick={() => catalogShelf(source)}
+                    disabled={running}
+                    className="inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-container-high text-foreground text-xs font-bold border border-outline-variant/20 hover:bg-surface-container-highest disabled:opacity-50"
+                    title="Generate chapter summaries and a book summary for the books here that have none (uses your model key)"
+                  >
+                    <span className={`material-symbols-outlined text-sm ${running ? "animate-spin" : ""}`} aria-hidden>
+                      {running ? "progress_activity" : "menu_book"}
+                    </span>
+                    {running ? "Cataloguing…" : `Catalog the rest`}
+                  </button>
+                )}
+              </>
+            );
+          })()}
           {isUnshelved && booksOnShelf.length > 0 && (
             <button
               onClick={() => chatWithBooks(booksOnShelf, "Unshelved")}
