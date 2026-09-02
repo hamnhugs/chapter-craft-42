@@ -97,6 +97,9 @@ const SUPPORTED_UPLOAD_EXTENSIONS = ["pdf", "doc", "docx", "txt", "rtf", "odt", 
 const MAX_UPLOAD_ATTEMPTS = 3;
 const MAX_CONCURRENT_UPLOADS = 3;
 
+/** Cards past this index all share the last delay (see BookCard). */
+const STAGGER_MAX_STEPS = 12;
+
 type ViewMode = "shelves" | "list" | "graph";
 const VIEW_KEY = "vault_view_mode";
 
@@ -941,7 +944,11 @@ const BookCard: React.FC<{
     <div
       data-book-card
       className="group bg-surface-container-high rounded-2xl overflow-hidden flex flex-col transition-all hover:-translate-y-1 hover:shadow-2xl hover:shadow-black/40 animate-slide-up"
-      style={{ animationDelay: `${index * 60}ms` }}
+      /* The stagger is a flourish for the first screenful, not a schedule for
+         the whole library: `index * 60` meant the 100th card appeared six
+         seconds after the first, and the 300th eighteen. Clamp it so the
+         effect survives and the wait does not. */
+      style={{ animationDelay: `${Math.min(index, STAGGER_MAX_STEPS) * 60}ms` }}
     >
       {/* Cover */}
       <div

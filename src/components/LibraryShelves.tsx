@@ -28,6 +28,28 @@ import { toast } from "sonner";
 // local assignments map, so the two can never disagree and the PostgREST
 // 1000-row cap on un-ranged selects never applies here.
 
+/** Grids render this many books before asking. The Vault has no
+ *  virtualization, and the shelves view renders the WHOLE library under the
+ *  shelf cards on every visit — at a few hundred books that is a few hundred
+ *  cards with covers, tag rows and two action layouts each, built on every
+ *  keystroke in search. A page bound keeps the first paint cheap without
+ *  taking anything away: the rest is one click, and the counts above never
+ *  lied about how many there are. */
+const GRID_PAGE_SIZE = 60;
+
+/** A grid's visible slice plus its "show more" affordance. Resets whenever
+ *  the underlying list changes identity — a new search or facet selection
+ *  starts from the top, which is where the user is looking. */
+function usePagedBooks(items: BookDocument[]) {
+  const [shown, setShown] = useState(GRID_PAGE_SIZE);
+  useEffect(() => { setShown(GRID_PAGE_SIZE); }, [items]);
+  return {
+    page: shown >= items.length ? items : items.slice(0, shown),
+    remaining: Math.max(0, items.length - shown),
+    showMore: () => setShown((n) => n + GRID_PAGE_SIZE),
+  };
+}
+
 /** The pile's pseudo-shelf id. Not a book_folders row and never written —
  *  it only ever names the drill-in the unshelved books open into. */
 const UNSHELVED_ID = "__unshelved__";
@@ -194,6 +216,11 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
 
   const visibleBooks = narrowed;
 
+  // Both grids are paged. Hooks run unconditionally, before the drill-in's
+  // early return.
+  const allBooksPage = usePagedBooks(visibleBooks);
+  const shelfPage = usePagedBooks(booksOnShelf);
+
   const handleCreate = async () => {
     const name = newName.trim();
     if (!name) return;
@@ -356,9 +383,12 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
                 : "This shelf is empty — hover any book card and use the shelf menu to add it here."}
           </div>
         ) : (
-          <div className="book-grid">
-            {booksOnShelf.map((b, i) => renderBookCard(b, i))}
-          </div>
+          <>
+            <div className="book-grid">
+              {shelfPage.page.map((b, i) => renderBookCard(b, i))}
+            </div>
+            <ShowMore remaining={shelfPage.remaining} onClick={shelfPage.showMore} />
+          </>
         )}
       </div>
     );
@@ -585,11 +615,29 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
             <p className="text-sm">No books match the selected filters</p>
           </div>
         ) : (
-          <div className="book-grid">
-            {visibleBooks.map((b, i) => renderBookCard(b, i))}
-          </div>
+          <>
+            <div className="book-grid">
+              {allBooksPage.page.map((b, i) => renderBookCard(b, i))}
+            </div>
+            <ShowMore remaining={allBooksPage.remaining} onClick={allBooksPage.showMore} />
+          </>
         )}
       </section>
+    </div>
+  );
+};
+
+const ShowMore: React.FC<{ remaining: number; onClick: () => void }> = ({ remaining, onClick }) => {
+  if (remaining <= 0) return null;
+  const next = Math.min(remaining, GRID_PAGE_SIZE);
+  return (
+    <div className="flex justify-center mt-4">
+      <button
+        onClick={onClick}
+        className="px-5 py-2 rounded-lg bg-surface-container-high text-foreground text-sm font-semibold border border-outline-variant/10 hover:bg-surface-container-highest transition-colors"
+      >
+        Show {next} more · {remaining} not shown
+      </button>
     </div>
   );
 };

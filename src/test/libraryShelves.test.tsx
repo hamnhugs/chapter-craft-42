@@ -231,3 +231,38 @@ describe("LibraryShelves unshelved pile", () => {
     expect(host.textContent).toContain("1 matching");
   });
 });
+
+describe("LibraryShelves pages long grids", () => {
+  /** 70 books: one page of 60 plus a remainder. */
+  const MANY = Array.from({ length: 70 }, (_, i) =>
+    book(`p${i}`, `Book ${String(i).padStart(2, "0")}`, i < 65 ? ["s1"] : []),
+  );
+
+  it("renders one page and offers the rest", async () => {
+    const host = await mount({ books: MANY, allBooks: MANY });
+    expect(host.textContent).toContain("Book 00");
+    expect(host.textContent).toContain("Book 59");
+    expect(host.textContent).not.toContain("Book 60");
+    expect(host.textContent).toContain("Show 10 more");
+  });
+
+  it("keeps counting the whole set while showing a page of it", async () => {
+    // Paging must not reintroduce the bug A-1 fixed by another route: the
+    // header counts the narrowed SET, never the rendered slice.
+    const host = await mount({ books: MANY, allBooks: MANY });
+    expect(host.textContent).toContain("All books (70)");
+    expect(host.textContent).toContain("65 books"); // Sci-fi's true size
+  });
+
+  it("reveals the remainder on demand", async () => {
+    const host = await mount({ books: MANY, allBooks: MANY });
+    await clickButton(host, "Show 10 more");
+    expect(host.textContent).toContain("Book 69");
+    expect(host.textContent).not.toContain("not shown");
+  });
+
+  it("shows no control when everything already fits", async () => {
+    const host = await mount({ books: ALL, allBooks: ALL });
+    expect(host.textContent).not.toContain("not shown");
+  });
+});
