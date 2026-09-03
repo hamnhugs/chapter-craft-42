@@ -93,9 +93,10 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
   // app. This view used to fetch its own, as did BookContextPicker, and the
   // two drifted (a shelf created here was invisible to a mounted picker).
   const {
-    toggleBookShelf, multiShelf, setActiveTab, membershipLoaded,
+    toggleBookShelf, multiShelf, membershipLoaded,
     shelves, shelvesLoading, createShelf, renameShelf, deleteShelf,
     applyChapterGists, applyBookSummary, applyShelfDigest,
+    requestShelfLoad, requestBooksLoad,
   } = useApp();
   const { selectedModel, apiKey, geminiApiKey, nvidiaKeyLast4 } = useChatSettings();
   const catJobs = useCatalogJobs();
@@ -110,24 +111,14 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
   }, [user?.id]);
 
   // The shelf's headline AI action — the successor to the retired "Digest
-  // folder into neuron": load the shelf as chat context and jump to Counsel.
-  const chatWithShelf = (shelf: BookFolder) => {
-    bookContextStore.init(user?.id ?? null); // idempotent belt-and-braces
-    bookContextStore.set({ shelfId: shelf.id, bookIds: [], excludedIds: [] });
-    toast.success(`"${shelf.name}" loaded into chat — its books ride with every message.`);
-    setActiveTab("chat");
-  };
+  // folder into neuron". It routes through the same neuron-pick dialog a
+  // book load does, and the load REPLACES what Counsel was discussing
+  // (docs/library-agent.md L1/L2) — the dialog says so, the toast undoes it.
+  const chatWithShelf = (shelf: BookFolder) => requestShelfLoad(shelf.id);
   // The pile has no book_folders row, so it rides as a HAND-PICKED set — a
-  // snapshot, not a live membership. The toast says so rather than implying
-  // the shelf-mode contract (books added later join the conversation).
-  const chatWithBooks = (list: BookDocument[], label: string) => {
-    bookContextStore.init(user?.id ?? null);
-    bookContextStore.set({ shelfId: null, bookIds: list.map((b) => b.id), excludedIds: [] });
-    toast.success(
-      `${label} loaded into chat — ${list.length} book${list.length === 1 ? "" : "s"}, as a fixed set.`,
-    );
-    setActiveTab("chat");
-  };
+  // snapshot, not a live membership.
+  const chatWithBooks = (list: BookDocument[], label: string) =>
+    requestBooksLoad(list.map((b) => b.id), `${label} (${list.length} book${list.length === 1 ? "" : "s"}, as a fixed set)`);
 
   // Catalog runs resolve their book at RUN time — the shelf may have changed
   // by the time the queue reaches it.

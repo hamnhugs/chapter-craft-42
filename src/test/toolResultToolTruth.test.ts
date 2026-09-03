@@ -332,6 +332,20 @@ function isEventSummary(src: string, litStart: number): boolean {
 interface Allowed { file: FileName; tool: string; snippet: string; why: string }
 
 const ALLOWLIST: Allowed[] = [
+  // ── library agent: branch-permission refusals name the RUNNING tool ────────
+  // permissionRefusal("<tool> (<branch>)", id) is the resolve_conflict shape:
+  // the tool is on the wire by construction (it is executing), and the
+  // literal names nothing else.
+  {
+    file: "src/lib/chatTools.ts", tool: "set_loaded_books",
+    snippet: "set_loaded_books (neuron branch)",
+    why: "self-reference — set_loaded_books' own neuron-branch refusal; it just ran, so it is on the wire.",
+  },
+  {
+    file: "src/lib/chatTools.ts", tool: "manage_shelf",
+    snippet: "manage_shelf (delete)",
+    why: "self-reference — manage_shelf's own delete-branch refusal; it just ran, so it is on the wire.",
+  },
   // ── self-reference ─────────────────────────────────────────────────────────
   // The tool naming itself in its OWN result. It just ran, so it cleared the
   // permission choke point and Lean Mode this turn: it is on the wire by

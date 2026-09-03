@@ -43,7 +43,20 @@ import { CHAT_TOOL_DEFINITIONS } from "@/lib/chatTools";
 // verified pointers. The cost is accepted against a hard check: the frozen E2
 // set is rerun with these on the roster, and if the quote criteria still
 // fail, they haven't earned their slots and the catalog default stays held.
-const ROSTER_BUDGET = 75;
+//
+// +4 (the library agent, docs/library-agent.md §2): set_loaded_books,
+// manage_shelf, save_to_library, delete_book. The user asked for hands-free
+// control of the library — loading shelves into the chat, making and filling
+// shelves, saving what the assistant wrote as a book, deleting books — and
+// none of it existed as a verb. Consolidation was applied first: no
+// list_shelves (list_books grew a shelves array), one action-enum shelf verb
+// instead of five siblings (sibling expansion is measured at −8 to −19 points
+// of call accuracy; merging semantically overlapping tools at +5 to +22 —
+// the research digest in docs/library-agent-research.md), and set_active_book
+// kept as a READER verb rather than a second load verb. Four slots is the
+// floor for four distinct objects (conversation focus · shelf · document ·
+// book), each with a description written as documentation.
+const ROSTER_BUDGET = 79;
 
 describe("the tool roster stays within its stated budget", () => {
   it(`ships at most ${ROSTER_BUDGET} tools`, () => {

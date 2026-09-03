@@ -44,6 +44,13 @@ export const TOOL_PERMISSION: Record<string, string> = {
   rename_chapter: "rename_chapter",
   delete_chapter: "delete_chapter",
   rename_book: "rename_book",
+  // Library agent (docs/library-agent.md §2). manage_shelf's delete action
+  // is a BRANCH permission on top (delete_shelf); set_loaded_books' neuron
+  // branch re-uses switch_wiki's switch.
+  manage_shelf: "manage_shelves",
+  set_loaded_books: "set_loaded_books",
+  save_to_library: "save_to_library",
+  delete_book: "delete_book",
   // Images
   generate_image: "generate_image",
   edit_image: "edit_image",
@@ -85,6 +92,11 @@ export const TOOL_PERMISSION: Record<string, string> = {
 export const BRANCH_PERMISSIONS: Record<string, string> = {
   save_blueprint_to_master: "create_blueprint_sheet (save_to_master branch)",
   save_scene: "create_stage_plan (save branch) and lock_scene",
+  delete_shelf: "manage_shelf (delete branch)",
+  // switch_wiki is already a tool permission; set_loaded_books' wiki_ids /
+  // chain_id branch honours the same switch (an off switch refuses the
+  // branch, the load itself still runs).
+  switch_wiki: "switch_wiki, and set_loaded_books (neuron branch)",
 };
 
 /** What the settings screen renders. Ids here MUST appear in TOOL_PERMISSION
@@ -111,11 +123,16 @@ export const PERMISSION_GROUPS: PermGroup[] = [
   {
     group: "Library",
     items: [
-      { id: "set_active_book", label: "Switch active book", description: "Allow the AI to open a different book in your library." },
+      { id: "set_active_book", label: "Open books in the reader", description: "Allow the AI to open a book in the Read tab. It never changes which shelf or books are loaded in the chat." },
+      { id: "set_loaded_books", label: "Load shelves and books into the chat", description: "Allow the AI to load a shelf or a set of books into the conversation, replacing what was loaded — the same as the Vault's “Chat with this shelf”. You can undo from the message that follows." },
       { id: "isolate_chapter", label: "Isolate chapter context", description: "Allow narrowing focus to one chapter." },
       { id: "rename_chapter", label: "Rename chapters", description: "Allow the AI to rename chapters." },
       { id: "delete_chapter", label: "Delete chapters", description: "Allow the AI to remove chapters from a book after you confirm.", danger: true },
       { id: "rename_book", label: "Rename books", description: "Allow the AI to retitle books in your library (single or bulk cleanups)." },
+      { id: "manage_shelves", label: "Manage shelves", description: "Allow the AI to create and rename shelves and to put books on them or take them off." },
+      { id: "delete_shelf", label: "Delete shelves", description: "Allow the AI to delete a shelf after you say its name. The books on it stay in your library.", danger: true },
+      { id: "save_to_library", label: "Save documents to the library", description: "Allow the AI to save something it wrote as a PDF book in your library, labelled as written by the assistant." },
+      { id: "delete_book", label: "Delete books", description: "Allow the AI to permanently delete a book — its PDF and chapters — after you say its title. There is no trash.", danger: true },
     ],
   },
   {

@@ -22,7 +22,7 @@ const BookContextPicker: React.FC<{
   // Shelves come from AppContext — the app's ONE roster. This dialog used to
   // fetch its own on open, so a shelf created in the Vault while the picker
   // was mounted never appeared, and a deleted one lingered as a phantom.
-  const { books, activeBookId, applyChapterGists, shelves } = useApp();
+  const { books, activeBookId, applyChapterGists, shelves, loadFocus } = useApp();
   const { user } = useAuth();
   const { selectedModel, apiKey, geminiApiKey, nvidiaKeyLast4 } = useChatSettings();
   const [gistProgress, setGistProgress] = useState<string | null>(null);
@@ -153,14 +153,18 @@ const BookContextPicker: React.FC<{
     }
   };
 
+  // Switching shelves here IS a load — the same act as the Vault's "Chat
+  // with this shelf" — so it goes through the one focus writer (undo toast
+  // included; the neuron step is skipped because the picker is already a
+  // dialog). Leaving shelf mode keeps the currently effective books as a
+  // hand-picked FIXED set, so switching modes never silently empties context.
   const pickShelf = (shelfId: string) => {
-    if (!shelfId) {
-      // Leaving shelf mode keeps the currently effective books as a
-      // hand-picked set, so switching modes never silently empties context.
-      bookContextStore.set({ shelfId: null, bookIds: effective.map((b) => b.id), excludedIds: [] });
-    } else {
-      bookContextStore.set({ shelfId, bookIds: [], excludedIds: [] });
-    }
+    void loadFocus(
+      shelfId
+        ? { kind: "shelf", shelfId, neurons: { kind: "keep" } }
+        : { kind: "books", bookIds: effective.map((b) => b.id), neurons: { kind: "keep" } },
+      { navigate: false },
+    );
   };
 
   return (
@@ -232,7 +236,7 @@ const BookContextPicker: React.FC<{
               onChange={(e) => pickShelf(e.target.value)}
               className="w-full bg-surface-container-high border-none rounded-lg text-sm py-2 px-3"
             >
-              <option value="">Hand-picked books</option>
+              <option value="">Hand-picked books (fixed set — books added to a shelf later won't join)</option>
               {shelves.map((f) => {
                 const n = countByShelf.get(f.id) || 0;
                 return <option key={f.id} value={f.id}>{f.name} ({n} book{n === 1 ? "" : "s"})</option>;

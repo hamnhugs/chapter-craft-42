@@ -678,7 +678,15 @@ function emit() {
 function persist() {
   if (!currentUid) return;
   try {
-    if (isEmptySelection(selection)) localStorage.removeItem(storageKey(currentUid));
+    // The MODE outlives the membership. "full" is the user's explicit
+    // opt-out from the catalog default, and emptying the selection is now a
+    // routine event (every load of a book that is not on the loaded shelf
+    // replaces the selection — docs/library-agent.md L1). Removing the whole
+    // record on empty silently flipped exactly those users back to catalog on
+    // their next reload (review finding, three lenses). So an empty selection
+    // that still carries a mode persists as a mode-only record;
+    // `isEmptySelection` stays a MEMBERSHIP predicate and never reads mode.
+    if (isEmptySelection(selection) && !selection.mode) localStorage.removeItem(storageKey(currentUid));
     else localStorage.setItem(storageKey(currentUid), JSON.stringify(selection));
   } catch {
     // Private mode / quota — the selection simply doesn't survive a reload.
@@ -745,8 +753,10 @@ export const bookContextStore = {
     persist();
     emit();
   },
+  /** Empty the membership. The mode is CARRIED, like every other writer —
+   *  a clear is "nothing loaded", not "forget how I like books to ride". */
   clear(): void {
-    selection = EMPTY_BOOK_SELECTION;
+    selection = selection.mode ? { ...EMPTY_BOOK_SELECTION, mode: selection.mode } : EMPTY_BOOK_SELECTION;
     persist();
     emit();
   },

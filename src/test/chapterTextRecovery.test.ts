@@ -169,16 +169,16 @@ describe("get_chapter_text recovery", () => {
     expect(r.valid_chapters[0].chapters.map((c: any) => c.id)).toEqual(["ch-a1", "ch-a2", "ch-a3"]);
   });
 
-  it("the ACTIVE book is listed FIRST and survives the 5-book cap on a full shelf", async () => {
-    // Five context books + a distinct active book: the active book is the one
-    // open in front of the user — the review caught that appending it last
-    // let the slice cut exactly the most plausible read target.
+  it("the FOCUS book is listed FIRST and survives the 5-book cap on a full set", async () => {
+    // Five context books + the reader's book AMONG them: the focus book is
+    // the one open in front of the user — the review caught that appending
+    // it last let the slice cut exactly the most plausible read target.
     const shelf = Array.from({ length: 5 }, (_, i) =>
       mkBook(`shelf-${i}`, `Shelf Book ${i}`, [ch(`shelf-${i}-c1`, `Shelf ${i} Chapter`, 1, "x")]),
     );
     const active = mkBook("book-active", "The Open Book", [ch("ch-act", "Live Chapter", 1, "y")]);
     const d = deps({ books: [...shelf, active], activeBookId: "book-active" });
-    loadContext(...shelf.map((b) => b.id));
+    loadContext(...shelf.map((b) => b.id), active.id);
     const { result } = await call({ chapter_id: "nope-nope-nope" }, d);
     const r = result as any;
     expect(r.valid_chapters[0].book_id).toBe("book-active");
@@ -186,6 +186,26 @@ describe("get_chapter_text recovery", () => {
     // One shelf book fell off the cap — and the cut is LABELLED.
     expect(r.more_books_not_listed).toBe(1);
     expect(String(r.note)).toContain("truncated");
+  });
+
+  it("a reader book that is NOT on the loaded set is OUT of scope (docs/library-agent.md L1')", async () => {
+    // The pre-L1 smuggle: the block omitted a non-member active book while
+    // the prompt and this scope still carried it. The scope now derives the
+    // focus book through counselFocus.focusBookId, so with a shelf loaded
+    // the reader's unrelated book is neither offered nor matched.
+    const shelf = Array.from({ length: 2 }, (_, i) =>
+      mkBook(`shelf-${i}`, `Shelf Book ${i}`, [ch(`shelf-${i}-c1`, `Shelf ${i} Chapter`, 1, "x")]),
+    );
+    const active = mkBook("book-active", "The Open Book", [ch("ch-act", "Live Chapter", 1, "y")]);
+    const d = deps({ books: [...shelf, active], activeBookId: "book-active" });
+    loadContext(...shelf.map((b) => b.id));
+    const { result } = await call({ chapter_id: "nope-nope-nope" }, d);
+    const r = result as any;
+    expect(r.valid_chapters.map((v: any) => v.book_id)).toEqual(["shelf-0", "shelf-1"]);
+    // …and it is the FIRST and only book when nothing is loaded.
+    loadContext();
+    const { result: solo } = await call({ chapter_id: "nope-nope-nope" }, d);
+    expect((solo as any).valid_chapters.map((v: any) => v.book_id)).toEqual(["book-active"]);
   });
 
   it("a long book's chapter tail is cut with a count, never silently", async () => {

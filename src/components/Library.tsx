@@ -2,6 +2,7 @@ import React, { useRef, useState, useMemo, useEffect, lazy, Suspense } from "rea
 import { useApp } from "@/context/AppContext";
 import { BookDocument } from "@/types/library";
 import { pdfjs } from "react-pdf";
+import { isAssistantBook } from "@/lib/bookProvenance";
 import { Progress } from "@/components/ui/progress";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { usePlan } from "@/hooks/usePlan";
@@ -376,8 +377,12 @@ const Library: React.FC = () => {
   // (then offer a full re-tag). Each book costs ~1k input tokens.
   const handleAutoTag = async () => {
     if (tagProgress || books.length === 0) return;
-    const untagged = books.filter((b) => !b.category);
-    const targets = untagged.length > 0 ? untagged : books;
+    // Assistant-written books are never auto-tagged: their provenance rides
+    // on a reserved tag until the source column lands, and a re-tag would
+    // otherwise replace it (bookProvenance.ts).
+    const taggable = books.filter((b) => !isAssistantBook(b));
+    const untagged = taggable.filter((b) => !b.category);
+    const targets = untagged.length > 0 ? untagged : taggable;
     if (
       untagged.length === 0 &&
       !window.confirm("All books are already tagged. Re-tag the whole library?")

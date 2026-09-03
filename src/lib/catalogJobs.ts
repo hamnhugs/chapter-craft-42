@@ -217,6 +217,41 @@ export const catalogJobs = {
   },
 };
 
+/**
+ * ONE enqueue recipe for every surface that can finish a book (the Vault's
+ * upload path, the assistant's save_to_library). The settings ride through
+ * a getter so a long-lived closure reads the CURRENT model/keys/opt-in; the
+ * book is resolved at RUN time through `getBook` — except that a caller who
+ * has just built the chapters passes them explicitly, because the library
+ * mirror may not have committed them yet (a job that read an effect-updated
+ * ref one microtask after the last insert cataloged N-1 chapters and marked
+ * itself done — review finding).
+ */
+export function makeCatalogEnqueuer(deps: {
+  getSettings: () => { autoCatalogOnUpload: boolean; model: string; keys: CatalogJobInput["settings"]["keys"] };
+  getBook: (bookId: string) => BookDocument | undefined;
+  onGists: CatalogJobInput["onGists"];
+  onSummary: CatalogJobInput["onSummary"];
+}) {
+  return (bookId: string, known?: BookDocument): { queued: boolean; reason?: "opt_out" } => {
+    const { autoCatalogOnUpload, model, keys } = deps.getSettings();
+    if (!autoCatalogOnUpload) return { queued: false, reason: "opt_out" };
+    catalogJobs.enqueue({
+      bookId,
+      getBook: () => {
+        const live = deps.getBook(bookId);
+        if (!known) return live;
+        // The freshly built chapters win over a mirror that has not caught up.
+        return live && live.chapters.length >= known.chapters.length ? live : { ...(live ?? known), chapters: known.chapters };
+      },
+      settings: { model, keys },
+      onGists: deps.onGists,
+      onSummary: deps.onSummary,
+    });
+    return { queued: true };
+  };
+}
+
 const EMPTY: Record<string, CatalogJob> = {};
 
 export function useCatalogJobs(): Record<string, CatalogJob> {

@@ -43,15 +43,24 @@ export async function createFolder(name: string): Promise<BookFolder> {
   return data as BookFolder;
 }
 
+// Rename and delete RETURN the affected row. RLS hides another user's shelf,
+// and PostgREST answers a filtered update/delete that matched nothing with
+// success and zero rows — so without `.select()` a call against an unknown or
+// foreign id "succeeded", the caller mirrored the change locally, and the AI
+// tool built on it would report a shelf as renamed or deleted that never was
+// (review finding). Zero rows is an error here, never a no-op.
 export async function renameFolder(id: string, name: string): Promise<void> {
-  const { error } = await (supabase.from("book_folders" as any) as any)
-    .update({ name: name.trim() }).eq("id", id);
+  const { data, error } = await (supabase.from("book_folders" as any) as any)
+    .update({ name: name.trim() }).eq("id", id).select("id");
   if (error) throw error;
+  if (!Array.isArray(data) || data.length === 0) throw new Error("Shelf not found");
 }
 
 export async function deleteFolder(id: string): Promise<void> {
-  const { error } = await (supabase.from("book_folders" as any) as any).delete().eq("id", id);
+  const { data, error } = await (supabase.from("book_folders" as any) as any)
+    .delete().eq("id", id).select("id");
   if (error) throw error;
+  if (!Array.isArray(data) || data.length === 0) throw new Error("Shelf not found");
 }
 
 // Book→shelf membership changes go through AppContext.toggleBookShelf,

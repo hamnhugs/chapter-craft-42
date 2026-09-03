@@ -28,6 +28,8 @@ import { parseArtifact, type Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle } from "@/lib/workspaceStore";
 import { extractCodeBlocks, excludeArtifactDuplicates } from "@/lib/workspaceFiles";
 import { buildFocusBlock, type UsedFocusItem } from "@/lib/chatFocus";
+import { focusBookId } from "@/lib/counselFocus";
+import { makeCatalogEnqueuer } from "@/lib/catalogJobs";
 import {
   bookContextStore, selectContextBooks, hydrateBooksForContext,
   buildBookContextBlock, bookContextCharBudget, resolveBookContextMode, bookHasCatalog, type UsedBookContext,
@@ -418,9 +420,16 @@ function loadRollingSummary(uid: string): RollingSummary {
 
 export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
-  const { books, activeBookId, activeWiki, activeWikiId, activeWikis, wikis, addChapter, updateChapter, removeChapter, updateBookTitle, loadChapterText, loadChapterTextStrict, setActiveBookSilent } = useApp();
+  const {
+    books, activeBookId, activeWiki, activeWikiId, activeWikis, wikis, addChapter, updateChapter, removeChapter, updateBookTitle, loadChapterText, loadChapterTextStrict, setActiveBookSilent,
+    // The library agent's seams (docs/library-agent.md §2.1): live readers
+    // and AppContext's own mutators — a tool never writes the database or a
+    // focus layer itself.
+    getBooks, getActiveBookId, getShelves, multiShelf, createShelf, renameShelf, deleteShelf, setBookShelfMembership,
+    addBook, addChapters, removeBook, loadFocus, applyChapterGists, applyBookSummary,
+  } = useApp();
 
-  const { apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, selectedModel, setSelectedModel, savedModels, addModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, maxReplySentences, autoShowMemoryImages, chatToolPermissions, visionModel, imageModelPrimary, imageModelFallback,
+  const { autoCatalogOnUpload, apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, selectedModel, setSelectedModel, savedModels, addModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, maxReplySentences, autoShowMemoryImages, chatToolPermissions, visionModel, imageModelPrimary, imageModelFallback,
     videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold,
     videoIdentityScale, videoQcEnabled, videoMotionModel,
     falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback,
@@ -432,6 +441,19 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const { isPaid, loaded: planLoaded } = usePlan();
   const { getActiveBodyForScope, migrate } = usePromptPresets();
+
+  const catalogSettingsRef = useRef({ autoCatalogOnUpload: false, model: "", keys: {} as { apiKey?: string; geminiApiKey?: string; nvidiaKeyLast4?: string } });
+  catalogSettingsRef.current = {
+    autoCatalogOnUpload,
+    model: selectedModel,
+    keys: { apiKey: apiKey || undefined, geminiApiKey: geminiApiKey || undefined, nvidiaKeyLast4: nvidiaKeyLast4 || undefined },
+  };
+  const enqueueCatalog = useMemo(() => makeCatalogEnqueuer({
+    getSettings: () => catalogSettingsRef.current,
+    getBook: (id) => getBooks().find((b) => b.id === id),
+    onGists: applyChapterGists,
+    onSummary: applyBookSummary,
+  }), [getBooks, applyChapterGists, applyBookSummary]);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   // Mirror for callbacks that need the CURRENT transcript without depending
@@ -897,7 +919,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw new Error("Missing API key");
       }
 
-      const selectedBook = books.find((b) => b.id === activeBookId);
+      // The book the prompt calls "active" is Counsel's FOCUS book, derived
+      // (counselFocus.focusBookId): the reader's book only when nothing is
+      // loaded or it is a member of the effective selection. A shelf load
+      // therefore drops a non-member reader book from the prompt, the tool
+      // scope and the chips together — the composition report 1 described.
+      bookContextStore.init(userIdRef.current);
+      const focusId = focusBookId(books, bookContextStore.get(), activeBookId ?? null);
+      const selectedBook = books.find((b) => b.id === focusId);
       // Uploaded images that were registered in the library carry a ref —
       // attach those to the user message so (a) the bubble renders them
       // durably and (b) every future history rebuild can re-annotate the ids.
@@ -1743,6 +1772,16 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // one extra round, not five, and a model that keeps writing the same
           // prose call has already been told.
           if ((toolCalls.length === 0 && (!textCallNoted || textCallNoteSent)) || streamCutShort) {
+            if (streamCutShort && toolCalls.length > 0) {
+              // The calls were half-written and are NOT run. Without this
+              // chip the user hears "saving that now…" and nothing happens —
+              // the narrated-action-that-never-ran class (review finding).
+              assistantEvents.push({
+                name: toolCalls[0].name || "tool",
+                summary: "The reply was cut off before this action could run — nothing was changed. Ask again, or ask for a shorter reply first.",
+                ok: false,
+              });
+            }
             break;
           }
           // The forced answer round never executes calls: the budget note
@@ -1847,10 +1886,38 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // readToolPermissions() in chatTools.ts instead of re-querying
             // chat_tool_permissions, which could lose a race with the 500ms
             // debounced save and refuse a tool whose switch reads ON.
+            // The document save_to_library reads from the TRANSCRIPT, never
+            // re-emitted as arguments (they cap at the provider's output
+            // ceiling and a cut stream drops the call silently): "this" is
+            // the assistant's text so far in this reply, "last" its previous
+            // completed reply.
+            const getReplyText = (which: "this" | "last"): string | null => {
+              if (which === "this") return assistantText.trim() ? assistantText : null;
+              const prior = messagesRef.current.filter((m) =>
+                m.role === "assistant" && m.id !== assistantId && !m.displayOnly &&
+                typeof m.content === "string" && m.content.trim() && !m.content.startsWith("❌"));
+              const last = prior[prior.length - 1];
+              return last ? last.content : null;
+            };
             const toolDeps = {
               books,
               activeBookId,
               setActiveBookId: setActiveBookSilent,
+              getBooks,
+              getActiveBookId,
+              getShelves,
+              multiShelf,
+              createShelf,
+              renameShelf,
+              deleteShelf,
+              setBookShelfMembership,
+              addBook,
+              addChapters,
+              removeBook,
+              loadFocus,
+              enqueueCatalog,
+              getReplyText,
+              currentModel: model,
               addChapter,
               updateChapter,
               removeChapter,
@@ -2213,6 +2280,13 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           void updateRollingSummary([...baseHistory, { role: "assistant", content: assistantText }], firstHistoryId);
         }
 
+        // What the caller SPEAKS (hands-free reads this return): the reply,
+        // or — when the model acted without narrating — the last tool
+        // event's own sentence, so the spoken channel never goes dark after
+        // an action (docs/library-agent.md §2.2).
+        if (!assistantText.trim() && opts?.voiceMode && assistantEvents.length > 0) {
+          return assistantEvents[assistantEvents.length - 1].summary;
+        }
         return assistantText;
       } catch (err: any) {
         if (err?.name === "AbortError") {
@@ -2270,7 +2344,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // foundryReady are the raw inputs computeToolGates now takes (it draws the
     // opt-in and availability distinction itself, so the pre-combined
     // forgeEnabled/runEnabled are no longer read here).
-    [apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, autoShowMemoryImages, foundryEnabled, forgeOptIn, runOptIn, foundryReady, chatToolPermissions, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, updateBookTitle, loadChapterText, loadChapterTextStrict, setActiveBookSilent]
+    [apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, autoShowMemoryImages, foundryEnabled, forgeOptIn, runOptIn, foundryReady, chatToolPermissions, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, updateBookTitle, loadChapterText, loadChapterTextStrict, setActiveBookSilent,
+      getBooks, getActiveBookId, getShelves, multiShelf, createShelf, renameShelf, deleteShelf, setBookShelfMembership, addBook, addChapters, removeBook, loadFocus, enqueueCatalog]
   );
 
 

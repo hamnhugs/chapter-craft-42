@@ -519,7 +519,7 @@ describe("mode survives whole-record selection writers (review finding)", () => 
     expect(bookContextStore.get().shelfId).toBe("shelf-9");
   });
 
-  it("an explicit mode key still wins, and clear() drops the preference (documented)", () => {
+  it("an explicit mode key still wins, and clear() KEEPS the preference (docs/library-agent.md §1)", () => {
     bookContextStore.init(null);
     bookContextStore.set({ shelfId: null, bookIds: ["b1"], excludedIds: [], mode: "catalog" });
     bookContextStore.set({ shelfId: null, bookIds: ["b1"], excludedIds: [], mode: "full" });
@@ -529,8 +529,29 @@ describe("mode survives whole-record selection writers (review finding)", () => 
     // deliberately chose otherwise (review finding).
     expect(bookContextStore.get().mode).toBe("full");
     bookContextStore.set({ shelfId: null, bookIds: ["b1"], excludedIds: [], mode: "catalog" });
+    // Emptying the membership is now a routine event (a non-member book load
+    // replaces the selection), and a stored "full" is the user's opt-out from
+    // the catalog default — so the mode outlives the membership, in memory
+    // AND across a storage round-trip (three review lenses, one finding).
     bookContextStore.clear();
-    expect(bookContextStore.get().mode).toBeUndefined();
+    expect(bookContextStore.get().mode).toBe("catalog");
+    expect(bookContextStore.get().bookIds).toEqual([]);
+  });
+
+  it("an empty selection with a mode survives a reload (mode-only record)", () => {
+    bookContextStore.init(null);
+    bookContextStore.init("u-mode");
+    bookContextStore.set({ shelfId: null, bookIds: ["b1"], excludedIds: [], mode: "full" });
+    bookContextStore.set({ shelfId: null, bookIds: [], excludedIds: [] });
+    expect(bookContextStore.get().mode).toBe("full");
+    // Simulate a reload: re-init for the same user from storage.
+    bookContextStore.init(null);
+    bookContextStore.init("u-mode");
+    expect(bookContextStore.get().mode).toBe("full");
+    expect(bookContextStore.get().shelfId).toBeNull();
+    // Clearing the mode-less way (a selection written with no mode) still
+    // persists nothing once both are empty.
+    bookContextStore.set({ shelfId: null, bookIds: [], excludedIds: [], mode: undefined } as any);
   });
 });
 

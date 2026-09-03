@@ -35,6 +35,18 @@ export interface BookDocument {
   summaryModel?: string | null;
   /** When `summary` was written (epoch ms), for staleness against chapters. */
   summarizedAt?: number | null;
+  /** Who wrote the book: "user" (uploaded — the primary tier) or
+   *  "assistant" (written in-app at the user's request — a derived tier that
+   *  every read door labels). Set by the APP at insert, never by the model.
+   *  Absent until the provenance migration (20260903120000) is applied, in
+   *  which case the reserved tag carries it — read through bookProvenance's
+   *  `bookSource`, never by inspecting either field directly. */
+  source?: "user" | "assistant";
+  /** Model id that authored an assistant-written book. */
+  sourceModel?: string | null;
+  /** For assistant-written books: what was LOADED in the conversation when
+   *  it was written ({book_ids, shelf_id}) — computed by the app. */
+  sourceContext?: { book_ids?: string[]; shelf_id?: string | null } | null;
   /** User-managed shelf ids (book_folders.id), non-exclusive; empty when
    *  unshelved. Junction mode loads them in deterministic (book, shelf)
    *  order; books.folder_id survives only as a BEST-EFFORT single-shelf

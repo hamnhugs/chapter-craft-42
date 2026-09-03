@@ -39,6 +39,7 @@ import type { Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle, useWorkspaceItems } from "@/lib/workspaceStore";
 import { focusStatesForPinned } from "@/lib/chatFocus";
 import { bookContextStore, selectContextBooks } from "@/lib/chatBooks";
+import { focusBookId } from "@/lib/counselFocus";
 import BookContextPicker from "@/components/BookContextPicker";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations, isSearchRateLimited } from "@/lib/chatTools";
@@ -54,7 +55,7 @@ const SEARCH_INTENT_RE =
   /\b(search|look up|look for|find|google|what is|what are|who is|who are|tell me about|research|check online|latest|current|news about)\b/i;
 
 const ChatPanel: React.FC = () => {
-  const { books, activeBookId, activeWiki, activeWikiId, activeWikis, activeWikiIds, toggleNeuronInSession, setActiveTab } = useApp();
+  const { books, activeBookId, activeWiki, activeWikiId, activeWikis, activeWikiIds, toggleNeuronInSession, setActiveTab, shelves } = useApp();
   const { user } = useAuth();
   const {
     apiKey, nvidiaKeyLast4, geminiApiKey, leanMode, savedModels, selectedModel, voiceModel, autoReadReplies, burplexityApiToken, accessAllNeurons, loaded,
@@ -613,7 +614,17 @@ const ChatPanel: React.FC = () => {
     setActiveTab("settings");
   }, [setActiveTab]);
 
-  const selectedBook = books.find((b) => b.id === activeBookId);
+  // Counsel's FOCUS book (derived — counselFocus.focusBookId), not the
+  // reader's: with a shelf loaded, the reader's book is discussed only if it
+  // is on the shelf. `readerBook` is what the Read tab shows.
+  const focusId = focusBookId(books, bookSelection, activeBookId ?? null);
+  const selectedBook = books.find((b) => b.id === focusId);
+  const readerBook = activeBookId ? books.find((b) => b.id === activeBookId) : undefined;
+  const loadedLabel = bookSelection.shelfId
+    ? (shelves.find((f) => f.id === bookSelection.shelfId)?.name ?? "the loaded shelf")
+    : bookSelection.bookIds.length > 0
+      ? `${bookSelection.bookIds.length} hand-picked book${bookSelection.bookIds.length === 1 ? "" : "s"}`
+      : null;
 
   const handleSaveToWiki = async () => {
     if (messages.length < 2) { toast.error("Chat first before saving to neuron"); return; }
@@ -877,8 +888,10 @@ const ChatPanel: React.FC = () => {
   return (
     <div className="flex h-full overflow-hidden">
       <div className="flex flex-col h-full flex-1 min-w-0 relative">
-      {/* Active-book indicator — confirms to the user (and signals that the AI
-          knows) which book Counsel is currently focused on. */}
+      {/* Focus indicator — confirms to the user (and signals that the AI
+          knows) which book Counsel is discussing. When the reader shows a
+          book that is NOT on the loaded shelf, both are named, so the screen
+          never implies the AI is reading what the user is reading. */}
       {selectedBook && (
         <div className="px-4 pt-3 pb-0.5 flex items-center gap-2 text-xs font-body text-on-surface-variant">
           <span className="material-symbols-outlined text-sm text-primary-container" aria-hidden>
@@ -886,6 +899,17 @@ const ChatPanel: React.FC = () => {
           </span>
           <span className="truncate">
             Now discussing: <span className="font-semibold text-primary">{selectedBook.title}</span>
+          </span>
+        </div>
+      )}
+      {!selectedBook && readerBook && loadedLabel && (
+        <div className="px-4 pt-3 pb-0.5 flex items-center gap-2 text-xs font-body text-on-surface-variant" data-testid="reader-vs-focus">
+          <span className="material-symbols-outlined text-sm text-primary-container" aria-hidden>
+            auto_stories
+          </span>
+          <span className="truncate">
+            Reading: <span className="font-semibold">{readerBook.title}</span>
+            {" · "}Discussing: <span className="font-semibold text-primary">{loadedLabel}</span>
           </span>
         </div>
       )}

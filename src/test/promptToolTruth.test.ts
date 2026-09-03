@@ -446,8 +446,8 @@ describe("the additive contract: omitting offeredTools changes nothing", () => {
   // gained the gated search_book_text guidance (search before quoting, copy
   // excerpts byte-for-byte) — +215 chars on the default build, which carries
   // every tool.
-  const BASELINE_LENGTH = 24073;
-  const BASELINE_DIGEST = "ccdfda4c";
+  const BASELINE_LENGTH = 25289;
+  const BASELINE_DIGEST = "2f394aa4";
   const fnv1a = (s: string) => {
     let h = 0x811c9dc5;
     for (let i = 0; i < s.length; i++) {

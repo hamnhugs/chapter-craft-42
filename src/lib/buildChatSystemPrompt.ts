@@ -1,4 +1,5 @@
 import { BookDocument } from "@/types/library";
+import { isAssistantBook } from "@/lib/bookProvenance";
 import { fetchKnowledgeEntries, fetchConversationMemory, retrieveKnowledge, filterSupersededNodes, fetchCardPointers, type CardPointerRow } from "@/lib/knowledgeApi";
 import { fetchImagesForEntries } from "@/lib/imageGen";
 import { getRecallStates, type MemoryImageCandidate, type RecallState } from "@/lib/memoryLens";
@@ -352,7 +353,7 @@ export async function buildChatSystemPrompt({
   // what actually went out, and when nothing survives the sentence disappears
   // rather than leaving a dangling "You have these tools:".
   const CORE_TOOL_ORDER = [
-    "list_books", "get_book", "get_chapter_text", "set_active_book", "isolate_chapter",
+    "list_books", "get_book", "get_chapter_text", "set_active_book", "set_loaded_books", "manage_shelf", "save_to_library", "delete_book", "isolate_chapter",
     "rename_chapter", "delete_chapter", "list_conflicts", "get_conflict", "resolve_conflict",
     "update_conflict_status", "list_wikis", "get_active_wiki", "switch_wiki", "create_wiki",
     "set_active_neurons", "list_chains", "activate_chain",
@@ -383,6 +384,17 @@ export async function buildChatSystemPrompt({
   const neuronLine = !neuronStudy && !neuronChains ? [] : [
     "The user can also load SEVERAL neurons at once (up to 5), and save named neuron chains that load together." + neuronStudy + neuronChains +
     " Never claim neurons or chains were loaded without the tool call succeeding. If the user asks to load more than 5, explain that 2–3 related neurons is the research-backed sweet spot and 5 is the ceiling.",
+  ];
+
+  // The library agent (docs/library-agent.md §2.3): one gated line per verb,
+  // in the user's words. Every line names only the tool it is gated on (plus
+  // list_books, which cannot be withheld independently of the others).
+  const libraryAgentLines = [
+    ...ifTools(["set_active_book"], "`set_active_book` opens a book in the reader; it joins what you discuss only when nothing is loaded or it is on the loaded shelf — the result says which."),
+    ...ifTools(["set_loaded_books"], "To bring a shelf or books into this conversation — what the Vault's “Chat with this shelf” does — call `set_loaded_books`; it REPLACES what was loaded (the reader stays open). If the user hasn't said which neuron to read alongside, ask once, or omit wiki_ids to keep the current one. Narrate the result, nothing more."),
+    ...ifTools(["manage_shelf", "list_books"], "Shelves organise the library; `list_books` shows them with ids and which books sit where. `manage_shelf` makes, renames or fills a shelf (adding and removing are deltas — say exactly what changed from the result); deleting one needs the user to say its name."),
+    ...ifTools(["save_to_library"], "When the user asks to save something you wrote as a book or PDF in their library, call `save_to_library` with source this_reply or last_reply (headings become chapters) — never re-type the document into the call. Say it's saved and where; don't paste it back."),
+    ...ifTools(["delete_book"], "Deleting a book is permanent and has no trash: say the book's title, get a clear yes, then call `delete_book` with confirm_title set to the title as they said it."),
   ];
 
   // The reflex is a reading instruction first and a repair instruction second,
@@ -663,12 +675,21 @@ export async function buildChatSystemPrompt({
     const wikiLine = voiceWikiVerbs.length === 0 ? [] : [
       `Same rule for wikis: any 'switch to X', 'open my Y wiki', 'make a new wiki for Z' must trigger ${voiceWikiVerbs.map((n) => `\`${n}\``).join(" or ")}. Never claim a switch happened from narration alone.`,
     ];
-    if (resolveLine.length === 0 && wikiLine.length === 0) return [];
+    // The library verbs by voice: a spoken "yes" after you named the book or
+    // shelf IS the confirmation, and the object must be named again in the
+    // call (confirm_title / confirm_name) because a tool result does not
+    // survive the turn boundary the "yes" crosses.
+    const libVerbs = ["set_loaded_books", "manage_shelf", "delete_book", "save_to_library"].filter(has);
+    const libLine = libVerbs.length === 0 ? [] : [
+      `Same rule for the library: 'load my X shelf', 'put this on shelf Y', 'save that as a PDF', 'delete that book' must call ${libVerbs.map((n) => `\`${n}\``).join(", ")} as appropriate. When you have asked "delete <title>?" and the user says yes, call again with the title they said as confirm_title (or the shelf's name as confirm_name) — do not ask a second time. Never say it's loaded, saved or deleted without the tool's ok result.`,
+    ];
+    if (resolveLine.length === 0 && wikiLine.length === 0 && libLine.length === 0) return [];
     return [
       "## Voice-mode conflict + wiki rules (CRITICAL)",
       ...resolveLine,
       "NEVER say 'done', 'resolved', 'deleted', 'merged', 'switched', or 'created' unless the previous step in this turn was a successful tool call returning ok. If you didn't call the tool, you didn't do it — call the tool now, then speak the confirmation only after it succeeds.",
       ...wikiLine,
+      ...libLine,
     ];
   })();
 
@@ -677,6 +698,7 @@ export async function buildChatSystemPrompt({
     ...searchBullets,
     ...wikiToolsLine,
     ...neuronLine,
+    ...libraryAgentLines,
     ...reflexBlock,
     "## Answering from memory (provenance)",
     "When you answer using retrieved memories, keep stored fact and your own inference distinct. State what is actually stored plainly; when you extrapolate, combine, or fill gaps BEYOND what the memories say, phrase it as inference ('based on X and Y, it looks like…') rather than asserting invented specifics as remembered fact. Never fabricate a detail — a date, name, or number — and present it as something the user told you or a memory recorded. If you are unsure whether something is stored or inferred, say so.",
@@ -706,13 +728,26 @@ export async function buildChatSystemPrompt({
   // Library catalog (always). Titles for everything; chapter lines only for
   // the active book — a 50-book library otherwise spends the whole prompt on
   // chapter headings the model was never asked about.
+  // Titles and chapter names are UNTRUSTED (PDF headings, model renames, and
+  // now whole documents the assistant wrote): every one goes through
+  // sanitizeInline like every other untrusted string in this prompt, and the
+  // focus book's chapter lines are capped so a 400-heading document cannot
+  // spend the prompt (docs/library-agent.md §2.3). An assistant-written book
+  // is labelled as such wherever its title appears (§2.4).
+  const libLabel = (t: string | undefined, fallback: string) =>
+    sanitizeInline(t || fallback, SESSION_PROMPT_NONCE, 120) || fallback;
+  const CHAPTER_LINES_CAP = 60;
   parts.push("", "## Available Library", `The user has ${books.length} book(s) in their library:`);
   books.forEach((book) => {
-    parts.push(`- **${book.title}** (id: ${book.id}, ${book.pageCount} pages, ${book.chapters.length} chapter(s))`);
+    const byAssistant = isAssistantBook(book) ? " — written by the assistant at the user's request, not a primary source" : "";
+    parts.push(`- **${libLabel(book.title, "Untitled")}** (id: ${book.id}, ${book.pageCount} pages, ${book.chapters.length} chapter(s))${byAssistant}`);
     if (selectedBook && book.id === selectedBook.id) {
-      book.chapters.forEach((ch) => {
-        parts.push(`  - Chapter: "${ch.name}" (id: ${ch.id}, pages ${ch.startPage}–${ch.endPage})`);
+      book.chapters.slice(0, CHAPTER_LINES_CAP).forEach((ch, i) => {
+        parts.push(`  - Chapter: "${libLabel(ch.name, `Chapter ${i + 1}`)}" (id: ${ch.id}, pages ${ch.startPage}–${ch.endPage})`);
       });
+      if (book.chapters.length > CHAPTER_LINES_CAP) {
+        parts.push(`  - … ${book.chapters.length - CHAPTER_LINES_CAP} more chapter(s) not listed${has("get_book") ? " — `get_book` lists them all" : ""}.`);
+      }
     }
   });
   const catalogTail = [
@@ -735,8 +770,8 @@ export async function buildChatSystemPrompt({
   // line names the fetch path when this turn actually carries the tool.
   // Removed in Stage 0 of the Card Catalog redesign.
   if (selectedBook) {
-    parts.push("", `## Currently Active Book: "${selectedBook.title}" (id: ${selectedBook.id})`);
-    parts.push(`File: ${selectedBook.fileName} | Pages: ${selectedBook.pageCount}`);
+    parts.push("", `## Currently Active Book: "${libLabel(selectedBook.title, "Untitled")}" (id: ${selectedBook.id})`);
+    parts.push(`File: ${sanitizeInline(selectedBook.fileName || "", SESSION_PROMPT_NONCE, 120)} | Pages: ${selectedBook.pageCount}${isAssistantBook(selectedBook) ? " | Written by the assistant at the user's request — a derived document, not a primary source" : ""}`);
   }
 
   // Conversation memory (cross-session summary + key facts)

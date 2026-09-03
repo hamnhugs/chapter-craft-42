@@ -7,6 +7,9 @@ import { useAuth } from "@/hooks/useAuth";
 import { Wiki, fetchWikis, fetchActiveWikiIds, loadWiki as loadWikiApi, loadWikiSet, createWiki, sessionActiveWikiIds } from "@/lib/wikisApi";
 import { fetchShelfMembership, applyShelfDelta, type ShelfDelta } from "@/lib/shelfMembership";
 import { listFolders, createFolder, renameFolder, deleteFolder, type BookFolder } from "@/lib/bookFolders";
+import { applyLoad, describeLoad, focusChanged, focusEpoch, type FocusState, type LoadAction, type NeuronChoice } from "@/lib/counselFocus";
+import { bookContextStore } from "@/lib/chatBooks";
+import { ASSISTANT_TAG, mergeReservedTags } from "@/lib/bookProvenance";
 import { MAX_ACTIVE_NEURONS } from "@/lib/neuronAccess";
 
 type TabId = "library" | "viewer" | "chat" | "wiki" | "wikis" | "settings" | "admin";
@@ -22,18 +25,38 @@ interface AppState {
   activeWikiIds: string[];
   /** Loaded neurons in order, primary first (ids resolved against `wikis`). */
   activeWikis: Wiki[];
-  addBook: (book: BookDocument, sourceFile?: File) => Promise<string>;
-  removeBook: (id: string) => void;
+  addBook: (book: BookDocument, sourceFile?: File, opts?: AddBookOptions) => Promise<string>;
+  /** Typed: a delete that failed says so, and a delete that succeeded says
+   *  what went with it. Row first, storage cleanup after (an orphaned file is
+   *  recoverable garbage; an orphaned row with no file is a broken book). */
+  removeBook: (id: string) => Promise<RemoveBookResult>;
   setActiveBook: (id: string) => void;
-  setActiveBookSilent: (id: string) => void;
-  /** Book id awaiting a neuron choice in the load dialog (null = dialog closed). */
-  pendingBookLoadId: string | null;
-  /** Entry point for loading a book from the Vault: opens the neuron-pick dialog. */
+  setActiveBookSilent: (id: string | null) => void;
+  /** What the load dialog is asking about (null = dialog closed). */
+  pendingLoad: PendingLoad | null;
+  /** Entry points for loading from the Vault: each opens the neuron-pick dialog. */
   requestBookLoad: (bookId: string) => void;
-  /** Resolves the load dialog: loads the chosen neuron (if any/changed) then opens the book. neuronId null = skip / keep current. chainWikiIds (when set) loads that whole set instead. */
-  resolveBookLoad: (neuronId: string | null, chainWikiIds?: string[]) => Promise<void>;
+  requestShelfLoad: (shelfId: string) => void;
+  requestBooksLoad: (bookIds: string[], label: string) => void;
+  /** Resolves the load dialog with the neuron choice (keep = Skip). For a
+   *  book, `alongside` opens it in the reader WITHOUT replacing the loaded
+   *  shelf/books. */
+  resolveLoad: (neurons: NeuronChoice, opts?: { alongside?: boolean }) => Promise<void>;
+  /** THE focus writer (docs/library-agent.md L4): every surface that changes
+   *  what Counsel discusses — the dialog, the picker's shelf switch, the AI
+   *  tool — goes through this. Neurons are written first (the async layer);
+   *  the toast with Undo is raised after they settle. */
+  loadFocus: (action: LoadAction, opts?: { toast?: boolean; navigate?: boolean }) => Promise<LoadReport>;
+  /** LIVE readers — synchronously current within a turn, unlike the render
+   *  snapshot a closure holds. Tools that compose (save → shelve → load) must
+   *  read through these. */
+  getBooks: () => BookDocument[];
+  getActiveBookId: () => string | null;
+  getShelves: () => BookFolder[];
   setActiveTab: (tab: TabId) => void;
   addChapter: (bookId: string, chapter: Chapter) => Promise<void>;
+  /** Bulk insert (one request per 100 rows, one state patch). */
+  addChapters: (bookId: string, chapters: Chapter[]) => Promise<void>;
   updateChapter: (bookId: string, chapterId: string, name: string) => void;
   removeChapter: (bookId: string, chapterId: string) => void;
   updateBookTitle: (bookId: string, newTitle: string) => void;
@@ -42,6 +65,10 @@ interface AppState {
    *  the write, inverse-delta rollback on failure); in multi-shelf mode a
    *  check adds membership, in exclusive fallback it replaces it. */
   toggleBookShelf: (bookId: string, shelfId: string) => Promise<void>;
+  /** Explicit membership write (a DELTA, never replace-the-set). Resolves
+   *  with the shelves the book LEFT when the exclusive fallback made an add
+   *  into a move. Unknown book id THROWS. */
+  setBookShelfMembership: (bookId: string, shelfId: string, member: boolean) => Promise<{ changed: boolean; moved_from: string[] }>;
   /** THE shelf roster — one copy for the whole app. Membership already had
    *  this law (books[].folderIds); the roster did not, so the Vault and the
    *  chat picker each fetched their own and drifted: a shelf created in one
@@ -89,6 +116,37 @@ interface AppState {
   signOut: () => void;
 }
 
+export type PendingLoad =
+  | { kind: "book"; bookId: string }
+  | { kind: "shelf"; shelfId: string }
+  | { kind: "books"; bookIds: string[]; label: string };
+
+export interface AddBookOptions {
+  /** Skip the file-name re-upload lookup and INSERT unconditionally — the
+   *  path for app-generated books, which must never enter the
+   *  update-and-overwrite branch (docs/library-agent.md §2). */
+  createOnly?: boolean;
+  /** Provenance, set by the APP. Written to books.source when the column
+   *  exists, else carried by the reserved tag (bookProvenance.ts). */
+  source?: "assistant";
+  sourceModel?: string;
+  sourceContext?: { book_ids?: string[]; shelf_id?: string | null };
+}
+
+export type RemoveBookResult =
+  | { ok: true; deleted: { title: string; chapters: number; shelves: string[] } }
+  | { ok: false; error: string };
+
+export interface LoadReport {
+  /** One sentence naming what changed and what was kept (describeLoad). */
+  summary: string;
+  changed: { selection: boolean; activeBookId: boolean; wikiIds: boolean };
+  /** Set when the neuron write failed; the book layers still applied. */
+  neuronError?: string;
+  prev: FocusState;
+  next: FocusState;
+}
+
 const AppContext = createContext<AppState | null>(null);
 
 const DEFAULT_STORAGE_EXTENSION = "pdf";
@@ -130,13 +188,38 @@ const getStoragePathsForBook = (userId: string, bookId: string, fileName: string
 };
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [books, setBooks] = useState<BookDocument[]>([]);
+  // books / shelves / activeBookId each keep a SYNCHRONOUS mirror. The
+  // setter wrappers apply a functional update themselves, against the mirror,
+  // then hand React the value — so a mutation that runs while the provider
+  // already has a pending update (a tool composing createShelf with a
+  // membership write in one microtask) still reads the truth, and never
+  // depends on React running the updater eagerly. Everything that reads
+  // "the current library" inside an async flow reads the mirror.
+  const [books, setBooksState] = useState<BookDocument[]>([]);
+  const booksRef = useRef<BookDocument[]>([]);
+  const setBooks = useCallback((u: BookDocument[] | ((prev: BookDocument[]) => BookDocument[])) => {
+    const next = typeof u === "function" ? u(booksRef.current) : u;
+    booksRef.current = next;
+    setBooksState(next);
+  }, []);
   const [multiShelf, setMultiShelf] = useState(false);
   const [membershipLoaded, setMembershipLoaded] = useState(false);
-  const [shelves, setShelves] = useState<BookFolder[]>([]);
+  const [shelves, setShelvesState] = useState<BookFolder[]>([]);
+  const shelvesRef = useRef<BookFolder[]>([]);
+  const setShelves = useCallback((u: BookFolder[] | ((prev: BookFolder[]) => BookFolder[])) => {
+    const next = typeof u === "function" ? u(shelvesRef.current) : u;
+    shelvesRef.current = next;
+    setShelvesState(next);
+  }, []);
   const [shelvesLoading, setShelvesLoading] = useState(true);
-  const [activeBookId, setActiveBookId] = useState<string | null>(null);
-  const [pendingBookLoadId, setPendingBookLoadId] = useState<string | null>(null);
+  const [activeBookId, setActiveBookIdState] = useState<string | null>(null);
+  const activeBookIdRef = useRef<string | null>(null);
+  const setActiveBookId = useCallback((u: string | null | ((prev: string | null) => string | null)) => {
+    const next = typeof u === "function" ? u(activeBookIdRef.current) : u;
+    activeBookIdRef.current = next;
+    setActiveBookIdState(next);
+  }, []);
+  const [pendingLoad, setPendingLoad] = useState<PendingLoad | null>(null);
   // Restore-the-last-book runs once per signed-in session (guard ref).
   const restoredBookRef = useRef(false);
   const [activeTab, setActiveTab] = useState<TabId>("library");
@@ -272,6 +355,82 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return next;
   }, [applyActiveSet]);
 
+  // ── Counsel's focus: one reducer, one writer ─────────────────────────────
+  // docs/library-agent.md §1. The reducer (counselFocus.applyLoad) is pure;
+  // this is the place that writes each layer through its owner, in the one
+  // order that keeps Undo honest: neurons first (async, can fail), then the
+  // two synchronous layers, then the epoch bump, then the toast.
+  const focusPrev = useCallback((): FocusState => {
+    bookContextStore.init(user?.id ?? null);
+    return {
+      selection: bookContextStore.get(),
+      activeBookId: activeBookIdRef.current,
+      wikiIds: activeWikiIdsRef.current,
+    };
+  }, [user?.id]);
+
+  const writeFocus = useCallback(async (
+    next: FocusState,
+    changed: { selection: boolean; activeBookId: boolean; wikiIds: boolean },
+  ): Promise<string | undefined> => {
+    let neuronError: string | undefined;
+    if (changed.wikiIds) {
+      try {
+        await applyActiveSet(next.wikiIds);
+      } catch (err) {
+        neuronError = err instanceof Error ? err.message : "Couldn't load the neuron";
+      }
+    }
+    if (changed.selection) bookContextStore.set(next.selection);
+    if (changed.activeBookId) setActiveBookId(next.activeBookId);
+    focusEpoch.bump();
+    return neuronError;
+  }, [applyActiveSet, setActiveBookId]);
+
+  const focusNames = useCallback(() => ({
+    shelf: (id: string) => shelvesRef.current.find((f) => f.id === id)?.name ?? "shelf",
+    book: (id: string) => booksRef.current.find((b) => b.id === id)?.title ?? "book",
+    wiki: (id: string) => wikis.find((w) => w.id === id)?.name ?? "neuron",
+  }), [wikis]);
+
+  /** Undo is an EPOCH problem: it runs only while nothing else has moved the
+   *  focus since the toast was raised (a picker toggle, a second load, a tool
+   *  call, a realtime delete) — restoring a snapshot over a later change
+   *  would clobber it. */
+  const undoFocus = useCallback(async (prev: FocusState, next: FocusState, epochAt: number) => {
+    if (focusEpoch.current() !== epochAt) {
+      toast.error("Focus changed since — nothing undone.");
+      return;
+    }
+    const err = await writeFocus(prev, focusChanged(next, prev));
+    toast(err ? `Restored the books; the neuron did not change: ${err}` : "Restored the previous focus.");
+  }, [writeFocus]);
+
+  const loadFocus = useCallback(async (
+    action: LoadAction,
+    opts: { toast?: boolean; navigate?: boolean } = {},
+  ): Promise<LoadReport> => {
+    const prev = focusPrev();
+    const outcome = applyLoad(prev, action);
+    const neuronError = await writeFocus(outcome.next, outcome.changed);
+    // A failed neuron write must not be narrated as a change.
+    const effective = neuronError
+      ? { next: { ...outcome.next, wikiIds: prev.wikiIds }, changed: { ...outcome.changed, wikiIds: false } }
+      : outcome;
+    const summary = describeLoad(prev, effective, focusNames()) +
+      (neuronError ? ` The neuron did not change: ${neuronError}` : "");
+    if (opts.navigate !== false) {
+      if (action.kind === "book") navigateTab("viewer");
+      else if (action.kind === "shelf" || action.kind === "books") navigateTab("chat");
+    }
+    const any = effective.changed.selection || effective.changed.activeBookId || effective.changed.wikiIds;
+    if (opts.toast !== false && any) {
+      const epochAt = focusEpoch.current();
+      toast(summary, { action: { label: "Undo", onClick: () => { void undoFocus(prev, effective.next, epochAt); } } });
+    }
+    return { summary, changed: effective.changed, neuronError, prev, next: effective.next };
+  }, [focusPrev, writeFocus, focusNames, navigateTab, undoFocus]);
+
   const getAuthenticatedUserId = useCallback(async () => {
     if (user?.id) return user.id;
 
@@ -312,6 +471,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const BOOK_COLUMNS =
         "id, title, file_name, page_count, cover_image_url, created_at, category, tags, folder_id";
       const loadBookRows = async () => {
+        // Newest optional columns first (provenance, 20260903120000), then
+        // summaries, then the base — each 42703 steps down one level.
+        const withProvenance = await fetchAllRows((from, to) =>
+          supabase
+            .from("books")
+            .select(`${BOOK_COLUMNS}, summary, summary_model, summarized_at, source, source_model, source_context`)
+            .eq("user_id", user.id)
+            .order("created_at", { ascending: false })
+            .range(from, to)
+        );
+        if (!withProvenance.error || (withProvenance.error as any)?.code !== "42703") return withProvenance;
         const withSummary = await fetchAllRows((from, to) =>
           supabase
             .from("books")
@@ -353,6 +523,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         summary: b.summary ?? null,
         summaryModel: b.summary_model ?? null,
         summarizedAt: b.summarized_at ? new Date(b.summarized_at).getTime() : null,
+        ...(b.source === "assistant" || b.source === "user" ? { source: b.source } : {}),
+        sourceModel: b.source_model ?? null,
+        sourceContext: b.source_context ?? null,
         // EMPTY, deliberately. The junction read below is the authority.
         // Seeding from the single-valued folder_id mirror meant a book on
         // three shelves rendered as being on one — with the shelf menu's
@@ -517,6 +690,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               // A just-inserted book has no junction rows yet; the mirror is
               // all there is to go on, and for a new book it is accurate.
               folderIds: b.folder_id ? [b.folder_id] : [],
+              ...(b.source === "assistant" || b.source === "user" ? { source: b.source } : {}),
+              sourceModel: b.source_model ?? null,
+              sourceContext: b.source_context ?? null,
             };
 
             return [newBook, ...prev];
@@ -575,32 +751,58 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [user, activeBookId]);
 
-  const addBook = useCallback(async (book: BookDocument, sourceFile?: File) => {
+  const addBook = useCallback(async (book: BookDocument, sourceFile?: File, opts?: AddBookOptions) => {
     if (!user) throw new Error("You must be signed in to upload books");
 
-    const { data: existingRow, error: existingRowError } = await supabase
-      .from("books")
-      .select("id, file_name")
-      .eq("user_id", user.id)
-      .ilike("file_name", book.fileName)
-      .limit(1)
-      .maybeSingle();
+    // Re-upload detection: a book with the same file name is UPDATED, not
+    // duplicated. ilike is a case-folding probe only — `%`/`_` are wildcards
+    // and PostgREST maps `*` to `%` after decoding (repo lesson), so the
+    // pattern is escaped AND the match is re-verified client-side. App-
+    // generated books skip the lookup entirely (createOnly): they can never
+    // enter the overwrite branch, whatever their name.
+    const escapeIlikeProbe = (v: string) => v.replace(/([\\%_])/g, "\\$1").replace(/\*/g, "_");
+    let existingRow: { id: string; file_name: string } | null = null;
+    if (!opts?.createOnly) {
+      const { data: probe, error: existingRowError } = await supabase
+        .from("books")
+        .select("id, file_name")
+        .eq("user_id", user.id)
+        .ilike("file_name", escapeIlikeProbe(book.fileName))
+        .limit(1)
+        .maybeSingle();
 
-    if (existingRowError) {
-      console.error("Failed to look up existing book record:", existingRowError);
-      throw existingRowError;
+      if (existingRowError) {
+        console.error("Failed to look up existing book record:", existingRowError);
+        throw existingRowError;
+      }
+      if (probe && String((probe as any).file_name).toLowerCase() === book.fileName.toLowerCase()) {
+        existingRow = probe as { id: string; file_name: string };
+      }
     }
+
+    // Provenance travels on the document from here on (in-memory truth), and
+    // to the row when the column exists.
+    let stamped: BookDocument = opts?.source
+      ? { ...book, source: opts.source, sourceModel: opts.sourceModel ?? null, sourceContext: opts.sourceContext ?? null }
+      : book;
 
     const existingBookId = existingRow?.id as string | undefined;
     let finalBookId = existingBookId || book.id;
     let createdNewBook = false;
 
     if (!existingBookId) {
-      const { data, error } = await supabase
-        .from("books")
-        .insert({ id: book.id, title: book.title, file_name: book.fileName, page_count: book.pageCount, user_id: user.id })
-        .select()
-        .single();
+      const base = { id: book.id, title: book.title, file_name: book.fileName, page_count: book.pageCount, user_id: user.id };
+      const withSource = opts?.source
+        ? { ...base, source: opts.source, source_model: opts.sourceModel ?? null, source_context: opts.sourceContext ?? null }
+        : base;
+      let { data, error } = await supabase.from("books").insert(withSource as any).select().single();
+      // First write IS the probe: 42703/PGRST204 means the provenance
+      // migration (20260903120000) isn't applied — insert without the
+      // columns and carry the fact on the reserved tag instead.
+      if (error && opts?.source && (error.code === "42703" || error.code === "PGRST204")) {
+        ({ data, error } = await supabase.from("books").insert({ ...base, tags: [ASSISTANT_TAG] } as any).select().single());
+        if (!error) stamped = { ...stamped, tags: mergeReservedTags([ASSISTANT_TAG], stamped.tags ?? []) };
+      }
 
       if (error || !data) {
         console.error("Failed to create book record:", error);
@@ -625,7 +827,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!sourceFile && !book.fileData) {
       setBooks((prev) => {
         const existingIndex = prev.findIndex((b) => b.id === finalBookId);
-        const nextBook = { ...book, id: finalBookId, fileData: "" };
+        const nextBook = { ...stamped, id: finalBookId, fileData: "" };
 
         if (existingIndex === -1) return [nextBook, ...prev];
 
@@ -663,7 +865,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       setBooks((prev) => {
         const existingIndex = prev.findIndex((b) => b.id === finalBookId);
-        const nextBook = { ...book, id: finalBookId, fileData: cachedFileUrl };
+        const nextBook = { ...stamped, id: finalBookId, fileData: cachedFileUrl };
 
         if (existingIndex === -1) return [nextBook, ...prev];
 
@@ -685,72 +887,99 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return finalBookId;
   }, [user]);
 
-  const removeBook = useCallback(async (id: string) => {
-    if (!user) return;
-    const existingBook = books.find((book) => book.id === id);
+  const removeBook = useCallback(async (id: string): Promise<RemoveBookResult> => {
+    if (!user) return { ok: false, error: "Not signed in" };
+    const existingBook = booksRef.current.find((book) => book.id === id);
+    // The manifest is read BEFORE anything is destroyed, and reported only
+    // on success (the tool built on this must never claim what it did not do).
+    const manifest = {
+      title: existingBook?.title ?? "",
+      chapters: existingBook?.chapters.length ?? 0,
+      shelves: (existingBook?.folderIds ?? []).map((fid) => shelvesRef.current.find((f) => f.id === fid)?.name ?? fid),
+    };
 
+    // ROW FIRST. Chapters, junction rows and figure rows cascade with it. A
+    // failed row delete leaves the library exactly as it was — the old order
+    // (storage first, row second, failure swallowed) could leave a listed
+    // book whose file was already gone.
+    const { data: gone, error } = await supabase
+      .from("books").delete().eq("id", id).eq("user_id", user.id).select("id");
+    if (error || !gone || gone.length === 0) {
+      console.error("Failed to delete book:", error);
+      toast.error("Could not delete book — it is still in your library");
+      return { ok: false, error: error?.message || "Book not found" };
+    }
+
+    // Storage cleanup, best-effort, AFTER the row is gone: an orphaned object
+    // is recoverable garbage, never a broken book.
     const storagePaths = existingBook
       ? getStoragePathsForBook(user.id, id, existingBook.fileName)
       : [`${user.id}/${id}.pdf`];
-
-    await supabase.storage.from("book-pdfs").remove(Array.from(new Set(storagePaths)));
-
-    // Extracted figures: the DB rows go with the book via ON DELETE
-    // CASCADE, but their JPEGs in generated-images would be orphaned
-    // forever — the cascaded rows are the only pointers to them.
+    try {
+      await supabase.storage.from("book-pdfs").remove(Array.from(new Set(storagePaths)));
+    } catch (e) { console.error("Book row deleted; PDF cleanup failed:", e); }
+    // Extracted figures: their rows cascaded, but the JPEGs in
+    // generated-images would be orphaned forever — the rows were the only
+    // pointers to them.
     try {
       const dir = `${user.id}/figures/${id}`;
       const { data: figs } = await supabase.storage.from("generated-images").list(dir, { limit: 200 });
       if (figs && figs.length > 0) {
         await supabase.storage.from("generated-images").remove(figs.map((f) => `${dir}/${f.name}`));
       }
-    } catch { /* best-effort — never block the delete */ }
+    } catch { /* best-effort — the book is already gone */ }
 
-    const { error } = await supabase.from("books").delete().eq("id", id).eq("user_id", user.id);
-    if (error) {
-      console.error("Failed to delete book:", error);
-      toast.error("Could not delete book — it is still in your library");
-      return;
-    }
     setBooks((prev) => prev.filter((b) => b.id !== id));
-    setActiveBookId((prev) => (prev === id ? null : prev));
-  }, [user, books]);
+    // A deleted book leaves every focus layer it sat in (the reader, a
+    // hand-picked selection) — through the one writer, silently.
+    await loadFocus({ kind: "remove", bookId: id }, { toast: false, navigate: false });
+    return { ok: true, deleted: manifest };
+  }, [user, setBooks, loadFocus]);
 
+  // Reader-only writers (no dialog, no replacement of the loaded books).
+  // They still bump the focus epoch: an Undo captured before them must not
+  // run over them.
   const setActiveBook = useCallback((id: string) => {
     setActiveBookId(id);
+    focusEpoch.bump();
     navigateTab("viewer");
-  }, [navigateTab]);
+  }, [navigateTab, setActiveBookId]);
 
-  const setActiveBookSilent = useCallback((id: string) => {
+  const setActiveBookSilent = useCallback((id: string | null) => {
     setActiveBookId(id);
-  }, []);
+    focusEpoch.bump();
+  }, [setActiveBookId]);
 
-  // Loading a book from the Vault routes through here so the user can pick a
-  // neuron to load alongside it. The picker pre-selects the active neuron and
-  // is fully skippable, so opening the book never blocks on a choice (see
-  // LoadNeuronDialog + the UX research behind the conditional/default pattern).
+  // Loading from the Vault routes through the neuron-pick dialog — for a
+  // book, a shelf, or a hand-picked pile alike (docs/library-agent.md L2).
+  // The dialog pre-selects the active neuron and is fully skippable, so the
+  // load never blocks on the choice (see LoadNeuronDialog + the UX research
+  // behind the conditional/default pattern).
   const requestBookLoad = useCallback((bookId: string) => {
-    setPendingBookLoadId(bookId);
+    setPendingLoad({ kind: "book", bookId });
+  }, []);
+  const requestShelfLoad = useCallback((shelfId: string) => {
+    setPendingLoad({ kind: "shelf", shelfId });
+  }, []);
+  const requestBooksLoad = useCallback((bookIds: string[], label: string) => {
+    setPendingLoad({ kind: "books", bookIds, label });
   }, []);
 
-  const resolveBookLoad = useCallback(async (neuronId: string | null, chainWikiIds?: string[]) => {
-    const bookId = pendingBookLoadId;
-    setPendingBookLoadId(null);
-    if (!bookId) return;
+  const resolveLoad = useCallback(async (neurons: NeuronChoice, opts?: { alongside?: boolean }) => {
+    const pending = pendingLoad;
+    setPendingLoad(null);
+    if (!pending) return;
+    const action: LoadAction = pending.kind === "book"
+      ? { kind: "book", bookId: pending.bookId, neurons, alongside: opts?.alongside }
+      : pending.kind === "shelf"
+        ? { kind: "shelf", shelfId: pending.shelfId, neurons }
+        : { kind: "books", bookIds: pending.bookIds, neurons };
     try {
-      if (chainWikiIds && chainWikiIds.length > 0) {
-        // A chain was picked — load the whole set alongside the book.
-        await setActiveNeurons(chainWikiIds);
-      } else if (neuronId && neuronId !== activeWikiId) {
-        // Only switch neurons when the user picked a different one — avoids a
-        // redundant loadWiki round-trip when they keep the current neuron.
-        await setActiveWiki(neuronId);
-      }
+      await loadFocus(action);
     } catch (err) {
-      console.error("Failed to load neuron alongside book:", err);
+      console.error("Failed to load:", err);
     }
-    setActiveBook(bookId);
-  }, [pendingBookLoadId, activeWikiId, setActiveWiki, setActiveNeurons, setActiveBook]);
+  }, [pendingLoad, loadFocus]);
 
   const addChapter = useCallback(async (bookId: string, chapter: Chapter) => {
     const userId = await getAuthenticatedUserId();
@@ -797,6 +1026,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       )
     );
   }, [getAuthenticatedUserId]);
+
+  /** Bulk chapter insert — one request per 100 rows, ONE state patch. Ids are
+   *  client uuids, so they are known before the round trip. On a mid-way
+   *  failure the rows already written are mirrored into state before the
+   *  error propagates (state never claims less than the database holds). */
+  const addChapters = useCallback(async (bookId: string, chapters: Chapter[]) => {
+    if (chapters.length === 0) return;
+    const userId = await getAuthenticatedUserId();
+    const rows = chapters.map((c) => ({
+      id: c.id, book_id: bookId, name: c.name, start_page: c.startPage, end_page: c.endPage,
+      text_content: c.textContent, user_id: userId,
+    }));
+    const written: Chapter[] = [];
+    let failure: unknown = null;
+    for (let i = 0; i < rows.length; i += 100) {
+      const { error } = await supabase.from("chapters").insert(rows.slice(i, i + 100));
+      if (error) { failure = error; break; }
+      written.push(...chapters.slice(i, i + 100));
+    }
+    if (written.length > 0) {
+      setBooks((prev) => prev.map((b) => (b.id === bookId ? { ...b, chapters: [...b.chapters, ...written] } : b)));
+    }
+    if (failure) throw failure;
+  }, [getAuthenticatedUserId, setBooks]);
 
   const updateChapter = useCallback(async (bookId: string, chapterId: string, name: string) => {
     if (!user) return;
@@ -849,9 +1102,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateBookTags = useCallback(async (bookId: string, category: string | null, tags: string[]) => {
     if (!user) return;
+    // Reserved provenance markers survive a whole-array replace (Auto-tag
+    // rewrites every targeted book's tags — bookProvenance.ts).
+    const merged = mergeReservedTags(booksRef.current.find((b) => b.id === bookId)?.tags, tags);
     const { error } = await supabase
       .from("books")
-      .update({ category, tags })
+      .update({ category, tags: merged })
       .eq("id", bookId)
       .eq("user_id", user.id);
     if (error) {
@@ -859,55 +1115,64 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       throw error;
     }
     setBooks((prev) =>
-      prev.map((b) => (b.id === bookId ? { ...b, category: category || undefined, tags } : b))
+      prev.map((b) => (b.id === bookId ? { ...b, category: category || undefined, tags: merged } : b))
     );
   }, [user]);
 
   // Shelf membership changes go through here so books[].folderIds (the
   // single client copy of membership) never goes stale — the Shelves view
-  // derives entirely from it. The next set is computed INSIDE the functional
-  // update and applied optimistically before the write: the shelf menu stays
-  // open across toggles, and a second click issued before the first write's
-  // round trip resolves must see the first click's result, not the
-  // render-captured base (else its delta silently undoes the first toggle).
-  // Deltas from overlapping toggles commute at the database.
-  const toggleBookShelf = useCallback(async (bookId: string, shelfId: string) => {
-    if (!user) return;
-    let delta: ShelfDelta | null = null;
-    setBooks((prev) => prev.map((b) => {
-      if (b.id !== bookId) return b;
-      const member = b.folderIds.includes(shelfId);
-      // Unchecking is mode-independent; checking replaces the set in the
-      // exclusive fallback (one shelf per book is all folder_id can hold).
-      const next = member
-        ? b.folderIds.filter((id) => id !== shelfId)
-        : multiShelf ? [...b.folderIds, shelfId] : [shelfId];
-      delta = {
-        adds: next.filter((id) => !b.folderIds.includes(id)),
-        removes: b.folderIds.filter((id) => !next.includes(id)),
-        ...((next[0] ?? null) !== (b.folderIds[0] ?? null)
-          ? { mirror: { value: next[0] ?? null } }
-          : {}),
-      };
-      return { ...b, folderIds: next };
-    }));
-    if (!delta) return; // unknown book id
-    const d: ShelfDelta = delta;
+  // derives entirely from it. The delta is computed OUTSIDE React's updater,
+  // from the synchronous mirror: computing it inside `setBooks(fn)` only
+  // works when React runs the updater eagerly, which it does not once the
+  // provider has any pending update — a tool composing createShelf with a
+  // membership write in one microtask would then have written nothing and
+  // thrown nothing (review finding). The optimistic patch lands before the
+  // write; a second click issued before the first round trip resolves reads
+  // the first click's result from the mirror. Deltas commute at the database.
+  const setBookShelfMembership = useCallback(async (
+    bookId: string, shelfId: string, member: boolean,
+  ): Promise<{ changed: boolean; moved_from: string[] }> => {
+    if (!user) throw new Error("Not signed in");
+    const b = booksRef.current.find((x) => x.id === bookId);
+    if (!b) throw new Error("Book not found");
+    const isMember = b.folderIds.includes(shelfId);
+    if (member === isMember) return { changed: false, moved_from: [] };
+    // Unchecking is mode-independent; checking replaces the set in the
+    // exclusive fallback (one shelf per book is all folder_id can hold).
+    const next = member
+      ? (multiShelf ? [...b.folderIds, shelfId] : [shelfId])
+      : b.folderIds.filter((id) => id !== shelfId);
+    const d: ShelfDelta = {
+      adds: next.filter((id) => !b.folderIds.includes(id)),
+      removes: b.folderIds.filter((id) => !next.includes(id)),
+      ...((next[0] ?? null) !== (b.folderIds[0] ?? null)
+        ? { mirror: { value: next[0] ?? null } }
+        : {}),
+    };
+    setBooks((prev) => prev.map((x) => (x.id === bookId ? { ...x, folderIds: next } : x)));
     try {
       await applyShelfDelta(user.id, bookId, d, multiShelf);
     } catch (error) {
       // Roll back by INVERSE DELTA, not by snapshot — a snapshot restore
       // would clobber any later optimistic toggle on the same book.
-      setBooks((prev) => prev.map((b) => {
-        if (b.id !== bookId) return b;
-        const rolled = b.folderIds.filter((id) => !d.adds.includes(id));
+      setBooks((prev) => prev.map((x) => {
+        if (x.id !== bookId) return x;
+        const rolled = x.folderIds.filter((id) => !d.adds.includes(id));
         for (const id of d.removes) if (!rolled.includes(id)) rolled.push(id);
-        return { ...b, folderIds: rolled };
+        return { ...x, folderIds: rolled };
       }));
       console.error("Failed to update book shelves:", error);
       throw error;
     }
-  }, [user, multiShelf]);
+    // In the exclusive fallback an add is a MOVE — say which shelves it left.
+    return { changed: true, moved_from: member ? d.removes : [] };
+  }, [user, multiShelf, setBooks]);
+
+  const toggleBookShelf = useCallback(async (bookId: string, shelfId: string) => {
+    const b = booksRef.current.find((x) => x.id === bookId);
+    if (!b) return; // unknown book id
+    await setBookShelfMembership(bookId, shelfId, !b.folderIds.includes(shelfId));
+  }, [setBookShelfMembership]);
 
   // Deleting a shelf cascades its junction rows and SET NULLs books.folder_id
   // server-side; this mirrors both into client state without per-book writes.
@@ -967,7 +1232,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await deleteFolder(id);
     setShelves((prev) => prev.filter((f) => f.id !== id));
     clearShelfLocal(id);
-  }, [clearShelfLocal]);
+    // A deleted shelf that was LOADED would leave the selection pointing at
+    // nothing; unload it through the one focus writer (silently — the shelf
+    // is already gone, there is nothing to undo into).
+    bookContextStore.init(user?.id ?? null);
+    if (bookContextStore.get().shelfId === id) {
+      await loadFocus({ kind: "none", neurons: { kind: "keep" } }, { toast: false, navigate: false });
+    }
+  }, [clearShelfLocal, loadFocus, user?.id]);
 
   const getActiveBook = useCallback(() => {
     return books.find((b) => b.id === activeBookId);
@@ -1141,11 +1413,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         removeBook,
         setActiveBook,
         setActiveBookSilent,
-        pendingBookLoadId,
+        pendingLoad,
         requestBookLoad,
-        resolveBookLoad,
+        requestShelfLoad,
+        requestBooksLoad,
+        resolveLoad,
+        loadFocus,
+        getBooks: () => booksRef.current,
+        getActiveBookId: () => activeBookIdRef.current,
+        getShelves: () => shelvesRef.current,
         setActiveTab: navigateTab,
         addChapter,
+        addChapters,
         updateChapter,
         applyChapterGists,
         applyBookSummary,
@@ -1153,6 +1432,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateBookTitle,
         updateBookTags,
         toggleBookShelf,
+        setBookShelfMembership,
         membershipLoaded,
         shelves,
         shelvesLoading,
