@@ -2095,7 +2095,6 @@ export type Database = {
           active_wiki_ids: string[]
           auto_approve_tool_updates: boolean
           auto_catalog_on_upload: boolean
-          auto_extract_figures: boolean
           auto_read_replies: boolean
           auto_show_memory_images: boolean
           burplexity_api_token: string | null
@@ -2118,8 +2117,6 @@ export type Database = {
           inworld_voice_id: string
           is_recording_mode: boolean
           lean_mode: string
-          library_ingest_auto_file: boolean
-          library_ingest_model: string | null
           max_reply_sentences: number | null
           nvidia_api_key: string | null
           nvidia_key_last4: string | null
@@ -2164,7 +2161,6 @@ export type Database = {
           active_wiki_ids?: string[]
           auto_approve_tool_updates?: boolean
           auto_catalog_on_upload?: boolean
-          auto_extract_figures?: boolean
           auto_read_replies?: boolean
           auto_show_memory_images?: boolean
           burplexity_api_token?: string | null
@@ -2187,8 +2183,6 @@ export type Database = {
           inworld_voice_id?: string
           is_recording_mode?: boolean
           lean_mode?: string
-          library_ingest_auto_file?: boolean
-          library_ingest_model?: string | null
           max_reply_sentences?: number | null
           nvidia_api_key?: string | null
           nvidia_key_last4?: string | null
@@ -2233,7 +2227,6 @@ export type Database = {
           active_wiki_ids?: string[]
           auto_approve_tool_updates?: boolean
           auto_catalog_on_upload?: boolean
-          auto_extract_figures?: boolean
           auto_read_replies?: boolean
           auto_show_memory_images?: boolean
           burplexity_api_token?: string | null
@@ -2256,8 +2249,6 @@ export type Database = {
           inworld_voice_id?: string
           is_recording_mode?: boolean
           lean_mode?: string
-          library_ingest_auto_file?: boolean
-          library_ingest_model?: string | null
           max_reply_sentences?: number | null
           nvidia_api_key?: string | null
           nvidia_key_last4?: string | null
