@@ -434,7 +434,6 @@ export type Database = {
           cover_image_url: string | null
           created_at: string
           file_name: string
-          folder_id: string | null
           id: string
           page_count: number
           summarized_at: string | null
@@ -449,7 +448,6 @@ export type Database = {
           cover_image_url?: string | null
           created_at?: string
           file_name: string
-          folder_id?: string | null
           id?: string
           page_count?: number
           summarized_at?: string | null
@@ -464,7 +462,6 @@ export type Database = {
           cover_image_url?: string | null
           created_at?: string
           file_name?: string
-          folder_id?: string | null
           id?: string
           page_count?: number
           summarized_at?: string | null
@@ -474,15 +471,7 @@ export type Database = {
           title?: string
           user_id?: string | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "books_folder_id_fkey"
-            columns: ["folder_id"]
-            isOneToOne: false
-            referencedRelation: "book_folders"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       chapters: {
         Row: {
