@@ -96,70 +96,66 @@ describe("fetchShelfMembership — the read that doubles as the probe", () => {
   });
 });
 
-describe("applyShelfDelta — delta writes, dual-store", () => {
-  it("adds land BEFORE removes, adds use ON CONFLICT DO NOTHING, and the mirror write targets books", async () => {
-    await applyShelfDelta("u1", "b1", { adds: ["s2"], removes: ["s1"], mirror: { value: "s2" } }, true);
-    expect(state.calls.map((c) => c.table)).toEqual(["book_shelf_members", "book_shelf_members", "books"]);
-    const [up, del, mirror] = state.calls;
+describe("applyShelfDelta — the junction is the only store", () => {
+  it("adds land BEFORE removes, and adds use ON CONFLICT DO NOTHING", async () => {
+    await applyShelfDelta("u1", "b1", { adds: ["s2"], removes: ["s1"] });
+    // No books table in the call list any more: the folder_id mirror is gone.
+    expect(state.calls.map((c) => c.table)).toEqual(["book_shelf_members", "book_shelf_members"]);
+    const [up, del] = state.calls;
     expect(up.ops[0][0]).toBe("upsert");
     expect(up.ops[0][1][0]).toEqual([{ folder_id: "s2", book_id: "b1", user_id: "u1" }]);
     expect(up.ops[0][1][1]).toEqual({ onConflict: "folder_id,book_id", ignoreDuplicates: true });
     expect(del.ops.map(([m]) => m)).toContain("delete");
     expect(del.ops).toContainEqual(["in", ["folder_id", ["s1"]]]);
-    expect(mirror.ops).toContainEqual(["update", [{ folder_id: "s2" }]]);
   });
 
-  it("a toggle that doesn't move folderIds[0] omits the mirror round trip entirely", async () => {
-    await applyShelfDelta("u1", "b1", { adds: ["s3"], removes: [] }, true);
-    expect(state.calls.map((c) => c.table)).toEqual(["book_shelf_members"]);
-  });
-
-  it("junction ops run in a FALLBACK session too (transient startup failure must not lose writes), with failures only logged", async () => {
-    // Cache is unknown (no fetch ran): junction attempted, error swallowed,
-    // mirror write proceeds and is authoritative.
-    state.queue = [{ error: { code: "PGRST301", message: "blip" } }, { error: null }];
-    await applyShelfDelta("u1", "b1", { adds: ["s1"], removes: [], mirror: { value: "s1" } }, false);
-    expect(junctionCalls()).toHaveLength(1);
-    expect(bookCalls()).toHaveLength(1);
-  });
-
-  it("a KNOWN-missing junction (cached by a read) skips junction round trips — only the mirror write goes out", async () => {
-    state.queue = [{ error: { code: "42P01" } }]; // fetch caches fallback mode
-    expect(await fetchShelfMembership("u1")).toBeNull();
-    state.calls = [];
-    await applyShelfDelta("u1", "b1", { adds: ["s1"], removes: [], mirror: { value: "s1" } }, false);
-    expect(junctionCalls()).toHaveLength(0);
-    expect(bookCalls()).toHaveLength(1);
-  });
-
-  it("a missing-schema error DURING a write caches fallback mode and lets the mirror write proceed as the write of record", async () => {
-    state.queue = [{ error: { code: "PGRST205" } }, { error: null }];
-    await applyShelfDelta("u1", "b1", { adds: ["s1"], removes: [], mirror: { value: "s1" } }, true);
-    expect(bookCalls()).toHaveLength(1);
-    state.calls = [];
-    await applyShelfDelta("u1", "b1", { adds: ["s2"], removes: [], mirror: { value: "s1" } }, true);
-    expect(junctionCalls()).toHaveLength(0); // cached: no more junction attempts
-  });
-
-  it("junction-live: a junction failure throws BEFORE the mirror write (the caller rolls back)", async () => {
-    state.queue = [{ error: { code: "57014", message: "canceled" } }];
-    await expect(
-      applyShelfDelta("u1", "b1", { adds: ["s1"], removes: [], mirror: { value: "s1" } }, true),
-    ).rejects.toBeTruthy();
+  it("never touches the books table", async () => {
+    // The mirror cost a round trip on every toggle and could only ever
+    // represent one shelf of many. Its removal is the client half of the
+    // deferred books.folder_id column drop, so this is the assertion that
+    // makes the column safe to drop.
+    await applyShelfDelta("u1", "b1", { adds: ["s1"], removes: ["s2"] });
     expect(bookCalls()).toHaveLength(0);
   });
 
-  it("junction-live: a failed mirror does NOT fail the committed membership", async () => {
-    state.queue = [{ error: null }, { error: { code: "57014", message: "mirror failed" } }];
-    await expect(
-      applyShelfDelta("u1", "b1", { adds: ["s1"], removes: [], mirror: { value: "s1" } }, true),
-    ).resolves.toBeUndefined();
+  it("skips the round trip entirely when a delta is empty on one side", async () => {
+    await applyShelfDelta("u1", "b1", { adds: ["s3"], removes: [] });
+    expect(state.calls.map((c) => c.table)).toEqual(["book_shelf_members"]);
   });
 
-  it("fallback session: a mirror failure throws — it was the write of record", async () => {
-    state.queue = [{ error: null }, { error: { code: "57014", message: "boom" } }];
+  it("THROWS on a junction failure — there is no second store to absorb it", async () => {
+    // While the mirror existed a junction error could be swallowed and the
+    // change still recorded somewhere. There is no somewhere else now, so the
+    // caller must hear about it and roll its optimistic patch back.
+    state.queue = [{ error: { code: "57014", message: "canceled" } }];
     await expect(
-      applyShelfDelta("u1", "b1", { adds: ["s1"], removes: [], mirror: { value: "s1" } }, false),
+      applyShelfDelta("u1", "b1", { adds: ["s1"], removes: [] }),
     ).rejects.toBeTruthy();
+  });
+
+  it("throws on a transient failure during the REMOVE half too", async () => {
+    state.queue = [{ error: null }, { error: { code: "57014", message: "canceled" } }];
+    await expect(
+      applyShelfDelta("u1", "b1", { adds: ["s1"], removes: ["s2"] }),
+    ).rejects.toBeTruthy();
+  });
+
+  it("a missing junction caches AND throws, in plain words", async () => {
+    // It used to cache and fall through to the mirror. With nothing left to
+    // write to, silence would leave the UI showing a membership the database
+    // never accepted.
+    state.queue = [{ error: { code: "PGRST205" } }];
+    await expect(
+      applyShelfDelta("u1", "b1", { adds: ["s1"], removes: [] }),
+    ).rejects.toThrow(/Shelves aren't available/);
+  });
+
+  it("stops attempting junction writes once a read has cached it missing", async () => {
+    state.queue = [{ error: { code: "42P01" } }];
+    expect(await fetchShelfMembership("u1")).toBeNull();
+    state.calls = [];
+    await applyShelfDelta("u1", "b1", { adds: ["s1"], removes: [] });
+    expect(junctionCalls()).toHaveLength(0);
+    expect(bookCalls()).toHaveLength(0);
   });
 });

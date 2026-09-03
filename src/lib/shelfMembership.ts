@@ -1,12 +1,15 @@
 import { supabase } from "@/integrations/supabase/client";
 
-// Non-exclusive shelf membership, DUAL-MODE. The book_shelf_members junction
-// ships in the 20260821120000_shelf_membership migration, which the user
-// applies via a Lovable prompt out-of-band — push order vs apply order is not
-// controllable — so reads fall back to the exclusive books.folder_id column
-// while the table doesn't exist, and writes go to BOTH stores (the junction
-// as data, folder_id as a best-effort single-shelf mirror for stale cached
-// bundles) until the deferred migration drops the column.
+// Non-exclusive shelf membership. The book_shelf_members junction is the
+// SINGLE store — verified live, and books.folder_id is no longer read or
+// written by any path here.
+//
+// The mirror era is over. folder_id existed as a best-effort single-shelf
+// copy so bundles cached before the junction migration kept seeing a coherent
+// world; it cost a round trip on every toggle and could only ever represent
+// one shelf out of many. Dropping it here is the CLIENT half of the deferred
+// column drop — the column itself comes out once bundles carrying this code
+// have cycled.
 //
 // Design laws this module encodes (each earned by a review finding):
 //  - Writes are DELTAS (add/remove specific shelves), never replace-the-set:
@@ -19,9 +22,8 @@ import { supabase } from "@/integrations/supabase/client";
 //    HEAD request (HEAD error responses carry no JSON body, so the error
 //    code the classifier needs may never arrive).
 //  - Junction writes are attempted whenever the junction is not KNOWN
-//    missing — even in a fallback-mode session — so a transient startup
-//    failure can't make a session's shelf changes silently vanish on the
-//    next junction-mode reload.
+//    missing, so a transient startup read failure cannot stop a session's
+//    shelf changes from landing.
 //  - Membership has exactly ONE client copy: books[].folderIds in
 //    AppContext. This module only talks to the database; AppContext owns
 //    the state patch and the toggle semantics.
@@ -48,11 +50,11 @@ const PAGE_SIZE = 500;
 const MAX_PAGES = 40;
 
 /**
- * All shelf memberships for a user, as bookId → folderIds. Returns null in
- * fallback mode (junction not applied yet) — the caller then keeps its
- * folder_id-derived memberships. Throws on transient failures (network,
- * auth): a read failure is not a mode change, and the caller must not wipe
- * the fallback data it already has.
+ * All shelf memberships for a user, as bookId → folderIds. Returns null when
+ * the junction table is missing — the caller then knows there is nothing to
+ * show rather than guessing. Throws on transient failures (network, auth):
+ * "the read failed" and "there are no memberships" are different claims, and
+ * the caller has to be able to tell them apart.
  *
  * Paged because PostgREST silently caps un-ranged selects at 1000 rows
  * (documented repo lesson), and a junction table crosses that line faster
@@ -99,41 +101,38 @@ export interface ShelfDelta {
   adds: string[];
   /** Shelf ids to remove this book from. */
   removes: string[];
-  /** books.folder_id mirror write — omit when the mirror value is unchanged
-   *  (skips a round trip). The mirror is BEST-EFFORT: it exists only so
-   *  stale cached bundles keep seeing a coherent single-shelf world until
-   *  the deferred migration drops the column. */
-  mirror?: { value: string | null };
 }
 
 /**
  * Persist one book's membership delta. Adds land before removes, so a
- * mid-flight failure leaves a superset — never an emptied set. Junction ops
- * run whenever the junction is not known-missing, even in a fallback-mode
- * session (see the module header); `junctionLive` decides which store is
- * authoritative for errors:
- *  - junctionLive=true: a junction failure throws (the caller rolls back);
- *    a mirror failure is only logged — the membership already committed.
- *  - junctionLive=false: the mirror write is the authoritative one and
- *    throws; a best-effort junction failure is only logged.
- * A missing-schema junction error is neither: it caches fallback mode and
- * the mirror write proceeds as the write of record.
+ * mid-flight failure leaves a superset — never an emptied set.
+ *
+ * EVERY failure throws now, and that is what removing the mirror forces.
+ * While folder_id existed there was a second store to fall back on, so a
+ * junction error could be swallowed and the user's change still be recorded
+ * somewhere. There is no somewhere else: a write that did not land must reach
+ * the caller so the optimistic patch rolls back, rather than leaving the UI
+ * showing a membership the database never accepted.
+ *
+ * A missing-schema error stops being the special case it was, for the same
+ * reason. It still caches (so reads stop asking) and now throws as well —
+ * with no junction there is nothing left to write to.
  */
 export async function applyShelfDelta(
   userId: string,
   bookId: string,
   delta: ShelfDelta,
-  junctionLive: boolean,
 ): Promise<void> {
-  const { adds, removes, mirror } = delta;
+  const { adds, removes } = delta;
 
-  const onJunctionError = (error: unknown): void => {
+  const onJunctionError = (error: unknown): never => {
     if (isMissingSchema(error)) {
       junctionCache = false;
-      return;
+      throw new Error(
+        "Shelves aren't available on this account yet — the shelf-membership table is missing.",
+      );
     }
-    if (junctionLive) throw error;
-    console.error("Best-effort junction write failed (fallback session):", error);
+    throw error;
   };
 
   if (junctionCache !== false && adds.length > 0) {
@@ -154,17 +153,5 @@ export async function applyShelfDelta(
       .eq("user_id", userId)
       .in("folder_id", removes);
     if (error) onJunctionError(error);
-  }
-
-  if (mirror) {
-    const { error } = await supabase
-      .from("books")
-      .update({ folder_id: mirror.value } as any)
-      .eq("id", bookId)
-      .eq("user_id", userId);
-    if (error) {
-      if (!junctionLive) throw error;
-      console.error("Shelf membership saved, but the folder_id mirror write failed:", error);
-    }
   }
 }

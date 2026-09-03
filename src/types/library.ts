@@ -48,11 +48,12 @@ export interface BookDocument {
    *  it was written ({book_ids, shelf_id}) — computed by the app. */
   sourceContext?: { book_ids?: string[]; shelf_id?: string | null } | null;
   /** User-managed shelf ids (book_folders.id), non-exclusive; empty when
-   *  unshelved. Junction mode loads them in deterministic (book, shelf)
-   *  order; books.folder_id survives only as a BEST-EFFORT single-shelf
-   *  mirror for stale bundles (it may drift — e.g. a shelf delete SET NULLs
-   *  it while other memberships remain). In fallback mode (migration not
-   *  applied yet) this holds at most one id, derived from books.folder_id. */
+   *  unshelved. Loaded from the book_shelf_members junction in deterministic
+   *  (book, shelf) order — the single source. books.folder_id is no longer
+   *  read: it could hold one shelf out of many and drifted (a shelf delete
+   *  SET NULLs it while other memberships remain), so it seeded a book on
+   *  three shelves as being on one. Empty also means "not loaded yet";
+   *  AppContext.membershipLoaded is what separates the two. */
   folderIds: string[];
 }
 

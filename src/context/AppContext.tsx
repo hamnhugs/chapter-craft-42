@@ -80,8 +80,8 @@ interface AppState {
   createShelf: (name: string) => Promise<BookFolder>;
   renameShelf: (id: string, name: string) => Promise<void>;
   /** Deletes the shelf AND drops it from every book's folderIds. The DB
-   *  cascades junction rows and SET NULLs the folder_id mirror; this keeps
-   *  client state in step without a reload or per-book writes. */
+   *  cascades the junction rows; this keeps client state in step without a
+   *  reload or per-book writes. */
   deleteShelf: (id: string) => Promise<void>;
   /** Patch a freshly generated shelf digest into the roster. The DB write
    *  happens in shelfDigest.ts; this only mirrors it locally. */
@@ -469,7 +469,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // session runs a summary-less catalog. Same shape as the chapters.gist
       // feature-detect below.
       const BOOK_COLUMNS =
-        "id, title, file_name, page_count, cover_image_url, created_at, category, tags, folder_id";
+        "id, title, file_name, page_count, cover_image_url, created_at, category, tags";
       const loadBookRows = async () => {
         // Newest optional columns first (provenance, 20260903120000), then
         // summaries, then the base — each 42703 steps down one level.
@@ -526,25 +526,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ...(b.source === "assistant" || b.source === "user" ? { source: b.source } : {}),
         sourceModel: b.source_model ?? null,
         sourceContext: b.source_context ?? null,
-        // EMPTY, deliberately. The junction read below is the authority.
-        // Seeding from the single-valued folder_id mirror meant a book on
-        // three shelves rendered as being on one — with the shelf menu's
-        // checkboxes wrong to match — for as long as that read took. The
-        // mirror is held back in `mirrorFolderId` and used only if the
-        // junction turns out to be unavailable.
+        // EMPTY until the junction read below, which is the only authority.
+        // books.folder_id is no longer selected or seeded from: it could hold
+        // one shelf out of many, so a book on three rendered as being on one
+        // — with the shelf menu's checkboxes wrong to match — for as long as
+        // that read took.
         folderIds: [],
       }));
-      const mirrorFolderId = new Map<string, string | null>(
-        bookRows.rows.map((b: any) => [b.id as string, (b.folder_id as string | null) ?? null]),
-      );
-      /** Fallback path: derive single-shelf membership from the mirror. */
-      const applyMirrorMembership = () => {
-        setBooks((prev) => prev.map((b) => {
-          if (!initialIds.has(b.id)) return b;
-          const mirror = mirrorFolderId.get(b.id);
-          return { ...b, folderIds: mirror ? [mirror] : [] };
-        }));
-      };
       // The library (and the chat's view of it) is usable from here on, even
       // if chapters never arrive.
       setBooks(dbBooks);
@@ -602,14 +590,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setBooks((prev) => prev.map((b) => ({ ...b, chapters: chaptersByBookId[b.id] || b.chapters })));
       });
 
+      // With the mirror gone there is no second store to fall back on, so
+      // the three outcomes must stay distinguishable: memberships known,
+      // known to be none, and NOT known. Only the first two set
+      // membershipLoaded — a transient failure leaves the shelf UI saying
+      // "counting…" rather than reporting a zero it never read.
       void fetchShelfMembership(user.id)
         .then((membership) => {
           if (cancelled) return;
           if (!membership) {
-            // null = junction not applied yet. Fall back to the mirror we
-            // held back, so the session still shows the memberships it can
-            // represent (one shelf per book) rather than none.
-            applyMirrorMembership();
+            // Junction table missing: there genuinely are no memberships.
+            // That is a settled answer, so the UI may stop counting.
+            setMembershipLoaded(true);
             return;
           }
           setMultiShelf(true);
@@ -619,18 +611,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setBooks((prev) => prev.map((b) =>
             initialIds.has(b.id) ? { ...b, folderIds: membership.get(b.id) || [] } : b
           ));
+          setMembershipLoaded(true);
         })
         .catch((e) => {
-          // Transient failure — not a mode change, and not a reason to show
-          // an empty library of shelves. Fall back to the mirror; the session
-          // keeps the exclusive UI, and applyShelfDelta still lands junction
-          // rows best-effort whenever the junction isn't known-missing, so
-          // nothing written this session vanishes on the next reload.
+          // Transient (network, auth). NOT the same claim as "no shelves":
+          // membershipLoaded stays false so nothing downstream states a count
+          // it never established.
           if (cancelled) return;
           console.error("Failed to load shelf membership:", e);
-          applyMirrorMembership();
-        })
-        .finally(() => { if (!cancelled) setMembershipLoaded(true); });
+        });
     };
     loadBooks();
 
@@ -685,11 +674,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               addedAt: new Date(b.created_at).getTime(),
               category: b.category || undefined,
               tags: Array.isArray(b.tags) ? b.tags : [],
-              // A just-inserted book carries at most its folder_id mirror;
-              // junction rows for it would be written by this same client.
-              // A just-inserted book has no junction rows yet; the mirror is
-              // all there is to go on, and for a new book it is accurate.
-              folderIds: b.folder_id ? [b.folder_id] : [],
+              // A just-inserted book has no junction rows yet, and there is
+              // no mirror left to consult. Unshelved is the truth.
+              folderIds: [],
               ...(b.source === "assistant" || b.source === "user" ? { source: b.source } : {}),
               sourceModel: b.source_model ?? null,
               sourceContext: b.source_context ?? null,
@@ -1137,21 +1124,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!b) throw new Error("Book not found");
     const isMember = b.folderIds.includes(shelfId);
     if (member === isMember) return { changed: false, moved_from: [] };
-    // Unchecking is mode-independent; checking replaces the set in the
-    // exclusive fallback (one shelf per book is all folder_id can hold).
+    // Purely additive now. The "checking replaces the set" branch existed
+    // only because books.folder_id could hold a single shelf; with the
+    // junction as the sole store, checking a second shelf adds a second
+    // membership.
     const next = member
-      ? (multiShelf ? [...b.folderIds, shelfId] : [shelfId])
+      ? [...b.folderIds, shelfId]
       : b.folderIds.filter((id) => id !== shelfId);
     const d: ShelfDelta = {
       adds: next.filter((id) => !b.folderIds.includes(id)),
       removes: b.folderIds.filter((id) => !next.includes(id)),
-      ...((next[0] ?? null) !== (b.folderIds[0] ?? null)
-        ? { mirror: { value: next[0] ?? null } }
-        : {}),
     };
     setBooks((prev) => prev.map((x) => (x.id === bookId ? { ...x, folderIds: next } : x)));
     try {
-      await applyShelfDelta(user.id, bookId, d, multiShelf);
+      await applyShelfDelta(user.id, bookId, d);
     } catch (error) {
       // Roll back by INVERSE DELTA, not by snapshot — a snapshot restore
       // would clobber any later optimistic toggle on the same book.
@@ -1164,9 +1150,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.error("Failed to update book shelves:", error);
       throw error;
     }
-    // In the exclusive fallback an add is a MOVE — say which shelves it left.
+    // Kept in the shape callers already read, but an add can no longer
+    // displace anything: `removes` is always empty when `member` is true.
     return { changed: true, moved_from: member ? d.removes : [] };
-  }, [user, multiShelf, setBooks]);
+  }, [user, setBooks]);
 
   const toggleBookShelf = useCallback(async (bookId: string, shelfId: string) => {
     const b = booksRef.current.find((x) => x.id === bookId);
@@ -1174,8 +1161,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await setBookShelfMembership(bookId, shelfId, !b.folderIds.includes(shelfId));
   }, [setBookShelfMembership]);
 
-  // Deleting a shelf cascades its junction rows and SET NULLs books.folder_id
-  // server-side; this mirrors both into client state without per-book writes.
+  // Deleting a shelf cascades its junction rows server-side; this mirrors
+  // that into client state without per-book writes.
   // Internal now — deleteShelf is the only caller, so no surface can drop a
   // shelf from the books without also dropping it from the roster.
   const clearShelfLocal = useCallback((folderId: string) => {

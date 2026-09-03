@@ -21,9 +21,9 @@ import { toast } from "sonner";
 // over the All-books section — computed facets over metadata, never a second
 // container (the Calibre "virtual library" model). Membership is
 // NON-EXCLUSIVE (book_shelf_members junction) — checkbox membership, the
-// Kindle/Apple Books model — degrading to one-shelf-per-book while the
-// junction migration hasn't been applied (multiShelf false: checking a shelf
-// moves the book, matching what books.folder_id can actually store).
+// Kindle/Apple Books model. The junction is the only store; `multiShelf`
+// now means simply "the junction answered", and when it hasn't, shelf
+// changes cannot be saved at all rather than silently becoming exclusive.
 //
 // Membership has exactly ONE client copy: books[].folderIds in AppContext
 // (loaded paged at startup, patched by toggleBookShelf on every change).
@@ -321,8 +321,8 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
     if (!window.confirm(`Delete shelf "${f.name}"? Books on it stay in your library (nothing is deleted).`)) return;
     try {
       // deleteShelf drops the row, the roster entry, and the shelf from every
-      // book's folderIds — the DB cascades junction rows and SET NULLs the
-      // folder_id mirror, so client state must follow without a reload.
+      // book's folderIds — the DB cascades the junction rows, so client state
+      // must follow without a reload.
       await deleteShelf(id);
       if (openShelfId === id) setOpenShelfId(null);
       toast.success("Shelf deleted");
@@ -374,7 +374,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="min-w-44">
           <DropdownMenuLabel className="text-[10px] uppercase tracking-widest text-on-surface-variant">
-            {multiShelf ? "Shelves" : "Shelf (one per book until the database update lands)"}
+            {multiShelf ? "Shelves" : "Shelves (unavailable — couldn't reach your shelf data)"}
           </DropdownMenuLabel>
           {shelves.length === 0 && (
             <DropdownMenuLabel className="font-normal text-xs">No shelves yet — create one above.</DropdownMenuLabel>

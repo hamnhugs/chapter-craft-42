@@ -1,8 +1,9 @@
 import { supabase } from "@/integrations/supabase/client";
 
 // Shelves (UI name) are stored in the book_folders table; membership is the
-// non-exclusive book_shelf_members junction (dual-mode with the legacy
-// single-valued books.folder_id — see shelfMembership.ts). The table's
+// non-exclusive book_shelf_members junction, which is now the only store —
+// the legacy books.folder_id mirror is no longer read or written by any
+// client path (see shelfMembership.ts). The table's
 // dormant parent_id/color/default_wiki_id columns are dropped by the
 // 20260821120000_shelf_membership migration; this module never names them
 // (select * / explicit writes), so it works on either side of it.
