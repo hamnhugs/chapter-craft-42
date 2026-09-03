@@ -436,6 +436,9 @@ export type Database = {
           file_name: string
           id: string
           page_count: number
+          source: string
+          source_context: Json | null
+          source_model: string | null
           summarized_at: string | null
           summary: string | null
           summary_model: string | null
@@ -450,6 +453,9 @@ export type Database = {
           file_name: string
           id?: string
           page_count?: number
+          source?: string
+          source_context?: Json | null
+          source_model?: string | null
           summarized_at?: string | null
           summary?: string | null
           summary_model?: string | null
@@ -464,6 +470,9 @@ export type Database = {
           file_name?: string
           id?: string
           page_count?: number
+          source?: string
+          source_context?: Json | null
+          source_model?: string | null
           summarized_at?: string | null
           summary?: string | null
           summary_model?: string | null
