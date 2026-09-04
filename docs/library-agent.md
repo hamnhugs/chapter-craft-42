@@ -294,3 +294,52 @@ book's cards.
 - Live verification: the flows are Supabase-backed; a logged-in Browser-pane
   session is needed to exercise them end to end (shelf load → dialog → chips;
   `save_to_library` by voice; `delete_book` two-step).
+
+## 6. The Trash — a book delete you can take back (addendum, 2026-09-03)
+
+Every delete of a book was HARD and, in the Vault, UNCONFIRMED: the list view's
+trash icon called `removeBook` directly, which removed the PDF, the figures
+and the row. The research (§2, §4 of the digest) is unambiguous that a
+reversible action beats a confirmation, and the hands-free `delete_book` had to
+carry a title-bound two-step only because there was nothing to undo into.
+
+**Design.**
+- Migration `20260903130000_book_trash.sql`: `books.deleted_at timestamptz`
+  (NULL = live) + index `(user_id, deleted_at)`. No RLS change. Chapters,
+  junction rows, figures, storage and card locators are UNTOUCHED by a trash —
+  a restored book comes back exactly as it was, anchors included.
+- **Live books are the only `books`.** Startup loads `deleted_at IS NULL`
+  (first read IS the probe: a 42703 means the migration is absent, the
+  session is marked trash-unavailable, and the load retries unfiltered). Every
+  existing consumer of `books` — the block, the tools, search, the picker —
+  therefore never sees a trashed book. The trash is separate state,
+  `trashedBooks`, fetched once per session (`deleted_at IS NOT NULL`, newest
+  first, capped at 200).
+- **`removeBook` becomes a soft delete when the trash is available**: one
+  UPDATE setting `deleted_at`, `.select("id")` (0 rows = not found), the book
+  moves from `books` to `trashedBooks` in state, focus layers drop it through
+  `loadFocus({kind:"remove"})`. When the migration is absent it stays the
+  existing hard delete and every result SAYS so. `restoreBook(id)` is the
+  reverse UPDATE (`deleted_at = null`); `purgeBook(id)` is the old hard path
+  (row first, storage after); `emptyTrash()` purges all.
+- **Auto-expiry**: 30 days. On each trash fetch, rows older than 30 days are
+  purged client-side, best-effort (no pg_cron dependency; the UI says
+  "deleted forever after 30 days").
+- **Vault UI**: a "Trash (n)" button beside Auto-tag opens a dialog listing
+  trashed books (title, pages, trashed date, days left) with Restore, Delete
+  forever, and Empty trash (the last two need a click-through confirm — they
+  are the only hard deletes left). The list/card delete controls become "Move
+  to Trash" (no confirm; a toast with Undo = restore).
+- **AI verbs**: `delete_book` = move to Trash when the trash is available —
+  acts on the first call once the book is named (no `confirm_title`; the
+  action is compensable), still refuses the reader's or a loaded book without
+  `even_if_loaded`, and its result names the restore path. When the trash is
+  unavailable the existing title-bound two-step stays. New `restore_book
+  {book}` (roster 79 → 80; resolves against the trash by id or exact title).
+  Realtime: DELETE events already remove purged rows; a restore is an UPDATE
+  no channel carries, so another open tab sees it on reload (documented).
+- **Prompt**: the `delete_book` line says the result decides whether it was
+  trashed or permanent; a `restore_book` line rides gated on that verb.
+- **Tests**: AppContext-free unit tests for the executors (trash available /
+  unavailable; loaded guard; restore by title; unknown id), the startup
+  feature-detect, and the 30-day cut.
