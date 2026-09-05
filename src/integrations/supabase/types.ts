@@ -433,6 +433,7 @@ export type Database = {
           category: string | null
           cover_image_url: string | null
           created_at: string
+          deleted_at: string | null
           file_name: string
           id: string
           page_count: number
@@ -450,6 +451,7 @@ export type Database = {
           category?: string | null
           cover_image_url?: string | null
           created_at?: string
+          deleted_at?: string | null
           file_name: string
           id?: string
           page_count?: number
@@ -467,6 +469,7 @@ export type Database = {
           category?: string | null
           cover_image_url?: string | null
           created_at?: string
+          deleted_at?: string | null
           file_name?: string
           id?: string
           page_count?: number
