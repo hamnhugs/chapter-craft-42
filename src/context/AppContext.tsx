@@ -26,10 +26,26 @@ interface AppState {
   /** Loaded neurons in order, primary first (ids resolved against `wikis`). */
   activeWikis: Wiki[];
   addBook: (book: BookDocument, sourceFile?: File, opts?: AddBookOptions) => Promise<string>;
-  /** Typed: a delete that failed says so, and a delete that succeeded says
-   *  what went with it. Row first, storage cleanup after (an orphaned file is
-   *  recoverable garbage; an orphaned row with no file is a broken book). */
+  /** Move a book to the Trash — or, when the trash migration is not applied,
+   *  delete it permanently (the result says which). Typed: a delete that
+   *  failed says so, and one that succeeded says what went with it. A purge
+   *  goes row first, storage cleanup after (an orphaned file is recoverable
+   *  garbage; an orphaned row with no file is a broken book). */
   removeBook: (id: string) => Promise<RemoveBookResult>;
+  /** null until the first library load settles; false = the trash migration
+   *  (20260903130000) is not applied, so deleting is permanent. */
+  trashAvailable: boolean | null;
+  /** The Trash, newest first. Loaded on demand (refreshTrash), not at startup. */
+  trashedBooks: TrashedBook[];
+  trashLoading: boolean;
+  /** Fetch the Trash and purge anything past TRASH_RETENTION_DAYS. */
+  refreshTrash: () => Promise<void>;
+  /** Put a trashed book back in the library, exactly as it was. */
+  restoreBook: (id: string) => Promise<{ ok: true; title: string } | { ok: false; error: string }>;
+  /** Delete a trashed book forever (row, then storage). */
+  purgeBook: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Purge every trashed book. Resolves with how many went. */
+  emptyTrash: () => Promise<{ purged: number; failed: number }>;
   setActiveBook: (id: string) => void;
   setActiveBookSilent: (id: string | null) => void;
   /** What the load dialog is asking about (null = dialog closed). */
@@ -134,8 +150,34 @@ export interface AddBookOptions {
 }
 
 export type RemoveBookResult =
-  | { ok: true; deleted: { title: string; chapters: number; shelves: string[] } }
+  | {
+      ok: true;
+      /** true = moved to the Trash (restorable); false = deleted permanently
+       *  (the trash migration is not applied in this session). Every caller
+       *  must report which — a delete that says "permanent" when it was a
+       *  trash, or the reverse, is the one lie this feature cannot tell. */
+      trashed: boolean;
+      deleted: { title: string; chapters: number; shelves: string[] };
+    }
   | { ok: false; error: string };
+
+/** A book in the Trash. Deliberately thin: chapter rows are NOT loaded for
+ *  trashed books (they are untouched in the database and come back with the
+ *  book), so this carries only what the Trash list and a restore need. */
+export interface TrashedBook {
+  id: string;
+  title: string;
+  fileName: string;
+  pageCount: number;
+  /** epoch ms — when it was trashed. */
+  deletedAt: number;
+  source?: "user" | "assistant";
+}
+
+/** Books are deleted forever this long after they are trashed. Enforced
+ *  client-side when the Trash is opened (there is no cron), and stated in the
+ *  UI so the promise matches the mechanism. */
+export const TRASH_RETENTION_DAYS = 30;
 
 export interface LoadReport {
   /** One sentence naming what changed and what was kept (describeLoad). */
@@ -150,6 +192,13 @@ export interface LoadReport {
 const AppContext = createContext<AppState | null>(null);
 
 const DEFAULT_STORAGE_EXTENSION = "pdf";
+
+/** The columns a restored book is rebuilt from. A superset of the base set:
+ *  the optional columns can only be missing when the trash column is missing
+ *  too (a restore is unreachable in that session), so no feature-detect
+ *  ladder is needed here. */
+const BOOK_COLUMNS_FOR_RESTORE =
+  "id, title, file_name, page_count, cover_image_url, created_at, category, tags, folder_id, summary, summary_model, summarized_at, source, source_model, source_context";
 
 /** Page through a Supabase select so a library bigger than the API's default
  *  row cap still loads completely. Returns rows gathered so far plus the error
@@ -220,6 +269,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setActiveBookIdState(next);
   }, []);
   const [pendingLoad, setPendingLoad] = useState<PendingLoad | null>(null);
+  // The Trash. `trashAvailable` is learned by the startup read (first read IS
+  // the probe — house law, no HEAD probes) and read synchronously by every
+  // writer, so a delete never has to re-probe to know what it is doing.
+  const [trashAvailable, setTrashAvailableState] = useState<boolean | null>(null);
+  const trashAvailableRef = useRef<boolean | null>(null);
+  const setTrashAvailable = useCallback((v: boolean) => {
+    trashAvailableRef.current = v;
+    setTrashAvailableState(v);
+  }, []);
+  const [trashedBooks, setTrashedBooksState] = useState<TrashedBook[]>([]);
+  const trashedBooksRef = useRef<TrashedBook[]>([]);
+  const setTrashedBooks = useCallback((u: TrashedBook[] | ((prev: TrashedBook[]) => TrashedBook[])) => {
+    const next = typeof u === "function" ? u(trashedBooksRef.current) : u;
+    trashedBooksRef.current = next;
+    setTrashedBooksState(next);
+  }, []);
+  const [trashLoading, setTrashLoading] = useState(false);
   // Restore-the-last-book runs once per signed-in session (guard ref).
   const restoredBookRef = useRef(false);
   const [activeTab, setActiveTab] = useState<TabId>("library");
@@ -470,37 +536,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // feature-detect below.
       const BOOK_COLUMNS =
         "id, title, file_name, page_count, cover_image_url, created_at, category, tags";
-      const loadBookRows = async () => {
-        // Newest optional columns first (provenance, 20260903120000), then
-        // summaries, then the base — each 42703 steps down one level.
-        const withProvenance = await fetchAllRows((from, to) =>
-          supabase
-            .from("books")
-            .select(`${BOOK_COLUMNS}, summary, summary_model, summarized_at, source, source_model, source_context`)
-            .eq("user_id", user.id)
+      // TWO axes of optional columns, probed by the first read (house law —
+      // no HEAD probes). Down one axis: provenance (20260903120000) →
+      // summaries (20260902120000) → base, each 42703 stepping down. Across
+      // the other: `deleted_at` (20260903130000), which is both a column and
+      // a FILTER — live books are the ones where it is null, so every
+      // existing consumer of `books` (the context block, the reading tools,
+      // search, the picker) is trash-blind by construction.
+      //
+      // The chain steps down on 42703, so a 42703 that survives the BASE
+      // level can only be `deleted_at`: one retry without it settles
+      // trash-availability, and post-migration the whole thing is one request.
+      const loadBookRows = async (withTrash: boolean) => {
+        const trashCols = withTrash ? ", deleted_at" : "";
+        const scope = (q: any) => (withTrash ? q.is("deleted_at", null) : q);
+        const level = (cols: string) => fetchAllRows((from, to) =>
+          scope(
+            supabase
+              .from("books")
+              .select(cols)
+              .eq("user_id", user.id)
+          )
             .order("created_at", { ascending: false })
             .range(from, to)
         );
+        const withProvenance = await level(`${BOOK_COLUMNS}, summary, summary_model, summarized_at, source, source_model, source_context${trashCols}`);
         if (!withProvenance.error || (withProvenance.error as any)?.code !== "42703") return withProvenance;
-        const withSummary = await fetchAllRows((from, to) =>
-          supabase
-            .from("books")
-            .select(`${BOOK_COLUMNS}, summary, summary_model, summarized_at`)
-            .eq("user_id", user.id)
-            .order("created_at", { ascending: false })
-            .range(from, to)
-        );
+        const withSummary = await level(`${BOOK_COLUMNS}, summary, summary_model, summarized_at${trashCols}`);
         if (!withSummary.error || (withSummary.error as any)?.code !== "42703") return withSummary;
-        return fetchAllRows((from, to) =>
-          supabase
-            .from("books")
-            .select(BOOK_COLUMNS)
-            .eq("user_id", user.id)
-            .order("created_at", { ascending: false })
-            .range(from, to)
-        );
+        return level(`${BOOK_COLUMNS}${trashCols}`);
       };
-      const bookRows = await loadBookRows();
+      let bookRows = await loadBookRows(true);
+      if (bookRows.error && (bookRows.error as any)?.code === "42703") {
+        // Only `deleted_at` can still be missing at the base level.
+        const untrashed = await loadBookRows(false);
+        if (!untrashed.error) setTrashAvailable(false);
+        bookRows = untrashed;
+      } else if (!bookRows.error) {
+        setTrashAvailable(true);
+      }
 
       if (cancelled) return;
 
@@ -661,6 +735,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             gist: c.gist ?? null,
           }));
 
+          // A row that arrives already trashed is not an arrival (nothing
+          // writes one today; this keeps the invariant "books = live books"
+          // true whatever writes rows tomorrow).
+          if (b.deleted_at) return;
           setBooks((prev) => {
             if (prev.some((x) => x.id === b.id)) return prev;
             const newBook: BookDocument = {
@@ -693,6 +771,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const oldId = (payload.old as any)?.id;
           if (!oldId) return;
           setBooks((prev) => prev.filter((b) => b.id !== oldId));
+          // A purge in another tab empties it from the Trash too.
+          setTrashedBooks((prev) => prev.filter((b) => b.id !== oldId));
           setActiveBookId((prev) => (prev === oldId ? null : prev));
         }
       )
@@ -750,13 +830,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const escapeIlikeProbe = (v: string) => v.replace(/([\\%_])/g, "\\$1").replace(/\*/g, "_");
     let existingRow: { id: string; file_name: string } | null = null;
     if (!opts?.createOnly) {
-      const { data: probe, error: existingRowError } = await supabase
+      // Trashed rows are EXCLUDED: re-uploading a file whose book is in the
+      // Trash must create a new book, not silently resurrect and overwrite
+      // the trashed one (the user deleted it; the Trash is theirs to restore
+      // deliberately). Only filtered when the column is known to exist.
+      let probeQuery: any = supabase
         .from("books")
         .select("id, file_name")
         .eq("user_id", user.id)
-        .ilike("file_name", escapeIlikeProbe(book.fileName))
-        .limit(1)
-        .maybeSingle();
+        .ilike("file_name", escapeIlikeProbe(book.fileName));
+      if (trashAvailableRef.current === true) probeQuery = probeQuery.is("deleted_at", null);
+      const { data: probe, error: existingRowError } = await probeQuery.limit(1).maybeSingle();
 
       if (existingRowError) {
         console.error("Failed to look up existing book record:", existingRowError);
@@ -874,33 +958,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return finalBookId;
   }, [user]);
 
-  const removeBook = useCallback(async (id: string): Promise<RemoveBookResult> => {
+  /** The hard path: row first (chapters, junction rows and figure rows
+   *  cascade with it), then best-effort storage cleanup. Used by a purge and
+   *  by `removeBook` when the trash migration is not applied. */
+  const hardDeleteBook = useCallback(async (
+    id: string,
+    known?: { fileName?: string },
+  ): Promise<{ ok: boolean; error?: string }> => {
     if (!user) return { ok: false, error: "Not signed in" };
-    const existingBook = booksRef.current.find((book) => book.id === id);
-    // The manifest is read BEFORE anything is destroyed, and reported only
-    // on success (the tool built on this must never claim what it did not do).
-    const manifest = {
-      title: existingBook?.title ?? "",
-      chapters: existingBook?.chapters.length ?? 0,
-      shelves: (existingBook?.folderIds ?? []).map((fid) => shelvesRef.current.find((f) => f.id === fid)?.name ?? fid),
-    };
-
-    // ROW FIRST. Chapters, junction rows and figure rows cascade with it. A
-    // failed row delete leaves the library exactly as it was — the old order
-    // (storage first, row second, failure swallowed) could leave a listed
-    // book whose file was already gone.
     const { data: gone, error } = await supabase
       .from("books").delete().eq("id", id).eq("user_id", user.id).select("id");
     if (error || !gone || gone.length === 0) {
       console.error("Failed to delete book:", error);
-      toast.error("Could not delete book — it is still in your library");
       return { ok: false, error: error?.message || "Book not found" };
     }
-
-    // Storage cleanup, best-effort, AFTER the row is gone: an orphaned object
-    // is recoverable garbage, never a broken book.
-    const storagePaths = existingBook
-      ? getStoragePathsForBook(user.id, id, existingBook.fileName)
+    // AFTER the row is gone: an orphaned object is recoverable garbage, never
+    // a broken book.
+    const fileName = known?.fileName;
+    const storagePaths = fileName
+      ? getStoragePathsForBook(user.id, id, fileName)
       : [`${user.id}/${id}.pdf`];
     try {
       await supabase.storage.from("book-pdfs").remove(Array.from(new Set(storagePaths)));
@@ -915,13 +991,190 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await supabase.storage.from("generated-images").remove(figs.map((f) => `${dir}/${f.name}`));
       }
     } catch { /* best-effort — the book is already gone */ }
+    return { ok: true };
+  }, [user]);
 
+  const removeBook = useCallback(async (id: string): Promise<RemoveBookResult> => {
+    if (!user) return { ok: false, error: "Not signed in" };
+    const existingBook = booksRef.current.find((book) => book.id === id);
+    // The manifest is read BEFORE anything is destroyed, and reported only
+    // on success (the tool built on this must never claim what it did not do).
+    const manifest = {
+      title: existingBook?.title ?? "",
+      chapters: existingBook?.chapters.length ?? 0,
+      shelves: (existingBook?.folderIds ?? []).map((fid) => shelvesRef.current.find((f) => f.id === fid)?.name ?? fid),
+    };
+
+    // SOFT by default: one UPDATE stamping deleted_at. Chapters, shelf
+    // memberships, figures, storage objects and card locators are all left
+    // ALONE, which is what makes a restore return the book exactly as it was
+    // — anchors included. Only when the migration is absent does this fall
+    // through to the permanent path, and the result says which happened.
+    if (trashAvailableRef.current !== false) {
+      const stamp = new Date().toISOString();
+      const { data: hit, error } = await supabase
+        .from("books")
+        .update({ deleted_at: stamp } as any)
+        .eq("id", id).eq("user_id", user.id)
+        .select("id");
+      if (error && ((error as any).code === "42703" || (error as any).code === "PGRST204")) {
+        // The migration is not applied after all — learn it and fall through.
+        setTrashAvailable(false);
+      } else if (error || !hit || hit.length === 0) {
+        console.error("Failed to trash book:", error);
+        toast.error("Could not delete book — it is still in your library");
+        return { ok: false, error: error?.message || "Book not found" };
+      } else {
+        setBooks((prev) => prev.filter((b) => b.id !== id));
+        if (existingBook) {
+          setTrashedBooks((prev) => [
+            {
+              id, title: existingBook.title, fileName: existingBook.fileName,
+              pageCount: existingBook.pageCount, deletedAt: Date.parse(stamp),
+              source: existingBook.source,
+            },
+            ...prev.filter((b) => b.id !== id),
+          ]);
+        }
+        // A trashed book leaves every focus layer it sat in (the reader, a
+        // hand-picked selection) — through the one writer, silently. A
+        // restore deliberately does NOT put it back: the user asked to see
+        // the book again, not to change what the conversation is about.
+        await loadFocus({ kind: "remove", bookId: id }, { toast: false, navigate: false });
+        return { ok: true, trashed: true, deleted: manifest };
+      }
+    }
+
+    const hard = await hardDeleteBook(id, existingBook);
+    if (!hard.ok) {
+      toast.error("Could not delete book — it is still in your library");
+      return { ok: false, error: hard.error || "Book not found" };
+    }
     setBooks((prev) => prev.filter((b) => b.id !== id));
-    // A deleted book leaves every focus layer it sat in (the reader, a
-    // hand-picked selection) — through the one writer, silently.
     await loadFocus({ kind: "remove", bookId: id }, { toast: false, navigate: false });
-    return { ok: true, deleted: manifest };
-  }, [user, setBooks, loadFocus]);
+    return { ok: true, trashed: false, deleted: manifest };
+  }, [user, setBooks, setTrashedBooks, setTrashAvailable, loadFocus, hardDeleteBook]);
+
+  // ── The Trash ────────────────────────────────────────────────────────────
+  // Loaded on demand rather than at startup: it is a rarely-opened drawer,
+  // and the library must not wait on it.
+  const refreshTrash = useCallback(async () => {
+    if (!user || trashAvailableRef.current === false) return;
+    setTrashLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("books")
+        .select("id, title, file_name, page_count, deleted_at, source" as any)
+        .eq("user_id", user.id)
+        .not("deleted_at", "is", null)
+        .order("deleted_at", { ascending: false })
+        .limit(200);
+      if (error) {
+        if ((error as any).code === "42703") { setTrashAvailable(false); return; }
+        console.error("Failed to load the Trash:", error);
+        toast.error("Couldn't load the Trash");
+        return;
+      }
+      setTrashAvailable(true);
+      const rows = ((data as any[]) || []).map((b) => ({
+        id: b.id as string,
+        title: b.title as string,
+        fileName: b.file_name as string,
+        pageCount: (b.page_count as number) ?? 0,
+        deletedAt: Date.parse(b.deleted_at as string),
+        ...(b.source === "assistant" || b.source === "user" ? { source: b.source } : {}),
+      })) as TrashedBook[];
+      // Retention is enforced HERE, when the drawer is opened — not on a
+      // timer and not during startup. There is no cron in this project, and
+      // purging books inside a read the whole app waits on would be a
+      // surprise delete on a path nobody asked to run.
+      const cutoff = Date.now() - TRASH_RETENTION_DAYS * 86_400_000;
+      const expired = rows.filter((b) => Number.isFinite(b.deletedAt) && b.deletedAt < cutoff);
+      const live = rows.filter((b) => !expired.some((e) => e.id === b.id));
+      setTrashedBooks(live);
+      for (const b of expired) {
+        // Best-effort and sequential. A concurrent tab purging the same row
+        // simply finds it gone (0 rows), which is not an error worth showing.
+        await hardDeleteBook(b.id, b).catch(() => undefined);
+      }
+    } finally {
+      setTrashLoading(false);
+    }
+  }, [user, setTrashedBooks, setTrashAvailable, hardDeleteBook]);
+
+  const restoreBook = useCallback(async (id: string): Promise<{ ok: true; title: string } | { ok: false; error: string }> => {
+    if (!user) return { ok: false, error: "Not signed in" };
+    const entry = trashedBooksRef.current.find((b) => b.id === id);
+    const { data, error } = await supabase
+      .from("books")
+      .update({ deleted_at: null } as any)
+      .eq("id", id).eq("user_id", user.id)
+      .not("deleted_at", "is", null)
+      .select(`${BOOK_COLUMNS_FOR_RESTORE}` as any);
+    if (error) {
+      console.error("Failed to restore book:", error);
+      return { ok: false, error: error.message || "Restore failed" };
+    }
+    const row = ((data as any[]) || [])[0];
+    if (!row) return { ok: false, error: "That book is not in the Trash." };
+    // Its chapters were never touched — fetch the spine back so the restored
+    // book is immediately readable (and countable) rather than looking empty.
+    let chapters: Chapter[] = [];
+    try {
+      const { data: chRows } = await supabase
+        .from("chapters")
+        .select("id, name, start_page, end_page, gist" as any)
+        .eq("book_id", id)
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: true });
+      chapters = ((chRows as any[]) || []).map((c) => ({
+        id: c.id, name: c.name, startPage: c.start_page, endPage: c.end_page,
+        textContent: "", gist: c.gist ?? null,
+      }));
+    } catch { /* the spine loads on next reload; the book is back either way */ }
+    const restored: BookDocument = {
+      id: row.id, title: row.title, fileName: row.file_name, fileData: "",
+      pageCount: row.page_count ?? 0, coverImageUrl: row.cover_image_url || undefined,
+      chapters, addedAt: new Date(row.created_at).getTime(),
+      category: row.category || undefined, tags: Array.isArray(row.tags) ? row.tags : [],
+      summary: row.summary ?? null, summaryModel: row.summary_model ?? null,
+      summarizedAt: row.summarized_at ? new Date(row.summarized_at).getTime() : null,
+      ...(row.source === "assistant" || row.source === "user" ? { source: row.source } : {}),
+      sourceModel: row.source_model ?? null,
+      sourceContext: row.source_context ?? null,
+      folderIds: row.folder_id ? [row.folder_id] : [],
+    };
+    // Shelf membership is authoritative in the junction; re-read this book's
+    // rows so a restored book lands back on its shelves (the folder_id mirror
+    // above is the fallback for pre-migration sessions).
+    try {
+      const { data: mem } = await (supabase.from("book_shelf_members" as any) as any)
+        .select("folder_id").eq("book_id", id).eq("user_id", user.id);
+      const ids = ((mem as any[]) || []).map((r) => r.folder_id as string);
+      if (ids.length > 0) restored.folderIds = ids;
+    } catch { /* fallback mode — the mirror stands */ }
+    setBooks((prev) => (prev.some((b) => b.id === id) ? prev : [restored, ...prev]));
+    setTrashedBooks((prev) => prev.filter((b) => b.id !== id));
+    return { ok: true, title: entry?.title ?? restored.title };
+  }, [user, setBooks, setTrashedBooks]);
+
+  const purgeBook = useCallback(async (id: string) => {
+    const entry = trashedBooksRef.current.find((b) => b.id === id);
+    const out = await hardDeleteBook(id, entry);
+    if (out.ok) setTrashedBooks((prev) => prev.filter((b) => b.id !== id));
+    return out;
+  }, [hardDeleteBook, setTrashedBooks]);
+
+  const emptyTrash = useCallback(async () => {
+    let purged = 0;
+    let failed = 0;
+    for (const b of [...trashedBooksRef.current]) {
+      const out = await hardDeleteBook(b.id, b);
+      if (out.ok) { purged += 1; setTrashedBooks((prev) => prev.filter((x) => x.id !== b.id)); }
+      else failed += 1;
+    }
+    return { purged, failed };
+  }, [hardDeleteBook, setTrashedBooks]);
 
   // Reader-only writers (no dialog, no replacement of the loaded books).
   // They still bump the focus epoch: an Undo captured before them must not
@@ -1420,6 +1673,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateBookTags,
         toggleBookShelf,
         setBookShelfMembership,
+        trashAvailable,
+        trashedBooks,
+        trashLoading,
+        refreshTrash,
+        restoreBook,
+        purgeBook,
+        emptyTrash,
         membershipLoaded,
         shelves,
         shelvesLoading,

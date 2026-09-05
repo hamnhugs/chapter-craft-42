@@ -56,7 +56,15 @@ import { CHAT_TOOL_DEFINITIONS } from "@/lib/chatTools";
 // kept as a READER verb rather than a second load verb. Four slots is the
 // floor for four distinct objects (conversation focus · shelf · document ·
 // book), each with a description written as documentation.
-const ROSTER_BUDGET = 79;
+//
+// +1 (the book Trash): restore_book. delete_book became a MOVE to the Trash
+// rather than a permanent delete, which is only half a feature — an action
+// the user can undo in the Vault but not by voice is not undoable in the
+// conversation where they regretted it. It could not fold into delete_book
+// as an action enum without the verb's own name lying about half its
+// behaviour, and it is the cheapest kind of slot to add: one object, one
+// intent, a description that names no sibling.
+const ROSTER_BUDGET = 80;
 
 describe("the tool roster stays within its stated budget", () => {
   it(`ships at most ${ROSTER_BUDGET} tools`, () => {

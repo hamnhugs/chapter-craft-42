@@ -295,51 +295,105 @@ book's cards.
   session is needed to exercise them end to end (shelf load → dialog → chips;
   `save_to_library` by voice; `delete_book` two-step).
 
-## 6. The Trash — a book delete you can take back (addendum, 2026-09-03)
+## 6. The Trash — a book delete you can take back (BUILT 2026-09-03)
 
-Every delete of a book was HARD and, in the Vault, UNCONFIRMED: the list view's
-trash icon called `removeBook` directly, which removed the PDF, the figures
-and the row. The research (§2, §4 of the digest) is unambiguous that a
-reversible action beats a confirmation, and the hands-free `delete_book` had to
-carry a title-bound two-step only because there was nothing to undo into.
+Every delete of a book was HARD and, in the Vault's list view, UNCONFIRMED:
+the trash icon called `removeBook` directly, which removed the PDF, the
+figures and the row. The research (digest §2, §4) is unambiguous that a
+reversible action beats a confirmation, and the hands-free `delete_book` had
+to carry a title-bound two-step only because there was nothing to undo into.
 
-**Design.**
-- Migration `20260903130000_book_trash.sql`: `books.deleted_at timestamptz`
-  (NULL = live) + index `(user_id, deleted_at)`. No RLS change. Chapters,
-  junction rows, figures, storage and card locators are UNTOUCHED by a trash —
-  a restored book comes back exactly as it was, anchors included.
-- **Live books are the only `books`.** Startup loads `deleted_at IS NULL`
-  (first read IS the probe: a 42703 means the migration is absent, the
-  session is marked trash-unavailable, and the load retries unfiltered). Every
-  existing consumer of `books` — the block, the tools, search, the picker —
-  therefore never sees a trashed book. The trash is separate state,
-  `trashedBooks`, fetched once per session (`deleted_at IS NOT NULL`, newest
-  first, capped at 200).
-- **`removeBook` becomes a soft delete when the trash is available**: one
-  UPDATE setting `deleted_at`, `.select("id")` (0 rows = not found), the book
-  moves from `books` to `trashedBooks` in state, focus layers drop it through
-  `loadFocus({kind:"remove"})`. When the migration is absent it stays the
-  existing hard delete and every result SAYS so. `restoreBook(id)` is the
-  reverse UPDATE (`deleted_at = null`); `purgeBook(id)` is the old hard path
-  (row first, storage after); `emptyTrash()` purges all.
-- **Auto-expiry**: 30 days. On each trash fetch, rows older than 30 days are
-  purged client-side, best-effort (no pg_cron dependency; the UI says
-  "deleted forever after 30 days").
-- **Vault UI**: a "Trash (n)" button beside Auto-tag opens a dialog listing
-  trashed books (title, pages, trashed date, days left) with Restore, Delete
-  forever, and Empty trash (the last two need a click-through confirm — they
-  are the only hard deletes left). The list/card delete controls become "Move
-  to Trash" (no confirm; a toast with Undo = restore).
-- **AI verbs**: `delete_book` = move to Trash when the trash is available —
-  acts on the first call once the book is named (no `confirm_title`; the
-  action is compensable), still refuses the reader's or a loaded book without
-  `even_if_loaded`, and its result names the restore path. When the trash is
-  unavailable the existing title-bound two-step stays. New `restore_book
-  {book}` (roster 79 → 80; resolves against the trash by id or exact title).
-  Realtime: DELETE events already remove purged rows; a restore is an UPDATE
-  no channel carries, so another open tab sees it on reload (documented).
-- **Prompt**: the `delete_book` line says the result decides whether it was
-  trashed or permanent; a `restore_book` line rides gated on that verb.
-- **Tests**: AppContext-free unit tests for the executors (trash available /
-  unavailable; loaded guard; restore by title; unknown id), the startup
-  feature-detect, and the 30-day cut.
+NOTE ON REVIEW: the three-lens critique of this design died on usage credits
+before returning anything. The questions it was asked were answered against
+the code by the author instead, and each answer is recorded below as a
+decision with its reason. Treat this section as self-reviewed, not
+adversarially reviewed.
+
+**Data.** Migration `20260903130000_book_trash.sql`: `books.deleted_at`
+(NULL = live) + index `(user_id, deleted_at)`. Chapters, junction rows,
+figures, storage objects and card locators are UNTOUCHED by a trash - that is
+what makes a restore return the book exactly as it was, anchors included.
+Purge is the old hard path and still cascades everything.
+
+**Live books are the only `books`.** The startup read gained a second
+feature-detect axis: down one axis provenance -> summaries -> base (each 42703
+stepping down), across the other `deleted_at` as both a selected column and
+an `is null` FILTER. A 42703 that survives the base level can only be
+`deleted_at`, so ONE retry without it settles trash-availability; after the
+migration the whole thing is a single request. Because the filter lives in
+that one read, every existing consumer of `books` - the context block, the
+reading tools, search, the picker, the Vault - is trash-blind by
+construction. The Trash itself is separate state (`trashedBooks`), loaded on
+demand, never at startup.
+
+**Writers.**
+- `removeBook` is SOFT when the column exists: one UPDATE stamping
+  `deleted_at`, the book moves from `books` to `trashedBooks`, and the focus
+  layers drop it through `loadFocus({kind:"remove"})`. It returns
+  `{ok, trashed, deleted}` - and a 42703/PGRST204 on that UPDATE re-learns
+  availability and falls through to the permanent path, so the flag can never
+  make the result lie.
+- `restoreBook` is the reverse UPDATE, filtered `deleted_at IS NOT NULL` so
+  restoring a live book is a no-op error rather than a silent success. It
+  rebuilds the book from the returned row, re-reads its chapter spine (the
+  rows were never touched) and re-reads its junction memberships, so a
+  restored book lands back on its shelves. It deliberately does NOT re-enter
+  the conversation's focus: the user asked to see the book again, not to
+  change what is being discussed.
+- `purgeBook` / `emptyTrash` run the hard path (row first, storage after).
+- Retention (30 days) is enforced when the Trash is OPENED, not on a timer
+  and not during startup: there is no cron in this project, and purging books
+  inside a read the whole app waits on would be a surprise delete on a path
+  nobody asked to run. Concurrent tabs are safe - the second purge finds 0
+  rows, which is not an error worth showing.
+- `addBook`'s re-upload probe now EXCLUDES trashed rows (only when the column
+  is known to exist). Re-uploading a file whose book is in the Trash creates
+  a new book rather than silently resurrecting and overwriting the trashed
+  one; the Trash is the user's to restore deliberately.
+- Realtime: a row arriving already trashed is not an arrival; a DELETE
+  (purge elsewhere) leaves both lists. A restore is an UPDATE, which no
+  channel carries - another open tab sees it on reload. Accepted.
+
+**Vault UI.** A "Trash (n)" button beside Auto-tag opens a dialog listing
+each trashed book with its pages, the date it went, and the days left, with
+Restore and Delete forever per row plus Empty trash. The card and list
+delete controls now say "Move to Trash" and fire with no dialog - the toast
+that follows carries Undo. When the migration is absent they say "Delete"
+and earn a `window.confirm`, which that path never had. The only hard
+deletes left in the app live inside the Trash dialog, behind a second
+deliberate step; that is what buys every other delete its one click.
+
+**AI verbs (roster 79 -> 80).**
+- `delete_book` acts on the FIRST call when the Trash exists - a
+  confirmation for a reversible action is exactly the habituation the Trash
+  exists to avoid - and reports `trashed: true` with the restore path. When
+  the Trash is absent it keeps the title-bound two-step (`confirm_title`),
+  because there the action is irreversible and a spoken "yes" arrives a turn
+  after the result that asked for it is gone. The description is static and
+  names both shapes; the RESULT carries what actually happened, read from the
+  mutator rather than from the flag the branch read on the way in (pinned by
+  a test).
+- The loaded/reader guard SURVIVES the Trash. Losing the book you are reading
+  mid-conversation is disruptive even when undoable, and it is the case where
+  a mis-heard word is most likely; `even_if_loaded` is still required.
+- `restore_book {book}` resolves by id or exact title against the Trash, and
+  REFRESHES it first - a restore right after a delete in the same turn must
+  not answer from a stale snapshot. On no match it returns what IS in the
+  Trash (sanitized) so the assistant can offer the choice, and it never
+  guesses between two books with one title. Deliberately UNGATED: restoring
+  destroys nothing (the `save_file` precedent - a switch nobody would turn
+  off is noise, not control), and it is absent from RECOVERY_ALLOWED because
+  it is a write, so a quoted call is never executed.
+- `list_books` gains `trash_count` in the ENRICHED branch only, which the E2
+  harness never reaches. It is omitted when zero: the Trash is loaded on
+  demand, so an absent field is honestly "no claim", never "nothing there".
+
+**Tests.** `libraryAgentTools.test.ts` grows both delete shapes, the
+mutator-over-flag honesty pin, the loaded guard on both paths, restore by
+title with the refresh-first pin, the offer-what-is-there path, the empty and
+no-Trash cases, and `trash_count`. Roster budget 80 with its paragraph;
+`promptToolTruth` re-baselined (25585 / 91479ac5). 2,054 tests.
+
+**Still open.** A restore in another tab needs a reload to show; a purge of a
+book whose entry is not cached guesses the `.pdf` extension for storage
+cleanup (pre-existing shape); no live smoke test has been run.

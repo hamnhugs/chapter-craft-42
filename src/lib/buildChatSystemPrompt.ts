@@ -394,7 +394,8 @@ export async function buildChatSystemPrompt({
     ...ifTools(["set_loaded_books"], "To bring a shelf or books into this conversation — what the Vault's “Chat with this shelf” does — call `set_loaded_books`; it REPLACES what was loaded (the reader stays open). If the user hasn't said which neuron to read alongside, ask once, or omit wiki_ids to keep the current one. Narrate the result, nothing more."),
     ...ifTools(["manage_shelf", "list_books"], "Shelves organise the library; `list_books` shows them with ids and which books sit where. `manage_shelf` makes, renames or fills a shelf (adding and removing are deltas — say exactly what changed from the result); deleting one needs the user to say its name."),
     ...ifTools(["save_to_library"], "When the user asks to save something you wrote as a book or PDF in their library, call `save_to_library` with source this_reply or last_reply (headings become chapters) — never re-type the document into the call. Say it's saved and where; don't paste it back."),
-    ...ifTools(["delete_book"], "Deleting a book is permanent and has no trash: say the book's title, get a clear yes, then call `delete_book` with confirm_title set to the title as they said it."),
+    ...ifTools(["delete_book"], "`delete_book` normally moves a book to the Trash, where it can be restored for 30 days — a clear request is enough. Read the result: if it says the deletion is permanent, name the book, get a clear yes, and call again with confirm_title. Tell the user which of the two actually happened."),
+    ...ifTools(["restore_book"], "If they change their mind about a delete — \"put that back\", \"undo that\" — call `restore_book` with the book's title; it comes back with its chapters, shelves and anchors."),
   ];
 
   // The reflex is a reading instruction first and a repair instruction second,
@@ -679,7 +680,7 @@ export async function buildChatSystemPrompt({
     // shelf IS the confirmation, and the object must be named again in the
     // call (confirm_title / confirm_name) because a tool result does not
     // survive the turn boundary the "yes" crosses.
-    const libVerbs = ["set_loaded_books", "manage_shelf", "delete_book", "save_to_library"].filter(has);
+    const libVerbs = ["set_loaded_books", "manage_shelf", "delete_book", "restore_book", "save_to_library"].filter(has);
     const libLine = libVerbs.length === 0 ? [] : [
       `Same rule for the library: 'load my X shelf', 'put this on shelf Y', 'save that as a PDF', 'delete that book' must call ${libVerbs.map((n) => `\`${n}\``).join(", ")} as appropriate. When you have asked "delete <title>?" and the user says yes, call again with the title they said as confirm_title (or the shelf's name as confirm_name) — do not ask a second time. Never say it's loaded, saved or deleted without the tool's ok result.`,
     ];

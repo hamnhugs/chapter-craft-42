@@ -1,5 +1,5 @@
 import React, { useRef, useState, useMemo, useEffect, lazy, Suspense } from "react";
-import { useApp } from "@/context/AppContext";
+import { useApp, TRASH_RETENTION_DAYS } from "@/context/AppContext";
 import { BookDocument } from "@/types/library";
 import { pdfjs } from "react-pdf";
 import { isAssistantBook } from "@/lib/bookProvenance";
@@ -115,7 +115,7 @@ const VIEW_OPTIONS: { id: ViewMode; icon: string; label: string }[] = [
 
 
 const Library: React.FC = () => {
-  const { books, addBook, removeBook, requestBookLoad, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile, applyChapterGists, applyBookSummary, loadChapterText,
+  const { books, addBook, removeBook, trashAvailable, trashedBooks, trashLoading, refreshTrash, restoreBook, purgeBook, emptyTrash, requestBookLoad, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile, applyChapterGists, applyBookSummary, loadChapterText,
     shelves, toggleBookShelf } = useApp();
   const { apiKey, imageExtractionModel, selectedModel, geminiApiKey, nvidiaKeyLast4, autoCatalogOnUpload } = useChatSettings();
   const { user } = useAuth();
@@ -246,6 +246,43 @@ const Library: React.FC = () => {
    * being manual and buried in the chat picker, which is why most books carry
    * no catalog at all.
    */
+  // Deleting a book: a MOVE to the Trash (undoable from the toast that
+  // follows — the research this feature came from says a reversible action
+  // beats a confirmation), or, in a library without the Trash, the old
+  // permanent delete, which then earns the confirmation the list view never
+  // had.
+  const softDelete = trashAvailable !== false;
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [busyTrashId, setBusyTrashId] = useState<string | null>(null);
+
+  const handleRemove = async (book: BookDocument) => {
+    if (!softDelete && !window.confirm(
+      `Permanently delete “${book.title}”? Its PDF and ${book.chapters.length} chapter${book.chapters.length === 1 ? "" : "s"} go with it. This library has no Trash, so this cannot be undone.`,
+    )) return;
+    const out = await removeBook(book.id);
+    if (!out.ok) return; // removeBook already surfaced the failure
+    if (out.trashed) {
+      toast(`“${book.title}” moved to the Trash`, {
+        action: {
+          label: "Undo",
+          onClick: () => {
+            void restoreBook(book.id).then((r) => {
+              if (r.ok) toast.success(`“${r.title}” is back in your library`);
+              else toast.error((r as { ok: false; error: string }).error);
+            });
+          },
+        },
+      });
+    } else {
+      toast.success(`“${book.title}” deleted`);
+    }
+  };
+
+  const openTrash = () => {
+    setTrashOpen(true);
+    void refreshTrash();
+  };
+
   const enqueueCatalog = (bookId: string) => {
     if (!autoCatalogOnUpload) return;
     catalogJobs.enqueue({
@@ -755,6 +792,16 @@ const Library: React.FC = () => {
               </span>
               {tagProgress ? `Tagging ${tagProgress.done}/${tagProgress.total}…` : "Auto-tag"}
             </button>
+            {softDelete && (
+              <button
+                onClick={openTrash}
+                title="Deleted books, restorable for 30 days"
+                className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all"
+              >
+                <span className="material-symbols-outlined text-xs" aria-hidden>delete</span>
+                Trash{trashedBooks.length > 0 ? ` (${trashedBooks.length})` : ""}
+              </button>
+            )}
             {/* View switcher — segmented control, icons + label on wide screens */}
             <div
               role="group"
@@ -1131,7 +1178,11 @@ const Library: React.FC = () => {
             sortBy={sortBy}
             onSortBy={setSortBy}
             onOpenBook={(id) => requestBookLoad(id)}
-            onRemove={(id) => removeBook(id)}
+            softDelete={softDelete}
+            onRemove={(id) => {
+              const b = books.find((x) => x.id === id);
+              if (b) void handleRemove(b);
+            }}
             highlight={(text) => <Highlight text={text} query={query} />}
           />
         ) : (
@@ -1152,12 +1203,102 @@ const Library: React.FC = () => {
                 onDetect={() => runDetect(book)}
                 onExtractFigures={() => runExtractFigures(book)}
                 onRead={() => requestBookLoad(book.id)}
-                onRemove={() => removeBook(book.id)}
+                softDelete={softDelete}
+                onRemove={() => void handleRemove(book)}
                 onRename={(newTitle) => updateBookTitle(book.id, newTitle)}
               />
             )}
           />
         )}
+
+        {/* The Trash: deleted books, restorable for 30 days. The only hard
+            deletes left in the app live here, behind a second deliberate
+            step, which is what lets every other delete be a one-click move. */}
+        <Dialog open={trashOpen} onOpenChange={setTrashOpen}>
+          <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="font-headline text-2xl text-primary">Trash</DialogTitle>
+              <DialogDescription>
+                Deleted books wait here. Restoring one brings it back with its chapters,
+                shelves and saved anchors. Anything older than {TRASH_RETENTION_DAYS} days is
+                deleted forever the next time you open this.
+              </DialogDescription>
+            </DialogHeader>
+            {trashLoading && trashedBooks.length === 0 ? (
+              <p className="py-8 text-center text-sm text-on-surface-variant">Loading…</p>
+            ) : trashedBooks.length === 0 ? (
+              <p className="py-8 text-center text-sm text-on-surface-variant">The Trash is empty.</p>
+            ) : (
+              <>
+                <ul className="flex flex-col gap-1 py-1">
+                  {trashedBooks.map((t) => {
+                    const daysLeft = Math.max(
+                      0,
+                      TRASH_RETENTION_DAYS - Math.floor((Date.now() - t.deletedAt) / 86_400_000),
+                    );
+                    return (
+                      <li
+                        key={t.id}
+                        className="flex items-center gap-3 rounded-lg border border-outline-variant/15 bg-surface-container-high px-3 py-2"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold">{t.title}</p>
+                          <p className="text-[11px] text-on-surface-variant">
+                            {t.pageCount > 0 ? `${t.pageCount} pages · ` : ""}
+                            {Number.isFinite(t.deletedAt) ? `deleted ${new Date(t.deletedAt).toLocaleDateString()} · ` : ""}
+                            {daysLeft === 0 ? "deleted forever soon" : `${daysLeft} day${daysLeft === 1 ? "" : "s"} left`}
+                          </p>
+                        </div>
+                        <button
+                          disabled={busyTrashId === t.id}
+                          onClick={async () => {
+                            setBusyTrashId(t.id);
+                            const r = await restoreBook(t.id);
+                            setBusyTrashId(null);
+                            if (r.ok) toast.success(`“${r.title}” is back in your library`);
+                            else toast.error((r as { ok: false; error: string }).error);
+                          }}
+                          className="cc-tap-44 shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10 disabled:opacity-50"
+                        >
+                          Restore
+                        </button>
+                        <button
+                          disabled={busyTrashId === t.id}
+                          onClick={async () => {
+                            if (!window.confirm(`Delete “${t.title}” forever? This cannot be undone.`)) return;
+                            setBusyTrashId(t.id);
+                            const r = await purgeBook(t.id);
+                            setBusyTrashId(null);
+                            if (r.ok) toast.success(`“${t.title}” deleted forever`);
+                            else toast.error(r.error || "Could not delete it");
+                          }}
+                          title={`Delete “${t.title}” forever`}
+                          aria-label={`Delete “${t.title}” forever`}
+                          className="cc-tap-44 shrink-0 rounded-lg px-2 py-1.5 text-on-surface-variant hover:text-destructive hover:bg-error-container/20 disabled:opacity-50"
+                        >
+                          <span className="material-symbols-outlined text-lg" aria-hidden>delete_forever</span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+                <button
+                  onClick={async () => {
+                    if (!window.confirm(
+                      `Delete all ${trashedBooks.length} book${trashedBooks.length === 1 ? "" : "s"} in the Trash forever? This cannot be undone.`,
+                    )) return;
+                    const r = await emptyTrash();
+                    if (r.failed > 0) toast.error(`${r.purged} deleted, ${r.failed} could not be`);
+                    else toast.success(`Trash emptied (${r.purged} book${r.purged === 1 ? "" : "s"})`);
+                  }}
+                  className="self-start rounded-lg px-3 py-1.5 text-xs font-semibold text-destructive hover:bg-error-container/20"
+                >
+                  Empty trash
+                </button>
+              </>
+            )}
+          </DialogContent>
+        </Dialog>
 
         {/* YouTube import (the former Reel tab) */}
         <Dialog open={youtubeOpen} onOpenChange={setYoutubeOpen}>
@@ -1199,8 +1340,10 @@ const BookCard: React.FC<{
   onExtractFigures: () => void;
   onRead: () => void;
   onRemove: () => void;
+  /** True while books go to the Trash rather than being destroyed. */
+  softDelete?: boolean;
   onRename: (newTitle: string) => void;
-}> = ({ book, index, query = "", job, figJob, catJob, match, onDetect, onExtractFigures, onRead, onRemove, onRename }) => {
+}> = ({ book, index, query = "", job, figJob, catJob, match, onDetect, onExtractFigures, onRead, onRemove, onRename, softDelete = false }) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(book.title);
   const renameFromMenu = useRef(false);
@@ -1249,7 +1392,7 @@ const BookCard: React.FC<{
     : figJob?.status === "error"
       ? "Extract figures (retry)"
       : "Extract figures (signs, diagrams, charts) into your Images, tagged with their chapter — and paired with this book's neurons where they exist";
-  const removeLabel = `Delete “${book.title}”`;
+  const removeLabel = softDelete ? `Move “${book.title}” to the Trash` : `Delete “${book.title}”`;
 
   // Warm gradient hues
   const hues = [35, 25, 40, 15, 45, 20];
@@ -1533,7 +1676,7 @@ const BookCard: React.FC<{
                 onSelect={() => onRemove()}
               >
                 <span className="material-symbols-outlined text-base mr-2 shrink-0" aria-hidden>delete</span>
-                <span className="truncate">Delete</span>
+                <span className="truncate">{softDelete ? "Move to Trash" : "Delete"}</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

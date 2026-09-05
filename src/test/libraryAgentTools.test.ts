@@ -84,6 +84,7 @@ function makeDeps(over: Partial<Record<string, unknown>> = {}) {
     { id: "s2", user_id: "u1", name: "Summer Reading", sort_index: 1, created_at: "", updated_at: "" },
   ];
   let activeBookId: string | null = "b2";
+  let trashed: Array<{ id: string; title: string; fileName: string; pageCount: number; deletedAt: number }> = [];
   const deps: any = {
     get books() { return books; },
     get activeBookId() { return activeBookId; },
@@ -111,7 +112,27 @@ function makeDeps(over: Partial<Record<string, unknown>> = {}) {
     },
     addBook: async (doc: BookDocument, _file: File, opts: unknown) => { calls.push(["addBook", doc.title, doc.fileName, opts]); books = [{ ...doc }, ...books]; return doc.id; },
     addChapters: async (bookId: string, chapters: unknown[]) => { calls.push(["addChapters", bookId, chapters.length]); },
-    removeBook: async (id: string) => { calls.push(["removeBook", id]); const b = books.find((x) => x.id === id); if (!b) return { ok: false, error: "Book not found" }; books = books.filter((x) => x.id !== id); return { ok: true, deleted: { title: b.title, chapters: b.chapters.length, shelves: [] } }; },
+    trashAvailable: true,
+    getTrashedBooks: () => trashed,
+    refreshTrash: async () => { calls.push(["refreshTrash"]); },
+    restoreBook: async (id: string) => {
+      calls.push(["restoreBook", id]);
+      const t = trashed.find((x) => x.id === id);
+      if (!t) return { ok: false, error: "That book is not in the Trash." };
+      trashed = trashed.filter((x) => x.id !== id);
+      books = [{ ...book(t.id, t.title) }, ...books];
+      return { ok: true, title: t.title };
+    },
+    removeBook: async (id: string) => {
+      calls.push(["removeBook", id]);
+      const b = books.find((x) => x.id === id);
+      if (!b) return { ok: false, error: "Book not found" };
+      books = books.filter((x) => x.id !== id);
+      // Mirrors AppContext: soft when the trash column exists, else permanent.
+      const soft = deps.trashAvailable !== false;
+      if (soft) trashed = [{ id: b.id, title: b.title, fileName: b.fileName, pageCount: b.pageCount, deletedAt: Date.now() }, ...trashed];
+      return { ok: true, trashed: soft, deleted: { title: b.title, chapters: b.chapters.length, shelves: [] } };
+    },
     loadFocus: async (action: unknown) => { calls.push(["loadFocus", action]); return { summary: "Loaded.", changed: { selection: true, activeBookId: false, wikiIds: false }, prev: {} as any, next: {} as any }; },
     enqueueCatalog: (id: string) => { calls.push(["enqueueCatalog", id]); return { queued: true }; },
     getReplyText: (which: string) => (which === "this" ? "# Intro\n\nhello\n\n## Body\n\nworld" : "previous reply text"),
@@ -276,39 +297,93 @@ describe("save_to_library", () => {
   });
 });
 
-describe("delete_book — consent bound to the title", () => {
-  it("first call asks with the manifest; a bare 'yes' is refused; the exact title deletes", async () => {
+describe("delete_book — a move to the Trash, or a title-bound permanent delete", () => {
+  it("WITH the Trash: acts on the first call and says it is restorable", async () => {
     const { deps, calls } = makeDeps();
+    const { result, event } = await run("delete_book", { book: "Applied Trigonometry" }, deps);
+    expect(result).toMatchObject({ ok: true, trashed: true, deleted: { id: "b1", title: "Applied Trigonometry" } });
+    expect(String((result as any).note)).toMatch(/Trash — restorable for 30 days/);
+    expect(String(event.summary)).toMatch(/Moved .* to the Trash/);
+    expect(calls.filter((c) => c[0] === "removeBook")).toEqual([["removeBook", "b1"]]);
+  });
+  it("WITHOUT the Trash: first call asks, a bare 'yes' is refused, the exact title deletes", async () => {
+    const { deps, calls } = makeDeps({ trashAvailable: false });
     const ask = await run("delete_book", { book: "Applied Trigonometry" }, deps);
-    expect(ask.result).toMatchObject({ needs_confirmation: true, book: { id: "b1", title: "Applied Trigonometry" }, would_remove: { chapters: 1, shelves: ["Math"] } });
+    expect(ask.result).toMatchObject({ needs_confirmation: true, permanent: true, book: { id: "b1", title: "Applied Trigonometry" }, would_remove: { chapters: 1, shelves: ["Math"] } });
     const yes = await run("delete_book", { book: "b1", confirm_title: "yes" }, deps);
     expect((yes.result as any).error).toMatch(/exact title/);
     expect(calls.filter((c) => c[0] === "removeBook")).toEqual([]);
     const ok = await run("delete_book", { book: "b1", confirm_title: "applied  trigonometry" }, deps);
-    expect(ok.result).toMatchObject({ ok: true, deleted: { id: "b1", title: "Applied Trigonometry" } });
+    expect(ok.result).toMatchObject({ ok: true, trashed: false, deleted: { id: "b1", title: "Applied Trigonometry" } });
+    expect(String((ok.result as any).note)).toMatch(/permanently/);
     expect(calls.filter((c) => c[0] === "removeBook")).toEqual([["removeBook", "b1"]]);
   });
-  it("refuses the reader's or a loaded book without even_if_loaded", async () => {
+  it("reports what the MUTATOR did, not what the flag predicted", async () => {
+    // The flag says "trash available", the mutator falls back to a permanent
+    // delete (the migration turned out to be absent mid-session). The result
+    // must say permanent — the one lie this feature cannot tell.
+    const { deps } = makeDeps({
+      removeBook: async () => ({ ok: true, trashed: false, deleted: { title: "Applied Trigonometry", chapters: 1, shelves: [] } }),
+    });
+    const { result } = await run("delete_book", { book: "b1" }, deps);
+    expect(result).toMatchObject({ ok: true, trashed: false });
+    expect(String((result as any).note)).toMatch(/permanently/);
+  });
+  it("refuses the reader's or a loaded book without even_if_loaded — Trash or not", async () => {
     const { deps, calls } = makeDeps(); // reader = b2
-    const r = await run("delete_book", { book: "b2", confirm_title: "Practical Sigil Magic" }, deps);
+    const r = await run("delete_book", { book: "b2" }, deps);
     expect((r.result as any).error).toMatch(/open in the reader/);
     bookContextStore.set({ shelfId: "s1", bookIds: [], excludedIds: [] });
-    const r2 = await run("delete_book", { book: "Dune", confirm_title: "Dune" }, deps);
+    const r2 = await run("delete_book", { book: "Dune" }, deps);
     expect((r2.result as any).error).toMatch(/loaded in this conversation/);
     expect(calls.filter((c) => c[0] === "removeBook")).toEqual([]);
-    const r3 = await run("delete_book", { book: "Dune", confirm_title: "Dune", even_if_loaded: true }, deps);
-    expect(r3.result).toMatchObject({ ok: true });
+    const r3 = await run("delete_book", { book: "Dune", even_if_loaded: true }, deps);
+    expect(r3.result).toMatchObject({ ok: true, trashed: true });
   });
   it("reports a failed delete honestly", async () => {
     const { deps } = makeDeps({ removeBook: async () => ({ ok: false, error: "row still there" }) });
-    const r = await run("delete_book", { book: "b1", confirm_title: "Applied Trigonometry" }, deps);
+    const r = await run("delete_book", { book: "b1" }, deps);
     expect((r.result as any).error).toMatch(/row still there/);
     expect((r.result as any).ok).toBeUndefined();
   });
   it("is off when the delete_book permission is off (choke point)", async () => {
     const { deps, calls } = makeDeps({ permissionsSnapshot: { delete_book: false } });
-    const r = await run("delete_book", { book: "b1", confirm_title: "Applied Trigonometry" }, deps);
+    const r = await run("delete_book", { book: "b1" }, deps);
     expect((r.result as any).error).toMatch(/delete_book/);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("restore_book", () => {
+  it("refreshes the Trash first, then restores by title", async () => {
+    const { deps, calls } = makeDeps();
+    await run("delete_book", { book: "Applied Trigonometry" }, deps);
+    const { result } = await run("restore_book", { book: "applied trigonometry " }, deps);
+    expect(result).toMatchObject({ ok: true, restored: { id: "b1", title: "Applied Trigonometry" } });
+    // The Trash is read fresh: a restore right after a delete in the SAME
+    // turn must not answer from a stale render snapshot.
+    expect(calls.filter((c) => c[0] === "refreshTrash")).toHaveLength(1);
+    expect(calls.filter((c) => c[0] === "restoreBook")).toEqual([["restoreBook", "b1"]]);
+    expect(deps.getBooks().some((b: BookDocument) => b.id === "b1")).toBe(true);
+    expect(String((result as any).note)).toMatch(/NOT loaded into this conversation/);
+  });
+  it("offers what IS in the Trash when nothing matches, and never guesses", async () => {
+    const { deps, calls } = makeDeps();
+    await run("delete_book", { book: "Dune", even_if_loaded: true }, deps);
+    const { result } = await run("restore_book", { book: "Something Else" }, deps);
+    expect((result as any).error).toMatch(/Nothing in the Trash matches/);
+    expect((result as any).in_trash).toEqual([{ id: "b3", title: "Dune" }]);
+    expect(calls.filter((c) => c[0] === "restoreBook")).toEqual([]);
+  });
+  it("says the Trash is empty rather than erroring vaguely", async () => {
+    const { deps } = makeDeps();
+    const { result } = await run("restore_book", { book: "Dune" }, deps);
+    expect((result as any).error).toMatch(/Trash is empty/);
+  });
+  it("says so when the library has no Trash at all", async () => {
+    const { deps, calls } = makeDeps({ trashAvailable: false });
+    const { result } = await run("restore_book", { book: "Dune" }, deps);
+    expect((result as any).error).toMatch(/no Trash yet/);
     expect(calls).toEqual([]);
   });
 });
@@ -329,5 +404,12 @@ describe("list_books with a shelf reader", () => {
       { id: "s2", name: "Summer Reading", book_count: 0, loaded_in_chat: false },
     ]);
     expect(r.loaded).toEqual({ shelf_id: "s1" });
+    expect(r.trash_count).toBeUndefined();
+  });
+  it("reports trash_count once something is in the Trash", async () => {
+    const { deps } = makeDeps();
+    await run("delete_book", { book: "Applied Trigonometry" }, deps);
+    const { result } = await run("list_books", {}, deps);
+    expect((result as any).trash_count).toBe(1);
   });
 });

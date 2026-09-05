@@ -427,6 +427,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // focus layer itself.
     getBooks, getActiveBookId, getShelves, multiShelf, createShelf, renameShelf, deleteShelf, setBookShelfMembership,
     addBook, addChapters, removeBook, loadFocus, applyChapterGists, applyBookSummary,
+    trashAvailable, trashedBooks, refreshTrash, restoreBook,
   } = useApp();
 
   const { autoCatalogOnUpload, apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, selectedModel, setSelectedModel, savedModels, addModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, maxReplySentences, autoShowMemoryImages, chatToolPermissions, visionModel, imageModelPrimary, imageModelFallback,
@@ -454,6 +455,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     onGists: applyChapterGists,
     onSummary: applyBookSummary,
   }), [getBooks, applyChapterGists, applyBookSummary]);
+
+  // The Trash list is read INSIDE a turn (restore_book), so it rides a ref
+  // like every other live reader — the render snapshot a closure captured
+  // predates any delete made earlier in the same turn.
+  const trashedBooksRef = useRef(trashedBooks);
+  trashedBooksRef.current = trashedBooks;
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   // Mirror for callbacks that need the CURRENT transcript without depending
@@ -1914,6 +1921,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               addBook,
               addChapters,
               removeBook,
+              trashAvailable,
+              getTrashedBooks: () => trashedBooksRef.current,
+              refreshTrash,
+              restoreBook,
               loadFocus,
               enqueueCatalog,
               getReplyText,
@@ -2345,7 +2356,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // opt-in and availability distinction itself, so the pre-combined
     // forgeEnabled/runEnabled are no longer read here).
     [apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, autoShowMemoryImages, foundryEnabled, forgeOptIn, runOptIn, foundryReady, chatToolPermissions, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, updateBookTitle, loadChapterText, loadChapterTextStrict, setActiveBookSilent,
-      getBooks, getActiveBookId, getShelves, multiShelf, createShelf, renameShelf, deleteShelf, setBookShelfMembership, addBook, addChapters, removeBook, loadFocus, enqueueCatalog]
+      getBooks, getActiveBookId, getShelves, multiShelf, createShelf, renameShelf, deleteShelf, setBookShelfMembership, addBook, addChapters, removeBook, loadFocus, enqueueCatalog, trashAvailable, refreshTrash, restoreBook]
   );
 
 

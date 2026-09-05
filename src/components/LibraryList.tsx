@@ -23,8 +23,12 @@ const LibraryList: React.FC<{
   onSortBy: (s: "date" | "name") => void;
   onOpenBook: (bookId: string) => void;
   onRemove: (bookId: string) => void;
+  /** True while books go to the Trash rather than being destroyed — the
+   *  control must not say "Delete" when it means "Move to Trash", and must
+   *  not say "Move to Trash" when there is none. */
+  softDelete?: boolean;
   highlight: (text: string) => React.ReactNode;
-}> = ({ books, sortBy, onSortBy, onOpenBook, onRemove, highlight }) => {
+}> = ({ books, sortBy, onSortBy, onOpenBook, onRemove, softDelete = false, highlight }) => {
   const Header: React.FC<{
     label: string;
     sortKey?: "date" | "name";
@@ -172,8 +176,8 @@ const LibraryList: React.FC<{
                     e.stopPropagation();
                     onRemove(book.id);
                   }}
-                  title={`Delete "${book.title}"`}
-                  aria-label={`Delete "${book.title}"`}
+                  title={`${softDelete ? "Move" : "Delete"} "${book.title}"${softDelete ? " to the Trash" : ""}`}
+                  aria-label={`${softDelete ? "Move" : "Delete"} "${book.title}"${softDelete ? " to the Trash" : ""}`}
                   className="w-8 h-8 rounded-lg flex items-center justify-center text-on-surface-variant hover:text-destructive hover:bg-error-container/20 transition-colors"
                 >
                   <span className="material-symbols-outlined text-lg" aria-hidden>delete</span>
