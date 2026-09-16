@@ -165,12 +165,15 @@ const LoadNeuronDialog: React.FC = () => {
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) handleSkip(); }}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="font-display">
+      {/* Phones: inset from the edges and capped to the visible viewport (dvh
+          tracks Android's collapsing URL bar), with only the neuron list
+          scrolling so the title and buttons always stay on screen. */}
+      <DialogContent className="flex flex-col w-[calc(100%-2rem)] max-h-[calc(100dvh-2rem)] gap-3 p-4 rounded-lg sm:max-w-md sm:gap-4 sm:p-6">
+        <DialogHeader className="shrink-0 text-left">
+          <DialogTitle className="font-display pr-6 leading-snug">
             Load a neuron alongside {subject}?
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="text-xs sm:text-sm">
             Pick the knowledge neuron — or a saved chain of neurons — Counsel
             should draw on. Your current neuron is pre-selected — skip to keep it.
           </DialogDescription>
@@ -180,7 +183,7 @@ const LoadNeuronDialog: React.FC = () => {
         {(offerAlongside || readerStopsBeingDiscussed || (pendingLoad?.kind !== "book" && loadedLabel)) && (
           <p
             data-testid="load-replaces"
-            className="rounded-md bg-surface-container-high px-3 py-2 text-xs text-on-surface-variant"
+            className="shrink-0 rounded-md bg-surface-container-high px-3 py-2 text-xs text-on-surface-variant"
           >
             {pendingLoad?.kind === "book" && offerAlongside && (
               <>“Load &amp; open” makes this book Counsel’s focus and unloads {loadedLabel}. “Open alongside” keeps {loadedLabel} loaded and only opens the reader.</>
@@ -195,7 +198,7 @@ const LoadNeuronDialog: React.FC = () => {
           </p>
         )}
 
-        <div className="max-h-[50vh] overflow-auto -mx-1 px-1 py-1 space-y-1">
+        <div className="flex-1 min-h-[6rem] sm:max-h-[50vh] overflow-y-auto overscroll-contain -mx-1 px-1 py-1 space-y-1">
           {chains.length > 0 && (
             <>
               <div className="px-3 pt-1 pb-0.5 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
@@ -300,16 +303,18 @@ const LoadNeuronDialog: React.FC = () => {
           )}
         </div>
 
-        <DialogFooter className="gap-2 sm:gap-2">
-          <Button variant="outline" onClick={handleSkip}>
+        {/* One wrapping row instead of shadcn's stacked column: three
+            full-width stacked buttons alone ate a third of a phone screen. */}
+        <DialogFooter className="shrink-0 flex-row flex-wrap justify-end gap-2 sm:gap-2 sm:space-x-0">
+          <Button variant="outline" onClick={handleSkip} className="flex-1 sm:flex-none">
             Skip
           </Button>
           {offerAlongside && (
-            <Button variant="secondary" onClick={handleAlongside} disabled={selectedLocked}>
+            <Button variant="secondary" onClick={handleAlongside} disabled={selectedLocked} className="flex-1 sm:flex-none">
               Open alongside
             </Button>
           )}
-          <Button onClick={handleLoad} disabled={!selected || selectedLocked}>
+          <Button onClick={handleLoad} disabled={!selected || selectedLocked} className="flex-1 sm:flex-none">
             Load &amp; open
           </Button>
         </DialogFooter>
