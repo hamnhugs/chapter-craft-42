@@ -243,6 +243,22 @@ const ChatPanel: React.FC = () => {
     [books, bookSelection, activeBookId]
   );
   const [booksPickerOpen, setBooksPickerOpen] = useState(false);
+  // Collapsing only hides the chip row — the books still ride with every
+  // message, and the collapsed summary keeps the count visible.
+  const [contextBooksCollapsed, setContextBooksCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("counsel_context_books_collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("counsel_context_books_collapsed", contextBooksCollapsed ? "1" : "0");
+    } catch {
+      // Storage unavailable. The row just won't remember its state across reloads.
+    }
+  }, [contextBooksCollapsed]);
   const removeContextBook = (id: string) => {
     if (bookSelection.shelfId) {
       bookContextStore.set({ ...bookSelection, excludedIds: [...bookSelection.excludedIds, id] });
@@ -1414,15 +1430,33 @@ const ChatPanel: React.FC = () => {
           )}
           {contextBooks.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5 px-1 pb-1 text-xs font-body text-on-surface-variant">
-              <span
-                className="material-symbols-outlined text-[14px] text-primary-container"
-                style={{ fontVariationSettings: "'FILL' 1" }}
-                title="Book context — these books' text is sent to the AI with every message"
-                aria-hidden
+              <button
+                type="button"
+                onClick={() => setContextBooksCollapsed((c) => !c)}
+                className="inline-flex items-center gap-0.5 rounded-full hover:bg-surface-container-highest pl-0.5 pr-1 py-0.5 leading-none shrink-0"
+                aria-expanded={!contextBooksCollapsed}
+                title={contextBooksCollapsed
+                  ? "Show the loaded books (they're still sent with every message)"
+                  : "Hide the loaded books (they'll still be sent with every message)"}
               >
-                auto_stories
-              </span>
-              {contextBooks.map((b) => (
+                <span
+                  className="material-symbols-outlined text-[14px] text-primary-container"
+                  style={{ fontVariationSettings: "'FILL' 1" }}
+                  aria-hidden
+                >
+                  auto_stories
+                </span>
+                <span className="material-symbols-outlined text-[14px] block" aria-hidden>
+                  {contextBooksCollapsed ? "expand_more" : "expand_less"}
+                </span>
+                {contextBooksCollapsed && (
+                  <span className="font-semibold text-primary">
+                    {contextBooks.length} book{contextBooks.length === 1 ? "" : "s"}
+                    {bookSelection.shelfId && loadedLabel ? ` · ${loadedLabel}` : ""}
+                  </span>
+                )}
+              </button>
+              {!contextBooksCollapsed && contextBooks.map((b) => (
                 <span
                   key={b.id}
                   className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-surface-container-high border border-outline-variant/20 max-w-[200px]"
