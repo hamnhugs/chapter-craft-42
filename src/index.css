@@ -1103,3 +1103,100 @@ html.cc-media-overlay-open .message-bubble-user {
   border: 1px solid hsl(210 3% 27%) !important;
   background: hsl(0 0% 5%) !important;
 }
+
+/* ── Read-along (Read tab) ───────────────────────────────────────────────
+   The word highlight takes its colours from the live theme tokens, so it
+   recolours instantly on a theme switch. Aurora's accent is animated, so the
+   pill cycles hue with the rest of that theme. */
+.read-along-pill,
+.read-along-ghost {
+  --ra-fill: hsl(var(--primary-container));
+  --ra-glow: hsl(var(--primary));
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: var(--ra-radius, 6px);
+  opacity: 0;
+  will-change: transform, width, height;
+}
+[data-theme="aurora"] .read-along-pill,
+[data-theme="aurora"] .read-along-ghost {
+  --ra-fill: var(--aur-accent);
+  --ra-glow: var(--aur-accent);
+}
+.read-along-pill {
+  background: color-mix(in oklab, var(--ra-fill) 42%, transparent);
+  box-shadow:
+    0 0 0 2px color-mix(in oklab, var(--ra-glow) 85%, transparent),
+    0 0 16px 3px color-mix(in oklab, var(--ra-glow) 55%, transparent);
+  transition:
+    transform 150ms cubic-bezier(0.2, 0.9, 0.25, 1.15),
+    width 150ms cubic-bezier(0.2, 0.9, 0.25, 1.15),
+    height 150ms ease,
+    opacity 200ms ease;
+}
+/* Trailing comet: slower, softer, so the eye follows the motion. */
+.read-along-ghost {
+  background: color-mix(in oklab, var(--ra-glow) 30%, transparent);
+  filter: blur(6px);
+  transition:
+    transform 420ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    width 420ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    height 420ms ease,
+    opacity 300ms ease;
+}
+/* PDF pages are canvas "paper": multiply tints the paper and keeps the
+   printed ink at full contrast under the pill. */
+.read-along-pdf.read-along-pill { mix-blend-mode: multiply; background: color-mix(in oklab, var(--ra-fill) 70%, transparent); }
+.read-along-pdf.read-along-ghost { mix-blend-mode: multiply; }
+
+@keyframes ra-burst {
+  0% { transform: translate(-50%, -50%) rotate(var(--a)) translateY(0) scale(1); opacity: 1; }
+  100% { transform: translate(-50%, -50%) rotate(var(--a)) translateY(-46px) scale(0.2); opacity: 0; }
+}
+.ra-particle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-radius: 9999px;
+  pointer-events: none;
+  background: var(--c, hsl(var(--primary)));
+  animation: ra-burst 900ms cubic-bezier(0.15, 0.8, 0.3, 1) forwards;
+  animation-delay: var(--d, 0ms);
+}
+@keyframes ra-pop {
+  0% { transform: translateY(6px) scale(0.85); opacity: 0; }
+  20% { transform: translateY(0) scale(1.06); opacity: 1; }
+  80% { transform: translateY(-2px) scale(1); opacity: 1; }
+  100% { transform: translateY(-10px) scale(0.98); opacity: 0; }
+}
+.ra-pop { animation: ra-pop 2200ms ease forwards; }
+@keyframes ra-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.12); }
+}
+.ra-pulse { animation: ra-pulse 1.4s ease-in-out infinite; }
+@keyframes ra-flame {
+  0%, 100% { transform: translateY(0) rotate(-4deg); }
+  50% { transform: translateY(-1px) rotate(5deg); }
+}
+.ra-flame { display: inline-block; animation: ra-flame 1.1s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .read-along-pill { transition: opacity 120ms linear; }
+  .read-along-ghost { display: none; }
+  .ra-particle, .ra-pulse, .ra-flame { animation: none; }
+  .ra-particle { display: none; }
+  .ra-pop { animation-duration: 2200ms; animation-name: none; }
+}
+@media (forced-colors: active) {
+  .read-along-pill { background: transparent; mix-blend-mode: normal; box-shadow: none; outline: 2px solid Highlight; }
+  .read-along-ghost { display: none; }
+}
+/* HTML books: the pill floats over the iframe, so it stays translucent and
+   the word's own text is recoloured (::highlight) to keep it legible. */
+.read-along-html.read-along-pill { background: color-mix(in oklab, var(--ra-fill) 16%, transparent); }

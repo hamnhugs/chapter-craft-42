@@ -8,6 +8,7 @@ import ChapterNameDialog from "@/components/ChapterNameDialog";
 import ChapterManageDialog from "@/components/ChapterManageDialog";
 import CaptureQuoteDialog from "@/components/CaptureQuoteDialog";
 import { toast } from "sonner";
+import ReadAlong from "@/components/ReadAlong";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
@@ -29,10 +30,16 @@ const PdfViewer: React.FC = () => {
   const [htmlContent, setHtmlContent] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [manageChaptersOpen, setManageChaptersOpen] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [readAlongActive, setReadAlongActive] = useState(false);
+  // Bumps when the page's text layer (PDF) or the iframe document (HTML)
+  // renders, so read-along can re-map words onto fresh DOM.
+  const [textVersion, setTextVersion] = useState(0);
+  const bumpTextVersion = useCallback(() => setTextVersion((v) => v + 1), []);
   const [isSavingChapter, setIsSavingChapter] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const pageHostRef = useRef<HTMLDivElement>(null);
+  const htmlHostRef = useRef<HTMLDivElement>(null);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
 
   // ── Quote capture (Card Catalog Stage 2 — PDF text layer only) ──────────
@@ -50,46 +57,6 @@ const PdfViewer: React.FC = () => {
     // a little headroom keeps accidental drags from flashing the affordance).
     setSelectionCapture(text.length >= 12 && containerRef.current?.contains(sel?.anchorNode ?? null) ? text : "");
   }, [captureOpen]);
-
-  // --- Read aloud ---
-  const readCurrentPage = useCallback(async () => {
-    if (isSpeaking) {
-      window.speechSynthesis.cancel();
-      setIsSpeaking(false);
-      return;
-    }
-    if (isHtmlBook) {
-      const text = htmlContent.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-      if (!text) return;
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.onend = () => setIsSpeaking(false);
-      utterance.onerror = () => setIsSpeaking(false);
-      setIsSpeaking(true);
-      window.speechSynthesis.speak(utterance);
-      return;
-    }
-    if (!fileUrl) return;
-    try {
-      const loadingTask = pdfjs.getDocument(fileUrl);
-      const pdf = await loadingTask.promise;
-      const page = await pdf.getPage(currentPage);
-      const content = await page.getTextContent();
-      const text = content.items.map((item: any) => item.str).join(" ");
-      if (!text.trim()) return;
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.onend = () => setIsSpeaking(false);
-      utterance.onerror = () => setIsSpeaking(false);
-      setIsSpeaking(true);
-      window.speechSynthesis.speak(utterance);
-    } catch (err) {
-      console.error("Read aloud failed:", err);
-    }
-  }, [fileUrl, currentPage, isSpeaking, isHtmlBook, htmlContent]);
-
-  useEffect(() => {
-    window.speechSynthesis.cancel();
-    setIsSpeaking(false);
-  }, [currentPage, activeBookId]);
 
   // --- Swipe gestures (PDF only) ---
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
@@ -157,6 +124,7 @@ const PdfViewer: React.FC = () => {
 
   const onDocumentLoadSuccess = useCallback(({ numPages }: any) => { setNumPages(numPages); }, []);
   const goToPage = (page: number) => { if (page >= 1 && page <= numPages) setCurrentPage(page); };
+  const goToNextPage = useCallback(() => setCurrentPage((p) => (p < numPages ? p + 1 : p)), [numPages]);
   const zoom = (delta: number) => { setScale((s) => Math.max(0.5, Math.min(3, s + delta))); };
 
   const markChapterStart = () => setChapterStart(currentPage);
@@ -281,18 +249,21 @@ const PdfViewer: React.FC = () => {
 
       {/* Secondary Toolbar */}
       <div className="flex items-center justify-between px-6 py-3 bg-surface-container-high overflow-x-auto hide-scrollbar gap-4 border-t border-outline-variant/10">
-        {/* Read Aloud */}
-        <button
-          onClick={readCurrentPage}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg shrink-0 active:scale-95 transition-all ${
-            isSpeaking
-              ? "bg-accent text-on-primary-container"
-              : "bg-primary-container/10 border border-primary-container/20 text-primary-container"
-          }`}
-        >
-          <span className="material-symbols-outlined">{isSpeaking ? "volume_off" : "volume_up"}</span>
-          <span className="font-label text-sm font-semibold">{isSpeaking ? "Stop" : "Read Aloud"}</span>
-        </button>
+        {/* Read Along — word-highlighted read-aloud with XP/streaks */}
+        <ReadAlong
+          mode={isHtmlBook ? "html" : "pdf"}
+          bookId={book.id}
+          bookTitle={book.title}
+          pageHostRef={pageHostRef}
+          scrollRef={containerRef}
+          iframeRef={iframeRef}
+          htmlHostRef={htmlHostRef}
+          textVersion={textVersion}
+          page={currentPage}
+          hasNextPage={!isHtmlBook && currentPage < numPages}
+          onNextPage={goToNextPage}
+          onActiveChange={setReadAlongActive}
+        />
 
         {/* Zoom — PDF only */}
         {!isHtmlBook && (
@@ -364,17 +335,20 @@ const PdfViewer: React.FC = () => {
 
       {/* Document content */}
       {isHtmlBook ? (
-        <iframe
-          ref={iframeRef}
-          srcDoc={htmlContent}
-          sandbox="allow-same-origin"
-          className="flex-1 w-full border-0 bg-background"
-          title={book.title}
-        />
+        <div ref={htmlHostRef} className="relative flex-1 flex min-h-0">
+          <iframe
+            ref={iframeRef}
+            srcDoc={htmlContent}
+            sandbox="allow-same-origin"
+            className="flex-1 w-full border-0 bg-background"
+            title={book.title}
+            onLoad={bumpTextVersion}
+          />
+        </div>
       ) : (
         <div
           ref={containerRef}
-          className="flex-1 overflow-auto bg-background flex justify-center py-6 scrollbar-thin"
+          className="flex-1 overflow-auto bg-background flex [justify-content:safe_center] py-6 scrollbar-thin"
           onTouchStart={handleTouchStart}
           onTouchEnd={(e) => { handleTouchEnd(e); setTimeout(readSelection, 50); }}
           onMouseUp={() => setTimeout(readSelection, 0)}
@@ -385,7 +359,15 @@ const PdfViewer: React.FC = () => {
             loading={<div className="flex items-center justify-center py-20"><div className="animate-pulse text-on-surface-variant text-sm">Loading document…</div></div>}
             error={<div className="text-destructive text-sm text-center py-20">Failed to load the document.</div>}
           >
-            <Page pageNumber={currentPage} scale={scale} renderTextLayer={true} renderAnnotationLayer={true} />
+            <div ref={pageHostRef} className="relative">
+              <Page
+                pageNumber={currentPage}
+                scale={scale}
+                renderTextLayer={true}
+                renderAnnotationLayer={true}
+                onRenderTextLayerSuccess={bumpTextVersion}
+              />
+            </div>
           </Document>
         </div>
       )}
@@ -410,7 +392,7 @@ const PdfViewer: React.FC = () => {
       )}
 
       {/* Floating chapter info — PDF only */}
-      {!isHtmlBook && book.chapters.length > 0 && selectedChapterId && (() => {
+      {!isHtmlBook && !readAlongActive && book.chapters.length > 0 && selectedChapterId && (() => {
         const ch = book.chapters.find(c => c.id === selectedChapterId);
         if (!ch) return null;
         return (

@@ -77,7 +77,7 @@ Deno.serve(async (req) => {
 
     if (req.method === "POST") {
       const payload = await req.json().catch(() => null) as
-        | { text?: string; voice_id?: string; voiceId?: string; model?: string; sample_rate?: number }
+        | { text?: string; voice_id?: string; voiceId?: string; model?: string; sample_rate?: number; timestamp_type?: string }
         | null;
       let voiceId = String(payload?.voice_id ?? payload?.voiceId ?? "").trim();
       if (!payload?.text) {
@@ -93,6 +93,11 @@ Deno.serve(async (req) => {
         .trim();
 
       const sampleRate = Number(payload.sample_rate) > 0 ? Number(payload.sample_rate) : 24000;
+      // Read-along (the Read tab's word highlighting) asks for WORD timing.
+      // Callers that don't ask keep getting raw audio/mpeg bytes.
+      const timestampType = payload.timestamp_type === "WORD" || payload.timestamp_type === "CHARACTER"
+        ? payload.timestamp_type
+        : null;
 
       const resp = await fetch(`${INWORLD_BASE}/tts/v1/voice`, {
         method: "POST",
@@ -110,6 +115,7 @@ Deno.serve(async (req) => {
           },
           deliveryMode: "BALANCED",
           applyTextNormalization: "ON",
+          ...(timestampType ? { timestampType } : {}),
         }),
       });
 
@@ -121,6 +127,14 @@ Deno.serve(async (req) => {
       const result = await resp.json();
       const base64 = result?.audioContent || result?.audio_content;
       if (!base64) return jsonError("Inworld returned no audio", 502);
+      if (timestampType) {
+        // JSON so the timing rides with the audio in one round trip; the
+        // client decodes the base64 itself.
+        return new Response(
+          JSON.stringify({ audioContent: base64, timestampInfo: result?.timestampInfo ?? null }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
       const bin = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
       return new Response(bin, {
         status: 200,
