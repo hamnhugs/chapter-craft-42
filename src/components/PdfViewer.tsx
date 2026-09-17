@@ -13,7 +13,6 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
@@ -25,9 +24,6 @@ import { usePageSwipe } from "@/hooks/usePageSwipe";
 import { useReaderFocus } from "@/hooks/useReaderFocus";
 import { loadLastPage, saveLastPage, useReaderPrefs } from "@/hooks/useReaderPrefs";
 import { useWakeLock } from "@/hooks/useWakeLock";
-import { bookAudioStats, deleteBookAudio } from "@/lib/readAlongAudioCache";
-
-const formatBytes = (n: number) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
@@ -84,12 +80,6 @@ const PdfViewer: React.FC = () => {
   const [pageMinHeight, setPageMinHeight] = useState(0);
   const [pageInput, setPageInput] = useState<string | null>(null);
   const [swipeHint, setSwipeHint] = useState<{ dir: SwipeDirection; progress: number } | null>(null);
-
-  const [savedAudio, setSavedAudio] = useState<{ clips: number; bytes: number } | null>(null);
-  const refreshSavedAudio = useCallback(() => {
-    setSavedAudio(null);
-    if (activeBookId) bookAudioStats(activeBookId).then(setSavedAudio);
-  }, [activeBookId]);
 
   const { focused, enter: enterFocus, exit: exitFocus, toggle: toggleFocus } = useReaderFocus();
   useWakeLock(focused || readStatus === "playing");
@@ -479,9 +469,9 @@ const PdfViewer: React.FC = () => {
           <span className="font-label text-sm font-semibold">Focus</span>
         </button>
 
-        {/* Zoom (PDF only) + reading options */}
-        <div className="flex items-center shrink-0 gap-1">
-          {!isHtmlBook && (
+        {/* Zoom + reading options — PDF only */}
+        {!isHtmlBook && (
+          <div className="flex items-center shrink-0 gap-1">
             <div className="flex items-center bg-surface-container-highest rounded-full">
               <button type="button" onClick={() => changeZoom(-0.2)} disabled={scale <= MIN_ZOOM} className="grid place-items-center w-10 h-10 rounded-full text-secondary hover:text-primary disabled:opacity-30" aria-label="Zoom out">
                 <span className="material-symbols-outlined">remove</span>
@@ -499,53 +489,26 @@ const PdfViewer: React.FC = () => {
                 <span className="material-symbols-outlined">add</span>
               </button>
             </div>
-          )}
-          <DropdownMenu onOpenChange={(open) => { if (open) refreshSavedAudio(); }}>
-            <DropdownMenuTrigger asChild>
-              <button type="button" className="grid place-items-center w-10 h-10 rounded-full text-on-surface-variant hover:text-primary hover:bg-surface-container-highest" aria-label="Reading options">
-                <span className="material-symbols-outlined">tune</span>
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-72">
-              <DropdownMenuLabel>Reading options</DropdownMenuLabel>
-              {!isHtmlBook && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button type="button" className="grid place-items-center w-10 h-10 rounded-full text-on-surface-variant hover:text-primary hover:bg-surface-container-highest" aria-label="Reading options">
+                  <span className="material-symbols-outlined">tune</span>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                <DropdownMenuLabel>Reading options</DropdownMenuLabel>
                 <DropdownMenuCheckboxItem checked={swipeEnabled} onCheckedChange={(v) => setSwipeEnabled(!!v)}>
                   Swipe to turn pages
                 </DropdownMenuCheckboxItem>
-              )}
-              <DropdownMenuSeparator />
-              <div className="px-2 py-1.5 text-xs text-muted-foreground leading-relaxed">
-                <span className="font-semibold text-foreground">Saved Read Along audio</span>
-                <br />
-                {savedAudio === null
-                  ? "Checking…"
-                  : savedAudio.clips === 0
-                    ? "Nothing saved for this book on this device yet."
-                    : `${formatBytes(savedAudio.bytes)} for this book on this device (${savedAudio.clips} clips). Re-reading these passages is free and works offline.`}
-              </div>
-              {!!savedAudio?.clips && (
-                <DropdownMenuItem
-                  className="text-destructive focus:text-destructive"
-                  onSelect={async () => {
-                    await deleteBookAudio(book.id);
-                    toast.success("Saved audio for this book deleted from this device");
-                  }}
-                >
-                  Delete saved audio for this book
-                </DropdownMenuItem>
-              )}
-              {!isHtmlBook && (
-                <>
-                  <DropdownMenuSeparator />
-                  <div className="px-2 py-1.5 text-xs text-muted-foreground leading-relaxed">
-                    Swipe firmly across the page to turn it; scrolling, zoomed panning and selecting text never turn pages.
-                    <br />Keyboard: ← → turn pages · F focus mode
-                  </div>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+                <DropdownMenuSeparator />
+                <div className="px-2 py-1.5 text-xs text-muted-foreground leading-relaxed">
+                  Swipe firmly across the page to turn it; scrolling, zoomed panning and selecting text never turn pages.
+                  <br />Keyboard: ← → turn pages · F focus mode
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )}
 
         {/* Chapter Isolation — PDF only */}
         {!isHtmlBook && (

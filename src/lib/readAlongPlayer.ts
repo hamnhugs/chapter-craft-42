@@ -8,10 +8,9 @@
  *    word. Without timestamps (older edge function) words are estimated over
  *    the chunk's real duration. playbackRate keeps sync for free (media time).
  *    Chunks are always cut from the start of the page, never from where
- *    playback starts, so the same page always asks for the same clips: every
- *    clip is saved on this device under its book (readAlongAudioCache) and a
- *    repeat plays the saved copy with no Inworld request; a start mid-chunk
- *    just seeks into that clip. Recent clips also stay in memory, so
+ *    playback starts, so the same page always asks for the same clips: the
+ *    server serves repeats from the book's saved audio on the VPS, and a start
+ *    mid-chunk just seeks into that clip. Recent clips also stay in memory, so
  *    jumping back a sentence or tapping a word re-uses audio already fetched.
  *  - "browser": speechSynthesis. Word `boundary` events when the voice emits
  *    them; otherwise (Android Chrome's network voices send none) an estimated
@@ -34,7 +33,6 @@ import {
   type WordTimes,
 } from "@/lib/readAlong";
 import { synthesizeSpeechWithTimestamps } from "@/lib/inworldTts";
-import { clipCacheKey, loadClip, saveClip } from "@/lib/readAlongAudioCache";
 
 export type ReadAlongEngine = "inworld" | "browser";
 export type ReadAlongStatus = "idle" | "loading" | "playing" | "paused";
@@ -68,7 +66,6 @@ const INWORLD_MAX_CHUNK = 240;
 const INWORLD_FIRST_CHUNK = 120;
 /** Decoded clips kept in memory for instant replays. */
 const CLIP_MEMORY = 24;
-const INWORLD_MODEL = "inworld-tts-2";
 
 export class ReadAlongPlayer {
   private handlers: ReadAlongHandlers;
@@ -265,31 +262,17 @@ export class ReadAlongPlayer {
       this.clips.set(key, p);
       return p;
     }
-    p = this.loadOrSynthesize(chunk.text).then(({ audio, words }) => ({ url: URL.createObjectURL(audio), tokens: words }));
+    this.abort ??= new AbortController();
+    p = synthesizeSpeechWithTimestamps(chunk.text, this.voice.inworldVoiceId || "", undefined, {
+      signal: this.abort.signal,
+      bookId: this.bookId ?? undefined,
+    }).then(({ audio, words }) => ({ url: URL.createObjectURL(new Blob([audio], { type: "audio/mpeg" })), tokens: words }));
     const entry = p;
     // A failed fetch must not stick; also the unhandled-rejection guard for prefetches.
     entry.catch(() => { if (this.clips.get(key) === entry) this.clips.delete(key); });
     this.clips.set(key, entry);
     this.evictClips();
     return entry;
-  }
-
-  /** Saved copy on this device, else Inworld (then saved for next time). */
-  private async loadOrSynthesize(text: string): Promise<{ audio: Blob; words: PreparedChunk["tokens"] }> {
-    const voiceId = this.voice.inworldVoiceId || "";
-    const bookId = this.bookId;
-    const key = await clipCacheKey(INWORLD_MODEL, voiceId, text).catch(() => null);
-    const saved = key ? await loadClip(key) : null;
-    if (saved) return { audio: saved.audio, words: saved.words };
-    this.abort ??= new AbortController();
-    const { audio, words } = await synthesizeSpeechWithTimestamps(text, voiceId, INWORLD_MODEL, {
-      signal: this.abort.signal,
-      bookId: bookId ?? undefined,
-    });
-    const blob = new Blob([audio], { type: "audio/mpeg" });
-    // Only clips with real word timings: an estimate shouldn't be frozen in.
-    if (key && bookId && words) void saveClip(key, bookId, { audio: blob, words });
-    return { audio: blob, words };
   }
 
   private evictClips() {
