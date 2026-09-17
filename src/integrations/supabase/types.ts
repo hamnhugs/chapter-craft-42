@@ -3092,6 +3092,31 @@ export type Database = {
           via_relationship: string
         }[]
       }
+      get_neighbors_v2: {
+        Args: {
+          classes?: string[]
+          content_chars?: number
+          depth?: number
+          filter_wiki_ids?: string[]
+          max_rows?: number
+          query_embedding?: string
+          seed_ids: string[]
+        }
+        Returns: {
+          confidence: number
+          content: string
+          entry_id: string
+          entry_type: string
+          from_seed: string
+          hop: number
+          similarity: number
+          title: string
+          via_edge_class: string
+          via_relationship: string
+          vibrancy: number
+          wiki_id: string
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -3116,6 +3141,35 @@ export type Database = {
           source_book_id: string
           tags: string[]
           title: string
+        }[]
+      }
+      hybrid_search_knowledge_v2: {
+        Args: {
+          active_embedding_model?: string
+          filter_wiki_ids?: string[]
+          full_text_weight?: number
+          match_count?: number
+          query_embedding?: string
+          query_text: string
+          rrf_k?: number
+          semantic_weight?: number
+        }
+        Returns: {
+          aliases: string[]
+          author: string
+          confidence: number
+          content: string
+          entry_type: string
+          ft_match: boolean
+          id: string
+          locators: Json
+          score: number
+          similarity: number
+          source_book_id: string
+          tags: string[]
+          title: string
+          vibrancy: number
+          wiki_id: string
         }[]
       }
       is_admin: { Args: never; Returns: boolean }
