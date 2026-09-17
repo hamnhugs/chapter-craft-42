@@ -1060,6 +1060,7 @@ export type Database = {
           content: string
           created_at: string
           embedding: string | null
+          embedding_768_model: string | null
           embedding_model: string | null
           embedding_v2: unknown
           encoding_strength: number | null
@@ -1101,6 +1102,7 @@ export type Database = {
           content?: string
           created_at?: string
           embedding?: string | null
+          embedding_768_model?: string | null
           embedding_model?: string | null
           embedding_v2?: unknown
           encoding_strength?: number | null
@@ -1142,6 +1144,7 @@ export type Database = {
           content?: string
           created_at?: string
           embedding?: string | null
+          embedding_768_model?: string | null
           embedding_model?: string | null
           embedding_v2?: unknown
           encoding_strength?: number | null
@@ -3003,6 +3006,7 @@ export type Database = {
           content: string
           created_at: string
           embedding: string | null
+          embedding_768_model: string | null
           embedding_model: string | null
           embedding_v2: unknown
           encoding_strength: number | null

@@ -15,6 +15,13 @@
       "when": 1789636513786,
       "tag": "0001_memory_rpc_ownership",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789636535984,
+      "tag": "0002_embedding_model_tracking_and_staleness",
+      "breakpoints": true
     }
   ]
 }
