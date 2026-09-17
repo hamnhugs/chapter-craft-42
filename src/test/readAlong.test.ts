@@ -12,6 +12,9 @@ import {
   liveStreak,
   EMPTY_STATS,
   DAILY_WORD_GOAL,
+  sentenceStartOf,
+  nextSentenceStart,
+  prevSentenceStart,
 } from "@/lib/readAlong";
 
 describe("tokenizeWords", () => {
@@ -165,5 +168,29 @@ describe("gamification", () => {
     expect(liveStreak(s.stats, "2026-09-17")).toBe(0);
     s = creditWords(s.stats, DAILY_WORD_GOAL, 1, "2026-09-18");
     expect(s.stats.streak).toBe(1);
+  });
+});
+
+describe("sentence navigation", () => {
+  const text = "Dr. Smith came home. He sat down! Then he read “the book.” The end";
+  const words = tokenizeWords(text);
+  const idx = (w: string) => words.findIndex((x) => x.text === w);
+
+  it("finds sentence starts, not fooled by abbreviations", () => {
+    expect(sentenceStartOf(words, idx("home."))).toBe(0);
+    expect(sentenceStartOf(words, idx("down!"))).toBe(idx("He"));
+    expect(sentenceStartOf(words, idx("book.”"))).toBe(idx("Then"));
+  });
+
+  it("skips forward to the next sentence, or -1 in the last", () => {
+    expect(nextSentenceStart(words, idx("Smith"))).toBe(idx("He"));
+    expect(nextSentenceStart(words, idx("read"))).toBe(idx("The"));
+    expect(nextSentenceStart(words, idx("end"))).toBe(-1);
+  });
+
+  it("skips back to this sentence's start, or the previous one if just begun", () => {
+    expect(prevSentenceStart(words, idx("down!"))).toBe(idx("He"));
+    expect(prevSentenceStart(words, idx("He"))).toBe(0);
+    expect(prevSentenceStart(words, 0)).toBe(0);
   });
 });

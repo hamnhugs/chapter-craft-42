@@ -9,8 +9,35 @@ import ChapterManageDialog from "@/components/ChapterManageDialog";
 import CaptureQuoteDialog from "@/components/CaptureQuoteDialog";
 import { toast } from "sonner";
 import ReadAlong from "@/components/ReadAlong";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import type { ReadAlongStatus } from "@/lib/readAlongPlayer";
+import type { SwipeDirection } from "@/lib/readerGestures";
+import type { PDFDocumentProxy } from "pdfjs-dist";
+import { usePageSwipe } from "@/hooks/usePageSwipe";
+import { useReaderFocus } from "@/hooks/useReaderFocus";
+import { loadLastPage, saveLastPage, useReaderPrefs } from "@/hooks/useReaderPrefs";
+import { useWakeLock } from "@/hooks/useWakeLock";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 3;
+/** "Fit" on a wide desktop would blow a page up to poster size. */
+const MAX_FIT_ZOOM = 1.5;
+/** Focus mode hides its controls this long after the last touch while reading. */
+const FOCUS_CHROME_HIDE_MS = 3000;
+// 3x phone screens cost ~2.25x the canvas memory of 2x for no visible gain.
+const renderPixelRatio = () => Math.min(2, typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1);
+
+const iconBtn =
+  "grid place-items-center w-11 h-11 rounded-full transition-colors hover:bg-surface-container-high active:scale-95 disabled:opacity-30 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50";
 
 const PdfViewer: React.FC = () => {
   const { getActiveBook, addChapter, updateChapter, removeChapter, updateBookTitle, activeBookId, loadBookFile } = useApp();
@@ -20,7 +47,10 @@ const PdfViewer: React.FC = () => {
 
   const [numPages, setNumPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState(1);
-  const [scale, setScale] = useState(1.2);
+  const { zoom, setZoom, swipeEnabled, setSwipeEnabled } = useReaderPrefs();
+  /** Width of the current page at scale 1, for fit-to-width. */
+  const [pageWidth, setPageWidth] = useState(0);
+  const [containerWidth, setContainerWidth] = useState(0);
   const [chapterStart, setChapterStart] = useState<number | null>(null);
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(null);
   const [namingDialog, setNamingDialog] = useState<{ open: boolean; endPage: number; defaultName: string }>({
@@ -30,17 +60,29 @@ const PdfViewer: React.FC = () => {
   const [htmlContent, setHtmlContent] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [manageChaptersOpen, setManageChaptersOpen] = useState(false);
-  const [readAlongActive, setReadAlongActive] = useState(false);
+  const [readStatus, setReadStatus] = useState<ReadAlongStatus>("idle");
+  const readAlongActive = readStatus !== "idle";
   // Bumps when the page's text layer (PDF) or the iframe document (HTML)
   // renders, so read-along can re-map words onto fresh DOM.
   const [textVersion, setTextVersion] = useState(0);
   const bumpTextVersion = useCallback(() => setTextVersion((v) => v + 1), []);
   const [isSavingChapter, setIsSavingChapter] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
+  const setContainer = useCallback((node: HTMLDivElement | null) => {
+    (containerRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+    setScrollEl(node);
+  }, []);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const pageHostRef = useRef<HTMLDivElement>(null);
   const htmlHostRef = useRef<HTMLDivElement>(null);
-  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  /** Last rendered page height: holds the layout steady while the next page renders. */
+  const [pageMinHeight, setPageMinHeight] = useState(0);
+  const [pageInput, setPageInput] = useState<string | null>(null);
+  const [swipeHint, setSwipeHint] = useState<{ dir: SwipeDirection; progress: number } | null>(null);
+
+  const { focused, enter: enterFocus, exit: exitFocus, toggle: toggleFocus } = useReaderFocus();
+  useWakeLock(focused || readStatus === "playing");
 
   // ── Quote capture (Card Catalog Stage 2 — PDF text layer only) ──────────
   // A selection in the page container surfaces a "Save quote" affordance;
@@ -58,32 +100,21 @@ const PdfViewer: React.FC = () => {
     setSelectionCapture(text.length >= 12 && containerRef.current?.contains(sel?.anchorNode ?? null) ? text : "");
   }, [captureOpen]);
 
-  // --- Swipe gestures (PDF only) ---
-  const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    const touch = e.touches[0];
-    touchStartRef.current = { x: touch.clientX, y: touch.clientY };
-  }, []);
-
-  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
-    if (!touchStartRef.current) return;
-    const touch = e.changedTouches[0];
-    const dx = touch.clientX - touchStartRef.current.x;
-    const dy = touch.clientY - touchStartRef.current.y;
-    touchStartRef.current = null;
-    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-      if (dx < 0 && currentPage < numPages) setCurrentPage((p) => p + 1);
-      else if (dx > 0 && currentPage > 1) setCurrentPage((p) => p - 1);
-    }
-  }, [currentPage, numPages]);
-
-  // Reset on book change
+  // Reset on book change, reopening where this book was left.
   useEffect(() => {
-    setCurrentPage(1);
+    setCurrentPage(activeBookId ? loadLastPage(activeBookId) : 1);
+    setNumPages(0);
+    setPageWidth(0);
+    setPageMinHeight(0);
     setChapterStart(null);
     setSelectedChapterId(null);
     setFileUrl("");
     setHtmlContent("");
   }, [activeBookId]);
+
+  useEffect(() => {
+    if (activeBookId && numPages > 0) saveLastPage(activeBookId, currentPage);
+  }, [activeBookId, currentPage, numPages]);
 
   // Load file
   useEffect(() => {
@@ -122,16 +153,119 @@ const PdfViewer: React.FC = () => {
       .catch(() => { setFileUrl(""); setLoading(false); });
   }, [activeBookId, isPdfBook, isHtmlBook, book?.fileData, loadBookFile]);
 
-  const onDocumentLoadSuccess = useCallback(({ numPages }: any) => { setNumPages(numPages); }, []);
-  const goToPage = (page: number) => { if (page >= 1 && page <= numPages) setCurrentPage(page); };
+  // Track the reading column's width for fit-to-width.
+  useEffect(() => {
+    if (!scrollEl) return;
+    const ro = new ResizeObserver(([entry]) => setContainerWidth(Math.round(entry.contentRect.width)));
+    ro.observe(scrollEl);
+    return () => ro.disconnect();
+  }, [scrollEl]);
+
+  const onDocumentLoadSuccess = useCallback((pdf: PDFDocumentProxy) => {
+    setNumPages(pdf.numPages);
+    setCurrentPage((p) => Math.min(Math.max(1, p), pdf.numPages));
+    // Measure a page up front so the first render is already fitted.
+    pdf.getPage(1).then((p) => setPageWidth((w) => w || p.getViewport({ scale: 1 }).width)).catch(() => {});
+  }, []);
+
+  const gutter = containerWidth < 640 ? 8 : 32;
+  const fitScale = pageWidth > 0 && containerWidth > 0
+    ? Math.max(MIN_ZOOM, Math.min(MAX_FIT_ZOOM, (containerWidth - gutter * 2) / pageWidth))
+    : 0;
+  const scale = zoom === "fit" ? fitScale : zoom;
+
+  const goToPage = useCallback((page: number) => {
+    setCurrentPage((p) => (page >= 1 && page <= numPages ? page : p));
+  }, [numPages]);
   const goToNextPage = useCallback(() => setCurrentPage((p) => (p < numPages ? p + 1 : p)), [numPages]);
-  const zoom = (delta: number) => { setScale((s) => Math.max(0.5, Math.min(3, s + delta))); };
+  const goToPrevPage = useCallback(() => setCurrentPage((p) => (p > 1 ? p - 1 : p)), []);
+  const changeZoom = (delta: number) => {
+    const base = scale || 1;
+    setZoom(Math.round(Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, base + delta)) * 100) / 100);
+  };
+
+  // A new page starts at its top, like turning a real one.
+  useEffect(() => {
+    containerRef.current?.scrollTo({ top: 0 });
+  }, [currentPage]);
+
+  // ── Swipe to turn (deliberate gestures only — see readerGestures) ────────
+  usePageSwipe(scrollEl, {
+    enabled: swipeEnabled && isPdfBook,
+    onSwipe: (dir) => (dir === "next" ? goToNextPage() : goToPrevPage()),
+    onProgress: setSwipeHint,
+  });
+
+  // ── Keyboard: ←/→ turn pages, F toggles focus mode ──────────────────────
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true'], [role='menu'], [role='dialog']")) return;
+      const el = containerRef.current;
+      if (isPdfBook && (e.key === "ArrowRight" || e.key === "ArrowLeft")) {
+        // Arrows still pan a zoomed page until it reaches its edge.
+        const max = el ? el.scrollWidth - el.clientWidth : 0;
+        if (e.key === "ArrowRight" && el && el.scrollLeft < max - 1) return;
+        if (e.key === "ArrowLeft" && el && el.scrollLeft > 1) return;
+        e.preventDefault();
+        if (e.key === "ArrowRight") goToNextPage();
+        else goToPrevPage();
+      } else if ((e.key === "f" || e.key === "F") && !e.shiftKey) {
+        e.preventDefault();
+        toggleFocus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isPdfBook, goToNextPage, goToPrevPage, toggleFocus]);
+
+  // ── Focus mode controls: tap to show/hide, auto-hide while reading ──────
+  const [chromeVisible, setChromeVisible] = useState(true);
+  const [chromePoke, setChromePoke] = useState(0);
+  const showChrome = useCallback(() => {
+    setChromeVisible(true);
+    setChromePoke((n) => n + 1);
+  }, []);
+  useEffect(() => {
+    if (focused) showChrome();
+  }, [focused, showChrome]);
+  useEffect(() => {
+    if (!focused || readStatus !== "playing" || !chromeVisible) return;
+    const t = window.setTimeout(() => setChromeVisible(false), FOCUS_CHROME_HIDE_MS);
+    return () => window.clearTimeout(t);
+  }, [focused, readStatus, chromeVisible, chromePoke]);
+
+  const onReadingSurfaceClick = () => {
+    if (!focused) return;
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed) return;
+    // While reading, a tap may be a jump-to-word: always reveal, never hide.
+    if (chromeVisible && !readAlongActive) setChromeVisible(false);
+    else showChrome();
+  };
+
+  const onReadingSurfaceClickRef = useRef(onReadingSurfaceClick);
+  onReadingSurfaceClickRef.current = onReadingSurfaceClick;
+
+  // HTML books: taps land inside the iframe document.
+  useEffect(() => {
+    if (!focused || !isHtmlBook) return;
+    const doc = iframeRef.current?.contentDocument;
+    if (!doc) return;
+    const onTap = () => onReadingSurfaceClickRef.current();
+    doc.addEventListener("click", onTap);
+    return () => doc.removeEventListener("click", onTap);
+  }, [focused, isHtmlBook, textVersion]);
 
   const markChapterStart = () => setChapterStart(currentPage);
   const markChapterEnd = () => {
     if (chapterStart === null || !book) return;
     const endPage = currentPage;
-    if (endPage < chapterStart) return;
+    if (endPage < chapterStart) {
+      toast.error(`Go to page ${chapterStart} or later to end the chapter.`);
+      return;
+    }
     const defaultName = `Chapter ${book.chapters.length + 1} (pp. ${chapterStart}–${endPage})`;
     setNamingDialog({ open: true, endPage, defaultName });
   };
@@ -178,6 +312,13 @@ const PdfViewer: React.FC = () => {
       return;
     }
     setCurrentPage(chapter.startPage);
+  };
+
+  const submitPageInput = () => {
+    const n = Number(pageInput);
+    if (Number.isInteger(n) && n >= 1 && n <= numPages) goToPage(n);
+    else if (pageInput) toast.error(`Enter a page from 1 to ${numPages}.`);
+    setPageInput(null);
   };
 
   if (!book) {
@@ -229,26 +370,75 @@ const PdfViewer: React.FC = () => {
     );
   }
 
+  const bookProgress = numPages ? (currentPage / numPages) * 100 : 0;
+  const canPrev = currentPage > 1;
+  const canNext = currentPage < numPages;
+  const selectedChapter = selectedChapterId ? book.chapters.find((c) => c.id === selectedChapterId) : undefined;
+  const chromeShown = !focused || chromeVisible || readStatus !== "playing";
+
+  const pageIndicator = (compact: boolean) =>
+    pageInput !== null ? (
+      <form
+        onSubmit={(e) => { e.preventDefault(); submitPageInput(); }}
+        className="flex items-center gap-1.5"
+      >
+        <input
+          autoFocus
+          type="number"
+          inputMode="numeric"
+          min={1}
+          max={numPages}
+          value={pageInput}
+          onChange={(e) => setPageInput(e.target.value)}
+          onBlur={submitPageInput}
+          onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setPageInput(null); } }}
+          aria-label={`Go to page (1–${numPages})`}
+          className="w-16 h-9 rounded-lg bg-surface-container-highest text-center font-headline font-bold text-primary focus:outline-none focus:ring-2 focus:ring-primary/50 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+        />
+        <span className="text-sm text-on-surface-variant">of {numPages}</span>
+      </form>
+    ) : (
+      <button
+        type="button"
+        onClick={() => setPageInput(String(currentPage))}
+        disabled={!numPages}
+        className="flex flex-col items-center px-3 py-1 rounded-lg hover:bg-surface-container-high transition-colors"
+        aria-label={`Page ${currentPage} of ${numPages}. Tap to jump to a page.`}
+        title="Jump to page"
+      >
+        {!compact && (
+          <span className="font-label text-[10px] uppercase tracking-[0.2em] text-on-surface-variant">Tap to jump</span>
+        )}
+        <span className={`font-headline font-bold text-primary italic ${compact ? "text-sm" : "text-lg"}`}>
+          Page {currentPage} of {numPages || "…"}
+        </span>
+      </button>
+    );
+
   return (
-    <div className="flex flex-col h-full animate-fade-in">
+    <div
+      className={focused ? "fixed inset-0 z-[60] flex flex-col bg-background" : "flex flex-col h-full animate-fade-in"}
+      style={focused ? { height: "100dvh" } : undefined}
+      data-reader-focus={focused || undefined}
+    >
       {/* Pagination toolbar — PDF only */}
-      {!isHtmlBook && (
-        <div className="flex items-center justify-between px-4 h-14 bg-surface-container-low">
-          <button onClick={() => goToPage(currentPage - 1)} disabled={currentPage <= 1} className="p-2 hover:bg-surface-container-high rounded-full transition-colors disabled:opacity-30">
+      {!isHtmlBook && !focused && (
+        <div className="relative flex items-center justify-between px-2 sm:px-4 h-14 bg-surface-container-low">
+          <button type="button" onClick={goToPrevPage} disabled={!canPrev} className={iconBtn} aria-label="Previous page">
             <span className="material-symbols-outlined text-primary">arrow_back</span>
           </button>
-          <div className="flex flex-col items-center">
-            <span className="font-label text-[10px] uppercase tracking-[0.2em] text-on-surface-variant">Current Progress</span>
-            <span className="font-headline font-bold text-lg text-primary italic">Page {currentPage} of {numPages}</span>
-          </div>
-          <button onClick={() => goToPage(currentPage + 1)} disabled={currentPage >= numPages} className="p-2 hover:bg-surface-container-high rounded-full transition-colors disabled:opacity-30">
+          {pageIndicator(false)}
+          <button type="button" onClick={goToNextPage} disabled={!canNext} className={iconBtn} aria-label="Next page">
             <span className="material-symbols-outlined text-primary">arrow_forward</span>
           </button>
+          <div className="absolute inset-x-0 bottom-0 h-0.5 bg-surface-container-highest" aria-hidden>
+            <div className="h-full bg-primary/70 transition-[width] duration-300" style={{ width: `${bookProgress}%` }} />
+          </div>
         </div>
       )}
 
-      {/* Secondary Toolbar */}
-      <div className="flex items-center justify-between px-6 py-3 bg-surface-container-high overflow-x-auto hide-scrollbar gap-4 border-t border-outline-variant/10">
+      {/* Secondary Toolbar — stays mounted in focus mode (it hosts Read Along) */}
+      <div className={`${focused ? "hidden" : "flex"} items-center justify-start px-4 sm:px-6 py-2.5 bg-surface-container-high overflow-x-auto hide-scrollbar gap-3 border-t border-outline-variant/10 max-sm:[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)] max-sm:pr-10`}>
         {/* Read Along — word-highlighted read-aloud with XP/streaks */}
         <ReadAlong
           mode={isHtmlBook ? "html" : "pdf"}
@@ -260,17 +450,63 @@ const PdfViewer: React.FC = () => {
           htmlHostRef={htmlHostRef}
           textVersion={textVersion}
           page={currentPage}
-          hasNextPage={!isHtmlBook && currentPage < numPages}
+          hasNextPage={!isHtmlBook && canNext}
           onNextPage={goToNextPage}
-          onActiveChange={setReadAlongActive}
+          onStatusChange={setReadStatus}
+          focusMode={focused}
+          controlsVisible={chromeShown}
+          onToggleFocus={toggleFocus}
+          onInteract={showChrome}
         />
 
-        {/* Zoom — PDF only */}
+        <button
+          type="button"
+          onClick={enterFocus}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-lg shrink-0 bg-surface-container-highest text-foreground hover:text-primary active:scale-95 transition-all"
+          title="Focus mode: just the page (F)"
+        >
+          <span className="material-symbols-outlined text-xl text-primary" aria-hidden>fullscreen</span>
+          <span className="font-label text-sm font-semibold">Focus</span>
+        </button>
+
+        {/* Zoom + reading options — PDF only */}
         {!isHtmlBook && (
-          <div className="flex items-center bg-surface-container-highest px-3 py-1.5 rounded-full gap-4 shrink-0">
-            <button onClick={() => zoom(-0.2)} className="material-symbols-outlined text-secondary hover:text-primary transition-colors">remove</button>
-            <span className="font-label text-sm font-bold text-foreground w-10 text-center">{Math.round(scale * 100)}%</span>
-            <button onClick={() => zoom(0.2)} className="material-symbols-outlined text-secondary hover:text-primary transition-colors">add</button>
+          <div className="flex items-center shrink-0 gap-1">
+            <div className="flex items-center bg-surface-container-highest rounded-full">
+              <button type="button" onClick={() => changeZoom(-0.2)} disabled={scale <= MIN_ZOOM} className="grid place-items-center w-10 h-10 rounded-full text-secondary hover:text-primary disabled:opacity-30" aria-label="Zoom out">
+                <span className="material-symbols-outlined">remove</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setZoom("fit")}
+                className={`min-w-[3.5rem] h-10 px-1 font-label text-sm font-bold ${zoom === "fit" ? "text-primary" : "text-foreground"}`}
+                title="Fit page to width"
+                aria-label={zoom === "fit" ? "Fitted to width" : `Zoom ${Math.round(scale * 100)}% — fit to width`}
+              >
+                {zoom === "fit" ? "Fit" : `${Math.round(scale * 100)}%`}
+              </button>
+              <button type="button" onClick={() => changeZoom(0.2)} disabled={scale >= MAX_ZOOM} className="grid place-items-center w-10 h-10 rounded-full text-secondary hover:text-primary disabled:opacity-30" aria-label="Zoom in">
+                <span className="material-symbols-outlined">add</span>
+              </button>
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button type="button" className="grid place-items-center w-10 h-10 rounded-full text-on-surface-variant hover:text-primary hover:bg-surface-container-highest" aria-label="Reading options">
+                  <span className="material-symbols-outlined">tune</span>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                <DropdownMenuLabel>Reading options</DropdownMenuLabel>
+                <DropdownMenuCheckboxItem checked={swipeEnabled} onCheckedChange={(v) => setSwipeEnabled(!!v)}>
+                  Swipe to turn pages
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuSeparator />
+                <div className="px-2 py-1.5 text-xs text-muted-foreground leading-relaxed">
+                  Swipe firmly across the page to turn it; scrolling, zoomed panning and selecting text never turn pages.
+                  <br />Keyboard: ← → turn pages · F focus mode
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         )}
 
@@ -281,7 +517,8 @@ const PdfViewer: React.FC = () => {
               <button
                 onClick={markChapterStart}
                 disabled={isSavingChapter}
-                className="flex items-center gap-2 px-5 py-2 bg-primary-container text-on-primary-container rounded-lg shadow-sm font-bold text-sm active:scale-95 transition-all disabled:opacity-50"
+                className="flex items-center gap-2 px-4 py-2 bg-primary-container text-on-primary-container rounded-lg shadow-sm font-bold text-sm active:scale-95 transition-all disabled:opacity-50"
+                title="Mark this page as the start of a chapter"
               >
                 <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>bolt</span>
                 <span>Chapter Isolation</span>
@@ -295,12 +532,12 @@ const PdfViewer: React.FC = () => {
                   className="flex items-center gap-2 px-4 py-2 bg-accent text-on-primary-container rounded-lg font-bold text-sm active:scale-95 transition-all disabled:opacity-50"
                 >
                   <span className="material-symbols-outlined">flag</span>
-                  End
+                  End on p.{currentPage}
                 </button>
                 <button
                   onClick={() => setChapterStart(null)}
                   disabled={isSavingChapter}
-                  className="text-xs text-on-surface-variant hover:text-foreground disabled:opacity-50 px-2"
+                  className="text-xs text-on-surface-variant hover:text-foreground disabled:opacity-50 px-2 py-2"
                 >
                   Cancel
                 </button>
@@ -311,12 +548,13 @@ const PdfViewer: React.FC = () => {
 
         {/* Chapter select */}
         {book.chapters.length > 0 && (
-          <div className="flex items-center gap-2 shrink-0">
-            <span className="material-symbols-outlined text-on-surface-variant text-sm">bookmark</span>
+          <div className="flex items-center gap-1 shrink-0">
+            <span className="material-symbols-outlined text-on-surface-variant text-sm" aria-hidden>bookmark</span>
             <select
               value={selectedChapterId || ""}
               onChange={(e) => handleChapterSelect(e.target.value)}
-              className="text-xs font-body bg-surface-container-highest border-none rounded-lg px-3 py-2 text-foreground focus:ring-1 focus:ring-primary/40"
+              aria-label={isHtmlBook ? "Jump to section" : "Jump to chapter"}
+              className="text-xs font-body bg-surface-container-highest border-none rounded-lg px-3 h-10 text-foreground focus:ring-1 focus:ring-primary/40"
             >
               <option value="">{isHtmlBook ? "Jump to section…" : "Jump to chapter…"}</option>
               {book.chapters.map((ch) => (
@@ -325,13 +563,51 @@ const PdfViewer: React.FC = () => {
             </select>
             <button
               onClick={() => setManageChaptersOpen(true)}
-              className="p-1.5 rounded-lg hover:bg-surface-container-highest transition-colors"
+              className="grid place-items-center w-10 h-10 rounded-lg hover:bg-surface-container-highest transition-colors"
+              aria-label="Manage chapters"
             >
               <span className="material-symbols-outlined text-on-surface-variant text-sm">settings</span>
             </button>
           </div>
         )}
       </div>
+
+      {/* Focus mode: top bar (auto-hides while reading) and an always-on hairline progress */}
+      {focused && (
+        <>
+          {!isHtmlBook && (
+            <div className="absolute inset-x-0 top-0 h-0.5 z-[2] bg-transparent" style={{ marginTop: "env(safe-area-inset-top)" }} aria-hidden>
+              <div className="h-full bg-primary/60 transition-[width] duration-300" style={{ width: `${bookProgress}%` }} />
+            </div>
+          )}
+          <div
+            className={`absolute inset-x-0 top-0 z-[3] transition-all duration-300 ${chromeShown ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-full pointer-events-none"}`}
+            style={{ paddingTop: "env(safe-area-inset-top)" }}
+            aria-hidden={!chromeShown}
+          >
+            <div className="mx-2 mt-2 flex items-center gap-1 rounded-2xl bg-surface-container-high/90 backdrop-blur-xl shadow-xl border border-outline-variant/20 px-1 py-1">
+              <button type="button" onClick={exitFocus} className={iconBtn} aria-label="Exit focus mode" title="Exit focus mode (Esc)">
+                <span className="material-symbols-outlined text-primary">close_fullscreen</span>
+              </button>
+              <div className="flex-1 min-w-0 px-1">
+                <p className="truncate font-headline font-bold text-sm text-foreground">{book.title}</p>
+                {selectedChapter && <p className="truncate text-[11px] text-on-surface-variant">{selectedChapter.name}</p>}
+              </div>
+              {!isHtmlBook && (
+                <>
+                  <button type="button" onClick={goToPrevPage} disabled={!canPrev} className={iconBtn} aria-label="Previous page">
+                    <span className="material-symbols-outlined text-primary">chevron_left</span>
+                  </button>
+                  {pageIndicator(true)}
+                  <button type="button" onClick={goToNextPage} disabled={!canNext} className={iconBtn} aria-label="Next page">
+                    <span className="material-symbols-outlined text-primary">chevron_right</span>
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Document content */}
       {isHtmlBook ? (
@@ -346,40 +622,59 @@ const PdfViewer: React.FC = () => {
           />
         </div>
       ) : (
-        <div
-          ref={containerRef}
-          className="flex-1 overflow-auto bg-background flex [justify-content:safe_center] py-6 scrollbar-thin"
-          onTouchStart={handleTouchStart}
-          onTouchEnd={(e) => { handleTouchEnd(e); setTimeout(readSelection, 50); }}
-          onMouseUp={() => setTimeout(readSelection, 0)}
-        >
-          <Document
-            file={fileUrl}
-            onLoadSuccess={onDocumentLoadSuccess}
-            loading={<div className="flex items-center justify-center py-20"><div className="animate-pulse text-on-surface-variant text-sm">Loading document…</div></div>}
-            error={<div className="text-destructive text-sm text-center py-20">Failed to load the document.</div>}
+        <div className="relative flex-1 min-h-0 flex">
+          <div
+            ref={setContainer}
+            className={`flex-1 overflow-auto overscroll-contain bg-background flex [justify-content:safe_center] scrollbar-thin ${focused ? "pt-[calc(env(safe-area-inset-top)+4.5rem)] pb-40" : "py-4 sm:py-6"}`}
+            onClick={onReadingSurfaceClick}
+            onTouchEnd={() => { setTimeout(readSelection, 50); }}
+            onMouseUp={() => setTimeout(readSelection, 0)}
           >
-            <div ref={pageHostRef} className="relative">
-              <Page
-                pageNumber={currentPage}
-                scale={scale}
-                renderTextLayer={true}
-                renderAnnotationLayer={true}
-                onRenderTextLayerSuccess={bumpTextVersion}
-              />
+            <Document
+              file={fileUrl}
+              onLoadSuccess={onDocumentLoadSuccess}
+              loading={<div className="flex items-center justify-center py-20"><div className="animate-pulse text-on-surface-variant text-sm">Loading document…</div></div>}
+              error={<div className="text-destructive text-sm text-center py-20">Failed to load the document.</div>}
+            >
+              <div ref={pageHostRef} className="relative shadow-lg" style={{ minHeight: pageMinHeight || undefined }}>
+                {scale > 0 && (
+                  <Page
+                    pageNumber={currentPage}
+                    scale={scale}
+                    devicePixelRatio={renderPixelRatio()}
+                    renderTextLayer={true}
+                    renderAnnotationLayer={true}
+                    loading={null}
+                    onLoadSuccess={(p) => setPageWidth(p.getViewport({ scale: 1 }).width)}
+                    onRenderSuccess={() => setPageMinHeight(pageHostRef.current?.firstElementChild?.clientHeight ?? 0)}
+                    onRenderTextLayerSuccess={bumpTextVersion}
+                  />
+                )}
+              </div>
+            </Document>
+          </div>
+
+          {/* Swipe feedback: fills as the drag nears a page turn */}
+          {swipeHint && (swipeHint.dir === "next" ? canNext : canPrev) && (
+            <div
+              className={`pointer-events-none absolute top-1/2 -translate-y-1/2 z-10 ${swipeHint.dir === "next" ? "right-3" : "left-3"}`}
+              style={{ opacity: 0.35 + swipeHint.progress * 0.65 }}
+              aria-hidden
+            >
+              <div
+                className={`grid place-items-center w-12 h-12 rounded-full shadow-xl transition-colors ${swipeHint.progress >= 1 ? "bg-primary text-primary-foreground" : "bg-surface-container-high text-primary"}`}
+                style={{ transform: `scale(${0.75 + swipeHint.progress * 0.25})` }}
+              >
+                <span className="material-symbols-outlined">{swipeHint.dir === "next" ? "chevron_right" : "chevron_left"}</span>
+              </div>
             </div>
-          </Document>
+          )}
         </div>
       )}
 
       {/* Floating quote-capture affordance — PDF only, selection active.
-          Its own lane ABOVE the "Currently Reading" card (which is
-          bottom-24/md:bottom-6 and ~88px tall) and a higher z-index: the two
-          floaters previously shared a bottom band with this one painted
-          first, so the card covered the entry point to the whole capture
-          flow (review finding — it was unclickable in the normal reading
-          state, where a chapter is selected). */}
-      {!isHtmlBook && selectionCapture && !captureOpen && (
+          Its own lane ABOVE the chapter chip and read-along dock. */}
+      {!isHtmlBook && !focused && selectionCapture && !captureOpen && (
         <div className="fixed bottom-52 md:bottom-32 left-1/2 -translate-x-1/2 z-50">
           <button
             onClick={() => setCaptureOpen(true)}
@@ -391,29 +686,18 @@ const PdfViewer: React.FC = () => {
         </div>
       )}
 
-      {/* Floating chapter info — PDF only */}
-      {!isHtmlBook && !readAlongActive && book.chapters.length > 0 && selectedChapterId && (() => {
-        const ch = book.chapters.find(c => c.id === selectedChapterId);
-        if (!ch) return null;
-        return (
-          <div className="fixed bottom-24 md:bottom-6 left-1/2 -translate-x-1/2 w-[90%] max-w-md z-40">
-            <div className="bg-surface-container-high/90 backdrop-blur-xl p-5 rounded-2xl shadow-2xl border border-outline-variant/20 flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-primary-container rounded-xl flex items-center justify-center text-on-primary-container">
-                  <span className="material-symbols-outlined text-3xl" style={{ fontVariationSettings: "'FILL' 1" }}>auto_stories</span>
-                </div>
-                <div>
-                  <p className="font-label text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Currently Reading</p>
-                  <h4 className="font-headline font-bold text-lg text-primary">{ch.name}</h4>
-                </div>
-              </div>
-              <button onClick={() => setSelectedChapterId(null)} className="p-2 hover:bg-surface-container-highest rounded-lg transition-colors">
-                <span className="material-symbols-outlined text-secondary">close</span>
-              </button>
-            </div>
+      {/* Current chapter — a compact chip so it doesn't cover the page */}
+      {!isHtmlBook && !focused && !readAlongActive && selectedChapter && (
+        <div className="fixed bottom-24 md:bottom-6 left-1/2 -translate-x-1/2 z-40 max-w-[90vw]">
+          <div className="flex items-center gap-2 pl-3 pr-1 py-1 bg-surface-container-high/90 backdrop-blur-xl rounded-full shadow-xl border border-outline-variant/20">
+            <span className="material-symbols-outlined text-primary text-lg" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden>auto_stories</span>
+            <span className="truncate font-headline font-bold text-sm text-primary">{selectedChapter.name}</span>
+            <button onClick={() => setSelectedChapterId(null)} className="grid place-items-center w-9 h-9 shrink-0 hover:bg-surface-container-highest rounded-full transition-colors" aria-label="Dismiss current chapter">
+              <span className="material-symbols-outlined text-secondary text-lg">close</span>
+            </button>
           </div>
-        );
-      })()}
+        </div>
+      )}
 
       <ChapterNameDialog
         open={namingDialog.open}

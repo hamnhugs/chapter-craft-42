@@ -125,6 +125,41 @@ export function buildReadChunks(text: string, words: SourceWord[], from = 0, max
   return chunks;
 }
 
+// Title/abbreviation words whose full stop doesn't end a sentence.
+const NOT_SENTENCE_END = /^(?:mr|mrs|ms|dr|prof|st|sr|jr|vs|etc|e\.g|i\.e|cf|no|vol|ch|p|pp|fig)\.$/i;
+
+function endsSentence(w: SourceWord | undefined): boolean {
+  if (!w || !SENTENCE_END.test(w.text)) return false;
+  const bare = w.text.replace(/["'”’)\]]+$/, "");
+  return !NOT_SENTENCE_END.test(bare) && !/^\p{Lu}\.$/u.test(bare);
+}
+
+/** Index of the first word of the sentence containing word `i`. */
+export function sentenceStartOf(words: SourceWord[], i: number): number {
+  let s = Math.max(0, Math.min(i, words.length - 1));
+  while (s > 0 && !endsSentence(words[s - 1])) s--;
+  return s;
+}
+
+/**
+ * "Back" for a sentence-skip button, like a podcast player's rewind: restart
+ * the current sentence, or — if we're already within its first couple of
+ * words — go to the previous one.
+ */
+export function prevSentenceStart(words: SourceWord[], i: number, grace = 2): number {
+  const start = sentenceStartOf(words, i);
+  if (i - start >= grace || start === 0) return start;
+  return sentenceStartOf(words, start - 1);
+}
+
+/** First word of the next sentence, or -1 when `i` is in the last one. */
+export function nextSentenceStart(words: SourceWord[], i: number): number {
+  for (let k = Math.max(0, i); k < words.length - 1; k++) {
+    if (endsSentence(words[k])) return k + 1;
+  }
+  return -1;
+}
+
 /** Lowercased letters/digits only — the comparison key for alignment. */
 export function normalizeToken(s: string): string {
   return s.toLowerCase().normalize("NFKD").replace(/[^\p{L}\p{N}]/gu, "");

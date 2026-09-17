@@ -127,27 +127,45 @@ type HighlightWindow = Window & {
 };
 
 /**
- * Recolours the spoken word's own text via the CSS Custom Highlight API (no
- * DOM mutation). Used for HTML books, where the pill sits over an iframe and
- * can't go behind the text: the word stays legible inside the pill.
+ * Paints `range` with a named CSS Custom Highlight (no DOM mutation), or
+ * clears it when `range` is null. `declarations` style `::highlight(name)`.
  */
-export function paintWordText(doc: Document, range: Range | null, color: string) {
+export function paintHighlight(doc: Document, name: string, range: Range | null, declarations: string) {
   const win = doc.defaultView as HighlightWindow | null;
   const registry = win?.CSS?.highlights;
   if (!win?.Highlight || !registry) return;
   if (!range) {
-    registry.delete("read-along-word");
+    registry.delete(name);
     return;
   }
-  let style = doc.getElementById("read-along-style") as HTMLStyleElement | null;
+  const id = `read-along-style-${name}`;
+  let style = doc.getElementById(id) as HTMLStyleElement | null;
   if (!style) {
     style = doc.createElement("style");
-    style.id = "read-along-style";
+    style.id = id;
     (doc.head || doc.documentElement).appendChild(style);
   }
-  const css = `::highlight(read-along-word){color:${color};}`;
+  const css = `::highlight(${name}){${declarations}}`;
   if (style.textContent !== css) style.textContent = css;
-  registry.set("read-along-word", new win.Highlight(range));
+  registry.set(name, new win.Highlight(range));
+}
+
+/**
+ * Recolours the spoken word's own text. Used for HTML books, where the pill
+ * sits over an iframe and can't go behind the text: the word stays legible
+ * inside the pill.
+ */
+export function paintWordText(doc: Document, range: Range | null, color: string) {
+  paintHighlight(doc, "read-along-word", range, `color:${color};`);
+}
+
+/**
+ * Softly tints the whole sentence being read (the "where am I" tier under the
+ * word pill, as Edge Read Aloud and Speechify do). On a PDF the text layer's
+ * glyphs are transparent, so only the tint shows over the printed page.
+ */
+export function paintSentence(doc: Document, range: Range | null, color: string) {
+  paintHighlight(doc, "read-along-sentence", range, `background-color:${color};`);
 }
 
 /**
