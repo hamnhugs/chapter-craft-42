@@ -41,12 +41,21 @@ export interface BookDocument {
    *  Absent until the provenance migration (20260903120000) is applied, in
    *  which case the reserved tag carries it — read through bookProvenance's
    *  `bookSource`, never by inspecting either field directly. */
-  source?: "user" | "assistant";
+  source?: "user" | "assistant" | "youtube";
   /** Model id that authored an assistant-written book. */
   sourceModel?: string | null;
   /** For assistant-written books: what was LOADED in the conversation when
    *  it was written ({book_ids, shelf_id}) — computed by the app. */
-  sourceContext?: { book_ids?: string[]; shelf_id?: string | null } | null;
+  sourceContext?: {
+    book_ids?: string[];
+    shelf_id?: string | null;
+    /** YouTube transcripts: the video it was transcribed from. */
+    kind?: "youtube";
+    video_url?: string;
+    channel?: string | null;
+    duration_seconds?: number | null;
+    job_id?: string;
+  } | null;
   /** User-managed shelf ids (book_folders.id), non-exclusive; empty when
    *  unshelved. Loaded from the book_shelf_members junction in deterministic
    *  (book, shelf) order — the single source. books.folder_id is no longer

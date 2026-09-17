@@ -1,6 +1,8 @@
 import React from "react";
 import { BookDocument } from "@/types/library";
 import { categoryColor } from "@/lib/categoryColors";
+import { topicTags } from "@/lib/bookProvenance";
+import YoutubeTranscriptBadge from "@/components/YoutubeTranscriptBadge";
 
 // List view with details. Desktop: cover · title · category · tags · pages ·
 // chapters · added, with sortable Title/Added headers (the two sorts the app
@@ -108,6 +110,7 @@ const LibraryList: React.FC<{
                   <p className="font-headline font-bold text-sm text-foreground truncate">
                     {highlight(book.title)}
                   </p>
+                  <YoutubeTranscriptBadge book={book} className="mt-0.5" />
                   {/* The summary, where one exists — the list view is where
                       a reader scans to choose, and a title alone is the least
                       informative thing the app knows about a book. One line,
@@ -143,7 +146,7 @@ const LibraryList: React.FC<{
 
                 {/* Tags */}
                 <div className="hidden lg:flex items-center gap-1 min-w-0">
-                  {(book.tags || []).slice(0, 2).map((t) => (
+                  {topicTags(book.tags).slice(0, 2).map((t) => (
                     <span
                       key={t}
                       className="px-1.5 py-0.5 rounded-full bg-surface-container-highest text-on-surface-variant text-[10px] truncate max-w-[7rem]"
@@ -151,8 +154,8 @@ const LibraryList: React.FC<{
                       #{t}
                     </span>
                   ))}
-                  {(book.tags?.length ?? 0) > 2 && (
-                    <span className="text-[10px] text-on-surface-variant/60">+{book.tags!.length - 2}</span>
+                  {topicTags(book.tags).length > 2 && (
+                    <span className="text-[10px] text-on-surface-variant/60">+{topicTags(book.tags).length - 2}</span>
                   )}
                 </div>
 

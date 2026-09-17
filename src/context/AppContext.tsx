@@ -171,7 +171,7 @@ export interface TrashedBook {
   pageCount: number;
   /** epoch ms — when it was trashed. */
   deletedAt: number;
-  source?: "user" | "assistant";
+  source?: "user" | "assistant" | "youtube";
 }
 
 /** Books are deleted forever this long after they are trashed. Enforced
@@ -597,7 +597,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         summary: b.summary ?? null,
         summaryModel: b.summary_model ?? null,
         summarizedAt: b.summarized_at ? new Date(b.summarized_at).getTime() : null,
-        ...(b.source === "assistant" || b.source === "user" ? { source: b.source } : {}),
+        ...(b.source === "assistant" || b.source === "user" || b.source === "youtube" ? { source: b.source } : {}),
         sourceModel: b.source_model ?? null,
         sourceContext: b.source_context ?? null,
         // EMPTY until the junction read below, which is the only authority.
@@ -755,7 +755,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               // A just-inserted book has no junction rows yet, and there is
               // no mirror left to consult. Unshelved is the truth.
               folderIds: [],
-              ...(b.source === "assistant" || b.source === "user" ? { source: b.source } : {}),
+              ...(b.source === "assistant" || b.source === "user" || b.source === "youtube" ? { source: b.source } : {}),
               sourceModel: b.source_model ?? null,
               sourceContext: b.source_context ?? null,
             };
@@ -1082,7 +1082,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         fileName: b.file_name as string,
         pageCount: (b.page_count as number) ?? 0,
         deletedAt: Date.parse(b.deleted_at as string),
-        ...(b.source === "assistant" || b.source === "user" ? { source: b.source } : {}),
+        ...(b.source === "assistant" || b.source === "user" || b.source === "youtube" ? { source: b.source } : {}),
       })) as TrashedBook[];
       // Retention is enforced HERE, when the drawer is opened — not on a
       // timer and not during startup. There is no cron in this project, and

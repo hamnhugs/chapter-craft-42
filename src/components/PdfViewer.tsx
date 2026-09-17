@@ -9,6 +9,8 @@ import ChapterManageDialog from "@/components/ChapterManageDialog";
 import CaptureQuoteDialog from "@/components/CaptureQuoteDialog";
 import { toast } from "sonner";
 import ReadAlong from "@/components/ReadAlong";
+import YoutubeTranscriptBadge from "@/components/YoutubeTranscriptBadge";
+import { isYoutubeTranscript } from "@/lib/bookProvenance";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -591,7 +593,11 @@ const PdfViewer: React.FC = () => {
               </button>
               <div className="flex-1 min-w-0 px-1">
                 <p className="truncate font-headline font-bold text-sm text-foreground">{book.title}</p>
-                {selectedChapter && <p className="truncate text-[11px] text-on-surface-variant">{selectedChapter.name}</p>}
+                {isYoutubeTranscript(book) ? (
+                  <YoutubeTranscriptBadge book={book} />
+                ) : (
+                  selectedChapter && <p className="truncate text-[11px] text-on-surface-variant">{selectedChapter.name}</p>
+                )}
               </div>
               {!isHtmlBook && (
                 <>
@@ -608,6 +614,9 @@ const PdfViewer: React.FC = () => {
           </div>
         </>
       )}
+
+      {/* YouTube transcripts say so above the text (hidden in focus mode, whose top bar carries it) */}
+      {!focused && <YoutubeTranscriptBadge book={book} variant="banner" />}
 
       {/* Document content */}
       {isHtmlBook ? (

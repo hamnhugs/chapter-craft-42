@@ -1,5 +1,5 @@
 import { BookDocument } from "@/types/library";
-import { isAssistantBook } from "@/lib/bookProvenance";
+import { isAssistantBook, isYoutubeTranscript } from "@/lib/bookProvenance";
 import { fetchKnowledgeEntries, fetchConversationMemory, retrieveKnowledge, filterSupersededNodes, fetchCardPointers, type CardPointerRow } from "@/lib/knowledgeApi";
 import { fetchImagesForEntries } from "@/lib/imageGen";
 import { getRecallStates, type MemoryImageCandidate, type RecallState } from "@/lib/memoryLens";
@@ -740,7 +740,11 @@ export async function buildChatSystemPrompt({
   const CHAPTER_LINES_CAP = 60;
   parts.push("", "## Available Library", `The user has ${books.length} book(s) in their library:`);
   books.forEach((book) => {
-    const byAssistant = isAssistantBook(book) ? " — written by the assistant at the user's request, not a primary source" : "";
+    const byAssistant = isAssistantBook(book)
+      ? " — written by the assistant at the user's request, not a primary source"
+      : isYoutubeTranscript(book)
+        ? " — an automatic transcript of a YouTube video (spoken, may contain transcription errors), not a written book"
+        : "";
     parts.push(`- **${libLabel(book.title, "Untitled")}** (id: ${book.id}, ${book.pageCount} pages, ${book.chapters.length} chapter(s))${byAssistant}`);
     if (selectedBook && book.id === selectedBook.id) {
       book.chapters.slice(0, CHAPTER_LINES_CAP).forEach((ch, i) => {
@@ -772,7 +776,7 @@ export async function buildChatSystemPrompt({
   // Removed in Stage 0 of the Card Catalog redesign.
   if (selectedBook) {
     parts.push("", `## Currently Active Book: "${libLabel(selectedBook.title, "Untitled")}" (id: ${selectedBook.id})`);
-    parts.push(`File: ${sanitizeInline(selectedBook.fileName || "", SESSION_PROMPT_NONCE, 120)} | Pages: ${selectedBook.pageCount}${isAssistantBook(selectedBook) ? " | Written by the assistant at the user's request — a derived document, not a primary source" : ""}`);
+    parts.push(`File: ${sanitizeInline(selectedBook.fileName || "", SESSION_PROMPT_NONCE, 120)} | Pages: ${selectedBook.pageCount}${isAssistantBook(selectedBook) ? " | Written by the assistant at the user's request — a derived document, not a primary source" : isYoutubeTranscript(selectedBook) ? " | An automatic transcript of a YouTube video — spoken content that may contain transcription errors; say so when quoting it" : ""}`);
   }
 
   // Conversation memory (cross-session summary + key facts)

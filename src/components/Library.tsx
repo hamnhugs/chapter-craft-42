@@ -2,7 +2,8 @@ import React, { useRef, useState, useMemo, useEffect, lazy, Suspense } from "rea
 import { useApp, TRASH_RETENTION_DAYS } from "@/context/AppContext";
 import { BookDocument } from "@/types/library";
 import { pdfjs } from "react-pdf";
-import { isAssistantBook } from "@/lib/bookProvenance";
+import { isAssistantBook, isYoutubeTranscript, topicTags } from "@/lib/bookProvenance";
+import YoutubeTranscriptBadge from "@/components/YoutubeTranscriptBadge";
 import { Progress } from "@/components/ui/progress";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { usePlan } from "@/hooks/usePlan";
@@ -1369,7 +1370,7 @@ const BookCard: React.FC<{
   const metadataText = isPdf
     ? `${book.pageCount} pages · ${book.chapters.length} chapters · PDF`
     : isHtml
-    ? `${book.chapters.length > 0 ? `${book.chapters.length} sections · ` : ""}HTML`
+    ? `${book.chapters.length > 0 ? `${book.chapters.length} sections · ` : ""}${isYoutubeTranscript(book) ? "Video transcript" : "HTML"}`
     : "Document file";
 
   // One label per action, shared by the wide icon button's tooltip, its
@@ -1426,6 +1427,7 @@ const BookCard: React.FC<{
           </span>
         )}
         <div data-book-cover-overlay className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-60" />
+        <YoutubeTranscriptBadge book={book} className="absolute top-3 left-3 shadow-lg" />
       </div>
 
       {/* Info */}
@@ -1483,14 +1485,14 @@ const BookCard: React.FC<{
         )}
 
         {/* Category + tags (set by Auto-tag; they drive the mind map) */}
-        {(book.category || (book.tags?.length ?? 0) > 0) && (
+        {(book.category || topicTags(book.tags).length > 0) && (
           <div className="cc-book-tags flex flex-wrap gap-1.5 mb-2">
             {book.category && (
               <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[11px] font-medium">
                 {book.category}
               </span>
             )}
-            {(book.tags || []).slice(0, 3).map((t) => (
+            {topicTags(book.tags).slice(0, 3).map((t) => (
               <span
                 key={t}
                 className="px-2 py-0.5 rounded-full bg-surface-container-highest text-on-surface-variant text-[11px]"
