@@ -2982,6 +2982,15 @@ export type Database = {
         }[]
       }
       disable_program: { Args: { p_name: string }; Returns: Json }
+      enqueue_consolidation_entries: {
+        Args: {
+          p_entry_ids: string[]
+          p_priority?: number
+          p_reason: string
+          p_requeue_after?: string
+        }
+        Returns: number
+      }
       entries_due_for_review: {
         Args: { _limit?: number; _wiki_id?: string }
         Returns: {
@@ -3311,6 +3320,15 @@ export type Database = {
       touch_node_retrievals: {
         Args: { boost?: number; node_ids: string[] }
         Returns: undefined
+      }
+      upsert_wiki_health_alert: {
+        Args: {
+          p_kind: string
+          p_rationale: string
+          p_suggestion?: Json
+          p_wiki_id: string
+        }
+        Returns: string
       }
     }
     Enums: {
