@@ -2141,11 +2141,13 @@ export type Database = {
           splat_max_file_mb: number | null
           splat_model_primary: string | null
           splat_monthly_quota: number | null
+          studio_tools: string
           tavily_api_key: string | null
           trust_image_text: boolean
           tts_rate: number
           updated_at: string
           user_id: string
+          utility_model: string | null
           video_confirm_threshold: number | null
           video_default_aspect: string | null
           video_default_duration: number | null
@@ -2207,11 +2209,13 @@ export type Database = {
           splat_max_file_mb?: number | null
           splat_model_primary?: string | null
           splat_monthly_quota?: number | null
+          studio_tools?: string
           tavily_api_key?: string | null
           trust_image_text?: boolean
           tts_rate?: number
           updated_at?: string
           user_id: string
+          utility_model?: string | null
           video_confirm_threshold?: number | null
           video_default_aspect?: string | null
           video_default_duration?: number | null
@@ -2273,11 +2277,13 @@ export type Database = {
           splat_max_file_mb?: number | null
           splat_model_primary?: string | null
           splat_monthly_quota?: number | null
+          studio_tools?: string
           tavily_api_key?: string | null
           trust_image_text?: boolean
           tts_rate?: number
           updated_at?: string
           user_id?: string
+          utility_model?: string | null
           video_confirm_threshold?: number | null
           video_default_aspect?: string | null
           video_default_duration?: number | null
