@@ -98,32 +98,86 @@ export interface LintResult {
   stats: { total_entries: number; total_relationships: number; orphan_count: number; avg_confidence: number };
 }
 
+// ── Entry list reads: explicit columns, every page ─────────────────────────────
+// `select("*")` on knowledge_entries shipped both vector columns (embedding
+// 768 floats + embedding_v2 1536 floats, serialized as text) and the tsvector
+// for EVERY row the WikiPanel or chat prompt listed — typically >90% of the
+// payload, for data no client reads. And PostgREST silently caps a response
+// at max-rows (1000): a big neuron just "lost" its oldest entries.
+//
+// ENTRY_LIST_COLUMNS is every column except embedding / embedding_v2 / tsv.
+// PostgREST applies `select` and `range` to set-returning RPCs too, so the
+// entries_for_wiki RPC is narrowed the same way — no new SQL function needed.
+// If a listed column doesn't exist yet (an unapplied optional migration →
+// 42703) the read retries with "*", exactly the old behaviour.
+export const ENTRY_LIST_COLUMNS = [
+  "id", "user_id", "wiki_id", "linked_wiki_id", "title", "content", "entry_type",
+  "source_book_id", "tags", "confidence", "folder", "maturity", "subject", "is_index",
+  "pending_changes", "atomicity_warning", "embedding_model", "vibrancy",
+  "last_retrieved_at", "retrieval_count", "importance", "surprise", "encoding_strength",
+  "storage_strength", "review_count", "next_review_at", "archived", "valid_from",
+  "valid_to", "superseded_by", "supersede_reason", "locators", "aliases", "author",
+  "created_at", "updated_at",
+].join(", ");
+
+const LIST_PAGE_SIZE = 1000;
+const LIST_MAX_ROWS = 20_000;
+
+/** Page through a PostgREST read until a short page. `build` must return a
+ *  fresh, deterministically ordered query each call. */
+export async function fetchAllPages<T>(
+  build: () => any,
+  pageSize = LIST_PAGE_SIZE,
+  maxRows = LIST_MAX_ROWS,
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; from < maxRows; from += pageSize) {
+    const { data, error } = await build().range(from, from + pageSize - 1);
+    if (error) throw error;
+    const page = (data || []) as T[];
+    out.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return out;
+}
+
+const isMissingColumn = (err: unknown) => (err as any)?.code === "42703";
+
 export async function fetchKnowledgeEntries(wikiId?: string | null): Promise<KnowledgeEntry[]> {
   // When a wiki is selected we want both native entries AND bridged-in entries.
   // The entries_for_wiki RPC handles the union and keeps RLS clean.
   if (wikiId) {
-    const { data, error } = await supabase.rpc("entries_for_wiki" as any, {
-      target_wiki_id: wikiId,
-    } as any);
-    if (error) throw error;
-    return (data || []) as unknown as KnowledgeEntry[];
+    const scoped = (cols: string) => () =>
+      (supabase.rpc("entries_for_wiki" as any, { target_wiki_id: wikiId } as any) as any)
+        .select(cols)
+        .order("updated_at", { ascending: false })
+        .order("id", { ascending: true });
+    try {
+      return await fetchAllPages<KnowledgeEntry>(scoped(ENTRY_LIST_COLUMNS));
+    } catch (err) {
+      if (!isMissingColumn(err)) throw err;
+      return fetchAllPages<KnowledgeEntry>(scoped("*"));
+    }
   }
   // Unscoped view shows only LIVING entries (superseded ones live in history).
   // Feature-detected: before the supersession migration the column doesn't
-  // exist (42703), so retry without the filter.
-  const live = await supabase
-    .from("knowledge_entries")
-    .select("*")
-    .is("superseded_by" as any, null)
-    .order("updated_at", { ascending: false });
-  if (!live.error) return (live.data || []) as unknown as KnowledgeEntry[];
-  if ((live.error as any)?.code !== "42703") throw live.error;
-  const { data, error } = await supabase
-    .from("knowledge_entries")
-    .select("*")
-    .order("updated_at", { ascending: false });
-  if (error) throw error;
-  return (data || []) as unknown as KnowledgeEntry[];
+  // exist (42703), so retry without the filter (and with "*").
+  const unscoped = (cols: string, liveOnly: boolean) => () => {
+    let q: any = supabase.from("knowledge_entries").select(cols as "*");
+    if (liveOnly) q = q.is("superseded_by" as any, null);
+    return q.order("updated_at", { ascending: false }).order("id", { ascending: true });
+  };
+  try {
+    return await fetchAllPages<KnowledgeEntry>(unscoped(ENTRY_LIST_COLUMNS, true));
+  } catch (err) {
+    if (!isMissingColumn(err)) throw err;
+  }
+  try {
+    return await fetchAllPages<KnowledgeEntry>(unscoped("*", true));
+  } catch (err) {
+    if (!isMissingColumn(err)) throw err;
+  }
+  return fetchAllPages<KnowledgeEntry>(unscoped("*", false));
 }
 
 /**
@@ -172,18 +226,17 @@ export async function fetchMemoryGraphForSet(wikiIds: string[]): Promise<MemoryG
 }
 
 export async function fetchMemoryGraph(wikiId?: string | null): Promise<MemoryGraphEdge[]> {
+  // Paged: PostgREST's silent 1000-row cap dropped edges from dense graphs.
   if (wikiId) {
-    const { data, error } = await supabase.rpc("memory_graph_for_wiki" as any, {
-      target_wiki_id: wikiId,
-    } as any);
-    if (error) throw error;
-    return (data || []) as unknown as MemoryGraphEdge[];
+    return fetchAllPages<MemoryGraphEdge>(() =>
+      (supabase.rpc("memory_graph_for_wiki" as any, { target_wiki_id: wikiId } as any) as any)
+        .select("*")
+        .order("id", { ascending: true }),
+    );
   }
-  const { data, error } = await supabase
-    .from("memory_graph")
-    .select("*");
-  if (error) throw error;
-  return (data || []) as unknown as MemoryGraphEdge[];
+  return fetchAllPages<MemoryGraphEdge>(() =>
+    supabase.from("memory_graph").select("*").order("id", { ascending: true }),
+  );
 }
 
 export async function fetchConversationMemory(): Promise<ConversationMemory | null> {

@@ -58,17 +58,16 @@ serve(async (req) => {
       const c = centroidMap.get(w.id) as any;
       if (!c || (c.entry_count ?? 0) < MIN_ENTRIES_FOR_SPLIT) continue;
 
-      // Pull entry embeddings
-      const { data: entryList } = await supabase.rpc("entries_for_wiki", { target_wiki_id: w.id });
-      if (!entryList || entryList.length < MIN_ENTRIES_FOR_SPLIT) continue;
-
-      const ids = (entryList as any[]).slice(0, MAX_VECTORS).map((e) => e.id);
-      const { data: rows } = await supabase
-        .from("knowledge_entries")
+      // Pull entry embeddings — straight off the RPC with a narrowed select
+      // (the old path fetched every full row, vectors included, just to take
+      // ids, then re-selected the vectors by id).
+      const { data: rows, error: rowsErr } = await supabase
+        .rpc("entries_for_wiki", { target_wiki_id: w.id })
         .select("id, title, embedding_v2")
-        .in("id", ids)
-        .not("embedding_v2", "is", null);
-      if (!rows) continue;
+        .not("embedding_v2", "is", null)
+        .order("updated_at", { ascending: false })
+        .limit(MAX_VECTORS);
+      if (rowsErr || !rows) continue;
 
       const vectors: { id: string; title: string; vec: number[] }[] = [];
       for (const r of rows as any[]) {
