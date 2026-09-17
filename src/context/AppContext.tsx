@@ -11,6 +11,7 @@ import { applyLoad, describeLoad, focusChanged, focusEpoch, type FocusState, typ
 import { bookContextStore } from "@/lib/chatBooks";
 import { ASSISTANT_TAG, mergeReservedTags } from "@/lib/bookProvenance";
 import { MAX_ACTIVE_NEURONS } from "@/lib/neuronAccess";
+import { purgeBookAudio } from "@/lib/inworldTts";
 
 type TabId = "library" | "viewer" | "chat" | "wiki" | "wikis" | "settings" | "admin";
 
@@ -991,6 +992,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await supabase.storage.from("generated-images").remove(figs.map((f) => `${dir}/${f.name}`));
       }
     } catch { /* best-effort — the book is already gone */ }
+    // Saved read-along audio on the VPS (best-effort, not awaited).
+    void purgeBookAudio(id);
     return { ok: true };
   }, [user]);
 

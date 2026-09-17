@@ -160,6 +160,18 @@ export function nextSentenceStart(words: SourceWord[], i: number): number {
   return -1;
 }
 
+/** Index of the chunk holding word `i` (the last chunk if `i` is past the end). */
+export function chunkIndexForWord(chunks: ReadChunk[], i: number): number {
+  let lo = 0;
+  let hi = chunks.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (i < chunks[mid].last) hi = mid;
+    else lo = mid + 1;
+  }
+  return Math.max(0, lo);
+}
+
 /** Lowercased letters/digits only — the comparison key for alignment. */
 export function normalizeToken(s: string): string {
   return s.toLowerCase().normalize("NFKD").replace(/[^\p{L}\p{N}]/gu, "");

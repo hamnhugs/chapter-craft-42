@@ -1,0 +1,10 @@
+{
+  "keys": {
+    "tts-key-1": "PASTE_OUTPUT_OF__openssl_rand_-hex_32"
+  },
+  "data_dir": "/var/lib/chapter-craft-tts-cache",
+  "host": "127.0.0.1",
+  "port": 8760,
+  "max_total_mb": 20480,
+  "max_clip_kb": 4096
+}

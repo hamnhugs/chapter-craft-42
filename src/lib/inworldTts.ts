@@ -77,6 +77,8 @@ export interface TimedSpeech {
   audio: ArrayBuffer;
   /** Per-token timing (seconds from audio start), or null when unavailable. */
   words: Array<{ text: string; start: number; end: number }> | null;
+  /** Served from the book's saved audio on the VPS (no Inworld charge). */
+  cached?: boolean;
 }
 
 /**
@@ -88,7 +90,7 @@ export async function synthesizeSpeechWithTimestamps(
   text: string,
   voiceId: string,
   model = "inworld-tts-2",
-  opts?: { signal?: AbortSignal; sampleRate?: number },
+  opts?: { signal?: AbortSignal; sampleRate?: number; bookId?: string },
 ): Promise<TimedSpeech> {
   let cleanVoiceId = String(voiceId ?? "").trim();
   if (!cleanVoiceId || cleanVoiceId === "undefined") cleanVoiceId = "Ashley";
@@ -102,6 +104,9 @@ export async function synthesizeSpeechWithTimestamps(
       model: (model && model.trim()) || "inworld-tts-2",
       sample_rate: opts?.sampleRate ?? 24000,
       timestamp_type: "WORD",
+      // Read Along: the server keeps this clip under the book on the VPS and
+      // serves repeats from there instead of paying Inworld again.
+      ...(opts?.bookId ? { cache_book_id: opts.bookId } : {}),
     }),
     signal: opts?.signal,
   });
@@ -114,7 +119,25 @@ export async function synthesizeSpeechWithTimestamps(
   }
   const data = await resp.json();
   const bin = Uint8Array.from(atob(String(data?.audioContent ?? "")), (c) => c.charCodeAt(0));
-  return { audio: bin.buffer, words: parseWordAlignment(data?.timestampInfo) };
+  return {
+    audio: bin.buffer,
+    words: parseWordAlignment(data?.timestampInfo),
+    cached: resp.headers.get("X-TTS-Cache") === "hit",
+  };
+}
+
+/** Best-effort: delete a book's saved read-along audio (after the book is purged). */
+export async function purgeBookAudio(bookId: string): Promise<void> {
+  try {
+    const headers = await authHeaders();
+    await fetch(FUNCTIONS_BASE, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "purge_cache", book_id: bookId }),
+    });
+  } catch {
+    /* orphaned audio is evicted from the VPS as space is needed */
+  }
 }
 
 /** Inworld `timestampInfo.wordAlignment` → flat timed tokens (null if absent/malformed). */

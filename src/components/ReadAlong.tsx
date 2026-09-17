@@ -387,7 +387,7 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
     lastCreditedRef.current = from - 1;
     userScrolledAtRef.current = 0;
     setWordPos({ index: from, total: src.words.length });
-    playerRef.current!.start(src.map.text, src.words, from, voiceRef.current, rateRef.current);
+    playerRef.current!.start(src.map.text, src.words, from, voiceRef.current, rateRef.current, propsRef.current.bookId);
   }, [buildSource, ensurePill, attachInteractions]);
 
   const stopReading = useCallback(() => {
@@ -490,7 +490,7 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
     if (player.state.status !== "idle" && sourceRef.current) {
       const at = Math.max(0, currentWordRef.current);
       lastCreditedRef.current = at - 1;
-      player.start(sourceRef.current.map.text, sourceRef.current.words, at, next, rateRef.current);
+      player.start(sourceRef.current.map.text, sourceRef.current.words, at, next, rateRef.current, propsRef.current.bookId);
     }
   };
 

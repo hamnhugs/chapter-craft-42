@@ -13,6 +13,7 @@ import {
   EMPTY_STATS,
   DAILY_WORD_GOAL,
   sentenceStartOf,
+  chunkIndexForWord,
   nextSentenceStart,
   prevSentenceStart,
 } from "@/lib/readAlong";
@@ -192,5 +193,25 @@ describe("sentence navigation", () => {
     expect(prevSentenceStart(words, idx("down!"))).toBe(idx("He"));
     expect(prevSentenceStart(words, idx("He"))).toBe(0);
     expect(prevSentenceStart(words, 0)).toBe(0);
+  });
+});
+
+describe("page-anchored chunks (saved-audio reuse)", () => {
+  const text = Array.from({ length: 30 }, (_, i) => `Sentence number ${i + 1} is here, with a few more words to read.`).join(" ");
+  const words = tokenizeWords(text);
+  const chunks = buildReadChunks(text, words, 0, 240, 120);
+
+  it("finds the chunk holding any word", () => {
+    for (const [ci, c] of chunks.entries()) {
+      expect(chunkIndexForWord(chunks, c.first)).toBe(ci);
+      expect(chunkIndexForWord(chunks, c.last - 1)).toBe(ci);
+    }
+    expect(chunkIndexForWord(chunks, words.length + 5)).toBe(chunks.length - 1);
+    expect(chunkIndexForWord([], 3)).toBe(0);
+  });
+
+  it("cuts the same clips every time, so repeats hit the cache", () => {
+    const again = buildReadChunks(text, tokenizeWords(text), 0, 240, 120);
+    expect(again.map((c) => c.text)).toEqual(chunks.map((c) => c.text));
   });
 });
