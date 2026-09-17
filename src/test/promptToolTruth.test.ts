@@ -446,8 +446,10 @@ describe("the additive contract: omitting offeredTools changes nothing", () => {
   // gained the gated search_book_text guidance (search before quoting, copy
   // excerpts byte-for-byte) — +215 chars on the default build, which carries
   // every tool.
-  const BASELINE_LENGTH = 25585;
-  const BASELINE_DIGEST = "91479ac5";
+  // Re-captured 2026-09-16: the Save-to-neuron button was removed from
+  // Counsel, so the capture sentence no longer names it (+20 chars).
+  const BASELINE_LENGTH = 25605;
+  const BASELINE_DIGEST = "a77f5f34";
   const fnv1a = (s: string) => {
     let h = 0x811c9dc5;
     for (let i = 0; i < s.length; i++) {
