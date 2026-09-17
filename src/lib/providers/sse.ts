@@ -2,7 +2,7 @@
 // finish-reason normalization, tool-call index resolution, and the
 // thought-tag router for models that inline reasoning into content.
 
-import type { FinishReason } from "./types";
+import type { FinishReason, TokenUsage } from "./types";
 
 /** Parse an OpenAI-style SSE body into JSON payloads. Yields each `data:`
  *  object, stops at `[DONE]`, skips comments/blank lines, tolerates CRLF and
@@ -36,6 +36,40 @@ export async function* sseJson(res: Response): AsyncGenerator<any, void, unknown
   } finally {
     try { void reader.cancel(); } catch { /* already closed */ }
   }
+}
+
+/** Normalize an OpenAI-shaped `usage` object — the shape OpenRouter, Gemini's
+ *  compat surface and NIM all use, with each provider's extra fields — into
+ *  TokenUsage. Returns null when nothing usable is present. */
+export function normalizeUsage(u: any): TokenUsage | null {
+  if (!u || typeof u !== "object") return null;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+  const out: TokenUsage = {
+    inputTokens: num(u.prompt_tokens) ?? num(u.input_tokens),
+    outputTokens: num(u.completion_tokens) ?? num(u.output_tokens),
+    cachedTokens:
+      num(u.prompt_tokens_details?.cached_tokens) ??
+      num(u.input_tokens_details?.cached_tokens) ??
+      num(u.prompt_cache_hit_tokens) ??
+      num(u.cache_read_input_tokens),
+    cacheWriteTokens: num(u.prompt_tokens_details?.cache_write_tokens) ?? num(u.cache_creation_input_tokens),
+    reasoningTokens: num(u.completion_tokens_details?.reasoning_tokens),
+    costUsd: num(u.cost),
+  };
+  return Object.values(out).some((v) => v !== undefined) ? out : null;
+}
+
+/** Sum two usages field by field, keeping "not reported" distinct from 0. */
+export function addUsage(a: TokenUsage | undefined, b: TokenUsage | undefined): TokenUsage | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  const keys: (keyof TokenUsage)[] = ["inputTokens", "outputTokens", "cachedTokens", "cacheWriteTokens", "reasoningTokens", "costUsd"];
+  const out: TokenUsage = {};
+  for (const k of keys) {
+    if (a[k] === undefined && b[k] === undefined) continue;
+    out[k] = (a[k] ?? 0) + (b[k] ?? 0);
+  }
+  return out;
 }
 
 export function mapFinishReason(native: unknown): FinishReason {

@@ -10,8 +10,9 @@ import {
   ChatStreamEvent,
   ChatStreamRequest,
   ProviderError,
+  type CacheBreakpoint,
 } from "./types";
-import { mapFinishReason, sseJson, ToolCallIndexer } from "./sse";
+import { mapFinishReason, normalizeUsage, sseJson, ToolCallIndexer } from "./sse";
 
 const OR_CHAT = "https://openrouter.ai/api/v1/chat/completions";
 /** Generous enough that no real reply is truncated (the app's own sentence
@@ -42,25 +43,64 @@ function upstreamText(raw: string): string {
 
 /** Anthropic models bill cached prefix reads at 0.1x, but ONLY below an
  *  explicit cache_control breakpoint, which OpenRouter passes through inside
- *  content-part arrays. The pipeline says how many LEADING messages are
- *  byte-stable across turns (today: the book block); the LAST of them gets
- *  the marker, which caches everything up to it — tools included, since
- *  Anthropic's cache hierarchy is tools→system→messages.
+ *  content-part arrays. The pipeline names the breakpoints (the end of the
+ *  stable system messages, the latest user message, the newest tool result);
+ *  each marker caches everything up to it — tools included, since Anthropic's
+ *  cache hierarchy is tools→system→messages. Anthropic honors at most four.
+ *
+ *  Legacy callers pass only cacheStablePrefixCount: the last of that many
+ *  leading messages gets the one marker, exactly as before.
  *
  *  Anthropic-only on purpose: other OpenRouter providers either cache
  *  implicitly off byte-stability alone (OpenAI, DeepSeek, Gemini) or ignore
  *  the field, and none of them need the string→array content rewrite — so
- *  nobody else's wire shape changes at all. Non-string content (an image
- *  turn's part array) is left untouched: it is never the stable book block. */
+ *  nobody else's wire shape changes at all. */
 export function withCacheBreakpoint(req: ChatStreamRequest): unknown[] {
+  if (!req.model.startsWith("anthropic/")) return req.messages;
   const n = req.cacheStablePrefixCount || 0;
-  if (n <= 0 || !req.model.startsWith("anthropic/")) return req.messages;
-  const i = n - 1;
-  const m = req.messages[i] as any;
-  if (!m || typeof m.content !== "string" || !m.content) return req.messages;
+  const bps: CacheBreakpoint[] = req.cacheBreakpoints ?? (n > 0 ? [{ index: n - 1 }] : []);
+  if (bps.length === 0) return req.messages;
   const out = req.messages.slice();
-  out[i] = { ...m, content: [{ type: "text", text: m.content, cache_control: { type: "ephemeral" } }] };
-  return out;
+  const seen = new Set<number>();
+  for (const bp of bps) {
+    if (seen.size >= 4 || seen.has(bp.index)) continue;
+    const marked = markMessage(out[bp.index], bp.tailChars ?? 0);
+    if (!marked) continue;
+    out[bp.index] = marked;
+    seen.add(bp.index);
+  }
+  return seen.size > 0 ? out : req.messages;
+}
+
+const EPHEMERAL = { type: "ephemeral" } as const;
+
+function markMessage(m: any, tailChars: number): any | null {
+  if (!m) return null;
+  if (typeof m.content === "string") {
+    if (!m.content) return null;
+    if (tailChars > 0 && tailChars < m.content.length) {
+      const cut = m.content.length - tailChars;
+      return {
+        ...m,
+        content: [
+          { type: "text", text: m.content.slice(0, cut), cache_control: EPHEMERAL },
+          { type: "text", text: m.content.slice(cut) },
+        ],
+      };
+    }
+    return { ...m, content: [{ type: "text", text: m.content, cache_control: EPHEMERAL }] };
+  }
+  if (Array.isArray(m.content) && m.content.length > 0) {
+    // The marker goes on the last TEXT part at or before the stable end;
+    // image parts are left exactly as they were.
+    let i = m.content.length - 1 - (tailChars > 0 ? 1 : 0);
+    while (i >= 0 && m.content[i]?.type !== "text") i--;
+    if (i < 0) return null;
+    const parts = m.content.slice();
+    parts[i] = { ...parts[i], cache_control: EPHEMERAL };
+    return { ...m, content: parts };
+  }
+  return null;
 }
 
 async function throwOrError(res: Response): Promise<never> {
@@ -99,6 +139,9 @@ export const openrouterAdapter: ChatProviderAdapter = {
       body: JSON.stringify({
         model: req.model,
         messages: withCacheBreakpoint(req),
+        // Sticky routing: later requests of this conversation go to the same
+        // upstream provider, whose prompt cache is the warm one.
+        ...(req.sessionId ? { session_id: req.sessionId.slice(0, 256) } : {}),
         ...(req.tools ? { tools: req.tools, tool_choice: req.toolChoice ?? "auto" } : {}),
         stream: true,
         // OpenRouter reserves the MAXIMUM possible reply against the balance
@@ -120,6 +163,12 @@ export const openrouterAdapter: ChatProviderAdapter = {
       if (parsed?.error) {
         const m = upstreamText(JSON.stringify(parsed));
         throw new ProviderError("openrouter", /rate/i.test(m) ? "rate_limit" : "upstream", 200, m);
+      }
+      // OpenRouter always reports usage (tokens, cached tokens, cost) on the
+      // final chunk, whose `choices` is usually empty.
+      if (parsed?.usage) {
+        const usage = normalizeUsage(parsed.usage);
+        if (usage) yield { type: "usage", usage };
       }
       const choice = parsed.choices?.[0];
       const delta = choice?.delta;
@@ -165,6 +214,10 @@ export const openrouterAdapter: ChatProviderAdapter = {
     });
     if (!res.ok) await throwOrError(res);
     const data = await res.json();
+    req.onMeta?.({
+      finish: data?.choices?.[0]?.finish_reason ? mapFinishReason(data.choices[0].finish_reason) : undefined,
+      usage: normalizeUsage(data?.usage) ?? undefined,
+    });
     return (data?.choices?.[0]?.message?.content || "").trim();
   },
 };

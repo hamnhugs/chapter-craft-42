@@ -27,7 +27,7 @@ import {
   ProviderError,
   ProviderErrorCode,
 } from "./types";
-import { mapFinishReason, sseJson, ThoughtRouter, ToolCallIndexer } from "./sse";
+import { mapFinishReason, normalizeUsage, sseJson, ThoughtRouter, ToolCallIndexer } from "./sse";
 
 // Mirrors src/integrations/supabase/client.ts (auto-generated, so the
 // constants aren't exported from there).
@@ -91,6 +91,8 @@ async function throwRelayError(res: Response): Promise<never> {
 
 /** Emit events for one non-streaming completion payload. */
 function* completionEvents(data: any): Generator<ChatStreamEvent> {
+  const usage = normalizeUsage(data?.usage);
+  if (usage) yield { type: "usage", usage };
   const msg = data?.choices?.[0]?.message;
   if (typeof msg?.reasoning_content === "string" && msg.reasoning_content) {
     yield { type: "reasoning", delta: msg.reasoning_content };
@@ -177,6 +179,10 @@ export const nvidiaAdapter: ChatProviderAdapter = {
           const m = String(parsed.error?.message ?? parsed.error);
           throw new ProviderError("nvidia", /rate/i.test(m) ? "rate_limit" : "upstream", 200, m);
         }
+        if (parsed?.usage) {
+          const usage = normalizeUsage(parsed.usage);
+          if (usage) yield { type: "usage", usage };
+        }
         const choice = parsed.choices?.[0];
         const delta = choice?.delta;
         if (typeof delta?.reasoning_content === "string" && delta.reasoning_content) {
@@ -234,6 +240,10 @@ export const nvidiaAdapter: ChatProviderAdapter = {
       const m = String(data.error?.message ?? data.error);
       throw new ProviderError("nvidia", /rate/i.test(m) ? "rate_limit" : "upstream", 200, m);
     }
+    req.onMeta?.({
+      finish: data?.choices?.[0]?.finish_reason ? mapFinishReason(data.choices[0].finish_reason) : undefined,
+      usage: normalizeUsage(data?.usage) ?? undefined,
+    });
     const msg = data?.choices?.[0]?.message;
     const router = new ThoughtRouter();
     const routed = router.push(String(msg?.content || ""));

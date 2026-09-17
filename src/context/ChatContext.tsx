@@ -38,7 +38,11 @@ import {
 import { toast } from "sonner";
 import { isEmbeddingModel, isBatchOnlyModel } from "@/lib/utils";
 import { describeModel, freeChatProviders, localModelId, modelProvider, providerConfigured, providerKey, providerKeyUrl, providerLabel, resolveModel } from "@/lib/providers/registry";
-import type { ProviderId } from "@/lib/providers/types";
+import type { CacheBreakpoint, ProviderId, TokenUsage } from "@/lib/providers/types";
+import { addUsage } from "@/lib/providers/sse";
+import { studioToolsActive } from "@/lib/studioTools";
+import { TOOL_ROUNDS_PER_REPLY } from "@/lib/deepResearchPrompt";
+import { attachTurnContext, isModelVisibleMessage, resolveUtilityModel, toolTraceNote } from "@/lib/chatHistory";
 import { namespacedNvidiaId, nvidiaModelInfo, nvidiaNoThinkingBody, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
 import { namespacedGeminiId, GEMINI_STARTER_MODEL } from "@/lib/geminiCatalog";
 
@@ -101,6 +105,11 @@ export interface ChatMessage {
    *  bare OpenRouter id). Rendered as a small "via NVIDIA · model" line so
    *  provider is continuously visible, not only on failure. Transient. */
   viaModel?: string;
+  /** What this reply cost, summed over every provider request of the turn
+   *  (tool rounds included), as the provider reported it. Shown beside the
+   *  model line so caching and spend are verifiable rather than assumed.
+   *  Transient, like viaModel. */
+  usage?: TokenUsage;
   /** Ground truth for "was the tool even offered?" — the size and shape of the
    *  roster this turn's request actually carried.
    *
@@ -224,7 +233,7 @@ interface ChatContextValue {
 
 const ChatContext = createContext<ChatContextValue | null>(null);
 
-const MAX_TOOL_ITERATIONS = 5;
+const MAX_TOOL_ITERATIONS = TOOL_ROUNDS_PER_REPLY;
 
 /** The ONE app-authored sentence added to the conversation when the recovery
  *  pass found call syntax in the prose that it will not run (textToolCalls'
@@ -252,8 +261,11 @@ const MAX_TOOL_ITERATIONS = 5;
  *      blob to steer;
  *    - no imperative and no promise. It states how calls reach tools; it does
  *      not ask for a retry and does not say anything will run;
- *    - role "system", not a tool result. A tool result answers a call, and the
- *      whole point is that no call was made;
+ *    - an app note in a user-role message, not a tool result. A tool result
+ *      answers a call, and the whole point is that no call was made. (It was
+ *      role "system" until the prompt-cache layout: providers that hoist or
+ *      merge system messages into the head of the request rewrote the prefix
+ *      of the turn's largest request, un-caching every tool result before it.);
  *    - none of the safety register toolAvailability.test.ts's word list
  *      forbids — that register is what turns a mechanical note into a refusal
  *      the model argues with.
@@ -399,6 +411,11 @@ interface RollingSummary {
    *  starts elsewhere ("Load earlier" prepended, or a different device's
    *  window), the count is meaningless and must be re-anchored. */
   anchorId?: string;
+  /** Id of the LAST message the summary covers. Preferred over covered +
+   *  anchorId: an id stays meaningful however the loaded window shifts
+   *  (a reload that loads a newer 200, "Load earlier", another device),
+   *  where a count re-anchored to zero on every reload of a long chat. */
+  coveredThroughId?: string;
 }
 
 function loadRollingSummary(uid: string): RollingSummary {
@@ -411,6 +428,7 @@ function loadRollingSummary(uid: string): RollingSummary {
           summary: parsed.summary,
           covered: parsed.covered,
           anchorId: typeof parsed?.anchorId === "string" ? parsed.anchorId : undefined,
+          coveredThroughId: typeof parsed?.coveredThroughId === "string" ? parsed.coveredThroughId : undefined,
         };
       }
     }
@@ -430,7 +448,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     trashAvailable, trashedBooks, refreshTrash, restoreBook,
   } = useApp();
 
-  const { autoCatalogOnUpload, apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, selectedModel, setSelectedModel, savedModels, addModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, maxReplySentences, autoShowMemoryImages, chatToolPermissions, visionModel, imageModelPrimary, imageModelFallback,
+  const { utilityModel, studioTools, autoCatalogOnUpload, apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, selectedModel, setSelectedModel, savedModels, addModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, maxReplySentences, autoShowMemoryImages, chatToolPermissions, visionModel, imageModelPrimary, imageModelFallback,
     videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold,
     videoIdentityScale, videoQcEnabled, videoMotionModel,
     falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback,
@@ -446,7 +464,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const catalogSettingsRef = useRef({ autoCatalogOnUpload: false, model: "", keys: {} as { apiKey?: string; geminiApiKey?: string; nvidiaKeyLast4?: string } });
   catalogSettingsRef.current = {
     autoCatalogOnUpload,
-    model: selectedModel,
+    // Catalog jobs (gists, book summaries) move to the utility model only when
+    // the user picked one explicitly: gist quality is measured (E2) against
+    // the chat model, so the automatic cheap default does not apply here.
+    model: utilityModel || selectedModel,
     keys: { apiKey: apiKey || undefined, geminiApiKey: geminiApiKey || undefined, nvidiaKeyLast4: nvidiaKeyLast4 || undefined },
   };
   const enqueueCatalog = useMemo(() => makeCatalogEnqueuer({
@@ -584,6 +605,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const abortRef = useRef<AbortController | null>(null);
   const loadedRef = useRef(false);
   const summaryRef = useRef<RollingSummary>({ summary: "", covered: 0 });
+  const summaryBackoffRef = useRef({ failures: 0, retryAtLength: 0 });
   const summarizingRef = useRef(false);
   // Lean Mode read at TOOL-EXECUTION time, not turn-start: flipping the
   // switch mid-reply must stop the next generation in that same turn.
@@ -612,41 +634,60 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
    *  of a send. Merges messages that fell out of the window into the stored
    *  summary so the NEXT turn can drop them from the request. */
   const updateRollingSummary = useCallback(
-    async (allMsgs: { role: string; content: string }[], anchorId: string | undefined) => {
+    async (allMsgs: { id?: string; role: string; content: string }[], anchorId: string | undefined) => {
       if (!user || summarizingRef.current) return;
       const target = allMsgs.length - HISTORY_WINDOW;
       let cur = summaryRef.current;
-      // Window start moved since `covered` was computed (prepend / other
-      // device): the count no longer indexes this array. Keep the summary
-      // text — the merge prompt absorbs re-summarized overlap — but restart
-      // the count from zero against the current window.
-      if (cur.covered > 0 && cur.anchorId !== anchorId) {
-        cur = { summary: cur.summary, covered: 0, anchorId: undefined };
-        summaryRef.current = cur;
+      // How many leading messages of THIS array the summary already covers.
+      // The id form survives window shifts; the legacy count form is only
+      // trusted while its anchor still matches.
+      let coveredCount: number;
+      if (cur.coveredThroughId) {
+        coveredCount = allMsgs.findIndex((m) => m.id === cur.coveredThroughId) + 1;
+      } else {
+        if (cur.covered > 0 && cur.anchorId !== anchorId) {
+          cur = { summary: cur.summary, covered: 0, anchorId: undefined };
+          summaryRef.current = cur;
+        }
+        coveredCount = cur.covered;
       }
-      if (target <= 0 || target <= cur.covered) return;
+      if (target <= 0 || target <= coveredCount) return;
       // Batch: don't pay an LLM call every turn for 2 messages.
-      if (cur.covered > 0 && target - cur.covered < SUMMARY_MIN_BATCH) return;
-      const model = selectedModel;
+      if (coveredCount > 0 && target - coveredCount < SUMMARY_MIN_BATCH) return;
+      // Back off after failures instead of retrying on every turn — each
+      // retry re-sends up to 30k characters of transcript.
+      const backoff = summaryBackoffRef.current;
+      if (backoff.failures > 0 && allMsgs.length < backoff.retryAtLength) return;
+      const model = resolveUtilityModel(utilityModel, selectedModel);
       if (!model || isEmbeddingModel(model) || isBatchOnlyModel(model)) return;
       // Summaries follow the selected model through the same provider seam
       // as chat — with only the OTHER provider's key saved, they'd silently
       // 404 forever otherwise. No key for this provider → skip quietly.
       const { adapter, provider, localId } = resolveModel(model);
       if (!providerConfigured(provider, providerKeys)) return;
-      const batch = allMsgs.slice(cur.covered, target);
+      const batch = allMsgs.slice(coveredCount, target);
       if (batch.length === 0) return;
       let transcript = batch
-        .map((m) => `${m.role}: ${(m.content || "").slice(0, 600)}`)
+        .map((m) => `${m.role}: ${(typeof m.content === "string" ? m.content : "").slice(0, 600)}`)
         .join("\n\n");
       if (transcript.length > 30000) transcript = transcript.slice(-30000);
       summarizingRef.current = true;
+      const fail = () => {
+        const failures = Math.min(backoff.failures + 1, 6);
+        summaryBackoffRef.current = { failures, retryAtLength: allMsgs.length + SUMMARY_MIN_BATCH * 2 ** failures };
+      };
       try {
+        let finish: string | undefined;
         const text = (await adapter.completeChat({
           model: localId,
-          maxTokens: 500,
+          // 500 was too tight for reasoning models: the allowance went on
+          // thinking, the summary came back empty or cut, and the job retried
+          // every turn. ~250 words of summary is ~350 tokens; the rest is
+          // headroom for models that think before answering.
+          maxTokens: 1500,
           apiKey: providerKey(provider, providerKeys),
           extraBody: provider === "nvidia" ? nvidiaNoThinkingBody(localId) : undefined,
+          onMeta: (meta) => { finish = meta.finish; },
           messages: [
             {
               role: "system",
@@ -659,15 +700,24 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             },
           ],
         })).trim();
-        if (!text) return;
-        const next: RollingSummary = { summary: text.slice(0, 4000), covered: target, anchorId };
+        // A length-cut summary silently loses whatever it was about to say;
+        // keep the previous one and try again later.
+        if (!text || finish === "length") { fail(); return; }
+        summaryBackoffRef.current = { failures: 0, retryAtLength: 0 };
+        const lastCovered = allMsgs[target - 1];
+        const next: RollingSummary = {
+          summary: text.slice(0, 4000),
+          covered: target,
+          anchorId,
+          coveredThroughId: lastCovered?.id,
+        };
         summaryRef.current = next;
         try { localStorage.setItem(SUMMARY_STORE_KEY(user.id), JSON.stringify(next)); } catch { /* storage full */ }
-      } catch { /* background — never surface */ } finally {
+      } catch { fail(); /* background — never surface */ } finally {
         summarizingRef.current = false;
       }
     },
-    [user, apiKey, geminiApiKey, nvidiaKeyLast4, selectedModel]
+    [user, apiKey, geminiApiKey, nvidiaKeyLast4, selectedModel, utilityModel]
   );
 
   // Bind the durable Workspace store to the signed-in user so its files sync
@@ -964,7 +1014,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // context value), invalidating every child memoized on it, per token.
       // The ref always holds the latest committed state by the time a user
       // gesture can invoke sendMessage.
-      const historySource = [...messagesRef.current, userMsg].filter((m) => !m.displayOnly);
+      const historySource = [...messagesRef.current, userMsg].filter((m) => !m.displayOnly && isModelVisibleMessage(m));
+      // The reply this message follows up on — a short follow-up's retrieval
+      // query borrows its tail.
+      const previousAssistantText = [...historySource].reverse().find((m) => m.role === "assistant")?.content;
       // Anchors the rolling summary's `covered` count to this exact window —
       // see RollingSummary.anchorId.
       const firstHistoryId = historySource[0]?.id;
@@ -985,7 +1038,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               ],
             } as any;
           }
-          return { role: m.role, content: note ? `${m.content}\n\n${note}` : m.content };
+          const trace = m.role === "assistant" ? toolTraceNote(m.toolEvents) : "";
+          const extra = [note, trace].filter(Boolean).join("\n\n");
+          return { role: m.role, content: extra ? `${m.content}\n\n${extra}` : m.content };
         });
 
       const isVoice = !!opts?.voiceMode;
@@ -1039,6 +1094,13 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         || (hasUploads && visionModel ? visionModel : (deepResearch ? deepResearchModel : selectedModel));
       const { provider: turnProviderId, localId: turnLocalId } = resolveModel(model);
       const nvInfo = turnProviderId === "nvidia" ? nvidiaModelInfo(turnLocalId) : null;
+      // Voice replies are one to three spoken sentences; a reasoning model
+      // thinking at full effort first adds seconds of silence and bills the
+      // thought. OpenRouter normalizes `reasoning.effort` across models and
+      // ignores it for models that don't reason. Deep Research keeps full effort.
+      const turnExtraBody = turnProviderId === "openrouter" && isVoice && !deepResearch
+        ? { ...(nvInfo?.extraBody || {}), reasoning: { effort: "low" } }
+        : nvInfo?.extraBody;
       // Read off baseHistory rather than the assembled request, which does not
       // exist yet at this point. Same answer: pixels are only ever serialized
       // for the CURRENT user message (older images ride as text notes), and
@@ -1084,6 +1146,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         programReady,
         providerSupportsTools,
         imageTurnDisablesTools,
+        // Sticky per conversation, never per query — see studioTools.ts.
+        studioActive: studioToolsActive({
+          mode: studioTools,
+          userId: userIdRef.current,
+          history: messagesRef.current,
+          latestUserText: trimmed,
+        }),
+        voiceMode: isVoice,
       });
       // Both model-level gates are INPUTS to computeToolGates above, so when
       // sendTools is false every gate reads off_model_* and this set is empty.
@@ -1098,7 +1168,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ? CHAT_TOOL_DEFINITIONS.filter((t: any) => offeredNames.has(t.function.name))
         : undefined;
 
-      const { prompt: systemPrompt, usedMemories, memoryImages, inboundCards } = await buildChatSystemPrompt({
+      // A send the pre-flight gates below will refuse must not pay for the
+      // prompt build (retrieval embedding + half a dozen queries) first.
+      const preflightBlocked = isEmbeddingModel(model) || isBatchOnlyModel(model) || !providerConfigured(modelProvider(model), providerKeys);
+      const { stablePrompt: systemPrompt, turnContext, usedMemories, memoryImages, inboundCards } = preflightBlocked
+        ? { stablePrompt: "", turnContext: "", usedMemories: [] as UsedMemory[], memoryImages: [] as MemoryImageCandidate[], inboundCards: [] as string[] }
+        : await buildChatSystemPrompt({
         books,
         selectedBook,
         deepResearch,
@@ -1119,6 +1194,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         foundryTools: foundryEnabled,
         programTools: programEnabled,
         offeredTools: [...offeredNames],
+        previousAssistantText,
+        // Same selection the book block is built from below; a book whose
+        // block fails to hydrate still has `get_book` for its chapter ids.
+        booksInContext: offeredNames.has("get_book")
+          ? selectContextBooks(books, bookContextStore.get(), activeBookId ?? null).map((b) => b.id)
+          : [],
       });
 
       // Sliding window: replace messages older than the window with the
@@ -1133,8 +1214,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // "Load earlier" prepends and cross-device window shifts both move the
       // start, and a misaligned cut would drop the wrong messages.
       const anchored = !!rolling.anchorId && rolling.anchorId === firstHistoryId;
-      if (baseHistory.length > HISTORY_WINDOW && rolling.summary && rolling.covered > 0 && anchored) {
-        const cut = Math.min(rolling.covered, baseHistory.length - HISTORY_WINDOW);
+      const coveredCount = rolling.coveredThroughId
+        ? historySource.findIndex((m) => m.id === rolling.coveredThroughId) + 1
+        : anchored ? rolling.covered : 0;
+      if (baseHistory.length > HISTORY_WINDOW && rolling.summary && coveredCount > 0) {
+        const cut = Math.min(coveredCount, baseHistory.length - HISTORY_WINDOW);
         if (cut > 0) {
           historyForModel = baseHistory.slice(cut);
           summaryNote = `## Earlier conversation summary\nThe first ${cut} messages of this conversation were replaced by this summary to save context:\n\n${rolling.summary}`;
@@ -1194,6 +1278,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // think-tag content, normalized by the adapter). Rendered as a
       // collapsed strip; never persisted, never counted by the sentence cap.
       let turnReasoning = "";
+      // Summed provider-reported usage across every request of this turn.
+      let turnUsage: TokenUsage | undefined;
       // Set once the turn's model is resolved (below) so every bubble can
       // show which provider actually answered.
       let viaModelRef: string | undefined;
@@ -1218,6 +1304,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 content: assistantText,
                 reasoning: turnReasoning || undefined,
                 viaModel: viaModelRef,
+                usage: turnUsage,
                 toolEvents: [...assistantEvents],
                 images: turnImages.length > 0 ? [...turnImages] : copy[i].images,
                 videos: turnVideos.length > 0 ? [...turnVideos] : copy[i].videos,
@@ -1346,12 +1433,39 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // still varies per query — so the block AHEAD of it is what
       // provider-side prefix caching reliably hits, and the adapter is told
       // exactly how many leading messages are stable (cacheStablePrefixCount).
-      const workingMessages: any[] = [
+      //
+      // PROMPT-CACHE LAYOUT. Providers cache the longest byte-identical PREFIX
+      // of a request, so the order runs from most to least stable: book block,
+      // instructions, pinned focus, rolling summary (changes every ~6
+      // messages), history (append-only). The per-turn context — retrieved
+      // memories, the ranked Foundry roster — rides at the END of the latest
+      // user message: placed in the system prompt it changed every turn and
+      // made every history token a cache miss on every request. Next turn
+      // this message re-enters history WITHOUT that context, so the prefix
+      // still matches up to the user's own words.
+      const turnContextSuffix = turnContext ? `\n\n${turnContext}` : "";
+      const historyWithContext = turnContextSuffix
+        ? attachTurnContext(historyForModel, turnContextSuffix)
+        : historyForModel;
+      const leadingSystem: any[] = [
         ...(bookBlock?.message ? [{ role: "system", content: bookBlock.message }] : []),
         { role: "system", content: systemPrompt },
-        ...(summaryNote ? [{ role: "system", content: summaryNote }] : []),
         ...(focusBlock ? [{ role: "system", content: focusBlock.message }] : []),
-        ...historyForModel,
+        ...(summaryNote ? [{ role: "system", content: summaryNote }] : []),
+      ];
+      const workingMessages: any[] = [...leadingSystem, ...historyWithContext];
+      /** Where Anthropic-style explicit caches may mark "reusable up to here":
+       *  the end of the stable system block (the summary is excluded when
+       *  present — it churns), the user's own words in the latest message,
+       *  and — once tool rounds have appended — the newest message, so each
+       *  round reads the previous round's prefix. */
+      const stableSystemEnd = leadingSystem.length - 1 - (summaryNote ? 1 : 0);
+      const latestUserIndex = workingMessages.length - 1;
+      const cacheBreakpointsFor = (msgs: any[]): CacheBreakpoint[] => [
+        { index: stableSystemEnd },
+        ...(summaryNote ? [{ index: leadingSystem.length - 1 }] : []),
+        { index: latestUserIndex, tailChars: turnContextSuffix.length },
+        ...(msgs.length - 1 > latestUserIndex ? [{ index: msgs.length - 1 }] : []),
       ];
       // Focus receipt stamped only HERE — after the embedding-model and
       // provider-key gates — so an error bubble from a send that never
@@ -1473,8 +1587,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const finalRound = iteration === MAX_TOOL_ITERATIONS;
           const toollessRound = iteration === MAX_TOOL_ITERATIONS + 1;
           if (finalRound) {
+            // role "user", not "system": providers that hoist or merge system
+            // messages into the head of the request (Gemini's adapter does)
+            // would otherwise rewrite the prefix of the turn's LARGEST request
+            // — every tool result so far — and bill all of it uncached.
             workingMessages.push({
-              role: "system",
+              role: "user",
               content:
                 "[Tool budget for this reply is spent — no further tool calls will execute this turn. Answer the user's message now from what has already been read and returned above; say plainly if something needed could not be read in time.]",
             });
@@ -1514,11 +1632,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             toolChoice: finalRound ? "none" : undefined,
             signal: abortRef.current.signal,
             apiKey: providerKey(turnProviderId, providerKeys),
-            extraBody: nvInfo?.extraBody,
-            // Only the book block qualifies: it is byte-stable per selection.
-            // The focus block is stable too but sits AFTER the query-varying
-            // main prompt, where a breakpoint can never be reached by a read.
+            extraBody: turnExtraBody,
+            // Legacy single breakpoint, kept for adapters that read only it.
             cacheStablePrefixCount: bookBlock?.message ? 1 : 0,
+            cacheBreakpoints: toollessRound && toollessMessages ? undefined : cacheBreakpointsFor(workingMessages),
+            sessionId: userIdRef.current ? `counsel-${userIdRef.current}` : undefined,
           });
 
           // The forced answer round and toolless retry are BONUS rounds: five
@@ -1604,6 +1722,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               if (ev.argsDelta) toolCallAcc[idx].args += ev.argsDelta;
             } else if (ev.type === "finish") {
               finishNative = ev.native ?? ev.reason;
+            } else if (ev.type === "usage") {
+              turnUsage = addUsage(turnUsage, ev.usage);
+              updateAssistant();
             }
           }
           } catch (streamErr) {
@@ -2083,7 +2204,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // Zero interpolation: see TEXT_CALL_NOTE for why a note that names
           // the tool is a working exploit rather than a nicety.
           if (textCallNoted && !textCallNoteSent) {
-            workingMessages.push({ role: "system", content: TEXT_CALL_NOTE });
+            workingMessages.push({ role: "user", content: TEXT_CALL_NOTE });
             textCallNoteSent = true;
           }
 
@@ -2288,7 +2409,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Refresh the rolling summary in the background so the NEXT turn can
         // drop old messages from the request. Fire-and-forget by design.
         if (assistantText && !placeholderReply) {
-          void updateRollingSummary([...baseHistory, { role: "assistant", content: assistantText }], firstHistoryId);
+          void updateRollingSummary(
+            [...historySource.map((m) => ({ id: m.id, role: m.role, content: m.content })), { id: assistantId, role: "assistant", content: assistantText }],
+            firstHistoryId,
+          );
         }
 
         // What the caller SPEAKS (hands-free reads this return): the reply,
@@ -2355,7 +2479,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // foundryReady are the raw inputs computeToolGates now takes (it draws the
     // opt-in and availability distinction itself, so the pre-combined
     // forgeEnabled/runEnabled are no longer read here).
-    [apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, autoShowMemoryImages, foundryEnabled, forgeOptIn, runOptIn, foundryReady, chatToolPermissions, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, updateBookTitle, loadChapterText, loadChapterTextStrict, setActiveBookSilent,
+    [apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, studioTools, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, autoShowMemoryImages, foundryEnabled, forgeOptIn, runOptIn, foundryReady, chatToolPermissions, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, updateBookTitle, loadChapterText, loadChapterTextStrict, setActiveBookSilent,
       getBooks, getActiveBookId, getShelves, multiShelf, createShelf, renameShelf, deleteShelf, setBookShelfMembership, addBook, addChapters, removeBook, loadFocus, enqueueCatalog, trashAvailable, refreshTrash, restoreBook]
   );
 
@@ -2397,8 +2521,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Still NVIDIA-specific and still correct: only its VL models drop
       // tools on a picture turn.
       imageTurnDisablesTools: !!nv && nv.imagesDisableTools === true && hasImages,
+      studioActive: studioToolsActive({ mode: studioTools, userId: user?.id ?? null, history: messages }),
     });
-  }, [visionModel, chatDeepResearch, isPaid, deepResearchModel, selectedModel, leanMode, chatToolPermissions, forgeOptIn, runOptIn, foundryReady, forgeProgramOptIn, runProgramOptIn, programReady]);
+  }, [studioTools, messages, user?.id, visionModel, chatDeepResearch, isPaid, deepResearchModel, selectedModel, leanMode, chatToolPermissions, forgeOptIn, runOptIn, foundryReady, forgeProgramOptIn, runProgramOptIn, programReady]);
 
   const injectDisplayMessage = useCallback((content: string) => {
     setMessages((prev) => [

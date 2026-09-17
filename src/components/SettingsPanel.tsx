@@ -203,6 +203,7 @@ const SettingsPanel: React.FC = () => {
   const { isPaid, plan } = usePlan();
   const { themeId, setThemeId, themes } = useTheme();
   const {
+    utilityModel, setUtilityModel, studioTools, setStudioTools,
     apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, savedModels, selectedModel, deepResearchModel, voiceModel, visionModel, ttsRate,
     handsFreeTtsRate, maxReplySentences,
     autoReadReplies, wikiModel, customSystemPrompt, burplexityApiToken,
@@ -653,6 +654,35 @@ const SettingsPanel: React.FC = () => {
                   attempt them — it will say so once and give you the best free version instead. Anything you've
                   already made stays fully viewable in every mode. Applies to all your devices.
                   {leanMode !== "full" && " Figure extraction isn’t covered — it only runs when you queue it from a book card, on your OpenRouter key (app credits for admins)."}
+                </Hint>
+              </div>
+              <div>
+                <FieldLabel>Studio tools (video, 3D, masters, blueprints, stage plans)</FieldLabel>
+                <select
+                  value={studioTools}
+                  onChange={(e) => setStudioTools(e.target.value as typeof studioTools)}
+                  className={`${selectCls} mt-1.5`}
+                >
+                  <option value="auto">Auto — join a chat once it turns to studio work</option>
+                  <option value="always">Always</option>
+                  <option value="off">Off</option>
+                </select>
+                <Hint>
+                  These tools add about 10,000 tokens to every message you send, so by default they join a chat only
+                  after you ask for a video, a 3D model or a blueprint (or one is already in the chat), and then stay
+                  on for 12 hours.
+                </Hint>
+              </div>
+              <div>
+                <FieldLabel>Background model (conversation summaries)</FieldLabel>
+                <select value={utilityModel || ""} onChange={(e) => setUtilityModel(e.target.value)} className={`${selectCls} mt-1.5`}>
+                  <option value="">Automatic — a low-cost model on your chat model's provider</option>
+                  <ModelOptions models={savedModels.filter((m) => !isBatchOnlyModel(m) || m === utilityModel)} />
+                </select>
+                <Hint>
+                  Long chats are summarized in the background so older messages don't have to be re-sent. Automatic
+                  uses Gemini 2.5 Flash-Lite on OpenRouter or Gemini, and your chat model on NVIDIA or a free model.
+                  Choosing a model here also uses it for chapter gists and book summaries.
                 </Hint>
               </div>
               <div>

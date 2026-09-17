@@ -25,7 +25,38 @@ export type ChatStreamEvent =
       name?: string;
       argsDelta?: string;
     }
-  | { type: "finish"; reason: FinishReason; native?: string };
+  | { type: "finish"; reason: FinishReason; native?: string }
+  /** What the provider billed for this request, when it says. Arrives once,
+   *  usually on the final chunk. */
+  | { type: "usage"; usage: TokenUsage };
+
+/** Normalized token accounting for ONE provider request. Every field is
+ *  optional because providers report different subsets (and some, like the
+ *  NVIDIA relay, often nothing at all) — absent means "not reported", never 0. */
+export interface TokenUsage {
+  /** All input tokens, cached ones included. */
+  inputTokens?: number;
+  outputTokens?: number;
+  /** Input tokens served from the provider's prompt cache (billed at a discount). */
+  cachedTokens?: number;
+  /** Input tokens written to the prompt cache this request (Anthropic bills a premium). */
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+  /** Provider-reported cost in USD (OpenRouter's `usage.cost`). */
+  costUsd?: number;
+}
+
+/** One place in the request where a provider-side prompt cache may be told
+ *  "everything up to here is reusable". */
+export interface CacheBreakpoint {
+  /** Index into `messages`. */
+  index: number;
+  /** When > 0, only the part of the message BEFORE its last `tailChars`
+   *  characters is stable (string content), or — for part-array content —
+   *  the final part is volatile. Used for the latest user message, whose
+   *  app-added per-turn context rides at its end. */
+  tailChars?: number;
+}
 
 export type ProviderErrorCode =
   | "auth"
@@ -78,6 +109,13 @@ export interface ChatStreamRequest {
    *  message that changes per turn — a breakpoint on churning bytes buys
    *  cache WRITES (1.25x) with no reads, strictly worse than nothing. */
   cacheStablePrefixCount?: number;
+  /** Explicit breakpoints (supersedes cacheStablePrefixCount when present).
+   *  Adapters for providers without explicit cache markers ignore it — their
+   *  caches key on byte-stable prefixes alone. At most 4 are honored. */
+  cacheBreakpoints?: CacheBreakpoint[];
+  /** A stable id for the conversation. OpenRouter uses it to keep routing the
+   *  conversation to the same upstream provider, so its prompt cache stays warm. */
+  sessionId?: string;
 }
 
 export interface ChatCompleteRequest {
@@ -90,6 +128,9 @@ export interface ChatCompleteRequest {
    *  background summaries pin thinking OFF so a reasoning model can't spend
    *  the whole budget before writing a word). */
   extraBody?: Record<string, unknown>;
+  /** Called once with how the completion ended and what it cost — lets a
+   *  caller tell a length-truncated result from a finished one. */
+  onMeta?: (meta: { finish?: FinishReason; usage?: TokenUsage }) => void;
 }
 
 export interface ChatProviderAdapter {

@@ -28,7 +28,7 @@ import {
   ProviderError,
   ProviderErrorCode,
 } from "./types";
-import { mapFinishReason, sseJson, ThoughtRouter, ToolCallIndexer } from "./sse";
+import { mapFinishReason, normalizeUsage, sseJson, ThoughtRouter, ToolCallIndexer } from "./sse";
 
 export const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai";
 export const GEMINI_NATIVE_BASE = "https://generativelanguage.googleapis.com/v1beta";
@@ -129,6 +129,10 @@ export const geminiAdapter: ChatProviderAdapter = {
         const { code, message } = classify(200, JSON.stringify(parsed));
         throw new ProviderError("gemini", code, 200, message);
       }
+      if (parsed?.usage) {
+        const usage = normalizeUsage(parsed.usage);
+        if (usage) yield { type: "usage", usage };
+      }
       const choice = parsed.choices?.[0];
       const delta = choice?.delta;
       // Gemini's compat layer exposes thinking as reasoning_content when
@@ -190,6 +194,10 @@ export const geminiAdapter: ChatProviderAdapter = {
       const { code, message } = classify(200, JSON.stringify(data));
       throw new ProviderError("gemini", code, 200, message);
     }
+    req.onMeta?.({
+      finish: data?.choices?.[0]?.finish_reason ? mapFinishReason(data.choices[0].finish_reason) : undefined,
+      usage: normalizeUsage(data?.usage) ?? undefined,
+    });
     const content = String(data?.choices?.[0]?.message?.content || "");
     const router = new ThoughtRouter();
     const routed = router.push(content);

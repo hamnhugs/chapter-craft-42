@@ -160,9 +160,10 @@ describe("property: the prompt only ever names tools that are on the wire", () =
     expect(prompt).not.toContain("search tools:");
   });
 
-  it("rebuilds the roster sentence from what is actually offered", async () => {
+  it("no longer prints a partial prose roster — the wire definitions name every tool", async () => {
     const { prompt } = await build({ offeredTools: ["list_books", "get_book", "search_wiki"] });
-    expect(prompt).toContain("You have these tools: list_books, get_book, and one search tool:");
+    expect(prompt).not.toContain("You have these tools:");
+    expect(prompt).toContain("Search tool:");
     expect(prompt).not.toContain("get_chapter_text");
   });
 });
@@ -448,8 +449,14 @@ describe("the additive contract: omitting offeredTools changes nothing", () => {
   // every tool.
   // Re-captured 2026-09-16: the Save-to-neuron button was removed from
   // Counsel, so the capture sentence no longer names it (+20 chars).
-  const BASELINE_LENGTH = 25605;
-  const BASELINE_DIGEST = "a77f5f34";
+  // Re-captured 2026-09-17 (chat cost audit): the stable prompt no longer
+  // carries the legacy conversation-memory block, the partial "You have these
+  // tools:" roster, the separate Memory edits section, the Contradiction
+  // reflex / provenance rules (they now ride with retrieved memories) or the
+  // "If disabled in Settings" boilerplate; Deep Research instructions were
+  // rewritten (not in this fixed input). -2,502 chars.
+  const BASELINE_LENGTH = 23103;
+  const BASELINE_DIGEST = "60b65160";
   const fnv1a = (s: string) => {
     let h = 0x811c9dc5;
     for (let i = 0; i < s.length; i++) {
@@ -706,5 +713,30 @@ describe("Stage 2: the retrieval clip tiers", () => {
     expect(unanchored.prompt).toContain("L".repeat(4000));
     expect(pointer.prompt).not.toContain("L".repeat(1300));
     expect(bodyChars(pointer.prompt)).toBeLessThan(bodyChars(unanchored.prompt));
+  });
+});
+
+describe("per-turn context is split from the cacheable prompt", () => {
+  it("keeps retrieved memories out of stablePrompt and in turnContext", async () => {
+    retrievalPayload = {
+      nodes: [{ id: "e1", title: "Tide tables", content: "Spring tides follow new and full moons.", score: 1, hop: 0 }],
+      edges: [],
+    };
+    const r = await build({ latestUserQuery: "when are spring tides?", offeredTools: ALL_TOOLS });
+    expect(r.stablePrompt).not.toContain("Retrieved Knowledge");
+    expect(r.turnContext).toContain("Retrieved Knowledge");
+    expect(r.turnContext).toContain("Spring tides");
+    expect(r.prompt).toBe(`${r.stablePrompt}\n\n${r.turnContext}`);
+    // Same stable prompt for a different question: that is the cache hit.
+    retrievalPayload = { nodes: [{ id: "e2", title: "Kelp", content: "Kelp grows fast.", score: 1, hop: 0 }], edges: [] };
+    const r2 = await build({ latestUserQuery: "how fast does kelp grow?", offeredTools: ALL_TOOLS });
+    expect(stableNonces(r2.stablePrompt)).toBe(stableNonces(r.stablePrompt));
+  });
+
+  it("skips retrieval for a bare acknowledgement", async () => {
+    retrievalPayload = { nodes: [{ id: "e1", title: "T", content: "C", score: 1, hop: 0 }], edges: [] };
+    const r = await build({ latestUserQuery: "ok thanks!", offeredTools: ALL_TOOLS });
+    expect(r.turnContext).toBe("");
+    expect(r.usedMemories).toEqual([]);
   });
 });

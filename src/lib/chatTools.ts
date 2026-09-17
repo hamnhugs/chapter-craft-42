@@ -1112,7 +1112,7 @@ export const CHAT_TOOL_DEFINITIONS = [
         // delete_image — and the RESULT form of this same sentence is already
         // gated (see the delete_image_memory case). This is that gate's static
         // mirror: the boundary is stated, the verb is not named.
-        "Permanently delete an uploaded image MEMORY RECORD (the caption/OCR/search entry for a picture the user shared earlier). If the picture is ALSO in the image library (it has an image_id), the picture itself is kept and would have to be deleted separately; the result tells you which happened. Use `recall_image_memories` first to find the memory_id. DESTRUCTIVE: only call after the user has explicitly approved this specific deletion in the current turn (paraphrase caption/date, get 'yes'). Honors per-tool permissions in Settings.",
+        "Permanently delete an uploaded image MEMORY RECORD (the caption/OCR/search entry for a picture the user shared earlier). If the picture is ALSO in the image library (it has an image_id), the picture itself is kept and would have to be deleted separately; the result tells you which happened. Use `recall_image_memories` first to find the memory_id. DESTRUCTIVE: only call after the user has explicitly approved this specific deletion in the current turn (paraphrase caption/date, get 'yes').",
       parameters: {
         type: "object",
         properties: {
@@ -1208,7 +1208,7 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "delete_video",
       description:
-        "Permanently delete a generated video clip (its row AND the stored MP4). DESTRUCTIVE: only call after the user has explicitly approved deleting this specific clip in the current turn — paraphrase the clip (prompt/date) back, get a clear 'yes', then call with confirm:true. Honors per-tool permissions in Settings.",
+        "Permanently delete a generated video clip (its row AND the stored MP4). DESTRUCTIVE: only call after the user has explicitly approved deleting this specific clip in the current turn — paraphrase the clip (prompt/date) back, get a clear 'yes', then call with confirm:true.",
       parameters: {
         type: "object",
         properties: {
@@ -1277,7 +1277,7 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "delete_splat",
       description:
-        "Permanently delete a generated 3D splat (its row AND the stored file). DESTRUCTIVE: only call after the user has explicitly approved deleting this specific model in the current turn — paraphrase it (prompt/date) back, get a clear 'yes', then call with confirm:true. Honors per-tool permissions in Settings.",
+        "Permanently delete a generated 3D splat (its row AND the stored file). DESTRUCTIVE: only call after the user has explicitly approved deleting this specific model in the current turn — paraphrase it (prompt/date) back, get a clear 'yes', then call with confirm:true.",
       parameters: {
         type: "object",
         properties: {
@@ -1355,7 +1355,7 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "delete_master_asset",
       description:
-        "Delete a master asset bundle (the record only — its hero image, views, splat and neuron are NOT deleted). DESTRUCTIVE: paraphrase the master (@name) back to the user, get a clear 'yes', then call with confirm:true. Honors per-tool permissions in Settings.",
+        "Delete a master asset bundle (the record only — its hero image, views, splat and neuron are NOT deleted). DESTRUCTIVE: paraphrase the master (@name) back to the user, get a clear 'yes', then call with confirm:true.",
       parameters: {
         type: "object",
         properties: {
@@ -1807,7 +1807,7 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "create_memory_entry",
       description:
-        "Create a new knowledge entry (a 'neuron memory') in the user's active wiki. Use for facts the user explicitly asks you to remember. When books are loaded as context, a claim drawn from them needs at least one locator ({chapter_id, quote} — the quote's exact wording is anchored to its position automatically); pass unanchored:true only for personal or conversation notes unrelated to the loaded books. If a card with the same title or alias already exists, the entry may be folded into it instead of minting a duplicate. Honors the user's Settings → AI permissions (may be disabled).",
+        "Create a new knowledge entry (a 'neuron memory') in the user's active wiki. Use for facts the user explicitly asks you to remember. When books are loaded as context, a claim drawn from them needs at least one locator ({chapter_id, quote} — the quote's exact wording is anchored to its position automatically); pass unanchored:true only for personal or conversation notes unrelated to the loaded books. If a card with the same title or alias already exists, the entry may be folded into it instead of minting a duplicate.",
       parameters: {
         type: "object",
         properties: {
@@ -1860,7 +1860,7 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "update_memory_entry",
       description:
-        "Edit a knowledge entry the user already has (title / content / tags / confidence), and/or anchor it into the books with add_locators. Requires entry_id. Honors per-tool permissions.",
+        "Edit a knowledge entry the user already has (title / content / tags / confidence), and/or anchor it into the books with add_locators. Requires entry_id.",
       parameters: {
         type: "object",
         properties: {
@@ -1894,7 +1894,7 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "delete_memory_entry",
       description:
-        "Permanently delete a knowledge entry. Only call when the user has explicitly approved deleting this specific entry in the current turn. Honors per-tool permissions.",
+        "Permanently delete a knowledge entry. Only call when the user has explicitly approved deleting this specific entry in the current turn.",
       parameters: {
         type: "object",
         properties: {
@@ -1909,7 +1909,7 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "link_memory_entries",
       description:
-        "Create or remove a typed edge between two knowledge entries (supports, contradicts, refines, related, etc.). Honors per-tool permissions.",
+        "Create or remove a typed edge between two knowledge entries (supports, contradicts, refines, related, etc.).",
       parameters: {
         type: "object",
         properties: {

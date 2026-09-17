@@ -38,11 +38,14 @@
 import type { LeanMode } from "@/lib/leanMode";
 import { blockedTools, capabilityName } from "@/lib/leanMode";
 import { TOOL_PERMISSION, PERMISSION_GROUPS } from "@/lib/toolPermissions";
+import { STUDIO_TOOLS, VISUAL_ONLY_TOOLS } from "@/lib/studioTools";
 
 export type ToolGateCode =
   | "available"
   | "off_permission"
   | "off_lean_mode"
+  | "off_studio"
+  | "off_voice"
   | "off_foundry_optin"
   | "off_foundry_unavailable"
   | "off_program_optin"
@@ -57,7 +60,7 @@ export interface ToolGate {
   reason: string;
   /** The exact control that lifts it, in the user's words. */
   fix: string;
-  fixTarget: "settings_permissions" | "settings_foundry" | "settings_programs" | "settings_lean" | "settings_model" | "none";
+  fixTarget: "settings_permissions" | "settings_foundry" | "settings_programs" | "settings_lean" | "settings_model" | "settings_studio" | "none";
 }
 
 export interface ToolGateInput {
@@ -78,6 +81,11 @@ export interface ToolGateInput {
   providerSupportsTools: boolean;
   /** true when this turn carries images AND the model disables tools on image turns. */
   imageTurnDisablesTools: boolean;
+  /** Whether the production-studio pack rides this turn (studioTools.ts).
+   *  Omitted = on, so callers that predate the pack see no change. */
+  studioActive?: boolean;
+  /** Voice turn: visual-only tools have nothing to show a listener. */
+  voiceMode?: boolean;
 }
 
 /** The two Tool Foundry tools. Opt-in with INVERTED semantics (an explicit
@@ -312,6 +320,24 @@ const RULES: GateRule[] = [
     groupFix: "Choose “Full” under Spending in Settings → AI Models & Keys.",
   },
   {
+    code: "off_studio",
+    fixTarget: "settings_studio",
+    applies: (tool, input) => input.studioActive === false && STUDIO_TOOLS.has(tool),
+    reason: (tool) => `${upperFirst(capabilityName(tool))} is part of the studio tools, which join a chat once it turns to video, 3D or blueprint work.`,
+    fix: () => "Ask for studio work (a video, a 3D model, a blueprint) and they join from that message, or set Studio tools to “Always” in Settings → AI Models & Keys.",
+    groupReason: "The studio tools (video, 3D, masters, blueprints, stage plans) join a chat once it turns to that kind of work, which keeps everyday messages smaller.",
+    groupFix: "Ask for studio work and they join from that message, or set Studio tools to “Always” in Settings → AI Models & Keys.",
+  },
+  {
+    code: "off_voice",
+    fixTarget: "none",
+    applies: (tool, input) => input.voiceMode === true && VISUAL_ONLY_TOOLS.has(tool),
+    reason: (tool) => `${upperFirst(capabilityName(tool))} draws something on screen, so it stays out of voice replies.`,
+    fix: () => "Switch to typed chat to get tables, documents and sheets.",
+    groupReason: "Tools that draw on screen stay out of voice replies.",
+    groupFix: "Switch to typed chat to get tables, documents and sheets.",
+  },
+  {
     code: "off_permission",
     fixTarget: "settings_permissions",
     applies: (tool, input) => {
@@ -383,6 +409,8 @@ const MODEL_FACT: Record<ToolGateCode, string> = {
   available: "This tool is in your list for this turn.",
   off_permission: "The user has switched this tool off in their AI permissions.",
   off_lean_mode: "The user has Lean Mode on, which keeps the paid generators out of your list.",
+  off_studio: "The studio tools join the list once the conversation turns to video, 3D or blueprint work; they are not in your list this turn.",
+  off_voice: "This is a voice reply, so tools that only draw on screen are not in your list.",
   off_foundry_optin: "The user has the Tool Foundry switch off, so the foundry tools are not in your list.",
   off_foundry_unavailable: "The Tool Foundry's one-time database setup has not run on this account yet.",
   off_program_optin: "The user has the Program Foundry switch off, so the program tools are not in your list.",
@@ -454,6 +482,7 @@ export function allGateCopy(): string[] {
     FORGE_TOOL, RUN_TOOL, "generate_video", "generate_image", "web_search",
     "delete_chapter", "rename_book", "supersede_memory_entry", "some_new_tool",
     FORGE_PROGRAM, RUN_PROGRAM, PROGRAM_SURVEY_TOOL, "read_program", "delete_program",
+    "create_blueprint_sheet", "render_blocks",
   ];
   // Two permission states, because off_permission now has two branches: the
   // tool's own switch, and a DEPENDS_ON switch its executor also requires.
@@ -469,6 +498,7 @@ export function allGateCopy(): string[] {
       forgeOptIn: false, runOptIn: false, foundryReady: false,
       forgeProgramOptIn: false, runProgramOptIn: false, programReady: false,
       providerSupportsTools: false, imageTurnDisablesTools: false,
+      studioActive: false, voiceMode: true,
     } as unknown as ToolGateInput;
     for (const rule of RULES) {
       out.push(rule.groupReason, rule.groupFix);

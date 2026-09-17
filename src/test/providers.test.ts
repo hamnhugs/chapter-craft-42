@@ -449,3 +449,47 @@ describe("toolChoice pass-through (the forced answer round's wire)", () => {
     }
   });
 });
+
+describe("explicit cache breakpoints (prompt-cache layout)", () => {
+  const base = { model: "anthropic/claude-sonnet-5", apiKey: "k" } as const;
+  it("marks the stable head of a message whose per-turn context rides at its end", async () => {
+    const { withCacheBreakpoint } = await import("@/lib/providers/openrouterAdapter");
+    const out = withCacheBreakpoint({
+      ...base,
+      messages: [
+        { role: "system", content: "stable" },
+        { role: "user", content: "question\n\nCONTEXT" },
+      ],
+      cacheBreakpoints: [{ index: 0 }, { index: 1, tailChars: "\n\nCONTEXT".length }],
+    }) as any[];
+    expect(out[0].content).toEqual([{ type: "text", text: "stable", cache_control: { type: "ephemeral" } }]);
+    expect(out[1].content).toEqual([
+      { type: "text", text: "question", cache_control: { type: "ephemeral" } },
+      { type: "text", text: "\n\nCONTEXT" },
+    ]);
+  });
+
+  it("honors at most four breakpoints and ignores non-Anthropic models", async () => {
+    const { withCacheBreakpoint } = await import("@/lib/providers/openrouterAdapter");
+    const messages = Array.from({ length: 6 }, (_, i) => ({ role: "user", content: `m${i}` }));
+    const bps = messages.map((_, i) => ({ index: i }));
+    const out = withCacheBreakpoint({ ...base, messages, cacheBreakpoints: bps }) as any[];
+    expect(out.filter((m) => Array.isArray(m.content)).length).toBe(4);
+    const other = { model: "openai/gpt-5-mini", apiKey: "k", messages, cacheBreakpoints: bps };
+    expect(withCacheBreakpoint(other)).toBe(messages);
+  });
+});
+
+describe("usage normalization", () => {
+  it("reads OpenRouter, DeepSeek and Anthropic-shaped usage", async () => {
+    const { normalizeUsage, addUsage } = await import("@/lib/providers/sse");
+    expect(normalizeUsage({
+      prompt_tokens: 1000, completion_tokens: 50, cost: 0.002,
+      prompt_tokens_details: { cached_tokens: 800, cache_write_tokens: 0 },
+      completion_tokens_details: { reasoning_tokens: 10 },
+    })).toEqual({ inputTokens: 1000, outputTokens: 50, cachedTokens: 800, cacheWriteTokens: 0, reasoningTokens: 10, costUsd: 0.002 });
+    expect(normalizeUsage({ prompt_tokens: 10, prompt_cache_hit_tokens: 7 })?.cachedTokens).toBe(7);
+    expect(normalizeUsage({})).toBeNull();
+    expect(addUsage({ inputTokens: 1 }, { inputTokens: 2, costUsd: 0.1 })).toEqual({ inputTokens: 3, costUsd: 0.1 });
+  });
+});

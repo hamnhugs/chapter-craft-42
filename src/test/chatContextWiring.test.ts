@@ -274,7 +274,7 @@ describe("a recovered call the app will not run", () => {
     // The uncapped-arguments finding closes here too: recovered args were
     // bounded only by MAX_PAYLOAD x MAX_CALLS (100_000 x 8) while a real tool
     // result is clipped to 24000 before it is ever sent.
-    const noteAt = CTX.indexOf('workingMessages.push({ role: "system", content: TEXT_CALL_NOTE });');
+    const noteAt = CTX.indexOf('workingMessages.push({ role: "user", content: TEXT_CALL_NOTE });');
     expect(noteAt).toBeGreaterThan(-1);
     // Zero interpolation in the constant: no template literal, no concatenation
     // with anything the reply, the tool name or the arguments could reach.
@@ -313,12 +313,12 @@ describe("a recovered call the app will not run", () => {
     }
   });
 
-  it("is delivered as a system note, never as a result for a call nobody made", () => {
+  it("is delivered as an app note in a user-role message, never as a result for a call nobody made", () => {
     // A tool result ANSWERS a call. The whole point is that no call was made,
     // and inventing a tool_call_id to hang one on is what put fabricated bytes
     // in the transcript.
-    expect(CTX).toContain('workingMessages.push({ role: "system", content: TEXT_CALL_NOTE });');
-    const noteAt = CTX.indexOf('role: "system", content: TEXT_CALL_NOTE');
+    expect(CTX).toContain('workingMessages.push({ role: "user", content: TEXT_CALL_NOTE });');
+    const noteAt = CTX.indexOf('role: "user", content: TEXT_CALL_NOTE');
     // After the tool-result loop: a system message wedged between an assistant
     // tool_calls message and the results answering it is a malformed request.
     expect(noteAt).toBeGreaterThan(CTX.indexOf("turnToolResultText.push(visible || toolResultText)"));
@@ -505,7 +505,9 @@ describe("book context block: built from the frozen roster, first on the wire, h
   });
 
   it("rides FIRST in workingMessages — ahead of the query-varying main prompt", () => {
-    const wmAt = CTX.indexOf("const workingMessages: any[] = [");
+    // The leading system block (book, instructions, focus, summary) is what
+    // the wire starts with; history follows it.
+    const wmAt = CTX.indexOf("const leadingSystem: any[] = [");
     const wm = CTX.slice(wmAt, CTX.indexOf("];", wmAt));
     const bookIdx = wm.indexOf("bookBlock?.message");
     const sysIdx = wm.indexOf("content: systemPrompt");

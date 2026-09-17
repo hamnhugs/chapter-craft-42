@@ -46,6 +46,7 @@ import { useDownloadableTtsId, downloadTtsAudio } from "@/lib/ttsAudioCache";
 import { fileToDownscaledDataUrl, isAcceptedImage, uploadChatImage, registerUploadedImage, removeUploadedChatImage, type PendingChatImage } from "@/lib/imageUpload";
 import { extractMentions, resolveMentions, buildMentionNote, findActiveMention, mentionTokenEnd, getCachedMasters, refreshMastersCache, type ActiveMention } from "@/lib/mentions";
 import type { MasterAssetRow } from "@/lib/masterAssets";
+import { formatUsage } from "@/lib/chatHistory";
 
 
 const VOICE_QUICK_SEARCH_KEY = "voice_quick_search";
@@ -1159,6 +1160,9 @@ const ChatPanel: React.FC = () => {
                   {msg.viaModel && (
                     <div className="text-[10px] text-on-surface-variant/60 mb-1.5 font-medium tracking-wide">
                       via {describeModel(msg.viaModel)}
+                      {msg.usage && formatUsage(msg.usage) && (
+                        <span title="Tokens this reply used across all its requests, as reported by the provider"> · {formatUsage(msg.usage)}</span>
+                      )}
                     </div>
                   )}
                   {msg.reasoning && (

@@ -12,6 +12,8 @@ const DEFAULT_DEEP_RESEARCH_MODEL = "google/gemini-2.5-pro";
 const DEFAULT_TTS_RATE = 1.05;
 const DEFAULT_HANDS_FREE_TTS_RATE = 1.0;
 
+export type StudioToolsMode = import("@/lib/studioTools").StudioToolsMode;
+
 interface ChatSettings {
   apiKey: string;
   /** Last 4 chars of the saved NVIDIA key — the ONLY part the client ever
@@ -73,6 +75,15 @@ interface ChatSettings {
   visionModel: string;
   /** Vision model that describes figures extracted from uploaded documents. "" = built-in default. */
   imageExtractionModel: string;
+  /** Model for background text jobs (the rolling conversation summary; gists
+   *  and book summaries when set). "" = automatic: a cheap model on the chat
+   *  model's own provider (see resolveUtilityModel). */
+  utilityModel: string;
+  /** Production-studio tools (video, 3D, masters, blueprints, stage plans,
+   *  scenes, production ledger) — about 10k tokens on every request.
+   *  "auto" = offered once a conversation turns to studio work, "always",
+   *  or "off". */
+  studioTools: StudioToolsMode;
   imageModelPrimary: string;
   imageModelFallback: string;
   imageQuality: string;
@@ -133,6 +144,8 @@ const defaults: ChatSettings = {
   autoCatalogOnUpload: false,
   visionModel: "",
   imageExtractionModel: "",
+  utilityModel: "",
+  studioTools: "auto",
   imageModelPrimary: "",
   imageModelFallback: "",
   imageQuality: "",
@@ -277,6 +290,8 @@ function rowToSettings(data: any): ChatSettings {
     autoCatalogOnUpload: data.auto_catalog_on_upload === true,
     visionModel: data.vision_model || "",
     imageExtractionModel: data.image_extraction_model || "",
+    utilityModel: data.utility_model || "",
+    studioTools: (["auto", "always", "off"] as const).includes(data.studio_tools) ? data.studio_tools : "auto",
     imageModelPrimary: data.image_model_primary || "",
     imageModelFallback: data.image_model_fallback || "",
     imageQuality: data.image_quality || "",
@@ -396,6 +411,8 @@ const SETTING_LABEL: Partial<Record<keyof ChatSettings, string>> = {
   selectedModel: "the chat model",
   deepResearchModel: "the Deep Research model",
   visionModel: "the vision model",
+  utilityModel: "the background model",
+  studioTools: "the studio tools setting",
   voiceModel: "the voice model",
   wikiModel: "the neuron model",
   customSystemPrompt: "your custom instructions",
@@ -460,6 +477,8 @@ function persistSettings(userId: string, next: ChatSettings, changed?: Array<key
       auto_catalog_on_upload: next.autoCatalogOnUpload,
       vision_model: next.visionModel || null,
       image_extraction_model: next.imageExtractionModel || null,
+      utility_model: next.utilityModel || null,
+      studio_tools: next.studioTools,
       image_model_primary: next.imageModelPrimary || null,
       image_model_fallback: next.imageModelFallback || null,
       image_quality: next.imageQuality || null,
@@ -493,7 +512,7 @@ function persistSettings(userId: string, next: ChatSettings, changed?: Array<key
     // column and retry so one new column never breaks every settings save.
     // PostgREST reports ONE missing column per attempt (alphabetically
     // first), so keep retrying until no optional column is named.
-    const optionalColumns = ["access_all_neurons", "max_reply_sentences", "auto_show_memory_images", "auto_approve_tool_updates", "auto_catalog_on_upload", "image_extraction_model",
+    const optionalColumns = ["access_all_neurons", "max_reply_sentences", "auto_show_memory_images", "auto_approve_tool_updates", "auto_catalog_on_upload", "image_extraction_model", "utility_model", "studio_tools",
       "video_model_primary", "saved_video_models", "video_default_duration", "video_default_resolution",
       "video_default_aspect", "video_generate_audio", "video_confirm_threshold",
       "video_identity_scale", "video_qc_enabled", "video_motion_model",
@@ -745,6 +764,8 @@ export function useChatSettings() {
     setAutoCatalogOnUpload: (v: boolean) => update({ autoCatalogOnUpload: v }),
     setVisionModel: (m: string) => update({ visionModel: m }),
     setImageExtractionModel: (m: string) => update({ imageExtractionModel: m }),
+    setUtilityModel: (m: string) => update({ utilityModel: m.trim() }),
+    setStudioTools: (v: StudioToolsMode) => update({ studioTools: v }),
     setImageModelPrimary: (m: string) => update({ imageModelPrimary: m }),
     setImageModelFallback: (m: string) => update({ imageModelFallback: m }),
     setImageQuality: (q: string) => update({ imageQuality: q }),
