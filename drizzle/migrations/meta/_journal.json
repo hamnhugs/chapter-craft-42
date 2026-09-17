@@ -8,6 +8,13 @@
       "when": 1789613590714,
       "tag": "0000_book_source_youtube",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789636513786,
+      "tag": "0001_memory_rpc_ownership",
+      "breakpoints": true
     }
   ]
 }

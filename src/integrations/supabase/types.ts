@@ -2968,6 +2968,16 @@ export type Database = {
       }
       delete_entries_bulk: { Args: { entry_ids: string[] }; Returns: number }
       delete_program_schedule: { Args: { p_program_id: string }; Returns: Json }
+      dequeue_consolidation_batch: {
+        Args: { p_batch_size?: number; p_user_id: string }
+        Returns: {
+          entry_id: string
+          id: string
+          pending_data: Json
+          priority: number
+          reason: string
+        }[]
+      }
       disable_program: { Args: { p_name: string }; Returns: Json }
       entries_due_for_review: {
         Args: { _limit?: number; _wiki_id?: string }
@@ -3226,6 +3236,15 @@ export type Database = {
         Args: { _target_mean?: number; _user_id: string; _wiki_id?: string }
         Returns: number
       }
+      rerank_vibrancy: {
+        Args: {
+          p_ceil?: number
+          p_decay?: number
+          p_floor?: number
+          p_user_id: string
+        }
+        Returns: number
+      }
       scan_cleanup_flags: {
         Args: { target_wiki_id?: string }
         Returns: {
@@ -3274,6 +3293,10 @@ export type Database = {
       }
       sweep_orphan_cron_runs: { Args: never; Returns: number }
       tool_fingerprint: { Args: { p_tool_id: string }; Returns: string }
+      touch_node_retrievals: {
+        Args: { boost?: number; node_ids: string[] }
+        Returns: undefined
+      }
     }
     Enums: {
       app_role: "admin" | "user"
