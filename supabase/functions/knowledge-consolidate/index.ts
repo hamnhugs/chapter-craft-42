@@ -35,7 +35,8 @@ import { resolveWikiLlm } from "../_shared/wiki-llm.ts";
 import {
   checkRecordingMode,
   markProcessed,
-  enqueueEntry,
+  enqueueEntries,
+  selectAllPages,
   rankAnchorCandidates,
   ACT_R_DECAY,
   VIBRANCY_FLOOR,
@@ -359,40 +360,65 @@ async function reconsolidate(
 
 // ── Phase 3: Pruning (orphan detection) ────────────────────────────────────────
 
-async function prune(supabase: any, userId: string, wikiId: string | null): Promise<{ orphans: string[] }> {
+async function prune(supabase: any, userId: string, wikiId: string | null): Promise<{ orphans: string[]; enqueued?: number }> {
   // Nodes with zero edges in either direction (scoped to wiki when provided).
-  let edgesQuery = supabase
-    .from("memory_graph")
-    .select("source_entry_id, target_entry_id")
-    .eq("user_id", userId);
-  const { data: allEdges } = wikiId
-    ? await supabase.rpc("memory_graph_for_wiki", { target_wiki_id: wikiId })
-    : await edgesQuery;
+  // Both reads are paged: PostgREST silently truncates at max-rows (1000), and
+  // an edge list cut at 1000 turned every node past the cut into a false orphan.
+  const { rows: allEdges, error: edgeErr } = await selectAllPages<{ source_entry_id: string; target_entry_id: string }>(() =>
+    wikiId
+      ? supabase
+          .rpc("memory_graph_for_wiki", { target_wiki_id: wikiId })
+          .select("id, source_entry_id, target_entry_id")
+          .order("id", { ascending: true })
+      : supabase
+          .from("memory_graph")
+          .select("id, source_entry_id, target_entry_id")
+          .eq("user_id", userId)
+          .order("id", { ascending: true })
+  );
+  // A partial edge list would mislabel connected nodes — better to skip.
+  if (edgeErr) {
+    console.warn("prune: edge read failed, skipping orphan detection:", edgeErr.message);
+    return { orphans: [] };
+  }
 
   const connected = new Set<string>();
-  for (const e of (allEdges || []) as any[]) {
+  for (const e of allEdges) {
     connected.add(e.source_entry_id);
     connected.add(e.target_entry_id);
   }
 
-  let entriesQuery = supabase
-    .from("knowledge_entries")
-    .select("id, title")
-    .eq("user_id", userId);
-  if (wikiId) entriesQuery = entriesQuery.eq("wiki_id", wikiId);
-  const { data: allEntries } = await entriesQuery;
+  // Living entries only — a superseded card's edges were moved to its
+  // successor, so it is "orphaned" by design and must not be re-linked.
+  const entryQuery = (liveOnly: boolean) => () => {
+    let q = supabase
+      .from("knowledge_entries")
+      .select("id")
+      .eq("user_id", userId);
+    if (liveOnly) q = q.is("superseded_by", null);
+    if (wikiId) q = q.eq("wiki_id", wikiId);
+    return q.order("id", { ascending: true });
+  };
+  let { rows: allEntries, error: entryErr } = await selectAllPages<{ id: string }>(entryQuery(true));
+  if (entryErr && (entryErr as any).code === "42703") {
+    ({ rows: allEntries, error: entryErr } = await selectAllPages<{ id: string }>(entryQuery(false)));
+  }
+  if (entryErr) {
+    console.warn("prune: entry read failed:", entryErr.message);
+    return { orphans: [] };
+  }
 
   const orphanIds: string[] = [];
-  for (const entry of (allEntries || []) as any[]) {
+  for (const entry of allEntries) {
     if (!connected.has(entry.id)) orphanIds.push(entry.id);
   }
 
-  // Enqueue orphans (won't overwrite if already queued).
-  for (const id of orphanIds) {
-    await enqueueEntry(supabase, userId, id, "orphan");
-  }
+  // One set-based RPC call for all orphans (was one HTTP upsert per orphan,
+  // each failing against the partial unique index). Already-queued rows are
+  // left alone; long-processed ones are re-armed — see enqueueEntries.
+  const enqueued = await enqueueEntries(supabase, userId, orphanIds, "orphan");
 
-  return { orphans: orphanIds };
+  return { orphans: orphanIds, enqueued };
 }
 
 // ── Phase 4: Semanticize (episodic → semantic consolidation) ──────────────────

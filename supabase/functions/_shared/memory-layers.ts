@@ -166,22 +166,99 @@ export async function logEpisode(
 
 // ── Consolidation queue helpers ────────────────────────────────────────────────
 
-/** Enqueue an existing entry for Sleep Cycle processing. */
+/** PostgREST / Postgres codes meaning "this RPC isn't deployed yet". */
+export function isMissingRpc(error: unknown): boolean {
+  const code = (error as any)?.code;
+  return code === "PGRST202" || code === "42883";
+}
+
+/**
+ * Enqueue existing entries for Sleep Cycle processing — ONE round trip for
+ * any number of ids. Returns how many rows were inserted/re-armed, or -1 on
+ * failure (logged, never thrown: enqueueing is advisory).
+ *
+ * Why an RPC: the queue's uniqueness is a PARTIAL index
+ * (… WHERE entry_id IS NOT NULL), and PostgREST's upsert can't emit the
+ * predicate Postgres needs to match it, so the old `.upsert(onConflict:
+ * "user_id,entry_id,reason")` failed with 42P10 on every call — silently.
+ * enqueue_consolidation_entries (migration 20260917130400) does
+ * INSERT … ON CONFLICT (cols) WHERE entry_id IS NOT NULL. Before that
+ * migration: plain inserts, where a duplicate (23505) just means "already
+ * queued".
+ */
+export async function enqueueEntries(
+  supabase: any,
+  userId: string,
+  entryIds: string[],
+  reason: QueueReason,
+): Promise<number> {
+  const ids = [...new Set(entryIds.filter(Boolean))];
+  if (ids.length === 0) return 0;
+  const { data, error } = await supabase.rpc("enqueue_consolidation_entries", {
+    p_entry_ids: ids,
+    p_reason:    reason,
+    p_priority:  QUEUE_PRIORITY[reason],
+  });
+  if (!error) return typeof data === "number" ? data : 0;
+  if (!isMissingRpc(error)) {
+    console.error("enqueue_consolidation_entries failed:", error.message);
+    return -1;
+  }
+  let inserted = 0;
+  for (let i = 0; i < ids.length; i += 200) {
+    const { error: insErr } = await supabase.from("consolidation_queue").insert(
+      ids.slice(i, i + 200).map((entryId) => ({
+        user_id: userId, entry_id: entryId, reason, priority: QUEUE_PRIORITY[reason],
+      })),
+    );
+    if (!insErr) { inserted += Math.min(200, ids.length - i); continue; }
+    if ((insErr as any).code !== "23505") {
+      console.error("consolidation_queue insert failed:", insErr.message);
+      return -1;
+    }
+    // A duplicate aborts the whole multi-row insert — retry this chunk row by row.
+    for (const entryId of ids.slice(i, i + 200)) {
+      const { error: oneErr } = await supabase.from("consolidation_queue").insert({
+        user_id: userId, entry_id: entryId, reason, priority: QUEUE_PRIORITY[reason],
+      });
+      if (!oneErr) inserted++;
+    }
+  }
+  return inserted;
+}
+
+/** Enqueue one existing entry for Sleep Cycle processing. */
 export async function enqueueEntry(
   supabase: any,
   userId: string,
   entryId: string,
   reason: QueueReason,
 ): Promise<void> {
-  await supabase.from("consolidation_queue").upsert(
-    {
-      user_id:  userId,
-      entry_id: entryId,
-      reason,
-      priority: QUEUE_PRIORITY[reason],
-    },
-    { onConflict: "user_id,entry_id,reason" },
-  );
+  await enqueueEntries(supabase, userId, [entryId], reason);
+}
+
+/**
+ * Read every row of a PostgREST query, page by page. PostgREST caps responses
+ * at the project's max-rows (1000 by default) WITHOUT an error, so a plain
+ * select on a big table silently returns the first 1000 rows — e.g. orphan
+ * detection that only sees 1000 edges flags connected nodes as orphans.
+ * `build` must return a fresh, deterministically ordered query each call.
+ */
+export async function selectAllPages<T = any>(
+  build: () => any,
+  opts: { pageSize?: number; maxRows?: number } = {},
+): Promise<{ rows: T[]; error: any | null }> {
+  const pageSize = opts.pageSize ?? 1000;
+  const maxRows = opts.maxRows ?? 50_000;
+  const rows: T[] = [];
+  for (let from = 0; from < maxRows; from += pageSize) {
+    const { data, error } = await build().range(from, from + pageSize - 1);
+    if (error) return { rows, error };
+    const page = (data || []) as T[];
+    rows.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return { rows, error: null };
 }
 
 /** Enqueue a not-yet-inserted entry (conflict_staged) with its full data. */

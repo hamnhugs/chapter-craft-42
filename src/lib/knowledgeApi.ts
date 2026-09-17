@@ -64,7 +64,7 @@ export interface SleepCycleReport {
     embed?:      { embedded: number };
     rerank:      { updated: number; renormalized?: number };
     consolidate: { processed: number; edges_created: number; conflicts_inserted: number };
-    prune:       { orphans: string[] };
+    prune:       { orphans: string[]; enqueued?: number };
     semanticize?: { created: number };
   };
 }

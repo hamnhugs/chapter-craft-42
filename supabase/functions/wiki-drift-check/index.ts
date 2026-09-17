@@ -87,21 +87,17 @@ serve(async (req) => {
           const t1 = vectors.filter((_, i) => split.assignments[i] === 1).slice(0, 4).map((v) => v.title);
 
           const names = await proposeTwoNames(w.name, t0, t1);
-          await supabase.from("wiki_health_alerts").upsert({
-            user_id: user.id,
-            wiki_id: w.id,
-            kind: "split",
-            rationale: `"${w.name}" looks like two distinct themes (silhouette ${sil.toFixed(2)}).`,
-            suggestion: {
+          const ok = await writeAlert(supabase, user.id, w.id, "split",
+            `"${w.name}" looks like two distinct themes (silhouette ${sil.toFixed(2)}).`,
+            {
               silhouette: sil,
               name_a: names?.[0] ?? null,
               name_b: names?.[1] ?? null,
               titles_a: t0,
               titles_b: t1,
             },
-            status: "pending",
-          }, { onConflict: "user_id,wiki_id,kind", ignoreDuplicates: false });
-          alerts++;
+          );
+          if (ok) alerts++;
         }
       }
 
@@ -114,15 +110,11 @@ serve(async (req) => {
         if (drift >= RENAME_DRIFT_THRESHOLD) {
           const newName = await proposeRename(w.name, vectors.slice(0, 8).map((v) => v.title));
           if (newName && newName.toLowerCase() !== w.name.toLowerCase()) {
-            await supabase.from("wiki_health_alerts").upsert({
-              user_id: user.id,
-              wiki_id: w.id,
-              kind: "rename",
-              rationale: `Contents have drifted from the wiki's name (drift ${drift.toFixed(2)}).`,
-              suggestion: { current_name: w.name, proposed_name: newName, drift },
-              status: "pending",
-            }, { onConflict: "user_id,wiki_id,kind", ignoreDuplicates: false });
-            alerts++;
+            const ok = await writeAlert(supabase, user.id, w.id, "rename",
+              `Contents have drifted from the wiki's name (drift ${drift.toFixed(2)}).`,
+              { current_name: w.name, proposed_name: newName, drift },
+            );
+            if (ok) alerts++;
           }
         }
       }
@@ -136,6 +128,59 @@ serve(async (req) => {
 });
 
 // ── helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * One pending alert per (wiki, kind), refreshed in place on re-runs.
+ *
+ * The uniqueness is a PARTIAL index (… WHERE status = 'pending'), which
+ * PostgREST's upsert can't target — the old `.upsert(onConflict:
+ * "user_id,wiki_id,kind")` failed with 42P10 on every call and the error was
+ * ignored, so no drift alert was ever stored. upsert_wiki_health_alert
+ * (migration 20260917130400) does ON CONFLICT … WHERE status = 'pending'.
+ * Before that migration: update the pending row if there is one, else insert.
+ * Returns true when an alert row was written.
+ */
+async function writeAlert(
+  supabase: any,
+  userId: string,
+  wikiId: string,
+  kind: "split" | "rename",
+  rationale: string,
+  suggestion: Record<string, unknown>,
+): Promise<boolean> {
+  const { data, error } = await supabase.rpc("upsert_wiki_health_alert", {
+    p_wiki_id: wikiId, p_kind: kind, p_rationale: rationale, p_suggestion: suggestion,
+  });
+  if (!error) return !!data;
+  const code = (error as any).code;
+  if (code !== "PGRST202" && code !== "42883") {
+    console.error("upsert_wiki_health_alert failed:", error.message);
+    return false;
+  }
+  const { data: existing, error: selErr } = await supabase
+    .from("wiki_health_alerts")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("wiki_id", wikiId)
+    .eq("kind", kind)
+    .eq("status", "pending")
+    .limit(1);
+  if (selErr) {
+    console.error("wiki_health_alerts lookup failed:", selErr.message);
+    return false;
+  }
+  const row = (existing || [])[0] as { id: string } | undefined;
+  const { error: writeErr } = row
+    ? await supabase.from("wiki_health_alerts").update({ rationale, suggestion }).eq("id", row.id)
+    : await supabase.from("wiki_health_alerts").insert({
+      user_id: userId, wiki_id: wikiId, kind, rationale, suggestion, status: "pending",
+    });
+  if (writeErr) {
+    console.error("wiki_health_alerts write failed:", writeErr.message);
+    return false;
+  }
+  return true;
+}
 
 async function embed(text: string): Promise<number[] | null> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");

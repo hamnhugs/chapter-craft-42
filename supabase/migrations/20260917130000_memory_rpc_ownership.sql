@@ -27,7 +27,7 @@
 --   knowledge-retrieve    → touch_node_retrievals
 --
 -- Idempotent: CREATE OR REPLACE with identical signatures (grants survive, and
--- are re-issued explicitly anyway). NOTE: 20260917130400_vibrancy_idle_days
+-- are re-issued explicitly anyway). NOTE: 20260917130300_vibrancy_idle_days
 -- replaces rerank_vibrancy / touch_node_retrievals bodies again (formula fix)
 -- and keeps these guards.
 
