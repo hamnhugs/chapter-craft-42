@@ -40,7 +40,7 @@ import {
   MIN_EDGES_PER_CONSOLIDATION,
   QUEUE_PRIORITY,
 } from "../_shared/memory-layers.ts";
-import { embedOne } from "../_shared/embed.ts";
+import { embedOne, embedBatch, writeEntryEmbedding } from "../_shared/embed.ts";
 import { embedAndStore } from "../_shared/atomicity.ts";
 
 const corsHeaders = {
@@ -58,6 +58,42 @@ function json(body: unknown, status = 200) {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+// ── Phase 0: Embed missing vectors (safety net) ───────────────────────────────
+// Writes re-embed themselves via knowledgeApi.embedEntriesSoon, but that call
+// is fire-and-forget from the browser: a closed tab or an embedding outage
+// leaves rows with embedding IS NULL (as does every edit made before the
+// client shipped). Those rows are invisible to semantic retrieval and to
+// Phase 2's nearest-neighbour anchoring, so the Sleep Cycle sweeps a bounded
+// batch first.
+const EMBED_MISSING_CAP = 50;
+
+async function embedMissing(supabase: any, userId: string, wikiId: string | null): Promise<{ embedded: number }> {
+  try {
+    let q = supabase
+      .from("knowledge_entries")
+      .select("id, title, content")
+      .eq("user_id", userId)
+      .is("embedding", null)
+      .order("updated_at", { ascending: false })
+      .limit(EMBED_MISSING_CAP);
+    if (wikiId) q = q.eq("wiki_id", wikiId);
+    const { data: rows, error } = await q;
+    if (error || !rows || rows.length === 0) return { embedded: 0 };
+    const list = rows as Array<{ id: string; title: string; content: string | null }>;
+    const vectors = await embedBatch(list.map((r) => `${r.title}\n\n${r.content || ""}`));
+    let embedded = 0;
+    for (let i = 0; i < list.length; i++) {
+      const v = vectors[i];
+      if (!v) continue;
+      if (!(await writeEntryEmbedding(supabase, list[i].id, userId, v))) embedded++;
+    }
+    return { embedded };
+  } catch (e) {
+    console.warn("embedMissing skipped:", e);
+    return { embedded: 0 };
+  }
 }
 
 // ── Phase 1: Re-Ranking via ACT-R vibrancy ─────────────────────────────────────
@@ -441,6 +477,9 @@ serve(async (req) => {
 
     const t0 = Date.now();
 
+    // Phase 0 — recent writes get vectors before anything ranks/anchors on them.
+    const embedResult      = await embedMissing(supabase, user.id, wikiId);
+
     // Phase 1
     const rerankResult     = await rerank(supabase, user.id);
 
@@ -474,6 +513,7 @@ serve(async (req) => {
       ok: true,
       elapsed_ms,
       phases: {
+        embed:        embedResult,
         rerank:       { ...rerankResult, renormalized },
         consolidate:  consolidateResult,
         prune:        pruneResult,

@@ -1,6 +1,8 @@
 // Backfill or refresh embeddings for knowledge_entries.
 // Body (exactly one mode):
-//   { entry_ids: string[] }                     targeted (≤ MAX_TARGETED ids)
+//   { entry_ids: string[] }                     targeted (≤ MAX_TARGETED ids);
+//                                               also refreshes a missing
+//                                               embedding_v2 for those ids
 //   { all_missing: true, wiki_id?, force? }     rows with embedding IS NULL
 //                                               (force: every row, re-embed)
 //   { stale_model: true, wiki_id? }             rows whose vector was NOT made
@@ -13,6 +15,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { embedBatch, EMBEDDING_MODEL_ID, writeEntryEmbedding } from "../_shared/embed.ts";
+import { embedAndStore as embedV2AndStore } from "../_shared/wiki-embed.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -87,7 +90,31 @@ serve(async (req) => {
       }
     }
 
-    return json({ updated, failed, total: rows.length, model: EMBEDDING_MODEL_ID });
+    // Targeted calls come from embedEntriesSoon after a create/edit. The
+    // staleness trigger cleared embedding_v2 (the 1536-dim column behind
+    // search-knowledge, smart filing and wiki centroids) along with the 768
+    // vector, so refill it here for the same ids — otherwise an edited card
+    // silently drops out of cross-wiki search until a manual backfill.
+    // Best-effort; deliberately NOT chained to smart-file (that would re-route
+    // entries the user just placed).
+    let v2_updated = 0;
+    if (Array.isArray(entry_ids) && entry_ids.length > 0) {
+      try {
+        const { data: v2Rows } = await supabase
+          .from("knowledge_entries")
+          .select("id, title, content")
+          .eq("user_id", user.id)
+          .in("id", rows.map((r) => r.id))
+          .is("embedding_v2", null);
+        if (v2Rows && v2Rows.length > 0) {
+          v2_updated = await embedV2AndStore(supabase, Deno.env.get("LOVABLE_API_KEY") || "", v2Rows as any, user.id);
+        }
+      } catch (e) {
+        console.warn("knowledge-embed: embedding_v2 refresh skipped:", e);
+      }
+    }
+
+    return json({ updated, failed, total: rows.length, model: EMBEDDING_MODEL_ID, v2_updated });
   } catch (e) {
     console.error("knowledge-embed error:", e);
     return json({ error: e instanceof Error ? e.message : "Unknown error" }, 500);

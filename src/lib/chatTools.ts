@@ -130,7 +130,7 @@ import { fetchChains, touchChainUsed, emitChainsChanged, isChainsMigrationMissin
 import { sessionActiveWikiIds } from "@/lib/wikisApi";
 import {
   supersedeKnowledgeEntry, fetchEntryLineage, isMissingSupersessionSchema,
-  SUPERSESSION_MIGRATION_MESSAGE,
+  SUPERSESSION_MIGRATION_MESSAGE, embedEntriesSoon,
 } from "@/lib/knowledgeApi";
 import { MAX_ACTIVE_NEURONS, FREE_NEURON_LIMIT } from "@/lib/neuronAccess";
 import { OPEN_ACCESS } from "@/lib/openAccess";
@@ -2131,6 +2131,7 @@ async function ensureToolshedEntry(
   let { data, error } = await upsert("tool");
   if (error) ({ data, error } = await upsert("concept")); // pre-migration CHECK constraint fallback
   if (error) return null;
+  try { embedEntriesSoon((data as any) || entryId); } catch { /* best-effort re-embed */ }
   try { window.dispatchEvent(new Event("knowledge-entries-changed")); } catch { /* no-op */ }
   return (data as any) || entryId;
 }
@@ -4050,6 +4051,7 @@ export async function executeChatTool(
         const updateEntry = async (eid: string, patch: any) => {
           const { error } = await supabase.from("knowledge_entries").update(patch).eq("id", eid);
           if (error) throw error;
+          try { embedEntriesSoon([eid]); } catch { /* best-effort re-embed */ }
         };
         const fetchEntry = async (eid: string) => {
           const { data, error } = await supabase
@@ -7450,6 +7452,7 @@ export async function executeChatTool(
           });
           if (error) throw error;
           const newId = data as unknown as string;
+          try { embedEntriesSoon([newId]); } catch { /* best-effort embed */ }
           // Attach step (dual-mode): the entry EXISTS from here on, so every
           // failure path below must say what was and wasn't saved — a silent
           // partial success would re-mint exactly the unanchored book notes
@@ -7540,6 +7543,7 @@ export async function executeChatTool(
             });
             if (error) throw error;
             entryId = (data as unknown as string) || entryId;
+            try { embedEntriesSoon([entryId]); } catch { /* best-effort re-embed */ }
           }
           let locatorNote: Record<string, unknown> = {};
           // undefined = the card's prior locators could not be read, so how

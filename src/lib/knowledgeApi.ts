@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { createIdBatcher } from "@/lib/idBatcher";
 
 export interface KnowledgeEntry {
   id: string;
@@ -59,6 +60,8 @@ export interface SleepCycleReport {
   ok: boolean;
   elapsed_ms: number;
   phases: {
+    /** Phase 0 embed-missing sweep (absent from older deployments). */
+    embed?:      { embedded: number };
     rerank:      { updated: number; renormalized?: number };
     consolidate: { processed: number; edges_created: number; conflicts_inserted: number };
     prune:       { orphans: string[] };
@@ -200,6 +203,8 @@ export async function deleteKnowledgeEntry(id: string): Promise<void> {
 export async function updateKnowledgeEntry(id: string, updates: { title?: string; content?: string; tags?: string[]; confidence?: number }): Promise<void> {
   const { error } = await supabase.from("knowledge_entries").update(updates).eq("id", id);
   if (error) throw error;
+  // A text edit clears the stale vectors (embedding_staleness trigger) — re-embed.
+  if (updates.title !== undefined || updates.content !== undefined) embedEntriesSoon([id]);
 }
 
 export async function extractKnowledge(messages: { role: string; content: string }[], sourceBookId?: string, wikiId?: string | null): Promise<any> {
@@ -281,6 +286,55 @@ export async function retrieveKnowledge(
   opts: { depth?: number; match_count?: number; deep?: boolean; wiki_id?: string | null } = {},
 ): Promise<RetrievalResult> {
   return callEdge("knowledge-retrieve", { query, ...opts });
+}
+
+// ── Targeted embedding for freshly written entries ──────────────────────────
+// Only the media generators used to trigger embedding (a wiki-wide
+// all_missing sweep), so cards created or edited from chat, the quote-capture
+// dialog, the Toolshed mirror or a supersede had NO vector until someone
+// pressed "Rebuild search" — invisible to semantic retrieval. Every successful
+// entry write now calls embedEntriesSoon(ids): ids from a burst of writes are
+// debounced (~2s quiet, 6s max) and sent as ONE knowledge-embed { entry_ids }
+// call, fire-and-forget. Failures are swallowed on purpose: the row stays
+// embedding IS NULL and the next all_missing reindex / Sleep Cycle pass picks
+// it up, so a hiccup here never surfaces as a failed save.
+const EMBED_DEBOUNCE_MS = 2000;
+const EMBED_BATCH_MAX = 50; // knowledge-embed accepts ≤100 ids per call
+
+async function postEmbedBatch(ids: string[]): Promise<void> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) return; // signed out: nothing we could embed anyway
+    await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/knowledge-embed`, {
+      method: "POST",
+      // keepalive lets a flush triggered by pagehide finish after navigation.
+      keepalive: true,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ entry_ids: ids }),
+    });
+  } catch {
+    /* best-effort — see block comment */
+  }
+}
+
+const embedBatcher = createIdBatcher({
+  delayMs: EMBED_DEBOUNCE_MS,
+  maxWaitMs: EMBED_DEBOUNCE_MS * 3,
+  maxBatch: EMBED_BATCH_MAX,
+  onFlush: (ids) => { void postEmbedBatch(ids); },
+});
+
+if (typeof window !== "undefined") {
+  try { window.addEventListener("pagehide", () => embedBatcher.flush()); } catch { /* non-browser */ }
+}
+
+/** Queue entry ids for (re-)embedding after a successful create/edit. Never throws. */
+export function embedEntriesSoon(ids: Array<string | null | undefined> | string | null | undefined): void {
+  try {
+    embedBatcher.add(Array.isArray(ids) ? ids : [ids]);
+  } catch {
+    /* never let embedding bookkeeping break a save */
+  }
 }
 
 export async function reindexEmbeddings(
@@ -613,6 +667,8 @@ export async function supersedeKnowledgeEntry(
     _also_supersede: updates.alsoSupersede ?? null,
   } as any);
   if (error) throw error;
+  // The successor row is born without a vector.
+  embedEntriesSoon(data as unknown as string);
   return data as unknown as string;
 }
 
@@ -729,5 +785,6 @@ export async function createWikiPointerEntry(input: {
     .select()
     .single();
   if (error || !data) throw error || new Error("Failed to create pointer");
+  embedEntriesSoon((data as any).id);
   return data as unknown as KnowledgeEntry;
 }
