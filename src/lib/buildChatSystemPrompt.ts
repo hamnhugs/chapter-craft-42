@@ -993,8 +993,25 @@ export async function buildChatSystemPrompt({
   const retrievalQuery = retrievalQueryFor(latestUserQuery, previousAssistantText);
   if (retrievalQuery) {
     try {
-      let retrieval: { nodes: any[]; edges: any[] };
-      if (allNeurons || scopeIds.length <= 1) {
+      let retrieval: { nodes: any[]; edges: any[]; search?: string };
+      // Multi-neuron, current retrieval function: ONE call scopes and fuses
+      // every loaded neuron server-side (one embedding instead of N). The
+      // response names its scope; a function that predates `wiki_ids` returns
+      // no `scoped_wiki_ids`, and its unscoped result must not be used — that
+      // would silently widen retrieval past the loaded neurons.
+      const single = !allNeurons && scopeIds.length > 1
+        ? await retrieveKnowledge(retrievalQuery, { deep: deepResearch, wiki_ids: scopeIds }).catch(() => null)
+        : null;
+      if (single && Array.isArray(single.scoped_wiki_ids)) {
+        const nameById = new Map(activeNeurons.map((n) => [n.id, n.name]));
+        retrieval = {
+          ...single,
+          nodes: single.nodes.map((n: any) => {
+            const label = n.wiki_id ? nameById.get(n.wiki_id) : "";
+            return { ...n, fromNeurons: new Set(label ? [label] : []) };
+          }),
+        };
+      } else if (allNeurons || scopeIds.length <= 1) {
         retrieval = await retrieveKnowledge(retrievalQuery, {
           deep: deepResearch,
           // null = unscoped (all neurons); RLS still hides locked-neuron content.
@@ -1058,7 +1075,8 @@ export async function buildChatSystemPrompt({
       // Bitemporal supersession: the deployed retrieval functions predate the
       // upgrade and can still match retired (superseded) entries — drop them
       // here so only current truth reaches the model. No-op pre-migration.
-      try {
+      // The v2 search filters liveness in SQL, so its result skips the query.
+      if (retrieval.search !== "v2") try {
         const live = await filterSupersededNodes(retrieval.nodes);
         if (live.length !== retrieval.nodes.length) {
           const keep = new Set(live.map((n: any) => n.id));

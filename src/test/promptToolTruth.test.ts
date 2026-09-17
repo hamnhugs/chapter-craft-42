@@ -740,3 +740,20 @@ describe("per-turn context is split from the cacheable prompt", () => {
     expect(r.usedMemories).toEqual([]);
   });
 });
+
+describe("multi-neuron retrieval uses one scoped call when the function supports it", () => {
+  it("labels nodes by neuron from the single call's wiki_id", async () => {
+    retrievalPayload = {
+      nodes: [{ id: "e1", title: "Kelp forests", content: "Kelp.", score: 1, hop: 0, wiki_id: "n2" }],
+      edges: [],
+      scoped_wiki_ids: ["n1", "n2"],
+      search: "v2",
+    } as any;
+    const r = await build({
+      latestUserQuery: "tell me about kelp forests",
+      activeNeurons: [{ id: "n1", name: "Marine" }, { id: "n2", name: "Botany" }],
+      offeredTools: ALL_TOOLS,
+    });
+    expect(r.turnContext).toContain("neuron: Botany");
+  });
+});
