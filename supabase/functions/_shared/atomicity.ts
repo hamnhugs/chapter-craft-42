@@ -2,7 +2,7 @@
 // Splits compound entries, probes for contradictions against nearest existing nodes,
 // inserts entries, embeds them, creates contradicts/refutes/supports edges,
 // and logs conflicts to public.knowledge_conflicts.
-import { embedOne, EMBEDDING_MODEL_ID } from "./embed.ts";
+import { embedOne, writeEntryEmbedding } from "./embed.ts";
 
 const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
 const AI_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
@@ -218,10 +218,7 @@ export async function embedAndStore(
 ): Promise<number[] | null> {
   const vec = await embedOne(`${title}\n\n${content}`);
   if (!vec) return null;
-  await supabase
-    .from("knowledge_entries")
-    .update({ embedding: vec as any, embedding_model: EMBEDDING_MODEL_ID })
-    .eq("id", entry_id)
-    .eq("user_id", user_id);
+  const err = await writeEntryEmbedding(supabase, entry_id, user_id, vec);
+  if (err) console.error("embedAndStore: write failed:", err);
   return vec;
 }
