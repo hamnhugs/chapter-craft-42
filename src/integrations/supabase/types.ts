@@ -1060,6 +1060,7 @@ export type Database = {
           content: string
           created_at: string
           embedding: string | null
+          embedding_768_model: string | null
           embedding_model: string | null
           embedding_v2: unknown
           encoding_strength: number | null
@@ -1101,6 +1102,7 @@ export type Database = {
           content?: string
           created_at?: string
           embedding?: string | null
+          embedding_768_model?: string | null
           embedding_model?: string | null
           embedding_v2?: unknown
           encoding_strength?: number | null
@@ -1142,6 +1144,7 @@ export type Database = {
           content?: string
           created_at?: string
           embedding?: string | null
+          embedding_768_model?: string | null
           embedding_model?: string | null
           embedding_v2?: unknown
           encoding_strength?: number | null
@@ -2138,11 +2141,13 @@ export type Database = {
           splat_max_file_mb: number | null
           splat_model_primary: string | null
           splat_monthly_quota: number | null
+          studio_tools: string
           tavily_api_key: string | null
           trust_image_text: boolean
           tts_rate: number
           updated_at: string
           user_id: string
+          utility_model: string | null
           video_confirm_threshold: number | null
           video_default_aspect: string | null
           video_default_duration: number | null
@@ -2204,11 +2209,13 @@ export type Database = {
           splat_max_file_mb?: number | null
           splat_model_primary?: string | null
           splat_monthly_quota?: number | null
+          studio_tools?: string
           tavily_api_key?: string | null
           trust_image_text?: boolean
           tts_rate?: number
           updated_at?: string
           user_id: string
+          utility_model?: string | null
           video_confirm_threshold?: number | null
           video_default_aspect?: string | null
           video_default_duration?: number | null
@@ -2270,11 +2277,13 @@ export type Database = {
           splat_max_file_mb?: number | null
           splat_model_primary?: string | null
           splat_monthly_quota?: number | null
+          studio_tools?: string
           tavily_api_key?: string | null
           trust_image_text?: boolean
           tts_rate?: number
           updated_at?: string
           user_id?: string
+          utility_model?: string | null
           video_confirm_threshold?: number | null
           video_default_aspect?: string | null
           video_default_duration?: number | null
@@ -2480,6 +2489,8 @@ export type Database = {
           confident_threshold: number
           entry_count: number
           last_recomputed_at: string
+          name_embedding: unknown
+          name_embedding_source: string | null
           novelty_threshold: number
           user_id: string
           wiki_id: string
@@ -2489,6 +2500,8 @@ export type Database = {
           confident_threshold?: number
           entry_count?: number
           last_recomputed_at?: string
+          name_embedding?: unknown
+          name_embedding_source?: string | null
           novelty_threshold?: number
           user_id: string
           wiki_id: string
@@ -2498,6 +2511,8 @@ export type Database = {
           confident_threshold?: number
           entry_count?: number
           last_recomputed_at?: string
+          name_embedding?: unknown
+          name_embedding_source?: string | null
           novelty_threshold?: number
           user_id?: string
           wiki_id?: string
@@ -2968,7 +2983,26 @@ export type Database = {
       }
       delete_entries_bulk: { Args: { entry_ids: string[] }; Returns: number }
       delete_program_schedule: { Args: { p_program_id: string }; Returns: Json }
+      dequeue_consolidation_batch: {
+        Args: { p_batch_size?: number; p_user_id: string }
+        Returns: {
+          entry_id: string
+          id: string
+          pending_data: Json
+          priority: number
+          reason: string
+        }[]
+      }
       disable_program: { Args: { p_name: string }; Returns: Json }
+      enqueue_consolidation_entries: {
+        Args: {
+          p_entry_ids: string[]
+          p_priority?: number
+          p_reason: string
+          p_requeue_after?: string
+        }
+        Returns: number
+      }
       entries_due_for_review: {
         Args: { _limit?: number; _wiki_id?: string }
         Returns: {
@@ -2993,6 +3027,7 @@ export type Database = {
           content: string
           created_at: string
           embedding: string | null
+          embedding_768_model: string | null
           embedding_model: string | null
           embedding_v2: unknown
           encoding_strength: number | null
@@ -3057,6 +3092,16 @@ export type Database = {
           relationship: string
         }[]
       }
+      find_near_duplicates: {
+        Args: { p_entry_ids: string[]; p_threshold?: number }
+        Returns: {
+          duplicate_of: string
+          duplicate_title: string
+          entry_id: string
+          similarity: number
+          wiki_id: string
+        }[]
+      }
       get_neighbors: {
         Args: { classes?: string[]; depth?: number; seed_ids: string[] }
         Returns: {
@@ -3067,6 +3112,31 @@ export type Database = {
           title: string
           via_edge_class: string
           via_relationship: string
+        }[]
+      }
+      get_neighbors_v2: {
+        Args: {
+          classes?: string[]
+          content_chars?: number
+          depth?: number
+          filter_wiki_ids?: string[]
+          max_rows?: number
+          query_embedding?: string
+          seed_ids: string[]
+        }
+        Returns: {
+          confidence: number
+          content: string
+          entry_id: string
+          entry_type: string
+          from_seed: string
+          hop: number
+          similarity: number
+          title: string
+          via_edge_class: string
+          via_relationship: string
+          vibrancy: number
+          wiki_id: string
         }[]
       }
       has_role: {
@@ -3095,10 +3165,50 @@ export type Database = {
           title: string
         }[]
       }
+      hybrid_search_knowledge_v2: {
+        Args: {
+          active_embedding_model?: string
+          filter_wiki_ids?: string[]
+          full_text_weight?: number
+          match_count?: number
+          query_embedding?: string
+          query_text: string
+          rrf_k?: number
+          semantic_weight?: number
+        }
+        Returns: {
+          aliases: string[]
+          author: string
+          confidence: number
+          content: string
+          entry_type: string
+          ft_match: boolean
+          id: string
+          locators: Json
+          score: number
+          similarity: number
+          source_book_id: string
+          tags: string[]
+          title: string
+          vibrancy: number
+          wiki_id: string
+        }[]
+      }
       is_admin: { Args: never; Returns: boolean }
       mark_cron_tick: {
         Args: { p_note?: string; p_ok: boolean }
         Returns: undefined
+      }
+      match_entry_neighbors: {
+        Args: { p_count?: number; p_entry_id: string; p_wiki_id?: string }
+        Returns: {
+          content: string
+          entry_type: string
+          id: string
+          similarity: number
+          title: string
+          vibrancy: number
+        }[]
       }
       match_image_memories: {
         Args: {
@@ -3226,6 +3336,15 @@ export type Database = {
         Args: { _target_mean?: number; _user_id: string; _wiki_id?: string }
         Returns: number
       }
+      rerank_vibrancy: {
+        Args: {
+          p_ceil?: number
+          p_decay?: number
+          p_floor?: number
+          p_user_id: string
+        }
+        Returns: number
+      }
       scan_cleanup_flags: {
         Args: { target_wiki_id?: string }
         Returns: {
@@ -3274,6 +3393,19 @@ export type Database = {
       }
       sweep_orphan_cron_runs: { Args: never; Returns: number }
       tool_fingerprint: { Args: { p_tool_id: string }; Returns: string }
+      touch_node_retrievals: {
+        Args: { boost?: number; node_ids: string[] }
+        Returns: undefined
+      }
+      upsert_wiki_health_alert: {
+        Args: {
+          p_kind: string
+          p_rationale: string
+          p_suggestion?: Json
+          p_wiki_id: string
+        }
+        Returns: string
+      }
     }
     Enums: {
       app_role: "admin" | "user"
