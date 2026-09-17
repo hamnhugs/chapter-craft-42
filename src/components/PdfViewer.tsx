@@ -7,6 +7,7 @@ import { Chapter } from "@/types/library";
 import ChapterNameDialog from "@/components/ChapterNameDialog";
 import ChapterManageDialog from "@/components/ChapterManageDialog";
 import CaptureQuoteDialog from "@/components/CaptureQuoteDialog";
+import HighlightActions from "@/components/HighlightActions";
 import { toast } from "sonner";
 import ReadAlong from "@/components/ReadAlong";
 import YoutubeTranscriptBadge from "@/components/YoutubeTranscriptBadge";
@@ -26,6 +27,7 @@ import { usePageSwipe } from "@/hooks/usePageSwipe";
 import { useReaderFocus } from "@/hooks/useReaderFocus";
 import { loadLastPage, saveLastPage, useReaderPrefs } from "@/hooks/useReaderPrefs";
 import { useWakeLock } from "@/hooks/useWakeLock";
+import { useReaderHighlights, type HighlightHit } from "@/hooks/useReaderHighlights";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
@@ -42,14 +44,14 @@ const iconBtn =
   "grid place-items-center w-11 h-11 rounded-full transition-colors hover:bg-surface-container-high active:scale-95 disabled:opacity-30 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50";
 
 const PdfViewer: React.FC = () => {
-  const { getActiveBook, addChapter, updateChapter, removeChapter, updateBookTitle, activeBookId, loadBookFile } = useApp();
+  const { getActiveBook, addChapter, updateChapter, removeChapter, updateBookTitle, activeBookId, loadBookFile, loadChapterTextStrict, setActiveTab } = useApp();
   const book = getActiveBook();
   const isPdfBook = book?.fileName.toLowerCase().endsWith(".pdf") ?? false;
   const isHtmlBook = book?.fileName.toLowerCase().endsWith(".html") ?? false;
 
   const [numPages, setNumPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState(1);
-  const { zoom, setZoom, swipeEnabled, setSwipeEnabled } = useReaderPrefs();
+  const { zoom, setZoom, swipeEnabled, setSwipeEnabled, autoHighlight, setAutoHighlight } = useReaderPrefs();
   /** Width of the current page at scale 1, for fit-to-width. */
   const [pageWidth, setPageWidth] = useState(0);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -101,6 +103,40 @@ const PdfViewer: React.FC = () => {
     // a little headroom keeps accidental drags from flashing the affordance).
     setSelectionCapture(text.length >= 12 && containerRef.current?.contains(sel?.anchorNode ?? null) ? text : "");
   }, [captureOpen]);
+
+  // ── Highlights: saved marks with their own glow, made from selections ───
+  const [highlightHit, setHighlightHit] = useState<HighlightHit | null>(null);
+  /** "Save as card" from a highlight: the dialog anchors that quote instead of the live selection. */
+  const [cardSource, setCardSource] = useState<{ quote: string; page: number; chapterId: string | null } | null>(null);
+  const highlights = useReaderHighlights({
+    mode: isHtmlBook ? "html" : "pdf",
+    book: book ?? null,
+    page: currentPage,
+    pageHostRef,
+    iframeRef,
+    textVersion,
+    autoHighlight,
+    readAlongActive,
+    loadChapterTextStrict,
+    onTapHighlight: setHighlightHit,
+  });
+  const closeHighlightMenu = useCallback(() => setHighlightHit(null), []);
+  const askAboutHighlight = () => {
+    if (!highlightHit || !book) return;
+    const h = highlightHit.highlight;
+    const quote = h.quote.length > 1200 ? `${h.quote.slice(0, 1200)}…` : h.quote;
+    const source = `— highlighted in “${book.title || "Untitled"}”${h.page ? `, p. ${h.page}` : ""}`;
+    const text = `${quote.split("\n").map((line) => `> ${line}`).join("\n")}\n${source}\n\n`;
+    // The composer picks this up whether or not it's mounted right now.
+    try {
+      const draft = sessionStorage.getItem("counsel_draft") || "";
+      sessionStorage.setItem("counsel_draft", draft ? `${draft}\n\n${text}` : text);
+    } catch { /* storage unavailable: the live event below still works */ }
+    window.dispatchEvent(new CustomEvent("chat-composer-insert", { detail: { text } }));
+    setHighlightHit(null);
+    if (focused) exitFocus();
+    setActiveTab("chat");
+  };
 
   // Reset on book change, reopening where this book was left.
   useEffect(() => {
@@ -471,9 +507,9 @@ const PdfViewer: React.FC = () => {
           <span className="font-label text-sm font-semibold">Focus</span>
         </button>
 
-        {/* Zoom + reading options — PDF only */}
-        {!isHtmlBook && (
-          <div className="flex items-center shrink-0 gap-1">
+        {/* Zoom (PDF only) + reading options */}
+        <div className="flex items-center shrink-0 gap-1">
+          {!isHtmlBook && (
             <div className="flex items-center bg-surface-container-highest rounded-full">
               <button type="button" onClick={() => changeZoom(-0.2)} disabled={scale <= MIN_ZOOM} className="grid place-items-center w-10 h-10 rounded-full text-secondary hover:text-primary disabled:opacity-30" aria-label="Zoom out">
                 <span className="material-symbols-outlined">remove</span>
@@ -491,6 +527,7 @@ const PdfViewer: React.FC = () => {
                 <span className="material-symbols-outlined">add</span>
               </button>
             </div>
+          )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button type="button" className="grid place-items-center w-10 h-10 rounded-full text-on-surface-variant hover:text-primary hover:bg-surface-container-highest" aria-label="Reading options">
@@ -499,18 +536,33 @@ const PdfViewer: React.FC = () => {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-64">
                 <DropdownMenuLabel>Reading options</DropdownMenuLabel>
-                <DropdownMenuCheckboxItem checked={swipeEnabled} onCheckedChange={(v) => setSwipeEnabled(!!v)}>
-                  Swipe to turn pages
+                {!isHtmlBook && (
+                  <DropdownMenuCheckboxItem checked={swipeEnabled} onCheckedChange={(v) => setSwipeEnabled(!!v)}>
+                    Swipe to turn pages
+                  </DropdownMenuCheckboxItem>
+                )}
+                <DropdownMenuCheckboxItem checked={autoHighlight} onCheckedChange={(v) => setAutoHighlight(!!v)}>
+                  Highlight when I select text
                 </DropdownMenuCheckboxItem>
                 <DropdownMenuSeparator />
                 <div className="px-2 py-1.5 text-xs text-muted-foreground leading-relaxed">
-                  Swipe firmly across the page to turn it; scrolling, zoomed panning and selecting text never turn pages.
-                  <br />Keyboard: ← → turn pages · F focus mode
+                  Highlights glow gold on the page and chat can see them: ask about “my highlights”, or they come up when you ask about something you marked. Tap one to ask about it, save it as a card, or remove it.
+                  {highlights.total > 0 && (
+                    <><br />{isHtmlBook ? `${highlights.total} in this book` : `${highlights.pageCount} on this page · ${highlights.total} in this book`}</>
+                  )}
                 </div>
+                {!isHtmlBook && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <div className="px-2 py-1.5 text-xs text-muted-foreground leading-relaxed">
+                      Swipe firmly across the page to turn it; scrolling, zoomed panning and selecting text never turn pages.
+                      <br />Keyboard: ← → turn pages · F focus mode
+                    </div>
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
-          </div>
-        )}
+        </div>
 
         {/* Chapter Isolation — PDF only */}
         {!isHtmlBook && (
@@ -681,18 +733,48 @@ const PdfViewer: React.FC = () => {
         </div>
       )}
 
-      {/* Floating quote-capture affordance — PDF only, selection active.
-          Its own lane ABOVE the chapter chip and read-along dock. */}
-      {!isHtmlBook && !focused && selectionCapture && !captureOpen && (
-        <div className="fixed bottom-52 md:bottom-32 left-1/2 -translate-x-1/2 z-50">
-          <button
-            onClick={() => setCaptureOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-primary-container text-on-primary-container rounded-full shadow-xl font-bold text-sm active:scale-95 transition-all"
-          >
-            <span className="material-symbols-outlined text-base" style={{ fontVariationSettings: "'FILL' 1" }}>bookmark_add</span>
-            Save quote to neuron
-          </button>
+      {/* Floating selection affordances: Highlight (when highlighting isn't
+          automatic) and quote capture (PDF only). Their own lane ABOVE the
+          chapter chip and read-along dock. */}
+      {!captureOpen && ((!autoHighlight && highlights.pendingSelection) || (!isHtmlBook && !focused && selectionCapture)) && (
+        <div className={`fixed bottom-52 md:bottom-32 left-1/2 -translate-x-1/2 flex items-center gap-2 ${focused ? "z-[70]" : "z-50"}`}>
+          {!autoHighlight && highlights.pendingSelection && (
+            <button
+              onClick={() => { void highlights.commitSelection(); }}
+              className="flex items-center gap-2 px-4 py-2 bg-surface-container-high text-foreground rounded-full shadow-xl font-bold text-sm active:scale-95 transition-all border border-outline-variant/30"
+            >
+              <span className="material-symbols-outlined text-base text-primary" aria-hidden>ink_highlighter</span>
+              Highlight
+            </button>
+          )}
+          {!isHtmlBook && !focused && selectionCapture && (
+            <button
+              onClick={() => { setCardSource(null); setCaptureOpen(true); }}
+              className="flex items-center gap-2 px-4 py-2 bg-primary-container text-on-primary-container rounded-full shadow-xl font-bold text-sm active:scale-95 transition-all"
+            >
+              <span className="material-symbols-outlined text-base" style={{ fontVariationSettings: "'FILL' 1" }}>bookmark_add</span>
+              Save quote to neuron
+            </button>
+          )}
         </div>
+      )}
+
+      {highlightHit && (
+        <HighlightActions
+          hit={highlightHit}
+          onClose={closeHighlightMenu}
+          onAsk={askAboutHighlight}
+          onSaveCard={() => {
+            const h = highlightHit.highlight;
+            setCardSource({ quote: h.quote, page: h.page ?? currentPage, chapterId: h.chapter_id });
+            setHighlightHit(null);
+            setCaptureOpen(true);
+          }}
+          onRemove={() => {
+            void highlights.remove(highlightHit.highlight);
+            setHighlightHit(null);
+          }}
+        />
       )}
 
       {/* Current chapter — a compact chip so it doesn't cover the page */}
@@ -723,10 +805,11 @@ const PdfViewer: React.FC = () => {
       />
       <CaptureQuoteDialog
         open={captureOpen}
-        onClose={() => { setCaptureOpen(false); setSelectionCapture(""); }}
+        onClose={() => { setCaptureOpen(false); setSelectionCapture(""); setCardSource(null); }}
         book={book}
-        page={currentPage}
-        selectionText={selectionCapture}
+        page={cardSource?.page ?? currentPage}
+        selectionText={cardSource?.quote ?? selectionCapture}
+        chapterId={cardSource?.chapterId ?? null}
       />
     </div>
   );

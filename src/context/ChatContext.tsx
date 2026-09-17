@@ -41,6 +41,7 @@ import { describeModel, freeChatProviders, localModelId, modelProvider, provider
 import type { CacheBreakpoint, ProviderId, TokenUsage } from "@/lib/providers/types";
 import { addUsage } from "@/lib/providers/sse";
 import { studioToolsActive } from "@/lib/studioTools";
+import { highlightsForTurn } from "@/lib/highlights";
 import { TOOL_ROUNDS_PER_REPLY } from "@/lib/deepResearchPrompt";
 import { attachTurnContext, isModelVisibleMessage, resolveUtilityModel, toolTraceNote } from "@/lib/chatHistory";
 import { namespacedNvidiaId, nvidiaModelInfo, nvidiaNoThinkingBody, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
@@ -1171,6 +1172,15 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // A send the pre-flight gates below will refuse must not pay for the
       // prompt build (retrieval embedding + half a dozen queries) first.
       const preflightBlocked = isEmbeddingModel(model) || isBatchOnlyModel(model) || !providerConfigured(modelProvider(model), providerKeys);
+      // Reader highlights on topic (or asked about) — nothing on most turns.
+      const turnHighlights = preflightBlocked ? null : await highlightsForTurn({
+        query: trimmed,
+        books,
+        inPlayBookIds: [...new Set([
+          ...(focusId ? [focusId] : []),
+          ...selectContextBooks(books, bookContextStore.get(), activeBookId ?? null).map((b) => b.id),
+        ])],
+      });
       const { stablePrompt: systemPrompt, turnContext, usedMemories, memoryImages, inboundCards } = preflightBlocked
         ? { stablePrompt: "", turnContext: "", usedMemories: [] as UsedMemory[], memoryImages: [] as MemoryImageCandidate[], inboundCards: [] as string[] }
         : await buildChatSystemPrompt({
@@ -1195,6 +1205,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         programTools: programEnabled,
         offeredTools: [...offeredNames],
         previousAssistantText,
+        highlights: turnHighlights,
         // Same selection the book block is built from below; a book whose
         // block fails to hydrate still has `get_book` for its chapter ids.
         booksInContext: offeredNames.has("get_book")

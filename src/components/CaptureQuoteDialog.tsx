@@ -48,6 +48,8 @@ interface CaptureQuoteDialogProps {
   book: BookDocument | null;
   page: number;
   selectionText: string;
+  /** A highlight already matched to this chapter: anchor there, not by page. */
+  chapterId?: string | null;
 }
 
 type AnchorState =
@@ -55,7 +57,7 @@ type AnchorState =
   | { status: "anchored"; locator: CardLocator; chapterName: string }
   | { status: "unanchored"; reason: string };
 
-const CaptureQuoteDialog: React.FC<CaptureQuoteDialogProps> = ({ open, onClose, book, page, selectionText }) => {
+const CaptureQuoteDialog: React.FC<CaptureQuoteDialogProps> = ({ open, onClose, book, page, selectionText, chapterId }) => {
   const { activeWikiId, loadChapterTextStrict } = useApp();
   const [anchor, setAnchor] = useState<AnchorState>({ status: "working" });
   const [title, setTitle] = useState("");
@@ -75,13 +77,18 @@ const CaptureQuoteDialog: React.FC<CaptureQuoteDialogProps> = ({ open, onClose, 
         setAnchor({ status: "unanchored", reason: "No book is open." });
         return;
       }
+      const isHtml = book.fileName.toLowerCase().endsWith(".html");
       const candidates = book.chapters
         .map((chapter, index) => ({ chapter, index }))
-        .filter(({ chapter }) => page >= chapter.startPage && page <= chapter.endPage);
+        .filter(({ chapter }) => chapterId
+          ? chapter.id === chapterId
+          : !isHtml && page >= chapter.startPage && page <= chapter.endPage);
       if (candidates.length === 0) {
         setAnchor({
           status: "unanchored",
-          reason: `Page ${page} isn't part of any isolated chapter yet — isolate this chapter first, or save the note unanchored.`,
+          reason: isHtml
+            ? "This passage isn't matched to a chapter of this book — you can still save it as an unanchored note."
+            : `Page ${page} isn't part of any isolated chapter yet — isolate this chapter first, or save the note unanchored.`,
         });
         return;
       }
@@ -122,7 +129,7 @@ const CaptureQuoteDialog: React.FC<CaptureQuoteDialogProps> = ({ open, onClose, 
       }
     })();
     return () => { cancelled = true; };
-  }, [open, book?.id, page, selectionText]);
+  }, [open, book?.id, page, selectionText, chapterId]);
 
   const quotePreview = (normalizeSearchQuery(selectionText) || selectionText).slice(0, 200);
 

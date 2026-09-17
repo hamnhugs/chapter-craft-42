@@ -1200,3 +1200,41 @@ html.cc-media-overlay-open .message-bubble-user {
 /* HTML books: the pill floats over the iframe, so it stays translucent and
    the word's own text is recoloured (::highlight) to keep it legible. */
 .read-along-html.read-along-pill { background: color-mix(in oklab, var(--ra-fill) 16%, transparent); }
+
+/* ── Saved highlights (Read tab) ─────────────────────────────────────────
+   Their own hue (gold, or teal when the theme's primary is near gold — see
+   highlightHue), never the read-along colour. PDF pages get boxes under the
+   text layer with a soft glow; HTML books use ::highlight inside the iframe
+   (useReaderHighlights). Read-along's pill paints above these. */
+.user-hl-layer {
+  --uh-hue: 45;
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+.user-hl {
+  position: absolute;
+  border-radius: 3px;
+  mix-blend-mode: multiply;
+  background: hsl(var(--uh-hue) 100% 62% / 0.5);
+  box-shadow: 0 0 10px 2px hsl(var(--uh-hue) 100% 55% / 0.5);
+}
+.user-hl-fresh { animation: uh-bloom 900ms ease-out; }
+@keyframes uh-bloom {
+  0% { opacity: 0.2; box-shadow: 0 0 0 0 hsl(var(--uh-hue) 100% 55% / 0); }
+  45% { opacity: 1; box-shadow: 0 0 22px 7px hsl(var(--uh-hue) 100% 55% / 0.75); }
+  100% { box-shadow: 0 0 10px 2px hsl(var(--uh-hue) 100% 55% / 0.5); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .user-hl-fresh { animation: none; }
+}
+@media (forced-colors: active) {
+  .user-hl {
+    forced-color-adjust: none;
+    mix-blend-mode: normal;
+    background: transparent;
+    box-shadow: none;
+    outline: 2px solid Mark;
+  }
+}

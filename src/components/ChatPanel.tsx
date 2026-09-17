@@ -90,6 +90,16 @@ const ChatPanel: React.FC = () => {
   useEffect(() => {
     try { sessionStorage.setItem("counsel_draft", input); } catch { /* quota — drop */ }
   }, [input]);
+  // The reader's "Ask in chat" on a highlight appends the quote to the draft.
+  // (When this panel isn't mounted, the reader writes the stored draft instead.)
+  useEffect(() => {
+    const onInsert = (e: Event) => {
+      const text = (e as CustomEvent<{ text?: string }>).detail?.text;
+      if (text) setInput((prev) => (prev.trim() ? `${prev}\n\n${text}` : text));
+    };
+    window.addEventListener("chat-composer-insert", onInsert);
+    return () => window.removeEventListener("chat-composer-insert", onInsert);
+  }, []);
   // Pending image attachments for the next send (composer-local).
   const [pendingImages, setPendingImages] = useState<PendingChatImage[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);

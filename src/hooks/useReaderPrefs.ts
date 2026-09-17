@@ -10,6 +10,7 @@ export type ZoomSetting = "fit" | number;
 
 const ZOOM_KEY = "cc_reader_zoom";
 const SWIPE_KEY = "cc_reader_swipe";
+const AUTO_HIGHLIGHT_KEY = "cc_reader_auto_highlight";
 const pageKey = (bookId: string) => `cc_reader_page_${bookId}`;
 
 function read(key: string): string | null {
@@ -54,5 +55,11 @@ export function useReaderPrefs() {
     write(SWIPE_KEY, on ? "on" : "off");
   }, []);
 
-  return { zoom, setZoom, swipeEnabled, setSwipeEnabled };
+  const [autoHighlight, setAutoHighlightState] = useState(() => read(AUTO_HIGHLIGHT_KEY) !== "off");
+  const setAutoHighlight = useCallback((on: boolean) => {
+    setAutoHighlightState(on);
+    write(AUTO_HIGHLIGHT_KEY, on ? "on" : "off");
+  }, []);
+
+  return { zoom, setZoom, swipeEnabled, setSwipeEnabled, autoHighlight, setAutoHighlight };
 }

@@ -18,6 +18,12 @@ export interface TextMap {
   rangeFor(start: number, end: number): Range | null;
   /** Flattened offset of a DOM point, or -1 if it isn't in the map. */
   offsetOf(node: Node, offset: number): number;
+  /**
+   * Flattened offset of any boundary point — a selection's start or end,
+   * which may sit on an element or outside the mapped root. Points before the
+   * root clamp to 0, after it to text.length; -1 only if it can't be compared.
+   */
+  boundaryOffset(node: Node, offset: number): number;
 }
 
 /**
@@ -58,13 +64,16 @@ export function buildTextMap(root: Element): TextMap {
   });
 
   const segments: Segment[] = [];
+  const segmentByNode = new Map<Text, Segment>();
   let text = "";
   let prevBlock: Element | null = null;
   for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) {
     const block = containerBlock(n.parentElement);
     const value = n.nodeValue || "";
     if (text && block !== prevBlock && !/\s$/.test(text) && !/^\s/.test(value)) text += " ";
-    segments.push({ node: n, start: text.length });
+    const seg = { node: n, start: text.length };
+    segments.push(seg);
+    segmentByNode.set(n, seg);
     text += value;
     prevBlock = block;
   }
@@ -98,8 +107,28 @@ export function buildTextMap(root: Element): TextMap {
       }
     },
     offsetOf(node, offset) {
-      for (const s of segments) if (s.node === node) return s.start + offset;
-      return -1;
+      const s = segmentByNode.get(node as Text);
+      return s ? s.start + offset : -1;
+    },
+    boundaryOffset(node, offset) {
+      const own = segmentByNode.get(node as Text);
+      if (own) return own.start + Math.max(0, Math.min(offset, own.node.length));
+      if (!segments.length) return -1;
+      try {
+        const point = doc.createRange();
+        point.setStart(node, offset);
+        // The first mapped text node at or after the point.
+        let lo = 0;
+        let hi = segments.length;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (point.comparePoint(segments[mid].node, 0) >= 0) hi = mid;
+          else lo = mid + 1;
+        }
+        return lo < segments.length ? segments[lo].start : text.length;
+      } catch {
+        return -1;
+      }
     },
   };
 }
@@ -126,15 +155,29 @@ type HighlightWindow = Window & {
   CSS?: { highlights?: Map<string, unknown> };
 };
 
+/** Read-along paints above the user's saved highlights (higher priority wins
+ *  where the same property is set; ties go to whichever registered last). */
+export const READ_ALONG_HIGHLIGHT_PRIORITY = 10;
+
 /**
- * Paints `range` with a named CSS Custom Highlight (no DOM mutation), or
- * clears it when `range` is null. `declarations` style `::highlight(name)`.
+ * Paints `range` (or several) with a named CSS Custom Highlight (no DOM
+ * mutation), or clears it when `range` is null/empty. `declarations` style
+ * `::highlight(name)`; `extraCss` is appended verbatim (e.g. a forced-colors
+ * override).
  */
-export function paintHighlight(doc: Document, name: string, range: Range | null, declarations: string) {
+export function paintHighlight(
+  doc: Document,
+  name: string,
+  range: Range | readonly Range[] | null,
+  declarations: string,
+  priority = READ_ALONG_HIGHLIGHT_PRIORITY,
+  extraCss = "",
+) {
   const win = doc.defaultView as HighlightWindow | null;
   const registry = win?.CSS?.highlights;
   if (!win?.Highlight || !registry) return;
-  if (!range) {
+  const ranges = !range ? [] : Array.isArray(range) ? range : [range as Range];
+  if (ranges.length === 0) {
     registry.delete(name);
     return;
   }
@@ -145,9 +188,11 @@ export function paintHighlight(doc: Document, name: string, range: Range | null,
     style.id = id;
     (doc.head || doc.documentElement).appendChild(style);
   }
-  const css = `::highlight(${name}){${declarations}}`;
+  const css = `::highlight(${name}){${declarations}}${extraCss}`;
   if (style.textContent !== css) style.textContent = css;
-  registry.set(name, new win.Highlight(range));
+  const highlight = new win.Highlight(...ranges) as { priority?: number };
+  highlight.priority = priority;
+  registry.set(name, highlight);
 }
 
 /**
