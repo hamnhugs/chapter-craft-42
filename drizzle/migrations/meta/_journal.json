@@ -8,6 +8,69 @@
       "when": 1789613590714,
       "tag": "0000_book_source_youtube",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789636513786,
+      "tag": "0001_memory_rpc_ownership",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789636535984,
+      "tag": "0002_embedding_model_tracking_and_staleness",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789636567395,
+      "tag": "0003_vibrancy_idle_days",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789636592767,
+      "tag": "0004_partial_index_upserts",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789636634757,
+      "tag": "0005_hybrid_search_v2",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789636653560,
+      "tag": "0006_wiki_name_embedding_cache",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789636674779,
+      "tag": "0007_near_duplicate_flags",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789636689508,
+      "tag": "0008_chat_utility_model_studio_tools",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789636722873,
+      "tag": "0009_rpc_caller_scoping",
+      "breakpoints": true
     }
   ]
 }
