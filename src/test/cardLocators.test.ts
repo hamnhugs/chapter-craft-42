@@ -277,7 +277,13 @@ describe("mergeLocatorsViaRpc — atomic server-side merge", () => {
 });
 
 describe("bumpVibrancy — isolated, best-effort", () => {
-  it("bumps a numeric vibrancy and never exceeds 1", async () => {
+  it("records the use through touch_node_retrievals when the RPC is available", async () => {
+    await bumpVibrancy("e1");
+    expect(dbState.rpcCalls).toEqual([{ fn: "touch_node_retrievals", args: { node_ids: ["e1"], boost: 0.04 } }]);
+    expect(dbState.updates.length).toBe(0);
+  });
+  it("falls back to the legacy bump: numeric vibrancy, never exceeds 1", async () => {
+    dbState.rpcResult = { data: null, error: { code: "PGRST202", message: "no such function" } };
     dbState.selectResult = { data: { vibrancy: 0.5 }, error: null };
     await bumpVibrancy("e1");
     expect(dbState.updates[0].payload.vibrancy).toBeCloseTo(0.54, 5);
@@ -287,6 +293,7 @@ describe("bumpVibrancy — isolated, best-effort", () => {
     expect(dbState.updates[0].payload.vibrancy).toBe(1);
   });
   it("leaves null vibrancy alone and swallows every error", async () => {
+    dbState.rpcResult = { data: null, error: { code: "PGRST202", message: "no such function" } };
     dbState.selectResult = { data: { vibrancy: null }, error: null };
     await bumpVibrancy("e1");
     expect(dbState.updates.length).toBe(0);

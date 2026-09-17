@@ -23,44 +23,59 @@ export const LAYER = {
 export const VIBRANCY_FLOOR = 0.10;
 /** Vibrancy ceiling. */
 export const VIBRANCY_CEIL  = 1.00;
-/** Boost applied to a node on each retrieval hit. */
-export const RETRIEVAL_BOOST = 0.15;
+/** Boost applied on a deliberate dereference (read_span). Injecting a card
+ *  into the prompt no longer boosts anything — see knowledge-retrieve. */
+export const RETRIEVAL_BOOST = 0.04;
 /**
- * ACT-R Base-Level Learning decay parameter (Anderson et al., d = 0.5).
- * Activation: A_i = ln(Σ t_j^{-d}) where t_j = seconds since j-th retrieval.
- * Single-access approximation used here:
- *   raw = ln(retrieval_count + 1) − d × ln(seconds_idle + 1)
- *   vibrancy = clamp(sigmoid(raw) × 0.9 + 0.1, FLOOR, CEIL)
- * 30-day half-life at retrieval_count=1, which means a node at vibrancy=1.0
- * decays to ~0.55 after 30 days without access and to FLOOR after ~90 days.
+ * Legacy knob kept for the rerank_vibrancy RPC signature: the SQL derives the
+ * base half-life as 15 / ACT_R_DECAY days, so 0.5 → 30 days.
  */
 export const ACT_R_DECAY = 0.5;
+/** Idle days after which a never-used node's above-floor vibrancy halves. */
+export const VIBRANCY_HALF_LIFE_DAYS = 15 / ACT_R_DECAY;
 
 /** Minimum queue depth before the Sleep Cycle is considered overdue. */
 export const SLEEP_CYCLE_QUEUE_THRESHOLD = 10;
 /** Maximum number of consolidation_queue items processed per Sleep Cycle run. */
 export const SLEEP_CYCLE_BATCH_SIZE = 25;
-/** Minimum edges the LLM must propose per orphaned node during re-consolidation. */
-export const MIN_EDGES_PER_CONSOLIDATION = 2;
-
-// ── Vibrancy helpers (ACT-R d=0.5) ────────────────────────────────────────────
-
-function sigmoid(x: number): number {
-  return 1 / (1 + Math.exp(-x));
-}
-
 /**
- * Compute ACT-R vibrancy for a node.
- * raw  = ln(retrievalCount + 1) − d × ln(secondsIdle + 1)
- * Maps raw activation → [FLOOR, CEIL] via sigmoid.
+ * Minimum edges the LLM must propose per consolidated node. 0 — forcing edges
+ * (it used to be 2) made the model invent links between unrelated cards just
+ * to satisfy the schema.
  */
+export const MIN_EDGES_PER_CONSOLIDATION = 0;
+/** A conflict-staged (not yet inserted) entry is inserted only once it earns ≥ this many edges. */
+export const STAGED_INSERT_MIN_EDGES = 1;
+
+// ── Vibrancy (idle-days half-life, stretched by use) ──────────────────────────
+//
+// Mirror of rerank_vibrancy (migration 20260917130300_vibrancy_idle_days):
+//   H(n) = VIBRANCY_HALF_LIFE_DAYS · (1 + ln(1 + n))       n = retrieval_count
+//   v    = FLOOR + (CEIL − FLOOR) · 2^(−idle_days / H(n))
+// The part above the floor halves every H(n) days — 30 days for a never-used
+// node, ~72d at n=3, ~102d at n=10. Fresh nodes start at CEIL.
+//
+//   v(n, idle)   0d    1h    1d    7d    30d   60d   90d   180d
+//   n = 0       1.00  1.00  0.98  0.87  0.55  0.33  0.21  0.11
+//   n = 1       1.00  1.00  0.99  0.92  0.70  0.50  0.36  0.18
+//   n = 3       1.00  1.00  0.99  0.94  0.77  0.60  0.48  0.26
+//   n = 10      1.00  1.00  0.99  0.96  0.83  0.70  0.59  0.36
+//   n = 30      1.00  1.00  1.00  0.97  0.87  0.76  0.66  0.45
+//
+// (Asserted in src/test/vibrancy.test.ts.) The old formula — ln(n+1) −
+// 0.5·ln(idle_SECONDS+1) through a sigmoid — put a never-used node at 0.115
+// after ONE HOUR and a 10×-used node at 0.13 after a day: everything sat at
+// the floor, so no node was ever "core".
+
+/** Vibrancy for a node with `retrievalCount` uses, idle for `secondsIdle`. */
 export function computeVibrancy(retrievalCount: number, secondsIdle: number): number {
-  const raw = Math.log(retrievalCount + 1) - ACT_R_DECAY * Math.log(secondsIdle + 1);
-  const v = sigmoid(raw) * 0.9 + 0.1;
+  const idleDays = Math.max(0, secondsIdle) / 86400;
+  const halfLife = VIBRANCY_HALF_LIFE_DAYS * (1 + Math.log(1 + Math.max(0, retrievalCount)));
+  const v = VIBRANCY_FLOOR + (VIBRANCY_CEIL - VIBRANCY_FLOOR) * Math.pow(2, -idleDays / halfLife);
   return Math.max(VIBRANCY_FLOOR, Math.min(VIBRANCY_CEIL, v));
 }
 
-/** Compute boosted vibrancy after a retrieval hit. */
+/** Compute boosted vibrancy after a deliberate use. */
 export function boostVibrancy(current: number): number {
   return Math.min(VIBRANCY_CEIL, current + RETRIEVAL_BOOST);
 }
@@ -68,6 +83,26 @@ export function boostVibrancy(current: number): number {
 /** A node is "Core" when its vibrancy is high enough to anchor new edges. */
 export function isCoreNode(vibrancy: number): boolean {
   return vibrancy >= 0.70;
+}
+
+/**
+ * Rank Sleep Cycle anchor candidates for one queued node: semantic closeness
+ * dominates, vibrancy breaks ties toward live, used knowledge. Candidates
+ * below `minSimilarity` are dropped outright — an unrelated node is not an
+ * anchor however vibrant it is.
+ */
+export function rankAnchorCandidates<T extends { id: string; similarity: number; vibrancy: number | null }>(
+  candidates: T[],
+  opts: { limit?: number; minSimilarity?: number; similarityWeight?: number; excludeId?: string | null } = {},
+): Array<T & { anchor_score: number }> {
+  const limit = opts.limit ?? 8;
+  const minSim = opts.minSimilarity ?? 0.3;
+  const w = opts.similarityWeight ?? 0.75;
+  return candidates
+    .filter((c) => c.id !== opts.excludeId && typeof c.similarity === "number" && c.similarity >= minSim)
+    .map((c) => ({ ...c, anchor_score: w * c.similarity + (1 - w) * (typeof c.vibrancy === "number" ? c.vibrancy : 0.5) }))
+    .sort((a, b) => b.anchor_score - a.anchor_score)
+    .slice(0, limit);
 }
 
 // ── Consolidation-queue reasons ────────────────────────────────────────────────
