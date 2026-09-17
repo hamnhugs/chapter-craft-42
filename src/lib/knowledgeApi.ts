@@ -95,7 +95,8 @@ export interface LintResult {
   issues: { type: string; severity: string; description: string; affected_entries?: string[]; suggested_fix?: string }[];
   suggestions: { type: string; description: string; priority: string }[];
   health_score: number;
-  stats: { total_entries: number; total_relationships: number; orphan_count: number; avg_confidence: number };
+  /** sampled_entries: how many entries the LLM actually audited (capped at 150). */
+  stats: { total_entries: number; total_relationships: number; orphan_count: number; avg_confidence: number; sampled_entries?: number };
 }
 
 // ── Entry list reads: explicit columns, every page ─────────────────────────────
