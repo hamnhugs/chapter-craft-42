@@ -1,22 +1,11 @@
 // Proxy for Inworld AI TTS so the user's API key stays server-side.
-// Read Along clips are also cached per book on the VPS (see _shared/ttsCache).
 import { createClient } from "npm:@supabase/supabase-js@2";
-import {
-  clipKey,
-  deleteBookClips,
-  getCachedClip,
-  inBackground,
-  isValidBookId,
-  putCachedClip,
-  ttsCacheConfig,
-} from "../_shared/ttsCache.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Expose-Headers": "X-TTS-Cache",
 };
 
 const INWORLD_BASE = "https://api.inworld.ai";
@@ -60,26 +49,21 @@ Deno.serve(async (req) => {
     if (userErr || !userData?.user) return jsonError("Unauthorized", 401);
     const userId = userData.user.id;
 
-    const loadInworldKey = async () => {
-      const { data: settings } = await admin
-        .from("user_settings")
-        .select("inworld_api_key")
-        .eq("user_id", userId)
-        .maybeSingle();
-      return (settings?.inworld_api_key || "").trim();
-    };
-    /** Owner of a book, or null when the book no longer exists. */
-    const bookOwner = async (bookId: string): Promise<string | null> => {
-      const { data } = await admin.from("books").select("user_id").eq("id", bookId).maybeSingle();
-      return (data?.user_id as string | undefined) ?? null;
-    };
+    const { data: settings } = await admin
+      .from("user_settings")
+      .select("inworld_api_key")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    const inworldKey = (settings?.inworld_api_key || "").trim();
+    if (!inworldKey) {
+      return jsonError("No Inworld API key saved in settings", 400);
+    }
 
     const url = new URL(req.url);
     const isVoices = url.pathname.endsWith("/voices");
 
     if (req.method === "GET" && isVoices) {
-      const inworldKey = await loadInworldKey();
-      if (!inworldKey) return jsonError("No Inworld API key saved in settings", 400);
       const resp = await fetch(`${INWORLD_BASE}/tts/v1/voices`, {
         headers: { Authorization: basicAuth(inworldKey) },
       });
@@ -93,28 +77,8 @@ Deno.serve(async (req) => {
 
     if (req.method === "POST") {
       const payload = await req.json().catch(() => null) as
-        | {
-          text?: string; voice_id?: string; voiceId?: string; model?: string; sample_rate?: number; timestamp_type?: string;
-          /** Read Along: cache this clip under the book (must be the caller's). */
-          cache_book_id?: string;
-          action?: string; book_id?: string;
-        }
+        | { text?: string; voice_id?: string; voiceId?: string; model?: string; sample_rate?: number; timestamp_type?: string }
         | null;
-      const cache = ttsCacheConfig();
-
-      // A book is being permanently deleted: drop its saved audio too.
-      if (payload?.action === "purge_cache") {
-        if (!isValidBookId(payload.book_id)) return jsonError("book_id is required");
-        if (!cache) return new Response(JSON.stringify({ purged: false, reason: "cache not configured" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-        const owner = await bookOwner(payload.book_id);
-        // A book that still exists must be yours; a deleted one leaves only orphaned audio.
-        if (owner && owner !== userId) return jsonError("Forbidden", 403);
-        const result = await deleteBookClips(cache, payload.book_id);
-        return new Response(JSON.stringify({ purged: !!result, ...(result ?? {}) }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
       let voiceId = String(payload?.voice_id ?? payload?.voiceId ?? "").trim();
       if (!payload?.text) {
         return jsonError("text is required");
@@ -134,29 +98,6 @@ Deno.serve(async (req) => {
       const timestampType = payload.timestamp_type === "WORD" || payload.timestamp_type === "CHARACTER"
         ? payload.timestamp_type
         : null;
-      const modelId = payload.model || "inworld-tts-2";
-
-      // Saved audio first: only JSON (timestamped) clips for a book the caller owns.
-      let cacheSlot: { bookId: string; key: string } | null = null;
-      if (cache && timestampType && isValidBookId(payload.cache_book_id)) {
-        const [owner, key] = await Promise.all([
-          bookOwner(payload.cache_book_id),
-          clipKey({ model: modelId, voiceId, sampleRate, timestampType, text: clean }),
-        ]);
-        if (owner === userId) {
-          cacheSlot = { bookId: payload.cache_book_id, key };
-          const hit = await getCachedClip(cache, cacheSlot.bookId, key);
-          if (hit) {
-            return new Response(
-              JSON.stringify({ audioContent: hit.audioContent, timestampInfo: hit.timestampInfo ?? null }),
-              { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json", "X-TTS-Cache": "hit" } },
-            );
-          }
-        }
-      }
-
-      const inworldKey = await loadInworldKey();
-      if (!inworldKey) return jsonError("No Inworld API key saved in settings", 400);
 
       const resp = await fetch(`${INWORLD_BASE}/tts/v1/voice`, {
         method: "POST",
@@ -167,7 +108,7 @@ Deno.serve(async (req) => {
         body: JSON.stringify({
           text: clean,
           voiceId,
-          modelId,
+          modelId: payload.model || "inworld-tts-2",
           audioConfig: {
             audioEncoding: "MP3",
             sampleRateHertz: sampleRate,
@@ -189,19 +130,9 @@ Deno.serve(async (req) => {
       if (timestampType) {
         // JSON so the timing rides with the audio in one round trip; the
         // client decodes the base64 itself.
-        const timestampInfo = result?.timestampInfo ?? null;
-        if (cache && cacheSlot) {
-          // Saved after the response goes out; a failed save only costs a future re-synthesis.
-          inBackground(putCachedClip(cache, cacheSlot.bookId, cacheSlot.key, {
-            audioContent: base64, timestampInfo, voiceId, model: modelId, chars: clean.length,
-          }));
-        }
         return new Response(
-          JSON.stringify({ audioContent: base64, timestampInfo }),
-          {
-            status: 200,
-            headers: { ...corsHeaders, "Content-Type": "application/json", ...(cacheSlot ? { "X-TTS-Cache": "miss" } : {}) },
-          },
+          JSON.stringify({ audioContent: base64, timestampInfo: result?.timestampInfo ?? null }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
       const bin = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
