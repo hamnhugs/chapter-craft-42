@@ -2483,6 +2483,8 @@ export type Database = {
           confident_threshold: number
           entry_count: number
           last_recomputed_at: string
+          name_embedding: unknown
+          name_embedding_source: string | null
           novelty_threshold: number
           user_id: string
           wiki_id: string
@@ -2492,6 +2494,8 @@ export type Database = {
           confident_threshold?: number
           entry_count?: number
           last_recomputed_at?: string
+          name_embedding?: unknown
+          name_embedding_source?: string | null
           novelty_threshold?: number
           user_id: string
           wiki_id: string
@@ -2501,6 +2505,8 @@ export type Database = {
           confident_threshold?: number
           entry_count?: number
           last_recomputed_at?: string
+          name_embedding?: unknown
+          name_embedding_source?: string | null
           novelty_threshold?: number
           user_id?: string
           wiki_id?: string

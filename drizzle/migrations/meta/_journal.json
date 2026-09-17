@@ -43,6 +43,13 @@
       "when": 1789636634757,
       "tag": "0005_hybrid_search_v2",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789636653560,
+      "tag": "0006_wiki_name_embedding_cache",
+      "breakpoints": true
     }
   ]
 }
