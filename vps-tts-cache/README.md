@@ -1,5 +1,11 @@
 # Chapter Craft TTS Audio Cache
 
+> **Optional.** Read Along already saves every clip **on the device** (IndexedDB,
+> `src/lib/readAlongAudioCache.ts`), so re-reading on the same phone or computer
+> is free with no server. This service adds a *shared* copy, so a passage paid for
+> on one device is also free on your others. It stays off until its three
+> secrets are set.
+
 Read Along speaks each page through Inworld, and Inworld bills every request —
 including the tenth time you re-read the same page. This small service stores
 every clip Inworld produces **per book** on your VPS. When the same passage is
