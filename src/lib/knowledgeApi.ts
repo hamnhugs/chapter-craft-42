@@ -251,6 +251,18 @@ export interface RetrievedNode {
   hop: number;
   via: string | null;
   from_seed: string;
+  /** Raw query cosine (knowledge-retrieve ≥ 20260917 deploy); null when unknown. */
+  similarity?: number | null;
+  vibrancy?: number;
+  confidence?: number;
+  /** Owning wiki (v2 search path). */
+  wiki_id?: string | null;
+  /** Seed also matched full text (v2 search path). */
+  ft_match?: boolean;
+  /** Card pointer fields, raw (v2 search path) — parse with cardLocators. */
+  locators?: unknown;
+  aliases?: string[] | null;
+  author?: string | null;
 }
 export interface RetrievedEdge {
   source_entry_id: string;
@@ -262,6 +274,10 @@ export interface RetrievalResult {
   nodes: RetrievedNode[];
   edges: RetrievedEdge[];
   query_embedded?: boolean;
+  /** Which search path served the request ("legacy" = v2 migration not applied). */
+  search?: "v2" | "legacy";
+  scoped_wiki_ids?: string[] | null;
+  dropped?: { seeds_below_cosine: number; below_relative_floor: number };
 }
 
 async function callEdge(fnName: string, body: unknown): Promise<any> {
@@ -283,7 +299,9 @@ async function callEdge(fnName: string, body: unknown): Promise<any> {
 
 export async function retrieveKnowledge(
   query: string,
-  opts: { depth?: number; match_count?: number; deep?: boolean; wiki_id?: string | null } = {},
+  /** wiki_ids: all loaded neurons in ONE call (server fuses); wiki_id: legacy
+   *  single scope. limit: max nodes (default 18, deep 30, max 50). */
+  opts: { depth?: number; match_count?: number; deep?: boolean; wiki_id?: string | null; wiki_ids?: string[] | null; limit?: number } = {},
 ): Promise<RetrievalResult> {
   return callEdge("knowledge-retrieve", { query, ...opts });
 }
