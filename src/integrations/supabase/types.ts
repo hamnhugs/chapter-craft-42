@@ -3086,6 +3086,16 @@ export type Database = {
           relationship: string
         }[]
       }
+      find_near_duplicates: {
+        Args: { p_entry_ids: string[]; p_threshold?: number }
+        Returns: {
+          duplicate_of: string
+          duplicate_title: string
+          entry_id: string
+          similarity: number
+          wiki_id: string
+        }[]
+      }
       get_neighbors: {
         Args: { classes?: string[]; depth?: number; seed_ids: string[] }
         Returns: {
