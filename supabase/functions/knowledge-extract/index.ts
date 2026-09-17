@@ -1,3 +1,11 @@
+// ⚠ UNUSED — no caller since commit 522569b ("Remove the Save to Neuron button
+// beside Counsel's send button"), which removed the only UI path to
+// knowledgeApi.extractKnowledge(). Left deployed and unchanged on purpose
+// (this header is the only edit); memory is now written through the chat
+// tools (memory_entry_upsert / supersede_knowledge_entry). Before reviving it,
+// note it predates: the partial-index enqueue fix (enqueueEntry now routes
+// through an RPC), knowledge-embed's targeted embedding, and it still fires
+// embed-entries → smart-file, which may re-route entries between wikis.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { atomicitySplit, embedAndStore, probeAndLinkConflicts, type Candidate } from "../_shared/atomicity.ts";

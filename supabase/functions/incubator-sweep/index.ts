@@ -5,8 +5,12 @@
 //   1. Cold-start gate (≥2 wikis with ≥10 entries each)
 //   2. Pull pending incubator entries; mark expired ones
 //   3. Greedy cosine clustering (min cluster size 5, sim threshold 0.62)
-//   4. For each cluster: self-consistency naming (n=5, Gemini Flash); keep names
-//      surviving ≥3 runs AND failing the 0.82 cosine collision gate with existing wikis
+//   4. For each cluster: ONE naming call (Gemini Flash) that returns 5 candidate
+//      names + the best one + a 0-1 agreement confidence; keep the best name when
+//      ≥3 candidates agree on it OR confidence ≥ 0.6, AND it fails the 0.82
+//      cosine collision gate with existing wikis. (This used to be 5 sequential
+//      calls at temperature 0.8 voting on a name — 5× the latency and cost for
+//      a vote the model can report in one structured answer.)
 //   5. Insert wiki_proposals; mark cluster members 'clustered'
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
@@ -22,8 +26,9 @@ const COLD_START_MIN_ENTRIES = 10;
 const CLUSTER_MIN_SIZE = 5;
 const CLUSTER_SIM_THRESHOLD = 0.62;
 const NAME_COLLISION_THRESHOLD = 0.82;
-const SELF_CONSISTENCY_N = 5;
+const NAME_CANDIDATES_N = 5;
 const SELF_CONSISTENCY_MIN = 3;
+const NAMING_MIN_CONFIDENCE = 0.6;
 const PROPOSAL_CAP_PER_USER = 5;
 
 serve(async (req) => {
@@ -149,8 +154,8 @@ serve(async (req) => {
       const nameVotes = await proposeWikiName(snippets, wikiNames);
       if (!nameVotes) continue;
 
-      const { name, rationale, votes } = nameVotes;
-      if (votes < SELF_CONSISTENCY_MIN) continue;
+      const { name, rationale, votes, confidence } = nameVotes;
+      if (votes < SELF_CONSISTENCY_MIN && confidence < NAMING_MIN_CONFIDENCE) continue;
 
       // Name-collision gate: embed proposed name and compare to wiki names
       const collides = await nameCollides(name, wikiNames);
@@ -196,64 +201,69 @@ serve(async (req) => {
 async function proposeWikiName(
   snippets: string,
   existingNames: string[],
-): Promise<{ name: string; rationale: string; votes: number } | null> {
+): Promise<{ name: string; rationale: string; votes: number; confidence: number } | null> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) return null;
 
+  // One structured call replaces five sampled ones: the model drafts
+  // NAME_CANDIDATES_N names independently (repeating a name is allowed and
+  // means agreement), picks the best, and reports how strongly its drafts
+  // agree. Votes are still counted from the candidates we get back.
   const system =
-    "You name knowledge wikis. Given a set of related notes, propose ONE short wiki name (1-3 words, Title Case) that captures the common theme. Avoid names too close to: " +
+    `You name knowledge wikis. Given a set of related notes, silently draft ${NAME_CANDIDATES_N} independent candidate names — each a short wiki name (1-3 words, Title Case) capturing the common theme; a name MAY repeat if it is clearly the right one. Then pick the best. ` +
+    "Avoid names too close to: " +
     existingNames.map((n) => `"${n}"`).join(", ") +
-    ". Reply with strict JSON: {\"name\":\"...\",\"rationale\":\"one sentence\"}";
+    `. Reply with strict JSON: {"candidates":["...", ...${NAME_CANDIDATES_N} items],"best":"...","rationale":"one sentence","confidence":0.0-1.0} — confidence = how clearly one theme/name dominates the notes.`;
 
   const userMsg = `Notes in this cluster:\n${snippets}\n\nPropose the wiki name now.`;
 
-  const counts = new Map<string, { count: number; rationale: string }>();
-
-  for (let i = 0; i < SELF_CONSISTENCY_N; i++) {
-    try {
-      const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${LOVABLE_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "google/gemini-2.5-flash",
-          messages: [
-            { role: "system", content: system },
-            { role: "user", content: userMsg },
-          ],
-          response_format: { type: "json_object" },
-          temperature: 0.8,
-        }),
-      });
-      if (!res.ok) continue;
-      const j = await res.json();
-      const raw = j.choices?.[0]?.message?.content;
-      if (!raw) continue;
-      const parsed = JSON.parse(raw);
-      const key = (parsed.name || "").trim();
-      if (!key) continue;
-      const norm = key.toLowerCase();
-      const prev = counts.get(norm);
-      counts.set(norm, {
-        count: (prev?.count ?? 0) + 1,
-        rationale: prev?.rationale || parsed.rationale || "",
-      });
-    } catch (e) {
-      console.error("naming run failed:", e);
+  try {
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: userMsg },
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0.4,
+      }),
+    });
+    if (!res.ok) return null;
+    const j = await res.json();
+    const raw = j.choices?.[0]?.message?.content;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const candidates: string[] = (Array.isArray(parsed.candidates) ? parsed.candidates : [])
+      .map((c: unknown) => (typeof c === "string" ? c.trim() : ""))
+      .filter(Boolean)
+      .slice(0, NAME_CANDIDATES_N);
+    const counts = new Map<string, number>();
+    for (const c of candidates) counts.set(c.toLowerCase(), (counts.get(c.toLowerCase()) ?? 0) + 1);
+    let norm = (typeof parsed.best === "string" ? parsed.best.trim() : "").toLowerCase();
+    if (!norm) {
+      // No explicit pick: most frequent candidate.
+      for (const [k, v] of counts) if (!norm || v > (counts.get(norm) ?? 0)) norm = k;
     }
+    if (!norm) return null;
+    const confidence = typeof parsed.confidence === "number" && Number.isFinite(parsed.confidence)
+      ? Math.max(0, Math.min(1, parsed.confidence))
+      : 0;
+    return {
+      name: titleCase(norm),
+      rationale: typeof parsed.rationale === "string" ? parsed.rationale : "",
+      votes: counts.get(norm) ?? 0,
+      confidence,
+    };
+  } catch (e) {
+    console.error("naming call failed:", e);
+    return null;
   }
-
-  if (counts.size === 0) return null;
-  let best: { name: string; rationale: string; votes: number } | null = null;
-  for (const [norm, v] of counts.entries()) {
-    if (!best || v.count > best.votes) {
-      // Re-cap the display name with title case from original casing — use the lowercase as fallback
-      best = { name: titleCase(norm), rationale: v.rationale, votes: v.count };
-    }
-  }
-  return best;
 }
 
 async function nameCollides(name: string, existingNames: string[]): Promise<boolean> {

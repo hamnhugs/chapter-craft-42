@@ -42,10 +42,22 @@ serve(async (req) => {
       .eq("user_id", user.id);
     if (!wikis || wikis.length === 0) return json({ checked: 0, alerts: 0 });
 
-    const { data: centroids } = await supabase
+    // name_embedding(_source): cache from migration 20260917130600; absent
+    // before it (42703) → no cache, embed every run as before.
+    let nameCache = true;
+    const withCache = await supabase
       .from("wiki_centroids")
-      .select("wiki_id, centroid, entry_count")
+      .select("wiki_id, centroid, entry_count, name_embedding, name_embedding_source")
       .eq("user_id", user.id);
+    let centroids: any[] | null = withCache.data as any[] | null;
+    if (withCache.error && (withCache.error as any).code === "42703") {
+      nameCache = false;
+      const plain = await supabase
+        .from("wiki_centroids")
+        .select("wiki_id, centroid, entry_count")
+        .eq("user_id", user.id);
+      centroids = plain.data as any[] | null;
+    }
     const centroidMap = new Map(
       (centroids || []).map((c: any) => [c.wiki_id, c]),
     );
@@ -58,17 +70,16 @@ serve(async (req) => {
       const c = centroidMap.get(w.id) as any;
       if (!c || (c.entry_count ?? 0) < MIN_ENTRIES_FOR_SPLIT) continue;
 
-      // Pull entry embeddings
-      const { data: entryList } = await supabase.rpc("entries_for_wiki", { target_wiki_id: w.id });
-      if (!entryList || entryList.length < MIN_ENTRIES_FOR_SPLIT) continue;
-
-      const ids = (entryList as any[]).slice(0, MAX_VECTORS).map((e) => e.id);
-      const { data: rows } = await supabase
-        .from("knowledge_entries")
+      // Pull entry embeddings — straight off the RPC with a narrowed select
+      // (the old path fetched every full row, vectors included, just to take
+      // ids, then re-selected the vectors by id).
+      const { data: rows, error: rowsErr } = await supabase
+        .rpc("entries_for_wiki", { target_wiki_id: w.id })
         .select("id, title, embedding_v2")
-        .in("id", ids)
-        .not("embedding_v2", "is", null);
-      if (!rows) continue;
+        .not("embedding_v2", "is", null)
+        .order("updated_at", { ascending: false })
+        .limit(MAX_VECTORS);
+      if (rowsErr || !rows) continue;
 
       const vectors: { id: string; title: string; vec: number[] }[] = [];
       for (const r of rows as any[]) {
@@ -87,42 +98,47 @@ serve(async (req) => {
           const t1 = vectors.filter((_, i) => split.assignments[i] === 1).slice(0, 4).map((v) => v.title);
 
           const names = await proposeTwoNames(w.name, t0, t1);
-          await supabase.from("wiki_health_alerts").upsert({
-            user_id: user.id,
-            wiki_id: w.id,
-            kind: "split",
-            rationale: `"${w.name}" looks like two distinct themes (silhouette ${sil.toFixed(2)}).`,
-            suggestion: {
+          const ok = await writeAlert(supabase, user.id, w.id, "split",
+            `"${w.name}" looks like two distinct themes (silhouette ${sil.toFixed(2)}).`,
+            {
               silhouette: sil,
               name_a: names?.[0] ?? null,
               name_b: names?.[1] ?? null,
               titles_a: t0,
               titles_b: t1,
             },
-            status: "pending",
-          }, { onConflict: "user_id,wiki_id,kind", ignoreDuplicates: false });
-          alerts++;
+          );
+          if (ok) alerts++;
         }
       }
 
       // ── Rename check: centroid vs (name + description) embedding ───────
       const text = `${w.name}. ${w.description || ""}`.trim();
-      const titleVec = await embed(text);
+      // Names rarely change: reuse the cached vector when it was computed from
+      // exactly this text, otherwise embed and refresh the cache (best-effort).
+      const cachedVec = nameCache && c.name_embedding_source === text ? parseVector(c.name_embedding) : null;
+      let titleVec: number[] | null = cachedVec && cachedVec.length === 1536 ? cachedVec : null;
+      if (!titleVec) {
+        titleVec = await embed(text);
+        if (titleVec && nameCache) {
+          const { error: cacheErr } = await supabase
+            .from("wiki_centroids")
+            .update({ name_embedding: `[${titleVec.join(",")}]`, name_embedding_source: text })
+            .eq("wiki_id", w.id);
+          if (cacheErr) console.warn("wiki-drift-check: name embedding cache write failed:", cacheErr.message);
+        }
+      }
       const centroidVec = parseVector(c.centroid);
       if (titleVec && centroidVec && centroidVec.length === titleVec.length) {
         const drift = 1 - cosine(titleVec, centroidVec);
         if (drift >= RENAME_DRIFT_THRESHOLD) {
           const newName = await proposeRename(w.name, vectors.slice(0, 8).map((v) => v.title));
           if (newName && newName.toLowerCase() !== w.name.toLowerCase()) {
-            await supabase.from("wiki_health_alerts").upsert({
-              user_id: user.id,
-              wiki_id: w.id,
-              kind: "rename",
-              rationale: `Contents have drifted from the wiki's name (drift ${drift.toFixed(2)}).`,
-              suggestion: { current_name: w.name, proposed_name: newName, drift },
-              status: "pending",
-            }, { onConflict: "user_id,wiki_id,kind", ignoreDuplicates: false });
-            alerts++;
+            const ok = await writeAlert(supabase, user.id, w.id, "rename",
+              `Contents have drifted from the wiki's name (drift ${drift.toFixed(2)}).`,
+              { current_name: w.name, proposed_name: newName, drift },
+            );
+            if (ok) alerts++;
           }
         }
       }
@@ -136,6 +152,59 @@ serve(async (req) => {
 });
 
 // ── helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * One pending alert per (wiki, kind), refreshed in place on re-runs.
+ *
+ * The uniqueness is a PARTIAL index (… WHERE status = 'pending'), which
+ * PostgREST's upsert can't target — the old `.upsert(onConflict:
+ * "user_id,wiki_id,kind")` failed with 42P10 on every call and the error was
+ * ignored, so no drift alert was ever stored. upsert_wiki_health_alert
+ * (migration 20260917130400) does ON CONFLICT … WHERE status = 'pending'.
+ * Before that migration: update the pending row if there is one, else insert.
+ * Returns true when an alert row was written.
+ */
+async function writeAlert(
+  supabase: any,
+  userId: string,
+  wikiId: string,
+  kind: "split" | "rename",
+  rationale: string,
+  suggestion: Record<string, unknown>,
+): Promise<boolean> {
+  const { data, error } = await supabase.rpc("upsert_wiki_health_alert", {
+    p_wiki_id: wikiId, p_kind: kind, p_rationale: rationale, p_suggestion: suggestion,
+  });
+  if (!error) return !!data;
+  const code = (error as any).code;
+  if (code !== "PGRST202" && code !== "42883") {
+    console.error("upsert_wiki_health_alert failed:", error.message);
+    return false;
+  }
+  const { data: existing, error: selErr } = await supabase
+    .from("wiki_health_alerts")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("wiki_id", wikiId)
+    .eq("kind", kind)
+    .eq("status", "pending")
+    .limit(1);
+  if (selErr) {
+    console.error("wiki_health_alerts lookup failed:", selErr.message);
+    return false;
+  }
+  const row = (existing || [])[0] as { id: string } | undefined;
+  const { error: writeErr } = row
+    ? await supabase.from("wiki_health_alerts").update({ rationale, suggestion }).eq("id", row.id)
+    : await supabase.from("wiki_health_alerts").insert({
+      user_id: userId, wiki_id: wikiId, kind, rationale, suggestion, status: "pending",
+    });
+  if (writeErr) {
+    console.error("wiki_health_alerts write failed:", writeErr.message);
+    return false;
+  }
+  return true;
+}
 
 async function embed(text: string): Promise<number[] | null> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");

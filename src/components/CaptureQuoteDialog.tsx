@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { embedEntriesSoon } from "@/lib/knowledgeApi";
 import { useApp } from "@/context/AppContext";
 import { anchorQuote, approxPage, normalizeSearchQuery } from "@/lib/bookSearch";
 import {
@@ -136,6 +137,7 @@ const CaptureQuoteDialog: React.FC<CaptureQuoteDialogProps> = ({ open, onClose, 
       _confidence: 0.9,
     });
     if (error) throw error;
+    embedEntriesSoon(data as unknown as string);
     return data as unknown as string;
   };
 

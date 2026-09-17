@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { embedEntriesSoon } from "@/lib/knowledgeApi";
 import { buildProgramCard } from "@/lib/toolshed";
 
 /**
@@ -548,6 +549,7 @@ export async function mirrorApprovedProgram(input: {
     if (error) ({ data, error } = await upsert("tool"));     // pre-'program' CHECK fallback
     if (error) ({ data, error } = await upsert("concept"));  // pre-'tool' CHECK fallback
     if (error) return null;
+    embedEntriesSoon((data as any) || entryId);
     try { window.dispatchEvent(new Event("knowledge-entries-changed")); } catch { /* no-op */ }
     return (data as any) || entryId;
   } catch {

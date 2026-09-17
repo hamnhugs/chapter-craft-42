@@ -3,17 +3,23 @@
  *
  * Three-phase pipeline (runs sequentially, non-blocking to the caller):
  *
+ *   Phase 0 — Embed missing
+ *     Bounded sweep of rows with embedding IS NULL (safety net for the
+ *     client's fire-and-forget embedEntriesSoon).
+ *
  *   Phase 1 — Re-Ranking
- *     Recompute ACT-R vibrancy for every node using updated idle time.
+ *     Recompute vibrancy for every node from idle days + use count
+ *     (half-life formula, see memory-layers.ts computeVibrancy).
  *     Executed as a single parameterized SQL UPDATE; no LLM call needed.
  *
  *   Phase 2 — Re-Consolidation
  *     Pull unprocessed items from consolidation_queue (SKIP LOCKED for
- *     concurrent-safe batching). For each item, ask the LLM to propose
- *     ≥ MIN_EDGES_PER_CONSOLIDATION new edges connecting it to Core nodes.
- *     Write those edges to memory_graph. If the item is a conflict-staged
- *     pending entry, insert it into knowledge_entries only after edge
- *     generation succeeds.
+ *     concurrent-safe batching). For each item, pick anchor candidates from
+ *     its semantic nearest neighbours blended with vibrancy, and ask the LLM
+ *     for edges to them — zero edges is a valid answer, and no LLM call is
+ *     made when nothing is close enough. Write those edges to memory_graph.
+ *     If the item is a conflict-staged pending entry, insert it into
+ *     knowledge_entries only after it earns ≥ STAGED_INSERT_MIN_EDGES edges.
  *
  *   Phase 3 — Pruning
  *     Identify orphan nodes (zero edges). Add them to the queue with reason
@@ -29,18 +35,18 @@ import { resolveWikiLlm } from "../_shared/wiki-llm.ts";
 import {
   checkRecordingMode,
   markProcessed,
-  enqueueEntry,
-  computeVibrancy,
-  isCoreNode,
+  enqueueEntries,
+  selectAllPages,
+  rankAnchorCandidates,
   ACT_R_DECAY,
   VIBRANCY_FLOOR,
   VIBRANCY_CEIL,
-  RETRIEVAL_BOOST,
   SLEEP_CYCLE_BATCH_SIZE,
   MIN_EDGES_PER_CONSOLIDATION,
+  STAGED_INSERT_MIN_EDGES,
   QUEUE_PRIORITY,
 } from "../_shared/memory-layers.ts";
-import { embedOne } from "../_shared/embed.ts";
+import { embedOne, embedBatch, writeEntryEmbedding } from "../_shared/embed.ts";
 import { embedAndStore } from "../_shared/atomicity.ts";
 
 const corsHeaders = {
@@ -60,14 +66,50 @@ function json(body: unknown, status = 200) {
   });
 }
 
-// ── Phase 1: Re-Ranking via ACT-R vibrancy ─────────────────────────────────────
+// ── Phase 0: Embed missing vectors (safety net) ───────────────────────────────
+// Writes re-embed themselves via knowledgeApi.embedEntriesSoon, but that call
+// is fire-and-forget from the browser: a closed tab or an embedding outage
+// leaves rows with embedding IS NULL (as does every edit made before the
+// client shipped). Those rows are invisible to semantic retrieval and to
+// Phase 2's nearest-neighbour anchoring, so the Sleep Cycle sweeps a bounded
+// batch first.
+const EMBED_MISSING_CAP = 50;
+
+async function embedMissing(supabase: any, userId: string, wikiId: string | null): Promise<{ embedded: number }> {
+  try {
+    let q = supabase
+      .from("knowledge_entries")
+      .select("id, title, content")
+      .eq("user_id", userId)
+      .is("embedding", null)
+      .order("updated_at", { ascending: false })
+      .limit(EMBED_MISSING_CAP);
+    if (wikiId) q = q.eq("wiki_id", wikiId);
+    const { data: rows, error } = await q;
+    if (error || !rows || rows.length === 0) return { embedded: 0 };
+    const list = rows as Array<{ id: string; title: string; content: string | null }>;
+    const vectors = await embedBatch(list.map((r) => `${r.title}\n\n${r.content || ""}`));
+    let embedded = 0;
+    for (let i = 0; i < list.length; i++) {
+      const v = vectors[i];
+      if (!v) continue;
+      if (!(await writeEntryEmbedding(supabase, list[i].id, userId, v))) embedded++;
+    }
+    return { embedded };
+  } catch (e) {
+    console.warn("embedMissing skipped:", e);
+    return { embedded: 0 };
+  }
+}
+
+// ── Phase 1: Re-Ranking via idle-days vibrancy ────────────────────────────────
 
 async function rerank(supabase: any, userId: string): Promise<{ updated: number }> {
-  // Compute vibrancy using the ACT-R single-access approximation in SQL:
-  //   raw  = ln(retrieval_count + 1) - 0.5 * ln(idle_seconds + 1)
-  //   v    = 1 / (1 + exp(-raw)) * 0.9 + 0.1   [sigmoid → [0.1, 1.0]]
-  // GREATEST / LEAST clamp to [FLOOR, CEIL].
-  const { error, count } = await supabase.rpc("rerank_vibrancy", {
+  // SQL twin of memory-layers.ts computeVibrancy (migration 20260917130300):
+  //   H(n) = (15 / p_decay) days · (1 + ln(1 + n))    → 30 days at p_decay 0.5
+  //   v    = FLOOR + (CEIL − FLOOR) · 2^(−idle_days / H(n))
+  // Only rows that move by > 0.005 are written; updated_at is left alone.
+  const { data: count, error } = await supabase.rpc("rerank_vibrancy", {
     p_user_id:    userId,
     p_decay:      ACT_R_DECAY,
     p_floor:      VIBRANCY_FLOOR,
@@ -75,16 +117,13 @@ async function rerank(supabase: any, userId: string): Promise<{ updated: number 
   });
 
   if (error) {
-    // Fallback: simple exponential decay when the RPC isn't deployed yet.
-    const { error: fallbackErr } = await supabase
-      .from("knowledge_entries")
-      .update({ vibrancy: supabase.rpc("greatest", [VIBRANCY_FLOOR, 1]) }) // no-op placeholder
-      .eq("user_id", userId); // harmless no-op if rpc missing
-    console.warn("rerank_vibrancy RPC not found, skipping:", error.message);
+    // (The old "fallback" here sent a PostgREST builder object as the new
+    // vibrancy for every row — never a no-op. Just skip.)
+    console.warn("rerank_vibrancy failed, skipping:", error.message);
     return { updated: 0 };
   }
 
-  return { updated: count ?? 0 };
+  return { updated: typeof count === "number" ? count : 0 };
 }
 
 // ── Phase 2: Re-Consolidation (LLM edge generation) ───────────────────────────
@@ -108,20 +147,73 @@ async function reconsolidate(
     return { processed: 0, edges_created: 0, conflicts_inserted: 0 };
   }
 
-  // Fetch Core nodes (high vibrancy) to anchor new edges. Scope to wiki when provided.
-  let coreQuery = supabase
-    .from("knowledge_entries")
-    .select("id, title, content, vibrancy, entry_type")
-    .eq("user_id", userId)
-    .gte("vibrancy", 0.70)
-    .order("vibrancy", { ascending: false })
-    .limit(20);
-  if (wikiId) coreQuery = coreQuery.eq("wiki_id", wikiId);
-  const { data: coreNodes } = await coreQuery;
+  // Anchor candidates are chosen PER ITEM (see anchorsFor below): the item's
+  // semantic nearest neighbours, blended with vibrancy. The old code offered
+  // every item the same 20 globally most-vibrant nodes, related or not — and
+  // with the broken vibrancy formula that list was usually empty.
+  // Global core list = fallback only, for items without a vector or before
+  // the match_entry_neighbors migration is applied (fetched lazily, once).
+  type Anchor = { id: string; title: string; content: string; vibrancy: number | null; similarity?: number };
+  let globalCores: Anchor[] | null = null;
+  let neighborsRpcMissing = false;
+  const loadGlobalCores = async (): Promise<Anchor[]> => {
+    if (globalCores) return globalCores;
+    let coreQuery = supabase
+      .from("knowledge_entries")
+      .select("id, title, content, vibrancy")
+      .eq("user_id", userId)
+      .gte("vibrancy", 0.70)
+      .is("superseded_by", null)
+      .order("vibrancy", { ascending: false })
+      .limit(10);
+    if (wikiId) coreQuery = coreQuery.eq("wiki_id", wikiId);
+    const { data } = await coreQuery;
+    globalCores = (data || []) as Anchor[];
+    return globalCores;
+  };
 
-  const cores = (coreNodes || []) as Array<{
-    id: string; title: string; content: string; vibrancy: number; entry_type: string;
-  }>;
+  const anchorsFor = async (entry: { id: string | null; title: string; content: string }): Promise<Anchor[]> => {
+    let candidates: Anchor[] | null = null;
+    if (entry.id && !neighborsRpcMissing) {
+      const { data, error } = await supabase.rpc("match_entry_neighbors", {
+        p_entry_id: entry.id, p_count: 16, p_wiki_id: wikiId,
+      });
+      if (error) {
+        const code = (error as any).code;
+        if (code === "PGRST202" || code === "42883") neighborsRpcMissing = true;
+      } else if (Array.isArray(data) && data.length > 0) {
+        candidates = data as Anchor[];
+      }
+    }
+    if (!candidates && !entry.id) {
+      // Not inserted yet (conflict_staged): embed its text and use the
+      // generic kNN, then scope/meta-filter the hits.
+      const vec = await embedOne(`${entry.title}\n\n${entry.content}`);
+      if (vec) {
+        const { data } = await supabase.rpc("match_knowledge", { query_embedding: vec as any, match_count: 16 });
+        const hits = (data || []) as Array<{ id: string; title: string; content: string; similarity: number }>;
+        if (hits.length > 0) {
+          const mq = supabase.from("knowledge_entries").select("id, vibrancy, wiki_id, superseded_by").in("id", hits.map((h) => h.id));
+          const { data: meta } = await mq;
+          const byId = new Map(((meta || []) as any[]).map((m) => [m.id, m]));
+          candidates = hits
+            .filter((h) => {
+              const m = byId.get(h.id);
+              return m && !m.superseded_by && (!wikiId || m.wiki_id === wikiId);
+            })
+            .map((h) => ({ ...h, content: (h.content || "").slice(0, 600), vibrancy: byId.get(h.id)?.vibrancy ?? null }));
+        }
+      }
+    }
+    if (candidates) {
+      return rankAnchorCandidates(
+        candidates.map((c) => ({ ...c, similarity: typeof c.similarity === "number" ? c.similarity : 0 })),
+        { limit: 8, minSimilarity: 0.3, excludeId: entry.id },
+      );
+    }
+    // No vector for the item (not embedded yet) → legacy behaviour.
+    return (await loadGlobalCores()).filter((c) => c.id !== entry.id);
+  };
 
   let edgesCreated    = 0;
   let conflictsInserted = 0;
@@ -146,16 +238,16 @@ async function reconsolidate(
 
       if (!entry) { processedIds.push(item.id); continue; }
 
-      // Skip if no core nodes to link to.
-      const linkableCores = cores.filter((c) => c.id !== entry!.id);
+      // Skip (no LLM call) when nothing is close enough to link to.
+      const linkableCores = await anchorsFor(entry);
       if (linkableCores.length === 0) { processedIds.push(item.id); continue; }
 
       const coreList = linkableCores
         .slice(0, 10)
-        .map((c, i) => `[${i}] id=${c.id}\nTitle: ${c.title}\n${c.content.slice(0, 400)}`)
+        .map((c, i) => `[${i}] id=${c.id}\nTitle: ${c.title}\n${(c.content || "").slice(0, 400)}`)
         .join("\n\n");
 
-      // Ask the LLM to generate ≥ MIN_EDGES_PER_CONSOLIDATION edges.
+      // Ask the LLM for edges — zero is an acceptable answer.
       const resp = await fetch(llm.url, {
         method: "POST",
         headers: llm.headers,
@@ -164,11 +256,11 @@ async function reconsolidate(
           messages: [
             {
               role: "system",
-              content: `You are a knowledge graph editor. Your job is to find meaningful structural relationships between a new node and existing high-vibrancy "Core" nodes. Only propose edges where there is a real semantic relationship (not superficial topic overlap). Propose at least ${MIN_EDGES_PER_CONSOLIDATION} edges.`,
+              content: `You are a knowledge graph editor. Your job is to find meaningful structural relationships between a new node and nearby existing nodes. Only propose edges where there is a real semantic relationship (not superficial topic overlap). An empty list is the correct answer when no candidate is genuinely related — never invent a link to fill the list.`,
             },
             {
               role: "user",
-              content: `NEW NODE:\nTitle: ${entry.title}\nContent: ${entry.content.slice(0, 1500)}\n\nCORE NODES (anchor targets):\n${coreList}`,
+              content: `NEW NODE:\nTitle: ${entry.title}\nContent: ${(entry.content || "").slice(0, 1500)}\n\nCANDIDATE NODES (anchor targets):\n${coreList}`,
             },
           ],
           tools: [{
@@ -181,7 +273,7 @@ async function reconsolidate(
                 properties: {
                   edges: {
                     type: "array",
-                    minItems: MIN_EDGES_PER_CONSOLIDATION,
+                    minItems: MIN_EDGES_PER_CONSOLIDATION, // 0 — see memory-layers.ts
                     items: {
                       type: "object",
                       properties: {
@@ -216,7 +308,7 @@ async function reconsolidate(
 
       // If this is a conflict_staged entry, insert it now before creating edges.
       let resolvedId = entry.id;
-      if (!resolvedId && item.reason === "conflict_staged" && proposedEdges.length >= MIN_EDGES_PER_CONSOLIDATION) {
+      if (!resolvedId && item.reason === "conflict_staged" && proposedEdges.length >= STAGED_INSERT_MIN_EDGES) {
         const { data: inserted } = await supabase
           .from("knowledge_entries")
           .insert({
@@ -268,40 +360,65 @@ async function reconsolidate(
 
 // ── Phase 3: Pruning (orphan detection) ────────────────────────────────────────
 
-async function prune(supabase: any, userId: string, wikiId: string | null): Promise<{ orphans: string[] }> {
+async function prune(supabase: any, userId: string, wikiId: string | null): Promise<{ orphans: string[]; enqueued?: number }> {
   // Nodes with zero edges in either direction (scoped to wiki when provided).
-  let edgesQuery = supabase
-    .from("memory_graph")
-    .select("source_entry_id, target_entry_id")
-    .eq("user_id", userId);
-  const { data: allEdges } = wikiId
-    ? await supabase.rpc("memory_graph_for_wiki", { target_wiki_id: wikiId })
-    : await edgesQuery;
+  // Both reads are paged: PostgREST silently truncates at max-rows (1000), and
+  // an edge list cut at 1000 turned every node past the cut into a false orphan.
+  const { rows: allEdges, error: edgeErr } = await selectAllPages<{ source_entry_id: string; target_entry_id: string }>(() =>
+    wikiId
+      ? supabase
+          .rpc("memory_graph_for_wiki", { target_wiki_id: wikiId })
+          .select("id, source_entry_id, target_entry_id")
+          .order("id", { ascending: true })
+      : supabase
+          .from("memory_graph")
+          .select("id, source_entry_id, target_entry_id")
+          .eq("user_id", userId)
+          .order("id", { ascending: true })
+  );
+  // A partial edge list would mislabel connected nodes — better to skip.
+  if (edgeErr) {
+    console.warn("prune: edge read failed, skipping orphan detection:", edgeErr.message);
+    return { orphans: [] };
+  }
 
   const connected = new Set<string>();
-  for (const e of (allEdges || []) as any[]) {
+  for (const e of allEdges) {
     connected.add(e.source_entry_id);
     connected.add(e.target_entry_id);
   }
 
-  let entriesQuery = supabase
-    .from("knowledge_entries")
-    .select("id, title")
-    .eq("user_id", userId);
-  if (wikiId) entriesQuery = entriesQuery.eq("wiki_id", wikiId);
-  const { data: allEntries } = await entriesQuery;
+  // Living entries only — a superseded card's edges were moved to its
+  // successor, so it is "orphaned" by design and must not be re-linked.
+  const entryQuery = (liveOnly: boolean) => () => {
+    let q = supabase
+      .from("knowledge_entries")
+      .select("id")
+      .eq("user_id", userId);
+    if (liveOnly) q = q.is("superseded_by", null);
+    if (wikiId) q = q.eq("wiki_id", wikiId);
+    return q.order("id", { ascending: true });
+  };
+  let { rows: allEntries, error: entryErr } = await selectAllPages<{ id: string }>(entryQuery(true));
+  if (entryErr && (entryErr as any).code === "42703") {
+    ({ rows: allEntries, error: entryErr } = await selectAllPages<{ id: string }>(entryQuery(false)));
+  }
+  if (entryErr) {
+    console.warn("prune: entry read failed:", entryErr.message);
+    return { orphans: [] };
+  }
 
   const orphanIds: string[] = [];
-  for (const entry of (allEntries || []) as any[]) {
+  for (const entry of allEntries) {
     if (!connected.has(entry.id)) orphanIds.push(entry.id);
   }
 
-  // Enqueue orphans (won't overwrite if already queued).
-  for (const id of orphanIds) {
-    await enqueueEntry(supabase, userId, id, "orphan");
-  }
+  // One set-based RPC call for all orphans (was one HTTP upsert per orphan,
+  // each failing against the partial unique index). Already-queued rows are
+  // left alone; long-processed ones are re-armed — see enqueueEntries.
+  const enqueued = await enqueueEntries(supabase, userId, orphanIds, "orphan");
 
-  return { orphans: orphanIds };
+  return { orphans: orphanIds, enqueued };
 }
 
 // ── Phase 4: Semanticize (episodic → semantic consolidation) ──────────────────
@@ -441,17 +558,19 @@ serve(async (req) => {
 
     const t0 = Date.now();
 
+    // Phase 0 — recent writes get vectors before anything ranks/anchors on them.
+    const embedResult      = await embedMissing(supabase, user.id, wikiId);
+
     // Phase 1
     const rerankResult     = await rerank(supabase, user.id);
 
-    // Phase 1b — SHY: gently renormalize vibrancy toward a target mean so it
-    // can't saturate over time (synaptic homeostasis). Best-effort — skipped if
-    // the renormalize_vibrancy RPC (brain_memory migration) isn't deployed yet.
-    let renormalized = 0;
-    try {
-      const { data: rn } = await supabase.rpc("renormalize_vibrancy", { _user_id: user.id, _wiki_id: wikiId });
-      if (typeof rn === "number") renormalized = rn;
-    } catch (_e) { /* RPC not deployed — skip */ }
+    // Phase 1b (SHY renormalize_vibrancy) is intentionally no longer run here.
+    // It existed to stop incremental boosts from saturating vibrancy, but
+    // rerank_vibrancy now recomputes every score from scratch (idle days + use
+    // count), so nothing can accumulate — and renormalizing a young, active
+    // corpus right after rerank just multiplied every fresh card by ~0.6,
+    // pushing it back under the 0.70 core line. Reported as 0 for API shape.
+    const renormalized = 0;
 
     // Phase 2
     const consolidateResult = await reconsolidate(supabase, user.id, LOVABLE_API_KEY, llm, wikiId);
@@ -474,6 +593,7 @@ serve(async (req) => {
       ok: true,
       elapsed_ms,
       phases: {
+        embed:        embedResult,
         rerank:       { ...rerankResult, renormalized },
         consolidate:  consolidateResult,
         prune:        pruneResult,

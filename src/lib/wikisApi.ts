@@ -30,20 +30,19 @@ export async function fetchWikis(): Promise<Wiki[]> {
 }
 
 export async function fetchWikisWithStats(): Promise<WikiWithStats[]> {
-  const [wikis, counts] = await Promise.all([
-    fetchWikis(),
-    supabase
-      .from("knowledge_entries")
-      .select("wiki_id" as any),
-  ]);
-
-  const countMap = new Map<string, number>();
-  for (const row of ((counts.data || []) as unknown as Array<{ wiki_id: string | null }>)) {
-    if (!row.wiki_id) continue;
-    countMap.set(row.wiki_id, (countMap.get(row.wiki_id) || 0) + 1);
-  }
-
-  return wikis.map((w) => ({ ...w, entry_count: countMap.get(w.id) || 0 }));
+  // One exact HEAD count per wiki. The old path selected wiki_id for EVERY
+  // entry and counted client-side — which PostgREST silently truncated at
+  // 1000 rows, so a large library under-reported every neuron's size.
+  const wikis = await fetchWikis();
+  const counts = await Promise.all(
+    wikis.map((w) =>
+      (supabase.from("knowledge_entries") as any)
+        .select("id", { count: "exact", head: true })
+        .eq("wiki_id", w.id)
+        .then((r: { count: number | null }) => r.count ?? 0, () => 0) as Promise<number>,
+    ),
+  );
+  return wikis.map((w, i) => ({ ...w, entry_count: counts[i] }));
 }
 
 export async function createWiki(input: {

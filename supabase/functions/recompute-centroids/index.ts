@@ -33,24 +33,41 @@ serve(async (req) => {
 
     let recomputed = 0;
     for (const w of wikis as any[]) {
-      // Fetch entry embeddings for this wiki (native or bridged)
-      const { data: entries } = await supabase
-        .rpc("entries_for_wiki", { target_wiki_id: w.id });
-      if (!entries || entries.length === 0) {
+      // Entry embeddings for this wiki (native or bridged), read straight off
+      // the entries_for_wiki RPC with a narrowed select. The old code pulled
+      // every full row (both vector columns + tsv + content) just to collect
+      // ids, then re-selected embedding_v2 with a `.in(id, …)` list that
+      // outgrows URL limits on big wikis — and both reads were silently
+      // capped at 1000 rows by PostgREST. Now: one paged read of exactly the
+      // column needed.
+      const { count: entryCount, error: countErr } = await supabase
+        .rpc("entries_for_wiki", { target_wiki_id: w.id }, { count: "exact", head: true });
+      if (!countErr && (entryCount ?? 0) === 0) {
         // Delete centroid if no entries
         await supabase.from("wiki_centroids").delete().eq("wiki_id", w.id);
         continue;
       }
 
-      // Pull embedding_v2 for those entries
-      const ids = (entries as any[]).map((e) => e.id);
-      const { data: embedRows } = await supabase
-        .from("knowledge_entries")
-        .select("embedding_v2")
-        .in("id", ids)
-        .not("embedding_v2", "is", null);
+      const embedRows: any[] = [];
+      let readErr: any = null;
+      for (let from = 0; from < 20_000; from += 500) {
+        const { data: page, error } = await supabase
+          .rpc("entries_for_wiki", { target_wiki_id: w.id })
+          .select("id, embedding_v2")
+          .not("embedding_v2", "is", null)
+          .order("id", { ascending: true })
+          .range(from, from + 499);
+        if (error) { readErr = error; break; }
+        const rows = (page || []) as any[];
+        embedRows.push(...rows);
+        if (rows.length < 500) break;
+      }
+      if (readErr) {
+        console.error("recompute-centroids: embedding read failed for wiki", w.id, readErr.message);
+        continue;
+      }
 
-      if (!embedRows || embedRows.length === 0) continue;
+      if (embedRows.length === 0) continue;
 
       // Mean across vectors (parse halfvec from "[...]" string format)
       const vectors: number[][] = [];

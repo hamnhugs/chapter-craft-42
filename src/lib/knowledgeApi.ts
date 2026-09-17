@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { createIdBatcher } from "@/lib/idBatcher";
 
 export interface KnowledgeEntry {
   id: string;
@@ -59,9 +60,11 @@ export interface SleepCycleReport {
   ok: boolean;
   elapsed_ms: number;
   phases: {
+    /** Phase 0 embed-missing sweep (absent from older deployments). */
+    embed?:      { embedded: number };
     rerank:      { updated: number; renormalized?: number };
     consolidate: { processed: number; edges_created: number; conflicts_inserted: number };
-    prune:       { orphans: string[] };
+    prune:       { orphans: string[]; enqueued?: number };
     semanticize?: { created: number };
   };
 }
@@ -92,35 +95,90 @@ export interface LintResult {
   issues: { type: string; severity: string; description: string; affected_entries?: string[]; suggested_fix?: string }[];
   suggestions: { type: string; description: string; priority: string }[];
   health_score: number;
-  stats: { total_entries: number; total_relationships: number; orphan_count: number; avg_confidence: number };
+  /** sampled_entries: how many entries the LLM actually audited (capped at 150). */
+  stats: { total_entries: number; total_relationships: number; orphan_count: number; avg_confidence: number; sampled_entries?: number };
 }
+
+// ── Entry list reads: explicit columns, every page ─────────────────────────────
+// `select("*")` on knowledge_entries shipped both vector columns (embedding
+// 768 floats + embedding_v2 1536 floats, serialized as text) and the tsvector
+// for EVERY row the WikiPanel or chat prompt listed — typically >90% of the
+// payload, for data no client reads. And PostgREST silently caps a response
+// at max-rows (1000): a big neuron just "lost" its oldest entries.
+//
+// ENTRY_LIST_COLUMNS is every column except embedding / embedding_v2 / tsv.
+// PostgREST applies `select` and `range` to set-returning RPCs too, so the
+// entries_for_wiki RPC is narrowed the same way — no new SQL function needed.
+// If a listed column doesn't exist yet (an unapplied optional migration →
+// 42703) the read retries with "*", exactly the old behaviour.
+export const ENTRY_LIST_COLUMNS = [
+  "id", "user_id", "wiki_id", "linked_wiki_id", "title", "content", "entry_type",
+  "source_book_id", "tags", "confidence", "folder", "maturity", "subject", "is_index",
+  "pending_changes", "atomicity_warning", "embedding_model", "vibrancy",
+  "last_retrieved_at", "retrieval_count", "importance", "surprise", "encoding_strength",
+  "storage_strength", "review_count", "next_review_at", "archived", "valid_from",
+  "valid_to", "superseded_by", "supersede_reason", "locators", "aliases", "author",
+  "created_at", "updated_at",
+].join(", ");
+
+const LIST_PAGE_SIZE = 1000;
+const LIST_MAX_ROWS = 20_000;
+
+/** Page through a PostgREST read until a short page. `build` must return a
+ *  fresh, deterministically ordered query each call. */
+export async function fetchAllPages<T>(
+  build: () => any,
+  pageSize = LIST_PAGE_SIZE,
+  maxRows = LIST_MAX_ROWS,
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; from < maxRows; from += pageSize) {
+    const { data, error } = await build().range(from, from + pageSize - 1);
+    if (error) throw error;
+    const page = (data || []) as T[];
+    out.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return out;
+}
+
+const isMissingColumn = (err: unknown) => (err as any)?.code === "42703";
 
 export async function fetchKnowledgeEntries(wikiId?: string | null): Promise<KnowledgeEntry[]> {
   // When a wiki is selected we want both native entries AND bridged-in entries.
   // The entries_for_wiki RPC handles the union and keeps RLS clean.
   if (wikiId) {
-    const { data, error } = await supabase.rpc("entries_for_wiki" as any, {
-      target_wiki_id: wikiId,
-    } as any);
-    if (error) throw error;
-    return (data || []) as unknown as KnowledgeEntry[];
+    const scoped = (cols: string) => () =>
+      (supabase.rpc("entries_for_wiki" as any, { target_wiki_id: wikiId } as any) as any)
+        .select(cols)
+        .order("updated_at", { ascending: false })
+        .order("id", { ascending: true });
+    try {
+      return await fetchAllPages<KnowledgeEntry>(scoped(ENTRY_LIST_COLUMNS));
+    } catch (err) {
+      if (!isMissingColumn(err)) throw err;
+      return fetchAllPages<KnowledgeEntry>(scoped("*"));
+    }
   }
   // Unscoped view shows only LIVING entries (superseded ones live in history).
   // Feature-detected: before the supersession migration the column doesn't
-  // exist (42703), so retry without the filter.
-  const live = await supabase
-    .from("knowledge_entries")
-    .select("*")
-    .is("superseded_by" as any, null)
-    .order("updated_at", { ascending: false });
-  if (!live.error) return (live.data || []) as unknown as KnowledgeEntry[];
-  if ((live.error as any)?.code !== "42703") throw live.error;
-  const { data, error } = await supabase
-    .from("knowledge_entries")
-    .select("*")
-    .order("updated_at", { ascending: false });
-  if (error) throw error;
-  return (data || []) as unknown as KnowledgeEntry[];
+  // exist (42703), so retry without the filter (and with "*").
+  const unscoped = (cols: string, liveOnly: boolean) => () => {
+    let q: any = supabase.from("knowledge_entries").select(cols as "*");
+    if (liveOnly) q = q.is("superseded_by" as any, null);
+    return q.order("updated_at", { ascending: false }).order("id", { ascending: true });
+  };
+  try {
+    return await fetchAllPages<KnowledgeEntry>(unscoped(ENTRY_LIST_COLUMNS, true));
+  } catch (err) {
+    if (!isMissingColumn(err)) throw err;
+  }
+  try {
+    return await fetchAllPages<KnowledgeEntry>(unscoped("*", true));
+  } catch (err) {
+    if (!isMissingColumn(err)) throw err;
+  }
+  return fetchAllPages<KnowledgeEntry>(unscoped("*", false));
 }
 
 /**
@@ -169,18 +227,17 @@ export async function fetchMemoryGraphForSet(wikiIds: string[]): Promise<MemoryG
 }
 
 export async function fetchMemoryGraph(wikiId?: string | null): Promise<MemoryGraphEdge[]> {
+  // Paged: PostgREST's silent 1000-row cap dropped edges from dense graphs.
   if (wikiId) {
-    const { data, error } = await supabase.rpc("memory_graph_for_wiki" as any, {
-      target_wiki_id: wikiId,
-    } as any);
-    if (error) throw error;
-    return (data || []) as unknown as MemoryGraphEdge[];
+    return fetchAllPages<MemoryGraphEdge>(() =>
+      (supabase.rpc("memory_graph_for_wiki" as any, { target_wiki_id: wikiId } as any) as any)
+        .select("*")
+        .order("id", { ascending: true }),
+    );
   }
-  const { data, error } = await supabase
-    .from("memory_graph")
-    .select("*");
-  if (error) throw error;
-  return (data || []) as unknown as MemoryGraphEdge[];
+  return fetchAllPages<MemoryGraphEdge>(() =>
+    supabase.from("memory_graph").select("*").order("id", { ascending: true }),
+  );
 }
 
 export async function fetchConversationMemory(): Promise<ConversationMemory | null> {
@@ -200,6 +257,8 @@ export async function deleteKnowledgeEntry(id: string): Promise<void> {
 export async function updateKnowledgeEntry(id: string, updates: { title?: string; content?: string; tags?: string[]; confidence?: number }): Promise<void> {
   const { error } = await supabase.from("knowledge_entries").update(updates).eq("id", id);
   if (error) throw error;
+  // A text edit clears the stale vectors (embedding_staleness trigger) — re-embed.
+  if (updates.title !== undefined || updates.content !== undefined) embedEntriesSoon([id]);
 }
 
 export async function extractKnowledge(messages: { role: string; content: string }[], sourceBookId?: string, wikiId?: string | null): Promise<any> {
@@ -246,6 +305,18 @@ export interface RetrievedNode {
   hop: number;
   via: string | null;
   from_seed: string;
+  /** Raw query cosine (knowledge-retrieve ≥ 20260917 deploy); null when unknown. */
+  similarity?: number | null;
+  vibrancy?: number;
+  confidence?: number;
+  /** Owning wiki (v2 search path). */
+  wiki_id?: string | null;
+  /** Seed also matched full text (v2 search path). */
+  ft_match?: boolean;
+  /** Card pointer fields, raw (v2 search path) — parse with cardLocators. */
+  locators?: unknown;
+  aliases?: string[] | null;
+  author?: string | null;
 }
 export interface RetrievedEdge {
   source_entry_id: string;
@@ -257,6 +328,10 @@ export interface RetrievalResult {
   nodes: RetrievedNode[];
   edges: RetrievedEdge[];
   query_embedded?: boolean;
+  /** Which search path served the request ("legacy" = v2 migration not applied). */
+  search?: "v2" | "legacy";
+  scoped_wiki_ids?: string[] | null;
+  dropped?: { seeds_below_cosine: number; below_relative_floor: number };
 }
 
 async function callEdge(fnName: string, body: unknown): Promise<any> {
@@ -278,9 +353,97 @@ async function callEdge(fnName: string, body: unknown): Promise<any> {
 
 export async function retrieveKnowledge(
   query: string,
-  opts: { depth?: number; match_count?: number; deep?: boolean; wiki_id?: string | null } = {},
+  /** wiki_ids: all loaded neurons in ONE call (server fuses); wiki_id: legacy
+   *  single scope. limit: max nodes (default 18, deep 30, max 50). */
+  opts: { depth?: number; match_count?: number; deep?: boolean; wiki_id?: string | null; wiki_ids?: string[] | null; limit?: number } = {},
 ): Promise<RetrievalResult> {
   return callEdge("knowledge-retrieve", { query, ...opts });
+}
+
+// ── Targeted embedding for freshly written entries ──────────────────────────
+// Only the media generators used to trigger embedding (a wiki-wide
+// all_missing sweep), so cards created or edited from chat, the quote-capture
+// dialog, the Toolshed mirror or a supersede had NO vector until someone
+// pressed "Rebuild search" — invisible to semantic retrieval. Every successful
+// entry write now calls embedEntriesSoon(ids): ids from a burst of writes are
+// debounced (~2s quiet, 6s max) and sent as ONE knowledge-embed { entry_ids }
+// call, fire-and-forget. Failures are swallowed on purpose: the row stays
+// embedding IS NULL and the next all_missing reindex / Sleep Cycle pass picks
+// it up, so a hiccup here never surfaces as a failed save.
+const EMBED_DEBOUNCE_MS = 2000;
+const EMBED_BATCH_MAX = 50; // knowledge-embed accepts ≤100 ids per call
+
+async function postEmbedBatch(ids: string[]): Promise<void> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) return; // signed out: nothing we could embed anyway
+    await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/knowledge-embed`, {
+      method: "POST",
+      // keepalive lets a flush triggered by pagehide finish after navigation.
+      keepalive: true,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ entry_ids: ids }),
+    });
+  } catch {
+    /* best-effort — see block comment */
+  }
+}
+
+const embedBatcher = createIdBatcher({
+  delayMs: EMBED_DEBOUNCE_MS,
+  maxWaitMs: EMBED_DEBOUNCE_MS * 3,
+  maxBatch: EMBED_BATCH_MAX,
+  onFlush: (ids) => { void postEmbedBatch(ids); },
+});
+
+if (typeof window !== "undefined") {
+  try { window.addEventListener("pagehide", () => embedBatcher.flush()); } catch { /* non-browser */ }
+}
+
+/** Queue entry ids for (re-)embedding after a successful create/edit. Never throws. */
+export function embedEntriesSoon(ids: Array<string | null | undefined> | string | null | undefined): void {
+  try {
+    embedBatcher.add(Array.isArray(ids) ? ids : [ids]);
+  } catch {
+    /* never let embedding bookkeeping break a save */
+  }
+}
+
+// ── Ranked keyword search (chat tool executors) ──────────────────────────────
+// search_wiki / memory_search used `title.ilike.%<whole query>%` — a sequential
+// scan that only matches when the ENTIRE phrase appears verbatim, so "memory
+// palace technique" missed a card titled "Palace technique for memory".
+// hybrid_search_knowledge_v2 with no embedding is a ranked, GIN-indexed
+// full-text search with OR semantics over the stemmed query words, already
+// restricted to living entries and (optionally) the loaded wikis — native,
+// bridged, or legacy wiki-less. Returns null (caller falls back to its ilike
+// path) when the RPC isn't deployed, errors, or finds nothing.
+let rankedKeywordSearchMissing = false;
+
+export async function rankedKeywordSearch(
+  query: string,
+  limit: number,
+  wikiIds: string[] | null,
+): Promise<{ data: any[]; error: null } | null> {
+  const q = (query || "").trim();
+  if (!q || rankedKeywordSearchMissing) return null;
+  try {
+    const { data, error } = await supabase.rpc("hybrid_search_knowledge_v2" as any, {
+      query_text: q.slice(0, 500),
+      query_embedding: null,
+      match_count: Math.max(1, Math.min(50, limit)),
+      filter_wiki_ids: wikiIds && wikiIds.length > 0 ? wikiIds : null,
+    } as any);
+    if (error) {
+      const code = (error as any)?.code;
+      if (code === "PGRST202" || code === "42883") rankedKeywordSearchMissing = true;
+      return null;
+    }
+    const rows = Array.isArray(data) ? (data as any[]) : [];
+    return rows.length > 0 ? { data: rows, error: null } : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function reindexEmbeddings(
@@ -613,6 +776,8 @@ export async function supersedeKnowledgeEntry(
     _also_supersede: updates.alsoSupersede ?? null,
   } as any);
   if (error) throw error;
+  // The successor row is born without a vector.
+  embedEntriesSoon(data as unknown as string);
   return data as unknown as string;
 }
 
@@ -729,5 +894,6 @@ export async function createWikiPointerEntry(input: {
     .select()
     .single();
   if (error || !data) throw error || new Error("Failed to create pointer");
+  embedEntriesSoon((data as any).id);
   return data as unknown as KnowledgeEntry;
 }

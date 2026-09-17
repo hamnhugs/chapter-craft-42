@@ -526,15 +526,23 @@ export async function findRegisterMatches(
   }
 }
 
-/** Best-effort vibrancy bump on dereference (read_span): reading a card's
- *  spans is the "use" the ACT-R stats were always meant to measure, and
- *  knowledge-retrieve already boosts vibrancy on every retrieval — this
- *  mirrors that existing permissionless use-statistic semantic. Isolated
- *  from the main entry fetch (a DB without the brain-memory migrations
- *  42703s on the column — that must never fail the tool); swallows every
- *  error; a lost bump in a read-then-write race is accepted for a
- *  statistic. */
+/** Best-effort use bump on dereference (read_span): reading a card's spans is
+ *  the "use" the vibrancy stats are meant to measure (knowledge-retrieve no
+ *  longer bumps on mere injection — that was a popularity loop). Prefers the
+ *  touch_node_retrievals RPC, which also records retrieval_count and
+ *  last_retrieved_at — without those the Sleep Cycle's rerank recomputes the
+ *  score from scratch and a plain vibrancy bump is erased. Falls back to the
+ *  legacy read-then-write bump when the RPC is unavailable. Isolated from the
+ *  main entry fetch (a DB without the brain-memory migrations 42703s on the
+ *  column — that must never fail the tool); swallows every error; a lost bump
+ *  in a race is accepted for a statistic. */
 export async function bumpVibrancy(entryId: string): Promise<void> {
+  try {
+    const { error: rpcErr } = await supabase.rpc("touch_node_retrievals" as any, { node_ids: [entryId], boost: 0.04 } as any);
+    if (!rpcErr) return;
+  } catch {
+    /* fall through to the legacy bump */
+  }
   try {
     const { data, error } = await supabase
       .from("knowledge_entries")
