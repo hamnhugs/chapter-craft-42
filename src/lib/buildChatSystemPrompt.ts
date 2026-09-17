@@ -419,12 +419,12 @@ export async function buildChatSystemPrompt({
     ...(curateClauses.length === 0 ? [] : [
       "Beyond answering, you can actively tend the user's memory with your tools: " +
       (curateClauses.length < 2 ? curateClauses[0] : `${curateClauses.slice(0, -1).join("; ")}; and ${curateClauses[curateClauses.length - 1]}`) +
-      // TRUTH: nothing auto-captures conversation text (extraction is the
-      // user's Save-to-neuron button; only generated media self-save). The old
+      // TRUTH: nothing auto-captures conversation text (the Save-to-neuron
+      // button was removed, so capture is yours; only generated media self-save). The old
       // sentence claimed otherwise, which both misinformed the model and
       // suppressed deliberate captures — a described-but-absent capability in
       // the exact prompt that pins the rule against those.
-      ". Nothing is captured from conversation automatically — text is saved only when the user taps Save to neuron or when you act — so when a genuinely important, durable fact surfaces, capture it; never bulk-save chit-chat, and briefly say when you've saved, corrected, or linked something.",
+      ". Nothing is captured from conversation automatically — text is saved only when you act (including when the user asks you to remember something) — so when a genuinely important, durable fact surfaces, capture it; never bulk-save chit-chat, and briefly say when you've saved, corrected, or linked something.",
     ]),
     ...ifTools(["get_memory_history"], "Memory has a TIME AXIS: when the user asks what they used to believe, what changed, when something changed, or wants to audit a correction, call `get_memory_history` on the entry — it returns every version with the dates it was believed and why it was replaced. Superseded versions never appear in normal retrieval, only there."),
   ];

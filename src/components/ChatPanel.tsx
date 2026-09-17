@@ -12,7 +12,6 @@ import PocketScreen from "@/components/PocketScreen";
 import { LensImageFrame, MemoryChips } from "@/components/MemoryLensStrip";
 import ToolApprovalCard from "@/components/ToolApprovalCard";
 import ProgramApprovalCard from "@/components/ProgramApprovalCard";
-import { extractKnowledge } from "@/lib/knowledgeApi";
 import { Loader2, StickyNote, BookmarkPlus } from "lucide-react";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { isToolBlocked } from "@/lib/leanMode";
@@ -172,7 +171,6 @@ const ChatPanel: React.FC = () => {
     uploadsRef.current.delete(localId);
     if (up) void up.then(({ storagePath }) => removeUploadedChatImage(storagePath)).catch(() => {});
   }, []);
-  const [extracting, setExtracting] = useState(false);
   const [deepSearching, setDeepSearching] = useState(false);
   const [digesting, setDigesting] = useState(false);
 
@@ -641,34 +639,6 @@ const ChatPanel: React.FC = () => {
     : bookSelection.bookIds.length > 0
       ? `${bookSelection.bookIds.length} hand-picked book${bookSelection.bookIds.length === 1 ? "" : "s"}`
       : null;
-
-  const handleSaveToWiki = async () => {
-    if (messages.length < 2) { toast.error("Chat first before saving to neuron"); return; }
-    setExtracting(true);
-    try {
-      const result = await extractKnowledge(messages.map(m => ({ role: m.role, content: m.content })), activeBookId || undefined, activeWikiId);
-      const entries: any[] = result.entries || [];
-      const added = entries.filter((e) => e.action === "ADDED");
-      const updated = entries.filter((e) => e.action === "UPDATED");
-      const skipped = entries.filter((e) => e.action === "SKIPPED_DUPLICATE");
-      if (added.length === 0 && updated.length === 0) {
-        toast.info(skipped.length > 0 ? "Already remembered — nothing new to save" : "Nothing new to remember from this chat");
-      } else {
-        const names = [...added, ...updated].map((e) => e.title).filter(Boolean);
-        const parts: string[] = [];
-        if (added.length) parts.push(`${added.length} new`);
-        if (updated.length) parts.push(`${updated.length} updated`);
-        if (skipped.length) parts.push(`${skipped.length} duplicate${skipped.length === 1 ? "" : "s"} skipped`);
-        toast.success(`Memory updated — ${parts.join(", ")}`, {
-          description: names.slice(0, 3).join(" · ") + (names.length > 3 ? ` · +${names.length - 3} more` : ""),
-        });
-      }
-    } catch (err: any) {
-      toast.error(err.message || "Failed to extract knowledge");
-    } finally {
-      setExtracting(false);
-    }
-  };
 
   // Background Quick Search — runs a lightweight web search in the background
   // and injects the results into the transcript when ready.
@@ -1606,18 +1576,6 @@ const ChatPanel: React.FC = () => {
                 </button>
               )}
             </div>
-            {messages.length >= 2 && (
-              <button
-                onClick={handleSaveToWiki}
-                disabled={extracting}
-                aria-label="Save to Neuron"
-                title="Save to Neuron"
-                className="h-[50px] px-3 sm:px-5 bg-secondary-container text-on-secondary-container rounded-xl flex items-center gap-2 hover:bg-secondary-container/80 transition-all active:scale-95 border border-outline-variant/20 shrink-0"
-              >
-                {extracting ? <Loader2 className="w-4 h-4 animate-spin" /> : <span className="material-symbols-outlined text-lg">history_edu</span>}
-                <span className="hidden sm:inline text-sm font-semibold whitespace-nowrap">Save to Neuron</span>
-              </button>
-            )}
           </div>
           <div className="flex justify-between items-center px-2">
             <div className="flex items-center gap-4 flex-nowrap overflow-x-auto hide-scrollbar snap-x flex-1 min-w-0 [&>*]:shrink-0 [&>*]:snap-start [&>*]:min-h-[40px] md:flex-wrap md:overflow-visible md:[&>*]:min-h-0">
