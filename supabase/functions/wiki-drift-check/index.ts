@@ -42,10 +42,22 @@ serve(async (req) => {
       .eq("user_id", user.id);
     if (!wikis || wikis.length === 0) return json({ checked: 0, alerts: 0 });
 
-    const { data: centroids } = await supabase
+    // name_embedding(_source): cache from migration 20260917130600; absent
+    // before it (42703) → no cache, embed every run as before.
+    let nameCache = true;
+    const withCache = await supabase
       .from("wiki_centroids")
-      .select("wiki_id, centroid, entry_count")
+      .select("wiki_id, centroid, entry_count, name_embedding, name_embedding_source")
       .eq("user_id", user.id);
+    let centroids: any[] | null = withCache.data as any[] | null;
+    if (withCache.error && (withCache.error as any).code === "42703") {
+      nameCache = false;
+      const plain = await supabase
+        .from("wiki_centroids")
+        .select("wiki_id, centroid, entry_count")
+        .eq("user_id", user.id);
+      centroids = plain.data as any[] | null;
+    }
     const centroidMap = new Map(
       (centroids || []).map((c: any) => [c.wiki_id, c]),
     );
@@ -102,7 +114,20 @@ serve(async (req) => {
 
       // ── Rename check: centroid vs (name + description) embedding ───────
       const text = `${w.name}. ${w.description || ""}`.trim();
-      const titleVec = await embed(text);
+      // Names rarely change: reuse the cached vector when it was computed from
+      // exactly this text, otherwise embed and refresh the cache (best-effort).
+      const cachedVec = nameCache && c.name_embedding_source === text ? parseVector(c.name_embedding) : null;
+      let titleVec: number[] | null = cachedVec && cachedVec.length === 1536 ? cachedVec : null;
+      if (!titleVec) {
+        titleVec = await embed(text);
+        if (titleVec && nameCache) {
+          const { error: cacheErr } = await supabase
+            .from("wiki_centroids")
+            .update({ name_embedding: `[${titleVec.join(",")}]`, name_embedding_source: text })
+            .eq("wiki_id", w.id);
+          if (cacheErr) console.warn("wiki-drift-check: name embedding cache write failed:", cacheErr.message);
+        }
+      }
       const centroidVec = parseVector(c.centroid);
       if (titleVec && centroidVec && centroidVec.length === titleVec.length) {
         const drift = 1 - cosine(titleVec, centroidVec);

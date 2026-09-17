@@ -409,6 +409,43 @@ export function embedEntriesSoon(ids: Array<string | null | undefined> | string 
   }
 }
 
+// ── Ranked keyword search (chat tool executors) ──────────────────────────────
+// search_wiki / memory_search used `title.ilike.%<whole query>%` — a sequential
+// scan that only matches when the ENTIRE phrase appears verbatim, so "memory
+// palace technique" missed a card titled "Palace technique for memory".
+// hybrid_search_knowledge_v2 with no embedding is a ranked, GIN-indexed
+// full-text search with OR semantics over the stemmed query words, already
+// restricted to living entries and (optionally) the loaded wikis — native,
+// bridged, or legacy wiki-less. Returns null (caller falls back to its ilike
+// path) when the RPC isn't deployed, errors, or finds nothing.
+let rankedKeywordSearchMissing = false;
+
+export async function rankedKeywordSearch(
+  query: string,
+  limit: number,
+  wikiIds: string[] | null,
+): Promise<{ data: any[]; error: null } | null> {
+  const q = (query || "").trim();
+  if (!q || rankedKeywordSearchMissing) return null;
+  try {
+    const { data, error } = await supabase.rpc("hybrid_search_knowledge_v2" as any, {
+      query_text: q.slice(0, 500),
+      query_embedding: null,
+      match_count: Math.max(1, Math.min(50, limit)),
+      filter_wiki_ids: wikiIds && wikiIds.length > 0 ? wikiIds : null,
+    } as any);
+    if (error) {
+      const code = (error as any)?.code;
+      if (code === "PGRST202" || code === "42883") rankedKeywordSearchMissing = true;
+      return null;
+    }
+    const rows = Array.isArray(data) ? (data as any[]) : [];
+    return rows.length > 0 ? { data: rows, error: null } : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function reindexEmbeddings(
   all_missing = true,
   wikiId?: string | null,
