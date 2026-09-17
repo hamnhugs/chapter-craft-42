@@ -3114,6 +3114,17 @@ export type Database = {
         Args: { p_note?: string; p_ok: boolean }
         Returns: undefined
       }
+      match_entry_neighbors: {
+        Args: { p_count?: number; p_entry_id: string; p_wiki_id?: string }
+        Returns: {
+          content: string
+          entry_type: string
+          id: string
+          similarity: number
+          title: string
+          vibrancy: number
+        }[]
+      }
       match_image_memories: {
         Args: {
           filter_wiki_id?: string
