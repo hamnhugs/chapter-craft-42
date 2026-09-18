@@ -208,3 +208,12 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.sweep_orphan_cron_runs() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.sweep_orphan_cron_runs() TO service_role;
+
+-- ── live output for long runs ────────────────────────────────────────────────
+-- A scheduled run may legitimately take an hour, and until it finished there was
+-- nothing to look at: "running" with no output is indistinguishable from wedged.
+-- The runner now snapshots the job's last output every few seconds and hands it
+-- back on the poll; program-cron parks it here so the Settings screen can show
+-- the user what their program is actually doing.
+ALTER TABLE public.program_runs ADD COLUMN IF NOT EXISTS progress_tail TEXT;
+ALTER TABLE public.program_runs ADD COLUMN IF NOT EXISTS progress_at TIMESTAMPTZ;

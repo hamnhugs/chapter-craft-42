@@ -32,12 +32,33 @@ const NETWORK_LABEL = (p: ProgramProposal) =>
     ? `network → ${(p.manifest.allowed_hosts || []).join(", ") || "an approved allowlist"}`
     : "no network access";
 
+/**
+ * What the verifier actually proved, said without borrowing authority it does
+ * not have. "Smoke test passed" reads like an independent audit; in truth the
+ * AI wrote the program AND the examples it is checked against, and an example
+ * with no expected output only asserts that the program exited without error.
+ * So the label names the source of the checks and counts them, and the word
+ * "passed" never stands on its own.
+ */
 const verdictLabel = (v?: ProgramProposal["verifier"]) => {
+  const checks = v?.checks || [];
+  const n = checks.length;
+  const passed = checks.filter((c) => c.passed).length;
+  const plural = n === 1 ? "" : "s";
   switch (v?.verdict) {
-    case "passed": return { text: "Smoke test passed (one hermetic trace — a quality signal, not a safety guarantee)", bad: false };
-    case "failed": return { text: "Smoke test FAILED against the author's examples", bad: true };
-    case "inconclusive": return { text: "Smoke test inconclusive — behaviour could not be checked hermetically", bad: false };
-    default: return { text: "Not verified — no runner was reachable to smoke-test it", bad: false };
+    case "passed":
+      return {
+        text: n > 0
+          ? `Ran offline against ${n} check${plural} the AI wrote for itself, and all ${n === 1 ? "of it" : "of them"} behaved as it predicted. That means it runs — not that it does what you want.`
+          : "Ran offline without error, but the AI supplied no checks to test it against.",
+        bad: false,
+      };
+    case "failed":
+      return { text: `FAILED ${n - passed} of ${n} check${plural} the AI wrote for itself — its own code did not do what it predicted.`, bad: true };
+    case "inconclusive":
+      return { text: "Not checked — the sandbox could not run it (unreachable, busy, or out of time). Nothing is known about how it behaves.", bad: false };
+    default:
+      return { text: "Not checked — no runner was reachable. Nothing is known about how it behaves.", bad: false };
   }
 };
 

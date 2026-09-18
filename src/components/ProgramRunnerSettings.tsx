@@ -110,7 +110,12 @@ const ScheduleControl: React.FC<{ program: AgentProgramRow; schedule?: ProgramSc
     finally { setBusy(false); }
   }, [program.id, schedule, onChanged]);
 
+  // Whatever the in-flight run has printed so far. A scheduled job may run for
+  // an hour, and "in flight" on its own cannot be told apart from wedged.
+  const liveTail = schedule?.active_run_id && lastCron?.status === "pending" ? (lastCron.progress_tail || "") : "";
+
   return (
+    <>
     <div className="mt-1 flex flex-wrap items-center gap-2">
       <span className="text-[11px] text-on-surface-variant" aria-hidden>⏱</span>
       <select value={scheduleToPreset(schedule)} onChange={(e) => apply(e.target.value)} disabled={busy}
@@ -159,6 +164,15 @@ const ScheduleControl: React.FC<{ program: AgentProgramRow; schedule?: ProgramSc
         </>
       )}
     </div>
+    {liveTail && (
+      <div className="mt-1 rounded border border-outline/30 bg-black/20 p-2">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant">
+          Live output{lastCron?.progress_at ? ` · ${new Date(lastCron.progress_at).toLocaleTimeString()}` : ""}
+        </p>
+        <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-snug text-on-surface">{liveTail}</pre>
+      </div>
+    )}
+    </>
   );
 };
 
@@ -203,6 +217,16 @@ const ProgramRunnerSettings: React.FC = () => {
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
 
+  // While a scheduled run is actually in flight, re-read so its live output
+  // advances on screen. Only then — polling a screen where nothing is running
+  // would be a query every 15s for no reason.
+  const anyInFlight = Array.from(schedules.values()).some((s) => !!s.active_run_id);
+  useEffect(() => {
+    if (!anyInFlight) return;
+    const t = window.setInterval(() => { void refresh(); }, 15_000);
+    return () => window.clearInterval(t);
+  }, [anyInFlight, refresh]);
+
   const onSave = useCallback(async () => {
     setSaving(true);
     // Only send the signing key when the user typed one — otherwise the stored
@@ -244,9 +268,12 @@ const ProgramRunnerSettings: React.FC = () => {
   const onDeleteName = useCallback(async (name: string) => {
     if (!confirm(`Delete "${name}" permanently, including every version of it? The source is only stored here — this cannot be undone.`)) return;
     try {
-      const { deleted, cardRemoved } = await deleteProgramsByName(name);
+      const { deleted, cardRemoved, stateLeftBehind } = await deleteProgramsByName(name);
       if (deleted === 0) { toast.error(`"${name}" was not deleted — nothing matched it.`); return; }
       toast.success(`"${name}" deleted — ${deleted} version${deleted === 1 ? "" : "s"}${cardRemoved ? " and its Toolshed card" : ""}`);
+      // Said separately and as a warning: the program is gone from the app, but
+      // its files are still sitting on the user's server.
+      if (stateLeftBehind) toast.warning(`Its saved files are still on your VPS — ${stateLeftBehind}. Remove them by hand if they matter.`);
       void refresh();
     } catch (e) {
       toast.error(`Could not delete: ${String((e as Error)?.message || e).slice(0, 160)}`);

@@ -284,7 +284,7 @@ async function deleteProgramVerb(args: Record<string, unknown>): Promise<Program
   }
   if (!row) return fail(name, "PROGRAM_NOT_FOUND", `No program named '${programName}'.`, "Check your program list for the exact names.");
 
-  let outcome: { deleted: number; versions: number[] };
+  let outcome: { deleted: number; versions: number[]; stateLeftBehind?: string };
   try {
     outcome = await deleteProgramsByName(row.name);
   } catch (e) {
@@ -295,7 +295,16 @@ async function deleteProgramVerb(args: Record<string, unknown>): Promise<Program
   const nonce = buildFenceNonce();
   const safeName = sanitizeInline(row.name, nonce, 40);
   return {
-    result: { ok: true, name: safeName, deleted_versions: outcome.versions, deleted_count: outcome.deleted, note: "Deleted permanently, including earlier versions. It cannot be restored — if the user wants it back it has to be forged again." },
+    result: {
+      ok: true, name: safeName, deleted_versions: outcome.versions, deleted_count: outcome.deleted,
+      note: "Deleted permanently, including earlier versions. It cannot be restored — if the user wants it back it has to be forged again.",
+      // The VPS half of the deletion is a separate fact and may have failed on
+      // its own. Saying nothing here would let the model report a clean delete
+      // while the program's files are still on the user's server.
+      ...(outcome.stateLeftBehind
+        ? { vps_state: "NOT removed", vps_state_reason: sanitizeInline(outcome.stateLeftBehind, nonce, 160), tell_user: "Say plainly that its saved files are still on their VPS and why." }
+        : { vps_state: "removed with it" }),
+    },
     event: { name, summary: `Deleted Foundry program "${safeName}" (${outcome.deleted} version${outcome.deleted === 1 ? "" : "s"})`, ok: true },
   };
 }

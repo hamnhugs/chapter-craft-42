@@ -195,3 +195,23 @@ export async function verifyProgramRemote(programId: string): Promise<ProgramVer
   const code = codeFromBody(b);
   return { ok: false, code, error: (PROGRAM_UNAVAILABLE_CODES.has(code) ? PROGRAM_UNAVAILABLE_PREFIX : "") + programErrorText(code, typeof b.error === "string" ? b.error : ""), unavailable: PROGRAM_UNAVAILABLE_CODES.has(code) };
 }
+
+/**
+ * Ask the runner to delete a program's persistent /state before the program row
+ * itself goes. Best-effort and never throws: deletion of the program must not
+ * hinge on the VPS being up. Returns what actually happened so the caller can
+ * tell the user the truth — "files may still be on your server" is a fact they
+ * need, not a detail to swallow.
+ */
+export async function purgeProgramStateRemote(programId: string): Promise<{ purged: boolean; removed: number; reason?: string }> {
+  if (edgeUnavailable) return { purged: false, removed: 0, reason: "the program functions are not deployed" };
+  try {
+    const { data, status } = await invoke("program-run", { action: "purge_state", program_id: programId });
+    if (status === 404) { edgeUnavailable = true; return { purged: false, removed: 0, reason: "the program functions are not deployed" }; }
+    const b = (data || {}) as Record<string, unknown>;
+    if (b.ok === true) return { purged: true, removed: typeof b.removed === "number" ? b.removed : 0 };
+    return { purged: false, removed: 0, reason: typeof b.error === "string" ? b.error : "the runner did not confirm it" };
+  } catch (e) {
+    return { purged: false, removed: 0, reason: String((e as Error)?.message || e) };
+  }
+}

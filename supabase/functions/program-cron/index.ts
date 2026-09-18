@@ -206,7 +206,21 @@ serve(async (req) => {
         }
       } else if (ok2xx && b.running === true) {
         if (pastGrace) await reapLost("the run exceeded its deadline and the runner never produced a result");
-        // else: still executing — nothing to do this tick.
+        else {
+          // Still executing. Park the runner's latest output snapshot on the run
+          // row so the user can watch a long job work instead of staring at a
+          // silent "in flight" for an hour. Best-effort and capped; the runner
+          // has already redacted secrets out of it.
+          const prog = (b.progress || null) as Record<string, unknown> | null;
+          const tailOut = typeof prog?.stdout_tail === "string" ? prog.stdout_tail : "";
+          const tailErr = typeof prog?.stderr_tail === "string" ? prog.stderr_tail : "";
+          const tailText = (tailOut + (tailErr ? `\n[stderr]\n${tailErr}` : "")).slice(-4000);
+          if (tailText) {
+            await service.from("program_runs")
+              .update({ progress_tail: tailText, progress_at: new Date().toISOString() })
+              .eq("id", runId).eq("status", "pending");
+          }
+        }
       } else if (pastGrace) {
         // A non-2xx status (proxy 502, gateway 401 after a key rotation, clock
         // skew) or an unrecognized body — the runner is answering but not with a

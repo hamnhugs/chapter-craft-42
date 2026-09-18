@@ -2,6 +2,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { embedEntriesSoon } from "@/lib/knowledgeApi";
 import { buildProgramCard } from "@/lib/toolshed";
 import { deleteToolshedCard } from "@/lib/toolFoundry";
+import { purgeProgramStateRemote } from "@/lib/programRunner";
 
 /**
  * Program Foundry — lifecycle plumbing for AI-authored PROGRAMS.
@@ -310,7 +311,25 @@ export async function resolveProgramByName(name: string): Promise<AgentProgramRo
 /** Delete every version of a program by name, and the Toolshed card that made
  *  it findable — see deleteToolshedCard: a card left behind keeps the assistant
  *  offering a program whose code is gone. */
-export async function deleteProgramsByName(name: string): Promise<{ deleted: number; versions: number[]; cardRemoved: boolean }> {
+export async function deleteProgramsByName(name: string): Promise<{ deleted: number; versions: number[]; cardRemoved: boolean; stateLeftBehind?: string }> {
+  // Purge the VPS state FIRST, while the rows still exist to prove ownership to
+  // the edge function. Deleting the program used to leave its /state directory
+  // on the server forever — files a run may have written out of the user's
+  // secrets, with nothing left in the app even naming them. A runner that is
+  // down does not block the delete; it is reported instead.
+  const { data: doomed } = await (supabase.from("agent_programs" as any) as any)
+    .select("id, root_id, manifest")
+    .eq("name", name);
+  const persistRows = ((doomed as Array<{ id: string; root_id: string | null; manifest: ProgramManifest | null }> | null) || [])
+    .filter((r) => (r.manifest as { persist?: boolean } | null)?.persist === true);
+  const lineages = new Map<string, string>(); // lineage root → one program id to ask with
+  for (const r of persistRows) lineages.set(r.root_id || r.id, r.id);
+  let stateLeftBehind: string | undefined;
+  for (const pid of lineages.values()) {
+    const res = await purgeProgramStateRemote(pid);
+    if (!res.purged && !stateLeftBehind) stateLeftBehind = res.reason || "the runner did not confirm it";
+  }
+
   const { data, error } = await (supabase.from("agent_programs" as any) as any)
     .delete()
     .eq("name", name)
@@ -318,7 +337,7 @@ export async function deleteProgramsByName(name: string): Promise<{ deleted: num
   if (error) throw error;
   const rows = (data as { id: string; version: number }[]) || [];
   const cardRemoved = rows.length > 0 ? (await deleteToolshedCard(`Program: ${name}`)) > 0 : false;
-  return { deleted: rows.length, versions: rows.map((r) => Number(r.version) || 0).sort((a, b) => a - b), cardRemoved };
+  return { deleted: rows.length, versions: rows.map((r) => Number(r.version) || 0).sort((a, b) => a - b), cardRemoved, stateLeftBehind };
 }
 
 // ── run audit (read-only; program_runs is written server-side) ───────────────
@@ -331,10 +350,18 @@ export interface ProgramRunRow {
   stdout_bytes: number | null;
   stderr_bytes: number | null;
   error: string | null;
+  /** Last output snapshot of a run that is STILL GOING (the scheduler parks the
+   *  runner's progress here each poll). Null once the run settles. */
+  progress_tail?: string | null;
+  progress_at?: string | null;
   created_at: string;
 }
 
 const RUN_COLUMNS = "id, mode, status, exit_code, ms, stdout_bytes, stderr_bytes, error, created_at";
+// Progress columns land in a later migration than the runs table; asking for
+// them unconditionally would 42703 the whole query on an account that has not
+// applied it yet, so they are requested separately and dropped on failure.
+const RUN_COLUMNS_WITH_PROGRESS = RUN_COLUMNS + ", progress_tail, progress_at";
 
 export async function recentProgramRuns(programId: string, limit = 5): Promise<ProgramRunRow[]> {
   const { data, error } = await (supabase.from("program_runs" as any) as any)
@@ -356,12 +383,16 @@ export async function latestCronOutcomes(programIds: string[]): Promise<Map<stri
   const out = new Map<string, ProgramRunRow>();
   if (programIds.length === 0) return out;
   try {
-    const { data, error } = await (supabase.from("program_runs" as any) as any)
-      .select(RUN_COLUMNS + ", program_id")
+    const query = (cols: string) => (supabase.from("program_runs" as any) as any)
+      .select(cols)
       .in("program_id", programIds)
       .eq("mode", "cron")
       .order("created_at", { ascending: false })
       .limit(500);
+    let { data, error } = await query(RUN_COLUMNS_WITH_PROGRESS + ", program_id");
+    // 42703 = the progress columns are not there yet. Retry without them rather
+    // than losing every scheduled outcome to a column that is merely newer.
+    if (error) ({ data, error } = await query(RUN_COLUMNS + ", program_id"));
     if (error) return out;
     for (const r of (data as Array<ProgramRunRow & { program_id: string }>) || []) {
       if (!out.has(r.program_id)) out.set(r.program_id, r); // first = newest

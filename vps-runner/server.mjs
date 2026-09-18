@@ -64,19 +64,40 @@ const ceil = (v, dflt) => (Number.isFinite(v) && v > 0 ? v : dflt);
 // request is clamped to these). Raising a *_max lets an approved program ask for more;
 // a program can never exceed the ceiling and can never drop below the floor that keeps
 // the gVisor sentry alive.
-const MEM_DEFAULT  = memToBytes(config.memory) ?? 512 * MB;
-const MEM_MAX      = ceil(memToBytes(config.max_memory), MEM_DEFAULT);
-const CPU_DEFAULT  = cpuToMilli(config.cpus) ?? 1000;
-const CPU_MAX      = ceil(cpuToMilli(config.max_cpus), CPU_DEFAULT);
-const PIDS_DEFAULT = Number(config.pids_limit) || 256;
-const PIDS_MAX     = ceil(Number(config.max_pids), PIDS_DEFAULT);
-const OUTPUT_CAP   = ceil(Number(config.max_output_kb), 128) * 1024;
-const MEM_FLOOR = 64 * MB, PIDS_FLOOR = 128; // too-low kills the runsc sentry at spawn (pids counts THREADS)
-
 // Host reservation: the boot guard clamps effective concurrency so the box always keeps
 // headroom for docker/the runner/the user's other services (e.g. Hermes bots).
 const RESERVE_CORES    = Math.max(0, Number(config.reserve_cores) || 1);
 const RESERVE_RAM_FRAC = Math.min(0.9, Math.max(0.15, Number(config.reserve_ram_frac) || 0.15));
+
+// AUTO-SIZING. With fixed 512m/1cpu defaults, a program on a 32GB box got the
+// same sliver as one on a 2GB box, and nothing in the app could ask for more
+// (the manifest the model writes declares network/secrets/timeout, never
+// resources) — so the defaults WERE the ceiling in practice. They are now the
+// largest share the host can serve at the configured concurrency, after the
+// reserve. That is bounded by construction: concurrency x share <= what is left
+// for jobs, and the boot governor still lowers concurrency if the operator
+// raises a ceiling past what the box can carry. An explicit `memory`/`cpus` in
+// runner.config.json always wins.
+const HOST_RAM_BYTES = os.totalmem();
+const HOST_CORES     = Math.max(1, os.cpus().length);
+const EFF_RESERVE_CORES = HOST_CORES > RESERVE_CORES ? RESERVE_CORES : Math.max(0, HOST_CORES - 1);
+const JOB_RAM_SHARE  = Math.floor((HOST_RAM_BYTES * (1 - RESERVE_RAM_FRAC)) / Math.max(1, CONCURRENCY));
+const JOB_CPU_SHARE  = Math.floor(((HOST_CORES - EFF_RESERVE_CORES) * 1000) / Math.max(1, CONCURRENCY));
+
+// Per-job DEFAULTS (when a manifest omits a request) and operator CEILINGS (a manifest
+// request is clamped to these). Raising a *_max lets an approved program ask for more;
+// a program can never exceed the ceiling and can never drop below the floor that keeps
+// the gVisor sentry alive.
+const MEM_DEFAULT  = memToBytes(config.memory) ?? Math.max(512 * MB, JOB_RAM_SHARE);
+const MEM_MAX      = ceil(memToBytes(config.max_memory), MEM_DEFAULT);
+const CPU_DEFAULT  = cpuToMilli(config.cpus) ?? Math.max(1000, JOB_CPU_SHARE);
+const CPU_MAX      = ceil(cpuToMilli(config.max_cpus), CPU_DEFAULT);
+// Threads, not processes: 256 is tight for anything that forks a build or uses a
+// thread pool (pip, npm, numpy). Cheap to raise — pids cost nothing unused.
+const PIDS_DEFAULT = Number(config.pids_limit) || 1024;
+const PIDS_MAX     = ceil(Number(config.max_pids), PIDS_DEFAULT);
+const OUTPUT_CAP   = ceil(Number(config.max_output_kb), 128) * 1024;
+const MEM_FLOOR = 64 * MB, PIDS_FLOOR = 128; // too-low kills the runsc sentry at spawn (pids counts THREADS)
 
 // ── persistence (master switch OFF = today; /state is only ever ephemeral) ────
 const PERSIST_ENABLED    = config.persist_enabled === true;
@@ -262,6 +283,13 @@ async function ensureStateDir(key, epoch) {
 // ── async result store (survives restarts; the poll endpoint reads it) ────────
 const resultPath  = (id) => join(RESULTS_DIR, `${id}.json`);
 const startedPath = (id) => join(RESULTS_DIR, `${id}.started.json`);
+// Partial output for a run that is still going. A scheduled hour-long job used
+// to be completely silent until it finished — no way to tell "working" from
+// "wedged". Written on a throttle by runJob and read by /result.
+const progressPath = (id) => join(RESULTS_DIR, `${id}.progress.json`);
+const PROGRESS_EVERY_MS = 3_000;
+const PROGRESS_TAIL = 8 * 1024;
+const tail = (s2, n) => (s2.length > n ? s2.slice(s2.length - n) : s2);
 
 // Same 0700-parent discipline as STATE_DIR: results carry program output, which
 // may include anything the program printed.
@@ -310,12 +338,21 @@ async function reconcileOrphanedAsyncRuns() {
     const m = e.match(/^([0-9a-f-]{36})\.started\.json$/);
     if (!m) continue;
     if (!existsSync(resultPath(m[1]))) {
+      // Salvage whatever the job had printed. A run that dies at minute 50 of
+      // 60 still did most of its work, and its output is often the only record
+      // of what it got done before the restart.
+      let salvaged = "";
       try {
-        await writeResultFile(m[1], { v: 1, run_id: m[1], finished_at: Date.now(), status: "lost", exit_code: null, stdout: "", stderr: "the runner restarted while this job was in flight", ms: 0 });
+        const pr = JSON.parse(await readFile(progressPath(m[1]), "utf8"));
+        if (typeof pr?.stdout_tail === "string") salvaged = pr.stdout_tail;
+      } catch { /* no progress snapshot */ }
+      try {
+        await writeResultFile(m[1], { v: 1, run_id: m[1], finished_at: Date.now(), status: "lost", exit_code: null, stdout: salvaged, stderr: "the runner restarted while this job was in flight" + (salvaged ? " — the output above is the last snapshot before it died, and may be incomplete" : ""), ms: 0 });
         console.error(`[runner] async run ${m[1]} marked lost (restart while in flight)`);
       } catch (err) { console.error(`[runner] could not write lost-marker for ${m[1]}:`, err); }
     }
     await rm(join(RESULTS_DIR, e), { force: true }).catch(() => {});
+    await rm(progressPath(m[1]), { force: true }).catch(() => {});
   }
 }
 
@@ -387,6 +424,7 @@ async function runJob(job) {
     // gets its durable per-(lineage,epoch) directory; a persist request with the
     // operator switch OFF falls back to an ephemeral tmpfs so it still runs.
     let stateArgs = [];
+    let workspaceEnv = [];
     if (mode === "verify") {
       stateArgs = ["--tmpfs", "/state:size=16m,mode=0700,noexec,nosuid,nodev"];
     } else if (persistRun) {
@@ -402,6 +440,23 @@ async function runJob(job) {
       // filesystem mounted noexec on the host; everything else here (/tmp,
       // /dev/shm) is noexec already.
       stateArgs = ["-v", `${sd.path}:/state`];
+      // A durable /state is also the program's HOME and library prefix, which is
+      // what makes `pip install --user` / `npm install --prefix /state/npm`
+      // survive to the next run. Without these a program could install a
+      // package and then lose it the moment the container died, so every run
+      // paid the install again — or simply could not use a library at all.
+      // Python honours PYTHONUSERBASE for --user installs and adds that site
+      // dir to sys.path automatically; Node needs NODE_PATH spelled out.
+      workspaceEnv = [
+        "--env", "HOME=/state",
+        "--env", "PYTHONUSERBASE=/state/python",
+        "--env", "PYTHONPYCACHEPREFIX=/state/.pycache",
+        "--env", "XDG_CACHE_HOME=/state/.cache",
+        "--env", "NPM_CONFIG_PREFIX=/state/npm",
+        "--env", "NPM_CONFIG_CACHE=/state/.npm",
+        "--env", "NODE_PATH=/state/npm/lib/node_modules",
+        "--env", "PATH=/state/npm/bin:/state/python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      ];
     } else if (mode === "run" && manifest.persist === true) {
       stateArgs = ["--tmpfs", "/state:size=64m,mode=0700,nosuid,nodev"];
     }
@@ -451,6 +506,7 @@ async function runJob(job) {
       "--user", "65534:65534",
       "--ulimit", "nofile=1024:1024", "--ulimit", "nproc=256:256",
       "--env", `PROGRAM_ARGS=${JSON.stringify(job.args ?? {})}`,
+      ...workspaceEnv,
       ...secretEnv,
       "-v", `${codeFile}:/work/prog:ro`,
       "-w", "/work",
@@ -459,6 +515,32 @@ async function runJob(job) {
     ];
 
     let stdout = "", stderr = "", killedForTimeout = false, startError = "";
+
+    // Throttled partial-output snapshots, for async runs only: a sync caller is
+    // holding the socket open and gets everything at the end anyway. Redacted
+    // with the same secret list as the final result — a progress file is read
+    // back over the wire, so it must never be the loose one.
+    const progressId = job.async === true ? sanitizeUuid(job.run_id) : null;
+    let lastProgressAt = 0, progressPending = false;
+    const writeProgress = async () => {
+      if (!progressId) return;
+      lastProgressAt = Date.now();
+      try {
+        await writeFile(progressPath(progressId), JSON.stringify({
+          v: 1, at: lastProgressAt, started_at: started,
+          stdout_tail: redact(tail(stdout, PROGRESS_TAIL), redactNames),
+          stderr_tail: redact(tail(stderr, PROGRESS_TAIL), redactNames),
+          stdout_bytes: stdout.length, stderr_bytes: stderr.length,
+        }), "utf8");
+      } catch { /* progress is best-effort; never fail a run over it */ }
+    };
+    const noteProgress = () => {
+      if (!progressId || progressPending) return;
+      const due = PROGRESS_EVERY_MS - (Date.now() - lastProgressAt);
+      progressPending = true;
+      setTimeout(() => { progressPending = false; void writeProgress(); }, Math.max(0, due)).unref?.();
+    };
+
     const done = await new Promise((resolve) => {
       let settled = false;
       const finish = (v) => { if (!settled) { settled = true; resolve(v); } };
@@ -477,8 +559,8 @@ async function runJob(job) {
         spawn("docker", ["rm", "-f", name]);
         finish(true);
       }, timeoutMs + 15000);
-      child.stdout.on("data", (d) => { if (stdout.length < OUTPUT_CAP * 2) stdout += d.toString(); });
-      child.stderr.on("data", (d) => { if (stderr.length < OUTPUT_CAP * 2) stderr += d.toString(); });
+      child.stdout.on("data", (d) => { if (stdout.length < OUTPUT_CAP * 2) stdout += d.toString(); noteProgress(); });
+      child.stderr.on("data", (d) => { if (stderr.length < OUTPUT_CAP * 2) stderr += d.toString(); noteProgress(); });
       child.on("error", (e) => { startError = String(e?.message || e); clearTimeout(killTimer); clearTimeout(hardTimer); finish(false); });
       child.on("close", () => { clearTimeout(killTimer); clearTimeout(hardTimer); finish(true); });
     });
@@ -608,8 +690,38 @@ const server = http.createServer(async (req, res) => {
         const txt = await readFile(resultPath(runId), "utf8");
         return send(res, 200, { ok: true, done: true, result: JSON.parse(txt) });
       } catch { /* not finished (or never here) */ }
-      if (existsSync(startedPath(runId))) return send(res, 200, { ok: true, done: false, running: true });
+      if (existsSync(startedPath(runId))) {
+        // Hand back whatever the job has printed so far. "running" with no
+        // output is indistinguishable from wedged, which is the whole problem
+        // with a job that may legitimately take an hour.
+        let progress = null;
+        try { progress = JSON.parse(await readFile(progressPath(runId), "utf8")); } catch { /* none yet */ }
+        return send(res, 200, { ok: true, done: false, running: true, progress });
+      }
       return send(res, 200, { ok: true, done: false, unknown: true });
+    }
+
+    // Delete every epoch of one program lineage's persistent state. Called when
+    // the program itself is deleted: without it a deleted program's files —
+    // which may hold whatever it wrote out of its secrets — stayed on the VPS
+    // forever, with nothing left in the app even naming them.
+    if (req.method === "POST" && path === "/state/purge") {
+      let body2;
+      try { body2 = JSON.parse(raw.toString() || "{}"); } catch { return send(res, 400, { ok: false, error: "invalid json" }); }
+      const key = sanitizeUuid(body2.state_key);
+      if (!key) return send(res, 400, { ok: false, error: "state_key must be a uuid" });
+      let entries = [];
+      try { entries = await readdir(STATE_DIR); } catch { return send(res, 200, { ok: true, removed: 0 }); }
+      let removed = 0, busy = 0;
+      for (const e of entries) {
+        const m = e.match(/^([0-9a-f-]{36})-(\d+)$/);
+        if (!m || m[1] !== key) continue;
+        // Never yank a directory a run still has bind-mounted.
+        if (stateChains.has(`${m[1]}:${Number(m[2])}`)) { busy++; continue; }
+        const r = await runCmd("rm", ["-rf", join(STATE_DIR, e)]);
+        if (r.code === 0) removed++;
+      }
+      return send(res, 200, { ok: true, removed, busy });
     }
 
     if (req.method === "POST" && path === "/run") {
@@ -658,6 +770,7 @@ const server = http.createServer(async (req, res) => {
           try {
             await writeResultFile(runId, { v: 1, run_id: runId, finished_at: Date.now(), ...result });
             await rm(startedPath(runId), { force: true }).catch(() => {});
+            await rm(progressPath(runId), { force: true }).catch(() => {});
           } catch (e) {
             console.error(`[runner] async result write FAILED for ${runId}:`, e);
           } finally {
@@ -724,8 +837,8 @@ const server = http.createServer(async (req, res) => {
   // and clamp effective concurrency by BOTH the RAM bound and the CPU bound. This can only
   // LOWER concurrency; on a correctly-sized box it equals the configured value.
   {
-    const ram = os.totalmem(), cores = os.cpus().length;
-    const effReserveCores = cores > RESERVE_CORES ? RESERVE_CORES : Math.max(0, cores - 1);
+    const ram = HOST_RAM_BYTES, cores = HOST_CORES;
+    const effReserveCores = EFF_RESERVE_CORES;
     const ramBound = Math.max(1, Math.floor((ram * (1 - RESERVE_RAM_FRAC)) / MEM_MAX));
     const cpuBound = Math.max(1, Math.floor((cores - effReserveCores) / (CPU_MAX / 1000)));
     CONCURRENCY_EFF = Math.max(1, Math.min(CONCURRENCY, ramBound, cpuBound));

@@ -307,6 +307,47 @@ connection failure in stderr — which is still safe; nothing left the box.
 
 ---
 
+## 7b. Giving programs room to work
+
+Two switches turn this from "runs a short snippet" into "can actually build
+something", without giving anything access to the host:
+
+**Resources size themselves to your box.** Leave `memory` and `cpus` out of
+`runner.config.json` and each job gets the largest share the machine can serve
+at your `concurrency`, after the host reserve — roughly 1.1 GB and a full core
+on a 4 GB / 4-core VPS, instead of a flat 512m/1cpu. Pin either value and that
+one stops auto-sizing. The boot governor still lowers concurrency if the numbers
+do not fit, and says so in the log.
+
+**Persistence also gives programs a library prefix.** With `persist_enabled:
+true`, a program that declares `persist` gets a durable `/state` that is also
+its `HOME`, with:
+
+```
+PYTHONUSERBASE=/state/python     NPM_CONFIG_PREFIX=/state/npm
+NODE_PATH=/state/npm/lib/node_modules
+XDG_CACHE_HOME=/state/.cache     PATH=/state/npm/bin:/state/python/bin:...
+```
+
+So `pip install --user httpx` or `npm install -g dayjs` installs once and is
+importable on every later run. Installing needs network, so the program must
+declare `network: "allowlist"` and your `allowed_hosts_global` must include the
+index hosts:
+
+```json
+"allowed_hosts_global": ["pypi.org", "files.pythonhosted.org", "registry.npmjs.org"]
+```
+
+Everything else is unchanged: no root, no host filesystem, read-only rootfs,
+`/tmp` noexec, all capabilities dropped. `/state` is the one mount WITHOUT
+noexec (Docker exposes no noexec option for a bind mount), so a program can keep
+an executable there across runs. If that matters to you, put `state_dir` on a
+filesystem mounted noexec.
+
+Deleting a program now also wipes its `/state` (the app calls `POST
+/state/purge` before removing the rows). If the runner is unreachable at that
+moment, the app says so rather than pretending the files are gone.
+
 ## 8. Long unattended runs (async + poll)
 
 A schedule in the app can grant a program a **runtime allowance** past the ~60s

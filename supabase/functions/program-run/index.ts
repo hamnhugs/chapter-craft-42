@@ -87,6 +87,37 @@ serve(async (req) => {
       return json({ ok: true, sandbox_ok: r.body?.sandbox_ok === true, runner: r.body?.runner ?? null });
     }
 
+    // ── purge persistent state ────────────────────────────────────────────────
+    // Called just BEFORE a program is deleted, while its row still exists to
+    // prove ownership. Deleting a program used to leave its /state directory on
+    // the VPS forever — files a run may have written out of the user's secrets,
+    // with nothing left in the app even naming them.
+    if (body?.action === "purge_state") {
+      const pid = String(body?.program_id || "").trim();
+      if (!pid) return fail("PROGRAM_REQUEST_FAILED", "program_id required", 400);
+      // RLS-scoped read: a caller can only purge the state of a program of theirs.
+      const { data: prog, error: progErr } = await supabase
+        .from("agent_programs").select("id, root_id").eq("id", pid).maybeSingle();
+      if (progErr) return fail("PROGRAM_NOT_MIGRATED", `Could not read the program: ${progErr.message}`);
+      if (!prog) return fail("PROGRAM_NOT_APPROVED", "No program with that id.");
+      const lineage = (prog as { id: string; root_id: string | null }).root_id || prog.id;
+
+      let removed = 0;
+      try {
+        const r = await callRunner(conn, "POST", "/state/purge", { state_key: lineage }, HEALTH_TIMEOUT_MS);
+        removed = typeof r.body?.removed === "number" ? r.body.removed : 0;
+      } catch (e) {
+        // The caller deletes the program either way — a runner that is down must
+        // not block that — but it is told plainly that files may remain.
+        return json({ ok: false, code: "PROGRAM_REQUEST_FAILED", removed: 0, error: `Runner did not respond, so its stored files were left in place: ${(e as Error).message}` });
+      }
+      const service = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      // program_state has no client write policy — the epoch fence is the
+      // server's to maintain, so the service role clears it here.
+      await service.from("program_state").delete().eq("root_id", lineage).eq("user_id", user.id);
+      return json({ ok: true, removed });
+    }
+
     // ── run ─────────────────────────────────────────────────────────────────
     const programId = String(body?.program_id || "").trim();
     const argsBytes = (() => {

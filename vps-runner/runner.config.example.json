@@ -21,13 +21,15 @@
   "egress_proxy_ip": "172.31.99.2",
 
   "_doc_allowed_hosts_global": "OPTIONAL (default []). The hostnames the egress proxy will dial for allowlist jobs. Empty array = deny all outbound (every job effectively runs offline even in allowlist mode). '*.example.com' matches the apex and any subdomain.",
-  "allowed_hosts_global": ["api.example.com"],
+  "allowed_hosts_global": ["api.example.com", "pypi.org", "files.pythonhosted.org", "registry.npmjs.org"],
 
   "_doc_max_timeout_ms": "OPTIONAL (default 60000). Hard ceiling on a job's wall-clock time; a program's own manifest.timeout_ms is clamped to this.",
   "max_timeout_ms": 60000,
 
   "_doc_max_memory": "OPTIONAL (default = `memory`). CEILING for a program's requested memory (manifest.memory). Raise it for heavier jobs, e.g. \"2g\". 0/\"unlimited\" is IGNORED and falls back to the default — never infinite. Swap is always pinned equal (no swap). Keep concurrency x max_memory <= (1 - reserve_ram_frac) x RAM.",
   "max_memory": "512m",
+
+  "_doc_AUTO_SIZING": "IMPORTANT: leave `memory` and `cpus` OUT of your config and each job is given the largest share this box can serve at `concurrency` after the reserve — e.g. ~1.1GB and a full core on a 4GB/4-core VPS, instead of a flat 512m/1cpu. Setting either one pins it and turns auto-sizing off for that field. The boot governor still lowers concurrency if the numbers do not fit, and logs when it does.",
 
   "_doc_max_cpus": "OPTIONAL (default = `cpus`). CEILING for a program's requested CPU (manifest.cpus), e.g. \"2\". The sandbox always runs at --cpu-shares 512 (below host services) so jobs yield under contention. Keep concurrency x max_cpus <= cores - reserve_cores.",
   "max_cpus": "1",
@@ -43,6 +45,8 @@
 
   "_doc_reserve_ram_frac": "OPTIONAL (default 0.15, min 0.15). Fraction of RAM held back for the host. Combined with reserve_cores to compute the safe effective concurrency at boot.",
   "reserve_ram_frac": 0.15,
+
+  "_doc_persist_enabled_HOWTO": "Turn this ON to let programs KEEP things between runs and INSTALL their own libraries. With persistence on, /state is also the program's HOME, with PYTHONUSERBASE=/state/python, NPM_CONFIG_PREFIX=/state/npm and NODE_PATH set to match — so `pip install --user requests` or `npm install -g left-pad` installs once and is importable on every later run. Installing anything also needs network: the program must declare network 'allowlist', and `allowed_hosts_global` below must include the index hosts (for pip: pypi.org, files.pythonhosted.org; for npm: registry.npmjs.org).",
 
   "_doc_persist_enabled": "OPTIONAL (default false). MASTER SWITCH for persistent program state. While false, a program that requests persistence still runs but gets an EPHEMERAL /state (nothing survives). Set true only after creating state_dir (see docs). A persist program can write a secret to its /state that survives the run — the runner redacts the full secrets map from persist output, but treat persisted data as readable by anyone with host access.",
   "persist_enabled": false,
@@ -83,6 +87,6 @@
   "_doc_cpus": "OPTIONAL (default 1). Per-container CPU limit.",
   "cpus": "1",
 
-  "_doc_pids_limit": "OPTIONAL (default 256). Per-container process/thread cap.",
-  "pids_limit": 256
+  "_doc_pids_limit": "OPTIONAL (default 1024). Per-container process/thread cap. It counts THREADS, so anything that builds a package or uses a thread pool (pip, npm, numpy) needs headroom; unused pids cost nothing.",
+  "pids_limit": 1024
 }
