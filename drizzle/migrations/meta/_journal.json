@@ -78,6 +78,13 @@
       "when": 1789645956056,
       "tag": "0010_book_highlights",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789696389658,
+      "tag": "0011_foundry_delete_fix",
+      "breakpoints": true
     }
   ]
 }

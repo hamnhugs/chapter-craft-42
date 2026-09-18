@@ -1584,6 +1584,8 @@ export type Database = {
           mode: string
           ms: number | null
           program_id: string | null
+          progress_at: string | null
+          progress_tail: string | null
           sha256: string | null
           status: string
           stderr_bytes: number | null
@@ -1598,6 +1600,8 @@ export type Database = {
           mode?: string
           ms?: number | null
           program_id?: string | null
+          progress_at?: string | null
+          progress_tail?: string | null
           sha256?: string | null
           status?: string
           stderr_bytes?: number | null
@@ -1612,6 +1616,8 @@ export type Database = {
           mode?: string
           ms?: number | null
           program_id?: string | null
+          progress_at?: string | null
+          progress_tail?: string | null
           sha256?: string | null
           status?: string
           stderr_bytes?: number | null
