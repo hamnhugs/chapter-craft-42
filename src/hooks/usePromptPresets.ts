@@ -19,6 +19,12 @@ export interface PromptPreset {
   routing_enabled: boolean;
   /** 'assistant' = drafted by the AI and approved by the user. */
   origin: "user" | "assistant";
+  /** Context this prompt brings with it. Applied when the USER switches to it
+   *  — never by the router. See promptRouting.ts for why. */
+  neuron_ids: string[];
+  book_id: string | null;
+  /** A subset of chat tools this prompt narrows to. Only ever removes. */
+  tool_permissions: Record<string, boolean> | null;
 }
 
 interface PresetRow {
@@ -30,6 +36,9 @@ interface PresetRow {
   when_to_use?: string | null;
   routing_enabled?: boolean | null;
   origin?: string | null;
+  neuron_ids?: string[] | null;
+  book_id?: string | null;
+  tool_permissions?: Record<string, boolean> | null;
 }
 
 /** 42703 / PGRST204 = a column the routing migration adds is not there yet;
@@ -67,7 +76,7 @@ export function usePromptPresets() {
         .eq("user_id", user.id).order("created_at", { ascending: true });
       return { rows: (res.data || []) as unknown as PresetRow[], error: res.error };
     };
-    let { rows, error } = await read("id, name, body, scope, is_active, when_to_use, routing_enabled, origin");
+    let { rows, error } = await read("id, name, body, scope, is_active, when_to_use, routing_enabled, origin, neuron_ids, book_id, tool_permissions");
     if (error && isMissingPromptRoutingSchema(error)) {
       ({ rows, error } = await read("id, name, body, scope, is_active"));
     }
@@ -76,6 +85,13 @@ export function usePromptPresets() {
       id: r.id, name: r.name, body: r.body, scope: (r.scope as PromptScope) || "both", is_active: !!r.is_active,
       when_to_use: r.when_to_use || "", routing_enabled: !!r.routing_enabled,
       origin: r.origin === "assistant" ? "assistant" : "user",
+      neuron_ids: Array.isArray(r.neuron_ids) ? r.neuron_ids.filter((x): x is string => typeof x === "string") : [],
+      book_id: typeof r.book_id === "string" && r.book_id ? r.book_id : null,
+      // Only ever a map of booleans. Anything else is junk from a hand-edited
+      // row and must not reach the tool gate.
+      tool_permissions: r.tool_permissions && typeof r.tool_permissions === "object" && !Array.isArray(r.tool_permissions)
+        ? Object.fromEntries(Object.entries(r.tool_permissions).filter(([, v]) => typeof v === "boolean")) as Record<string, boolean>
+        : null,
     })));
     setLoaded(true);
   }, [user]);
@@ -158,13 +174,16 @@ export function usePromptPresets() {
       ...base,
       ...(preset.when_to_use !== undefined ? { when_to_use: preset.when_to_use } : {}),
       ...(preset.routing_enabled !== undefined ? { routing_enabled: preset.routing_enabled } : {}),
+      ...(preset.neuron_ids !== undefined ? { neuron_ids: preset.neuron_ids } : {}),
+      ...(preset.book_id !== undefined ? { book_id: preset.book_id } : {}),
+      ...(preset.tool_permissions !== undefined ? { tool_permissions: preset.tool_permissions } : {}),
     };
     // src/integrations/supabase/types.ts is generated and will not know the
     // routing columns until Lovable regenerates it after the migration, so the
     // writes go through a narrow hand-written shape rather than the generated
     // one. Narrow on purpose: a bare `any` here would also switch off the
     // check that the column NAMES are strings and the values are scalars.
-    type PresetWrite = Record<string, string | boolean>;
+    type PresetWrite = Record<string, string | boolean | string[] | Record<string, boolean> | null>;
     type LooseTable = {
       update: (p: PresetWrite) => { eq: (col: string, val: string) => Promise<{ error: unknown }> };
       insert: (p: PresetWrite) => Promise<{ error: unknown }>;

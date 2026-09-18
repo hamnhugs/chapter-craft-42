@@ -29,7 +29,7 @@ import { workspaceStore, deriveResearchTitle } from "@/lib/workspaceStore";
 import { extractCodeBlocks, excludeArtifactDuplicates } from "@/lib/workspaceFiles";
 import { buildFocusBlock, type UsedFocusItem } from "@/lib/chatFocus";
 import { focusBookId } from "@/lib/counselFocus";
-import { decideRoute, resolveTurnPrompt, turnPromptStore, type UsedPrompt } from "@/lib/promptRouting";
+import { decideRoute, hasContextBindings, narrowPermissions, resolveTurnPrompt, turnPromptStore, type UsedPrompt } from "@/lib/promptRouting";
 import { logPromptRoute, parkIncubatorTurn } from "@/lib/promptRoutingApi";
 import { computeCacheBreakpoints } from "@/lib/cacheLayout";
 import { makeCatalogEnqueuer } from "@/lib/catalogJobs";
@@ -1178,7 +1178,13 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // (a request whose `tools` no longer declares a function still named
         // in `messages` is rejected outright by some providers), so the live
         // ref belongs only in ToolDeps, where the executor backstop reads it.
-        permissions: chatToolPermissions || {},
+        // Narrowed by the prompt in force, if it binds a tool subset. Applied
+        // HERE, at the one choke point, so the wire roster, the prompt's own
+        // roster and the status chip cannot disagree about it — and never
+        // persisted, because a per-turn narrowing that wrote itself into the
+        // user's settings would outlive the prompt that asked for it.
+        // narrowPermissions only ever removes; a prompt cannot grant.
+        permissions: narrowPermissions(chatToolPermissions || {}, turnPrompt.bindings?.toolPermissions),
         forgeOptIn,
         runOptIn,
         foundryReady,
@@ -1287,7 +1293,19 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // receipt must describe what rode, not what was intended.
           if (routed.used.id) {
             const replacedId = turnPrompt.used.id;
-            turnPrompt = { block: routed.block, used: { ...routed.used, source: "auto", why: decision.why, replacedId } };
+            // THE ROUTER CHANGES VOICE, NEVER CONTEXT. Its decision lands
+            // after retrieval and after the tool gate, so any neurons, book or
+            // tool narrowing the prompt carries could not have shaped this
+            // reply — and silently changing what the assistant can SEE, on its
+            // own initiative, is a far bigger thing than changing how it
+            // sounds. bindings: null, and the receipt says so.
+            const broughtContext = hasContextBindings(
+              presets.find((p) => p.id === decision.promptId) || ({} as never),
+            );
+            const why = broughtContext
+              ? `${decision.why} Its neurons weren't loaded — switch to it yourself if you want those too.`
+              : decision.why;
+            turnPrompt = { block: routed.block, used: { ...routed.used, source: "auto", why, replacedId }, bindings: null };
             turnPromptBlock = routed.block;
             promptRouteRef.current.lastSwitchSend = promptRouteRef.current.sends;
           }

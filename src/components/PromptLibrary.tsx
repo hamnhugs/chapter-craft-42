@@ -6,10 +6,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Check, Pencil, Plus, Trash2, X } from "lucide-react";
 import { PromptPreset, PromptScope, usePromptPresets } from "@/hooks/usePromptPresets";
+import { useApp } from "@/context/AppContext";
+import { PERMISSION_GROUPS } from "@/lib/toolPermissions";
 import {
   acceptPromptProposal,
   dismissPromptProposal,
   fetchPromptProposals,
+  promptRoutingAccuracy,
   runPromptIncubatorSweep,
   type PromptProposal,
 } from "@/lib/promptRoutingApi";
@@ -25,8 +28,20 @@ const SCOPE_LABEL: Record<PromptScope, string> = {
   voice: "Voice only",
 };
 
-type Draft = { name: string; body: string; scope: PromptScope; when_to_use: string; routing_enabled: boolean };
-const EMPTY_DRAFT: Draft = { name: "", body: "", scope: "both", when_to_use: "", routing_enabled: false };
+type Draft = {
+  name: string; body: string; scope: PromptScope; when_to_use: string; routing_enabled: boolean;
+  neuron_ids: string[]; book_id: string | null; tool_permissions: Record<string, boolean> | null;
+};
+const EMPTY_DRAFT: Draft = {
+  name: "", body: "", scope: "both", when_to_use: "", routing_enabled: false,
+  neuron_ids: [], book_id: null, tool_permissions: null,
+};
+
+/** Turning a GROUP off writes `false` for each of its permissions. Narrowing
+ *  is expressed per-permission because that is what the tool gate reads; the
+ *  group is only how a person thinks about it. */
+const groupIsOff = (perms: Record<string, boolean> | null, ids: string[]) =>
+  !!perms && ids.length > 0 && ids.every((id) => perms[id] === false);
 
 /**
  * Prompt Library — saved system prompts, and the controls that let the
@@ -41,10 +56,12 @@ const PromptLibrary: React.FC<Props> = ({ scopeHint }) => {
     presets, savePreset, deletePreset, setActive, refresh,
     routingEnabled, plainOnRecall, routingSchemaReady, setRoutingEnabled, setPlainOnRecall,
   } = usePromptPresets();
+  const { wikis, books } = useApp();
   const [editingId, setEditingId] = useState<string | "new" | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [proposals, setProposals] = useState<PromptProposal[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [autoPaused, setAutoPaused] = useState(false);
 
   const loadProposals = useCallback(async () => {
     setProposals(routingSchemaReady ? await fetchPromptProposals() : []);
@@ -59,18 +76,57 @@ const PromptLibrary: React.FC<Props> = ({ scopeHint }) => {
     return () => { cancelled = true; };
   }, [routingSchemaReady, loadProposals]);
 
+  // Auto-pause. A router the user keeps overruling should stop routing rather
+  // than keep arguing — the same self-limiting loop Smart Filing has. Checked
+  // when the panel opens, which is where the explanation can be read.
+  useEffect(() => {
+    if (!routingSchemaReady || !routingEnabled) return;
+    let cancelled = false;
+    promptRoutingAccuracy().then((acc) => {
+      if (cancelled || !acc) return;
+      // Ten is enough to mean something; half is a coin toss, and a coin toss
+      // is not worth changing someone's voice over.
+      if (acc.switches >= 10 && acc.corrected / acc.switches > 0.5) {
+        setAutoPaused(true);
+        setRoutingEnabled(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [routingSchemaReady, routingEnabled, setRoutingEnabled]);
+
   const beginNew = () => { setDraft(EMPTY_DRAFT); setEditingId("new"); };
   const beginEdit = (p: PromptPreset) => {
-    setDraft({ name: p.name, body: p.body, scope: p.scope, when_to_use: p.when_to_use, routing_enabled: p.routing_enabled });
+    setDraft({
+      name: p.name, body: p.body, scope: p.scope, when_to_use: p.when_to_use, routing_enabled: p.routing_enabled,
+      neuron_ids: p.neuron_ids, book_id: p.book_id, tool_permissions: p.tool_permissions,
+    });
     setEditingId(p.id);
   };
+
+  const toggleNeuron = (id: string) => setDraft((d) => ({
+    ...d,
+    neuron_ids: d.neuron_ids.includes(id) ? d.neuron_ids.filter((x) => x !== id) : [...d.neuron_ids, id],
+  }));
+
+  const toggleToolGroup = (ids: string[]) => setDraft((d) => {
+    const off = groupIsOff(d.tool_permissions, ids);
+    const next = { ...(d.tool_permissions || {}) };
+    // Turning a group back ON DELETES the keys rather than writing `true`:
+    // this map may only ever remove tools, so "not mentioned" is the only way
+    // to say "leave the user's own setting alone".
+    for (const id of ids) { if (off) delete next[id]; else next[id] = false; }
+    return { ...d, tool_permissions: Object.keys(next).length > 0 ? next : null };
+  });
   const cancel = () => { setEditingId(null); setDraft(EMPTY_DRAFT); };
   const submit = async () => {
     if (!draft.name.trim() && !draft.body.trim()) { cancel(); return; }
     await savePreset({
       id: editingId === "new" ? undefined : (editingId as string),
       name: draft.name, body: draft.body, scope: draft.scope,
-      ...(routingSchemaReady ? { when_to_use: draft.when_to_use, routing_enabled: draft.routing_enabled } : {}),
+      ...(routingSchemaReady ? {
+        when_to_use: draft.when_to_use, routing_enabled: draft.routing_enabled,
+        neuron_ids: draft.neuron_ids, book_id: draft.book_id, tool_permissions: draft.tool_permissions,
+      } : {}),
     });
     cancel();
   };
@@ -154,6 +210,21 @@ const PromptLibrary: React.FC<Props> = ({ scopeHint }) => {
         </div>
       ))}
 
+      {autoPaused && !routingEnabled && (
+        <div className="rounded-lg border border-outline-variant/20 bg-error-container/40 p-3 flex items-start justify-between gap-3">
+          <div className="text-xs">
+            <p className="font-bold text-foreground">Prompt routing was paused automatically</p>
+            <p className="text-on-surface-variant pt-0.5">
+              You put the prompt back most of the times it switched, so it stopped. Turn it on again whenever
+              you want — or give your prompts sharper “use this when…” descriptions first.
+            </p>
+          </div>
+          <button onClick={() => setAutoPaused(false)} className="p-1 rounded-lg hover:bg-surface-container" aria-label="Dismiss">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* ── Routing ── */}
       {routingSchemaReady && (
         <div className="rounded-lg bg-surface-container-high p-3 space-y-2.5 border border-outline-variant/15">
@@ -218,6 +289,76 @@ const PromptLibrary: React.FC<Props> = ({ scopeHint }) => {
                   {!draft.when_to_use.trim() && <span className="opacity-70"> — needs a “use this when…” description first</span>}
                 </span>
               </label>
+
+              {/* ── Context this prompt brings with it ──
+                  Loaded when YOU switch to this prompt, never by the router:
+                  changing what the assistant can see is a bigger thing than
+                  changing how it sounds, and it should take a tap. */}
+              <div className="rounded-lg bg-surface-container-low p-2.5 space-y-2">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant">
+                  Bring context with it
+                </p>
+                <p className="text-[10px] text-on-surface-variant">
+                  Applied when you switch to this prompt yourself. The AI never loads these on its own.
+                </p>
+
+                {wikis.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {wikis.map((w) => {
+                      const on = draft.neuron_ids.includes(w.id);
+                      return (
+                        <button
+                          key={w.id}
+                          onClick={() => toggleNeuron(w.id)}
+                          aria-pressed={on}
+                          className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors ${on ? "bg-primary-container text-on-primary-container border-primary-container" : "bg-surface-container-high text-on-surface-variant border-outline-variant/20 hover:text-primary"}`}
+                        >
+                          {w.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {books.length > 0 && (
+                  <select
+                    value={draft.book_id || ""}
+                    onChange={(e) => setDraft((d) => ({ ...d, book_id: e.target.value || null }))}
+                    className="w-full text-xs rounded-md bg-surface-container-high border border-outline-variant/20 px-2 py-1.5 text-foreground"
+                    aria-label="Book to open with this prompt"
+                  >
+                    <option value="">No particular book</option>
+                    {books.map((b) => <option key={b.id} value={b.id}>{b.title}</option>)}
+                  </select>
+                )}
+
+                <details>
+                  <summary className="cursor-pointer text-[11px] text-on-surface-variant hover:text-primary">
+                    Limit what the AI can do while this prompt is on
+                  </summary>
+                  <p className="text-[10px] text-on-surface-variant mt-1.5">
+                    Switching a group off removes those tools for every turn this prompt is in force. It can only
+                    ever take tools away — never grant one you have turned off in Settings.
+                  </p>
+                  <div className="flex flex-wrap gap-1.5 mt-1.5">
+                    {PERMISSION_GROUPS.map((g) => {
+                      const ids = g.items.map((i) => i.id);
+                      const off = groupIsOff(draft.tool_permissions, ids);
+                      return (
+                        <button
+                          key={g.group}
+                          onClick={() => toggleToolGroup(ids)}
+                          aria-pressed={off}
+                          title={off ? `${g.group} is blocked while this prompt is on` : `${g.group} follows your normal settings`}
+                          className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors ${off ? "bg-error-container/40 text-foreground border-outline-variant/30 line-through" : "bg-surface-container-high text-on-surface-variant border-outline-variant/20 hover:text-primary"}`}
+                        >
+                          {g.group}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </details>
+              </div>
             </>
           )}
           <div className="flex flex-wrap items-center gap-2">
@@ -265,6 +406,12 @@ const PromptLibrary: React.FC<Props> = ({ scopeHint }) => {
                   <span className="text-[10px] uppercase tracking-wider text-on-surface-variant shrink-0">{SCOPE_LABEL[p.scope]}</span>
                   {p.routing_enabled && (
                     <span className="text-[10px] uppercase tracking-wider text-primary shrink-0" title="The AI may choose this one on its own">auto</span>
+                  )}
+                  {(p.neuron_ids.length > 0 || p.book_id) && (
+                    <span className="material-symbols-outlined text-[13px] text-on-surface-variant shrink-0" title="Switching to this prompt also loads its neurons or book" aria-label="brings context">hub</span>
+                  )}
+                  {p.tool_permissions && (
+                    <span className="material-symbols-outlined text-[13px] text-on-surface-variant shrink-0" title="This prompt limits which tools the AI can use" aria-label="limits tools">lock</span>
                   )}
                   {/* Provenance is never hidden: a prompt the AI drafted must
                       not become indistinguishable from one you wrote. */}

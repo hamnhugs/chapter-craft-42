@@ -10,6 +10,8 @@ import {
   type ResolvablePreset,
   type TurnPromptSelection,
   decideRoute,
+  narrowPermissions,
+  hasContextBindings,
   ROUTE_MIN_TURNS_BETWEEN_SWITCHES,
 } from "@/lib/promptRouting";
 import { computeCacheBreakpoints, MAX_CACHE_BREAKPOINTS } from "@/lib/cacheLayout";
@@ -469,5 +471,132 @@ describe("decideRoute", () => {
     }
     expect(switches / total).toBeLessThan(0.25);
     expect(switches).toBeGreaterThan(0); // and it does still fire
+  });
+});
+
+describe("narrowPermissions: a prompt may take tools away, never grant them", () => {
+  it("turns off what the binding marks false", () => {
+    expect(narrowPermissions({ a: true, b: true }, { a: false }))
+      .toEqual({ a: false, b: true });
+  });
+
+  it("leaves a user's OFF permission off even when the binding says true", () => {
+    // The whole safety property. A preset row is ordinary user data; if a
+    // `true` here could re-enable a tool, writing one would be a way around
+    // every consent gate in the app.
+    expect(narrowPermissions({ danger: false }, { danger: true }))
+      .toEqual({ danger: false });
+  });
+
+  it("leaves a user's ON permission on when the binding says true", () => {
+    expect(narrowPermissions({ x: true }, { x: true })).toEqual({ x: true });
+  });
+
+  it("is a no-op for a prompt with no tool binding", () => {
+    const perms = { a: true, b: false };
+    expect(narrowPermissions(perms, null)).toBe(perms);
+    expect(narrowPermissions(perms, undefined)).toBe(perms);
+  });
+
+  it("never mutates the caller's map", () => {
+    const perms = { a: true };
+    narrowPermissions(perms, { a: false });
+    expect(perms).toEqual({ a: true });
+  });
+
+  it("property: the result is never more permissive than the user's own map", () => {
+    const VALUES = [true, false, undefined] as const;
+    for (const userVal of VALUES) {
+      for (const bindVal of VALUES) {
+        const user: Record<string, boolean> = userVal === undefined ? {} : { t: userVal };
+        const bind: Record<string, boolean> | null = bindVal === undefined ? null : { t: bindVal };
+        const out = narrowPermissions(user, bind);
+        // "allowed" is: not explicitly false (the app's documented default).
+        const allowedBefore = user.t !== false;
+        const allowedAfter = out.t !== false;
+        expect(
+          !allowedAfter || allowedBefore,
+          `binding turned t ON: user=${String(userVal)} bind=${String(bindVal)}`,
+        ).toBe(true);
+      }
+    }
+  });
+});
+
+describe("bindings travel with the resolved prompt", () => {
+  const bound = (over: Partial<ResolvablePreset> = {}): ResolvablePreset => ({
+    ...preset(),
+    neuron_ids: ["n1"],
+    book_id: "b1",
+    tool_permissions: { generate_image: false },
+    ...over,
+  });
+
+  it("carries them when the prompt applies", () => {
+    const r = resolveTurnPrompt({
+      presets: [bound()],
+      selection: { mode: "pinned", presetId: "p1" },
+      lane: "chat",
+      inlinedBody: "different",
+    });
+    expect(r.bindings).toEqual({ neuronIds: ["n1"], bookId: "b1", toolPermissions: { generate_image: false } });
+  });
+
+  it("carries them for the saved default too", () => {
+    const p = bound({ is_active: true });
+    const r = resolveTurnPrompt({ presets: [p], selection: AUTO_SELECTION, lane: "chat", inlinedBody: p.body });
+    expect(r.bindings?.neuronIds).toEqual(["n1"]);
+  });
+
+  it("brings NOTHING when the prompt did not apply", () => {
+    // Scope mismatch: the prompt is not in this request, so its tools must not
+    // be narrowed and its neurons must not be claimed.
+    const r = resolveTurnPrompt({
+      presets: [bound({ scope: "voice" })],
+      selection: { mode: "pinned", presetId: "p1" },
+      lane: "chat",
+      inlinedBody: "",
+    });
+    expect(r.used.id).toBeNull();
+    expect(r.bindings).toBeNull();
+  });
+
+  it("brings nothing when Plain is chosen", () => {
+    const r = resolveTurnPrompt({
+      presets: [bound({ is_active: true })],
+      selection: { mode: "plain" },
+      lane: "chat",
+      inlinedBody: "",
+    });
+    expect(r.bindings).toBeNull();
+  });
+
+  it("property: bindings are non-null exactly when a prompt is named", () => {
+    const SELECTIONS: TurnPromptSelection[] = [
+      { mode: "auto" }, { mode: "plain" },
+      { mode: "pinned", presetId: "p1" }, { mode: "pinned", presetId: "gone" },
+    ];
+    for (const scope of ["both", "chat", "voice"] as const) {
+      for (const lane of ["chat", "voice"] as const) {
+        for (const sel of SELECTIONS) {
+          for (const isActive of [true, false]) {
+            const p = bound({ scope, is_active: isActive });
+            const r = resolveTurnPrompt({ presets: [p], selection: sel, lane, inlinedBody: p.body });
+            expect(
+              (r.bindings !== null) === (r.used.id !== null),
+              `bindings/name disagree: scope=${scope} lane=${lane} sel=${sel.mode} active=${isActive}`,
+            ).toBe(true);
+          }
+        }
+      }
+    }
+  });
+
+  it("hasContextBindings only counts context, not tool narrowing", () => {
+    // Tool narrowing is per-turn and needs no switch; neurons and a book are
+    // what a switch actually LOADS, and what the router must not touch.
+    expect(hasContextBindings(bound())).toBe(true);
+    expect(hasContextBindings(bound({ neuron_ids: [], book_id: null }))).toBe(false);
+    expect(hasContextBindings(preset())).toBe(false);
   });
 });

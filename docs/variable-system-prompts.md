@@ -125,10 +125,11 @@ asserts the builder still contains it verbatim, so the two copies cannot drift.
   `src/test/chatContextWiring.test.ts`.
 
 Phases 2-3 add: `src/lib/promptRoutingApi.ts`,
+`src/hooks/usePromptBindings.ts`,
 `supabase/migrations/20260919000000_prompt_routing.sql`,
 `supabase/functions/prompt-incubator-sweep/`, `routePrompts()` inside
-`supabase/functions/knowledge-retrieve/`, and the routing controls plus
-proposal cards in `src/components/PromptLibrary.tsx`.
+`supabase/functions/knowledge-retrieve/`, and the routing controls, bindings
+editor and proposal cards in `src/components/PromptLibrary.tsx`.
 
 ## Phase 2 — the router
 
@@ -177,16 +178,54 @@ that puts the old prompt back **and** records `user_corrected`, so a router the
 user keeps overruling has the evidence to stop. Identical to Smart Filing's
 propose → correct → auto-pause loop.
 
-### The one honest limitation
+### Where the router deliberately stops
 
-`prompt_presets` has `neuron_ids`, `book_id` and `tool_permissions`, and they
-are wired into the schema, but **the router does not apply context bindings**.
-Retrieval is scoped by the loaded neurons, and routing rides *on* retrieval, so
-a prompt that rebinds neurons would be deciding scope after scope was used.
-Applying it from the next turn was rejected: the receipt would then describe a
-scope the reply did not actually have. Bindings are therefore a manual-switch
-feature, and are not yet surfaced in the UI. (`tool_permissions` may only ever
-narrow the roster — granting stays with the existing permission gates.)
+`prompt_presets` carries `neuron_ids`, `book_id` and `tool_permissions`, and
+they are applied — but **never by the router**. Changing what the assistant can
+*see* is a different order of thing from changing how it *sounds*:
+
+- retrieval scope would change on the assistant's own initiative, mid-conversation;
+- the reply telling you about it was already written under the new scope, so the
+  receipt could not honestly describe the reply it sits under;
+- Counsel's loaded-neuron chips would change under the user's hands.
+
+So the router changes voice only. When it picks a prompt that carries context,
+the receipt says so in words: *"Its neurons weren't loaded — switch to it
+yourself if you want those too."*
+
+## Context bindings
+
+A prompt can bring three things with it, and they have two different lifetimes.
+
+**Per switch — `neuron_ids`, `book_id`.** Applied once, by `usePromptBindings`,
+when the user picks the prompt from the Counsel chip or ⌘K. It is an announced
+action: the menu shows what the switch will change *before* it is tapped
+("loads Drafts · opens Middlemarch"), and the toast afterwards reports what
+actually happened — deleted or plan-locked neurons are dropped from the load and
+named, rather than failing the switch. Switching **replaces** the loaded set, the
+way activating a chain already does, so repeated switching cannot accumulate
+neurons.
+
+Nothing is auto-restored on switching away. Restoring would discard any neuron
+the user loaded by hand in the meantime, and a switch that silently undid their
+work is the more surprising of the two behaviours.
+
+**Per turn — `tool_permissions`.** A tool roster is a property of a request, not
+something that can be "loaded", so it is intersected into the gate map on every
+turn the prompt is in force, and never persisted — a narrowing that wrote itself
+into the user's settings would outlive the prompt that asked for it.
+
+It is applied at `computeToolGates`, the single choke point the wire roster, the
+prompt's own roster and the status chip all read, so they cannot disagree about
+it. A source-level pin asserts there is exactly one call to `narrowPermissions`
+and that it sits on that line.
+
+**`narrowPermissions` only ever removes.** A key the prompt marks `false` is
+turned off; a key it marks `true` is left exactly as the user had it. A preset
+row is ordinary user data — if a `true` there could re-enable a tool, writing one
+would be a way around every consent gate in the app. A property test walks the
+user × binding matrix and asserts the result is never more permissive than the
+user's own map.
 
 ## Phase 3 — proposals the assistant earns
 
@@ -243,16 +282,19 @@ and `ChatContext` never asks for routing. The migration was verified by applying
 it twice against PGlite — existing presets keep their values, and all three
 CHECK constraints refuse bad input.
 
-## Not in this phase
+## Auto-pause
 
+`promptRoutingAccuracy()` is read when the Prompt Library opens. Ten or more
+switches with more than half of them overruled turns routing off and explains
+why — the same self-limiting loop Smart Filing has. Ten is enough to mean
+something; half is a coin toss, and a coin toss is not worth changing someone's
+voice over.
 
-- **Context bindings in the router** — see "The one honest limitation" above.
-  The columns exist; applying them needs retrieval to be re-run inside the
-  builder when a switch changes the neuron scope.
-- **Auto-pause.** `promptRoutingAccuracy()` is written and returns the numbers;
-  nothing reads it yet to switch routing off on the user's behalf.
-- **Anchors.** Worth stating plainly, because it was asked for: an anchor in
-  this codebase is a *locator* — a verified pointer from a memory card into a
-  chapter — not a switchable mode. There is nothing to bind a prompt to. The
-  real book-level tie is `book_id`, routed off the existing Counsel focus
-  (`src/lib/counselFocus.ts`), and it is part of the unbuilt bindings work.
+## Deliberately not built
+
+- **Router-applied context bindings** — see "Where the router deliberately
+  stops". This is a boundary, not a gap.
+- **Anchors as a binding.** Worth stating plainly because it was asked for: an
+  anchor in this codebase is a *locator* — a verified pointer from a memory card
+  into a chapter — not a switchable mode, so there is nothing for a prompt to
+  bind to. The book-level tie that does exist is `book_id`, and it is built.

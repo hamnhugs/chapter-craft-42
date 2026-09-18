@@ -18,6 +18,7 @@ import { useChains, touchChainUsed, NeuronChain } from "@/lib/chainsApi";
 import { useAuth } from "@/hooks/useAuth";
 import { usePromptPresets } from "@/hooks/usePromptPresets";
 import { turnPromptStore } from "@/lib/promptRouting";
+import { usePromptBindings } from "@/hooks/usePromptBindings";
 
 // Global keyboard-driven wiki switcher. Toggle with Cmd+K (Mac) / Ctrl+K (others).
 // Listens for keydown anywhere; ignores input/textarea/contenteditable focus
@@ -45,6 +46,7 @@ const WikiQuickSwitcher: React.FC = () => {
   const { chains } = useChains();
   const { user } = useAuth();
   const { presets, activePreset } = usePromptPresets();
+  const { applyBindings, describeBindings } = usePromptBindings();
   const [open, setOpen] = useState(false);
 
   // The palette is already the fastest way to change what Counsel is thinking
@@ -62,15 +64,19 @@ const WikiQuickSwitcher: React.FC = () => {
   );
 
   const handlePickPrompt = useCallback(
-    (id: string) => {
-      if (id === "__auto") turnPromptStore.set({ mode: "auto" });
-      else if (id === "__plain") turnPromptStore.set({ mode: "plain" });
-      else turnPromptStore.set({ mode: "pinned", presetId: id });
-      const name = id === "__auto" ? "Auto" : id === "__plain" ? "Plain" : presets.find((p) => p.id === id)?.name || "prompt";
-      toast.success(`Prompt: ${name}`);
+    async (id: string) => {
       setOpen(false);
+      if (id === "__auto") { turnPromptStore.set({ mode: "auto" }); toast.success("Prompt: Auto"); return; }
+      if (id === "__plain") { turnPromptStore.set({ mode: "plain" }); toast.success("Prompt: Plain"); return; }
+      turnPromptStore.set({ mode: "pinned", presetId: id });
+      const p = presets.find((x) => x.id === id);
+      if (!p) { toast.success("Prompt set"); return; }
+      // Same rule as the Counsel chip: a pick loads the prompt's context, and
+      // the toast reports what actually happened rather than what was meant.
+      const changed = await applyBindings(p);
+      toast.success(changed ? `Prompt: ${p.name} — ${changed}` : `Prompt: ${p.name}`);
     },
-    [presets],
+    [presets, applyBindings],
   );
 
   // Locked neurons (free plan) stay visible but can't be loaded — same rule
@@ -241,7 +247,7 @@ const WikiQuickSwitcher: React.FC = () => {
               ...presets.map((p) => ({
                 id: p.id,
                 name: p.name,
-                hint: p.scope === "voice" ? "voice only" : "",
+                hint: p.scope === "voice" ? "voice only" : describeBindings(p),
                 pinned: promptSelection.mode === "pinned" && promptSelection.presetId === p.id,
               })),
             ].map((row) => (

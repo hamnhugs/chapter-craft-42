@@ -530,6 +530,16 @@ describe("book context block: built from the frozen roster, first on the wire, h
     expect(wm.indexOf("summaryNote")).toBeLessThan(turnIdx);
   });
 
+  it("narrows tool permissions at the ONE gate, and only through the narrowing helper", () => {
+    // A prompt's tool binding must reach computeToolGates and nothing else:
+    // that is the single choke point the wire roster, the prompt's own roster
+    // and the status chip all read, so narrowing there is the only way they
+    // cannot disagree. Going around it — filtering toolDefs afterwards, say —
+    // would offer the model a tool the prompt text no longer describes.
+    expect(CTX).toContain("permissions: narrowPermissions(chatToolPermissions || {}, turnPrompt.bindings?.toolPermissions)");
+    expect(CTX.match(/narrowPermissions\(/g) || []).toHaveLength(1);
+  });
+
   it("counts the stable cache breakpoint from the FRONT of the system block", () => {
     // Counting back from the end silently encoded "exactly one optional tail
     // member". A second one made the marker land on churning bytes, which buys

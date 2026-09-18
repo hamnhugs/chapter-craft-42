@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useSyncExternalStore } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { usePromptPresets } from "@/hooks/usePromptPresets";
 import { turnPromptStore, type TurnPromptSelection } from "@/lib/promptRouting";
+import { usePromptBindings } from "@/hooks/usePromptBindings";
+import { toast } from "sonner";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,6 +33,7 @@ import {
 const PromptSwitcher: React.FC<{ onManage: () => void }> = ({ onManage }) => {
   const { user } = useAuth();
   const { presets } = usePromptPresets();
+  const { applyBindings, describeBindings } = usePromptBindings();
 
   // In an effect, never during render: init() notifies subscribers, and a
   // store notification raised while React is rendering schedules an update
@@ -66,7 +69,16 @@ const PromptSwitcher: React.FC<{ onManage: () => void }> = ({ onManage }) => {
         ? `"${effective.name}" is shaping replies${pinned ? " (pinned for this conversation)" : " (your default)"}`
         : `"${effective.name}" is set to Voice only, so it is not applied in Counsel`;
 
-  const choose = (next: TurnPromptSelection) => turnPromptStore.set(next);
+  const choose = async (next: TurnPromptSelection) => {
+    turnPromptStore.set(next);
+    if (next.mode !== "pinned") return;
+    // The context a prompt carries is loaded HERE, on the tap — a deliberate,
+    // announced action — and never on a later turn behind the user's back.
+    const p = presets.find((x) => x.id === next.presetId);
+    if (!p) return;
+    const changed = await applyBindings(p);
+    if (changed) toast.success(`${p.name} — ${changed}`);
+  };
 
   return (
     <DropdownMenu>
@@ -110,12 +122,15 @@ const PromptSwitcher: React.FC<{ onManage: () => void }> = ({ onManage }) => {
         {presets.map((p) => {
           const isPinned = selection.mode === "pinned" && selection.presetId === p.id;
           const usable = inLane(p);
+          const binds = describeBindings(p);
           return (
             <DropdownMenuItem key={p.id} onClick={() => choose({ mode: "pinned", presetId: p.id })}>
               <span className="material-symbols-outlined text-base mr-2">
                 {isPinned ? "check" : "radio_button_unchecked"}
               </span>
               <span className="flex-1 truncate">{p.name}</span>
+              {/* What the switch will change, BEFORE it is tapped. */}
+              {binds && <span className="text-[10px] text-on-surface-variant ml-2 shrink-0 truncate max-w-[110px]">{binds}</span>}
               {!usable && <span className="text-[10px] text-amber-500 ml-2 shrink-0">voice only</span>}
             </DropdownMenuItem>
           );

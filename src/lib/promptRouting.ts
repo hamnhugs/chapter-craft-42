@@ -153,13 +153,68 @@ export const turnPromptStore = {
 // Resolution
 // ---------------------------------------------------------------------------
 
-/** The minimum a preset must expose for this module to resolve it. */
+/** The minimum a preset must expose for this module to resolve it. The
+ *  binding fields are optional so a caller with only the old columns (or a
+ *  test) still type-checks. */
 export interface ResolvablePreset {
   id: string;
   name: string;
   body: string;
   scope: PromptScope;
   is_active: boolean;
+  neuron_ids?: string[];
+  book_id?: string | null;
+  tool_permissions?: Record<string, boolean> | null;
+}
+
+/**
+ * The context a prompt brings with it, and the two different lifetimes it has.
+ *
+ * `toolPermissions` is PER TURN. A tool roster is a property of a request, not
+ * something that can be "loaded", so it is intersected into the gate map on
+ * every turn the prompt is in force. It may only ever REMOVE tools — a prompt
+ * must never be able to grant what the user's own permissions withhold.
+ *
+ * `neuronIds` and `bookId` are PER SWITCH. They are applied once, by the
+ * switcher, as a visible action with a toast, and they show up in Counsel's
+ * own chips afterwards. Re-applying them every turn would fight the user every
+ * time they loaded a neuron by hand; applying them silently from the ROUTER
+ * would be worse still, which is why the router never does (see below).
+ */
+export interface PromptBindings {
+  neuronIds: string[];
+  bookId: string | null;
+  toolPermissions: Record<string, boolean> | null;
+}
+
+/** True when a prompt carries context a switch would load. */
+export const hasContextBindings = (p: ResolvablePreset): boolean =>
+  (p.neuron_ids?.length ?? 0) > 0 || !!p.book_id;
+
+const bindingsOf = (p: ResolvablePreset): PromptBindings => ({
+  neuronIds: p.neuron_ids ?? [],
+  bookId: p.book_id ?? null,
+  toolPermissions: p.tool_permissions ?? null,
+});
+
+/**
+ * Narrow a permission map by a prompt's tool binding.
+ *
+ * ONE DIRECTION ONLY. A key the prompt marks false is turned off; a key it
+ * marks true is left exactly as the user had it. A prompt that could flip a
+ * permission ON would be a grant path around the app's consent gates, reachable
+ * by anything that can write a preset row.
+ */
+export function narrowPermissions(
+  userPermissions: Record<string, boolean>,
+  binding: Record<string, boolean> | null | undefined,
+): Record<string, boolean> {
+  if (!binding) return userPermissions;
+  const out = { ...userPermissions };
+  for (const [tool, allowed] of Object.entries(binding)) {
+    if (allowed === false) out[tool] = false;
+  }
+  return out;
 }
 
 export interface ResolveInput {
@@ -178,6 +233,9 @@ export interface ResolvedPrompt {
   block: string;
   /** What actually rode — the receipt. */
   used: UsedPrompt;
+  /** The context this prompt carries, or null when no prompt applied. Never
+   *  inferred: a prompt that did not apply brings nothing with it. */
+  bindings: PromptBindings | null;
 }
 
 const scopeAllows = (scope: PromptScope, lane: "chat" | "voice") =>
@@ -195,6 +253,8 @@ export function resolveTurnPrompt(input: ResolveInput): ResolvedPrompt {
   const none = (source: PromptSource, why: string): ResolvedPrompt => ({
     block: "",
     used: { id: null, name: null, source, why },
+    // No prompt applied means no context came with it. Never inferred.
+    bindings: null,
   });
 
   if (sel.mode === "plain") {
@@ -219,11 +279,12 @@ export function resolveTurnPrompt(input: ResolveInput): ResolvedPrompt {
     if (p.body.trim() === inlined) {
       // Already in the stable prompt — adding it again would be duplicate bytes
       // AND a second cache entry for no behavioural gain.
-      return { block: "", used: { id: p.id, name: p.name, source: "manual", why: `"${p.name}" is applied.` } };
+      return { block: "", used: { id: p.id, name: p.name, source: "manual", why: `"${p.name}" is applied.` }, bindings: bindingsOf(p) };
     }
     return {
       block: renderTurnPromptBlock({ name: p.name, body: p.body, lane }),
       used: { id: p.id, name: p.name, source: "manual", why: `"${p.name}" is applied for this conversation.` },
+      bindings: bindingsOf(p),
     };
   }
 
@@ -248,7 +309,11 @@ export function resolveTurnPrompt(input: ResolveInput): ResolvedPrompt {
   if (activeBody !== inlined) {
     return none("default", inlined ? "Your saved custom instructions are applied." : `"${active.name}" was not applied to this turn.`);
   }
-  return { block: "", used: { id: active.id, name: active.name, source: "default", why: `"${active.name}" is applied (your default).` } };
+  return {
+    block: "",
+    used: { id: active.id, name: active.name, source: "default", why: `"${active.name}" is applied (your default).` },
+    bindings: bindingsOf(active),
+  };
 }
 
 /**
