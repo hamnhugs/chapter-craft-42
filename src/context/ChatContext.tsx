@@ -1299,9 +1299,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // reply — and silently changing what the assistant can SEE, on its
             // own initiative, is a far bigger thing than changing how it
             // sounds. bindings: null, and the receipt says so.
-            const broughtContext = hasContextBindings(
-              presets.find((p) => p.id === decision.promptId) || ({} as never),
-            );
+            const switchedTo = presets.find((p) => p.id === decision.promptId);
+            const broughtContext = !!switchedTo && hasContextBindings(switchedTo);
             const why = broughtContext
               ? `${decision.why} Its neurons weren't loaded — switch to it yourself if you want those too.`
               : decision.why;
