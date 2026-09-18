@@ -117,6 +117,13 @@ BEGIN
   END IF;
 END $$;
 
+-- PostgREST reaches these as `authenticated`, so the role needs table
+-- privileges as well as a policy: RLS narrows what a grant allows, it does
+-- not confer one. Explicit rather than relying on the project's default
+-- privileges, which are configuration and not part of this file.
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.prompt_routing_decisions TO authenticated;
+GRANT ALL ON public.prompt_routing_decisions TO service_role;
+
 -- ---------------------------------------------------------------------------
 -- 3. prompt_incubator_turns — evidence that a prompt is MISSING
 --
@@ -170,6 +177,13 @@ BEGIN
   END IF;
 END $$;
 
+-- PostgREST reaches these as `authenticated`, so the role needs table
+-- privileges as well as a policy: RLS narrows what a grant allows, it does
+-- not confer one. Explicit rather than relying on the project's default
+-- privileges, which are configuration and not part of this file.
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.prompt_incubator_turns TO authenticated;
+GRANT ALL ON public.prompt_incubator_turns TO service_role;
+
 -- ---------------------------------------------------------------------------
 -- 4. prompt_proposals — drafted by the assistant, inert until approved
 --
@@ -221,6 +235,13 @@ BEGIN
       FOR DELETE TO authenticated USING (auth.uid() = user_id);
   END IF;
 END $$;
+
+-- PostgREST reaches these as `authenticated`, so the role needs table
+-- privileges as well as a policy: RLS narrows what a grant allows, it does
+-- not confer one. Explicit rather than relying on the project's default
+-- privileges, which are configuration and not part of this file.
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.prompt_proposals TO authenticated;
+GRANT ALL ON public.prompt_proposals TO service_role;
 
 DO $$
 BEGIN

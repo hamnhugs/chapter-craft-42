@@ -34,7 +34,7 @@ export async function logPromptRoute(decision: RouteDecision, finalPromptId: str
   try {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return false;
-    const { error } = await supabase.from("prompt_routing_decisions" as never).insert({
+    const { error } = await supabase.from("prompt_routing_decisions").insert({
       user_id: user.id,
       s_max: decision.scores.s_max,
       s_active: decision.scores.s_active,
@@ -43,7 +43,7 @@ export async function logPromptRoute(decision: RouteDecision, finalPromptId: str
       proposed_prompt_id: decision.promptId,
       proposed_action: decision.action,
       final_prompt_id: finalPromptId,
-    } as never);
+    });
     if (error && !isMissingPromptRoutingSchema(error)) {
       console.warn("Failed to log prompt routing decision:", error.message);
     }
@@ -69,15 +69,15 @@ export async function markLastPromptRouteCorrected(): Promise<void> {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
     const { data, error } = await supabase
-      .from("prompt_routing_decisions" as never)
+      .from("prompt_routing_decisions")
       .select("id")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false })
       .limit(1);
     if (error || !data || data.length === 0) return;
     await supabase
-      .from("prompt_routing_decisions" as never)
-      .update({ user_corrected: true } as never)
+      .from("prompt_routing_decisions")
+      .update({ user_corrected: true })
       .eq("id", (data[0] as { id: string }).id);
   } catch {
     /* telemetry only */
@@ -89,7 +89,7 @@ export async function markLastPromptRouteCorrected(): Promise<void> {
 export async function promptRoutingAccuracy(): Promise<{ switches: number; corrected: number } | null> {
   try {
     const { data, error } = await supabase
-      .from("prompt_routing_decisions" as never)
+      .from("prompt_routing_decisions")
       .select("user_corrected")
       .eq("proposed_action", "switch")
       .order("created_at", { ascending: false })
@@ -115,10 +115,10 @@ export async function parkIncubatorTurn(gist: string): Promise<void> {
     if (!user) return;
     const trimmed = (gist || "").trim().slice(0, 200);
     if (!trimmed) return;
-    const { error } = await supabase.from("prompt_incubator_turns" as never).insert({
+    const { error } = await supabase.from("prompt_incubator_turns").insert({
       user_id: user.id,
       gist: trimmed,
-    } as never);
+    });
     if (error && !isMissingPromptRoutingSchema(error)) {
       console.warn("Failed to park incubator turn:", error.message);
     }
@@ -132,12 +132,12 @@ export async function parkIncubatorTurn(gist: string): Promise<void> {
 export async function fetchPromptProposals(): Promise<PromptProposal[]> {
   try {
     const { data, error } = await supabase
-      .from("prompt_proposals" as never)
+      .from("prompt_proposals")
       .select("id, proposed_name, proposed_body, when_to_use, rationale, sample_gists, member_turn_ids, created_at")
       .eq("status", "pending")
       .order("created_at", { ascending: false });
     if (error || !data) return [];
-    return data as unknown as PromptProposal[];
+    return data;
   } catch {
     return [];
   }
@@ -158,7 +158,7 @@ export async function fetchPromptProposals(): Promise<PromptProposal[]> {
 export async function acceptPromptProposal(p: PromptProposal): Promise<void> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Not signed in");
-  const { error: insErr } = await supabase.from("prompt_presets" as never).insert({
+  const { error: insErr } = await supabase.from("prompt_presets").insert({
     user_id: user.id,
     name: p.proposed_name,
     body: p.proposed_body,
@@ -168,12 +168,12 @@ export async function acceptPromptProposal(p: PromptProposal): Promise<void> {
     routing_enabled: false,
     origin: "assistant",
     approved_at: new Date().toISOString(),
-  } as never);
+  });
   if (insErr) throw insErr;
 
   const { error: updErr } = await supabase
-    .from("prompt_proposals" as never)
-    .update({ status: "accepted" } as never)
+    .from("prompt_proposals")
+    .update({ status: "accepted" })
     .eq("id", p.id);
   if (updErr) throw updErr;
 
@@ -184,16 +184,16 @@ export async function acceptPromptProposal(p: PromptProposal): Promise<void> {
   const members = p.member_turn_ids || [];
   if (members.length > 0) {
     await supabase
-      .from("prompt_incubator_turns" as never)
-      .update({ status: "promoted" } as never)
+      .from("prompt_incubator_turns")
+      .update({ status: "promoted" })
       .in("id", members);
   }
 }
 
 export async function dismissPromptProposal(id: string): Promise<void> {
   const { error } = await supabase
-    .from("prompt_proposals" as never)
-    .update({ status: "dismissed" } as never)
+    .from("prompt_proposals")
+    .update({ status: "dismissed" })
     .eq("id", id);
   if (error) throw error;
 }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import type { TablesInsert } from "@/integrations/supabase/types";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 
@@ -161,7 +162,7 @@ export function usePromptPresets() {
 
   const savePreset = useCallback(async (preset: Partial<PromptPreset> & { name: string; body: string }) => {
     if (!user) return;
-    const base = {
+    const base: TablesInsert<"prompt_presets"> = {
       user_id: user.id,
       name: preset.name.trim() || "Untitled",
       body: preset.body || "",
@@ -170,7 +171,7 @@ export function usePromptPresets() {
     // The routing fields are written when they are known and dropped on a
     // schema error, so saving a prompt keeps working before the migration —
     // the user just cannot describe when it should be chosen yet.
-    const full = {
+    const full: TablesInsert<"prompt_presets"> = {
       ...base,
       ...(preset.when_to_use !== undefined ? { when_to_use: preset.when_to_use } : {}),
       ...(preset.routing_enabled !== undefined ? { routing_enabled: preset.routing_enabled } : {}),
@@ -178,19 +179,10 @@ export function usePromptPresets() {
       ...(preset.book_id !== undefined ? { book_id: preset.book_id } : {}),
       ...(preset.tool_permissions !== undefined ? { tool_permissions: preset.tool_permissions } : {}),
     };
-    // src/integrations/supabase/types.ts is generated and will not know the
-    // routing columns until Lovable regenerates it after the migration, so the
-    // writes go through a narrow hand-written shape rather than the generated
-    // one. Narrow on purpose: a bare `any` here would also switch off the
-    // check that the column NAMES are strings and the values are scalars.
-    type PresetWrite = Record<string, string | boolean | string[] | Record<string, boolean> | null>;
-    type LooseTable = {
-      update: (p: PresetWrite) => { eq: (col: string, val: string) => Promise<{ error: unknown }> };
-      insert: (p: PresetWrite) => Promise<{ error: unknown }>;
-    };
-    const table = supabase.from("prompt_presets") as unknown as LooseTable;
-    const write = (payload: PresetWrite) =>
-      preset.id ? table.update(payload).eq("id", preset.id) : table.insert(payload);
+    const write = (payload: TablesInsert<"prompt_presets">) =>
+      preset.id
+        ? supabase.from("prompt_presets").update(payload).eq("id", preset.id)
+        : supabase.from("prompt_presets").insert(payload);
     let { error } = await write(full);
     if (error && isMissingPromptRoutingSchema(error)) ({ error } = await write(base));
     if (error) { toast.error("Failed to save prompt"); return; }
