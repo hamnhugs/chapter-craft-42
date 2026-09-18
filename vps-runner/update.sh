@@ -167,9 +167,26 @@ ok "$STATE_DIR (0700, owned by $RUN_USER)"
 say "5. Restart"
 if [ "$UNIT_CHANGED" = "1" ]; then systemctl daemon-reload; ok "systemd reloaded"; fi
 systemctl restart program-runner
-sleep 5
-if systemctl is-active --quiet program-runner; then
-  ok "program-runner is running"
+
+# The runner proves the egress lockdown BEFORE it logs or listens, and that
+# proof starts a real gVisor container — a minute or more on a single-core box.
+# A fixed sleep either lies ("no summary") or wastes everyone's time, so wait
+# for the line that means it is actually up, and say what we are waiting for.
+printf '  waiting for it to finish its startup self-test'
+UP=0
+for _ in $(seq 1 60); do
+  if journalctl -u program-runner --since "-3 minutes" --no-pager 2>/dev/null | grep -q '\[runner\] listening'; then UP=1; break; fi
+  systemctl is-active --quiet program-runner || break   # died — stop waiting, report below
+  printf '.'
+  sleep 3
+done
+printf '\n'
+
+if [ "$UP" = "1" ]; then
+  ok "program-runner is up and listening"
+elif systemctl is-active --quiet program-runner; then
+  warn "still starting after 3 minutes — it is running, but has not reported listening yet."
+  warn "watch it with: journalctl -u program-runner -f"
 else
   warn "the service did not come up — the last 30 log lines:"
   journalctl -u program-runner -n 30 --no-pager || true
@@ -180,7 +197,7 @@ say "What the runner decided for this box"
 # --since, not -n: a plain tail can hand back the PREVIOUS boot's summary while
 # journald is still flushing this one, which reads as "nothing changed" when in
 # fact everything did. Anything older than this restart is not this restart.
-SUMMARY="$(journalctl -u program-runner --since "-90 seconds" --no-pager 2>/dev/null | grep -E '\[runner\] (ceilings|SAFETY CLAMP|egress|listening|persist)' | tail -6 || true)"
+SUMMARY="$(journalctl -u program-runner --since "-4 minutes" --no-pager 2>/dev/null | grep -E '\[runner\] (ceilings|SAFETY CLAMP|egress|listening|persist)' | tail -6 || true)"
 if [ -n "$SUMMARY" ]; then printf '%s\n' "$SUMMARY"
 else skip "journald has not flushed this boot yet — run: journalctl -u program-runner --since '-2 min'"; fi
 
