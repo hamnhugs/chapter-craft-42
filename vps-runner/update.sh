@@ -167,7 +167,7 @@ ok "$STATE_DIR (0700, owned by $RUN_USER)"
 say "5. Restart"
 if [ "$UNIT_CHANGED" = "1" ]; then systemctl daemon-reload; ok "systemd reloaded"; fi
 systemctl restart program-runner
-sleep 3
+sleep 5
 if systemctl is-active --quiet program-runner; then
   ok "program-runner is running"
 else
@@ -177,8 +177,12 @@ else
 fi
 
 say "What the runner decided for this box"
-SUMMARY="$(journalctl -u program-runner -n 40 --no-pager 2>/dev/null | grep -E '\[runner\] (ceilings|SAFETY CLAMP|egress|listening|persist)' | tail -6 || true)"
-if [ -n "$SUMMARY" ]; then printf '%s\n' "$SUMMARY"; else skip "no summary lines yet — try: journalctl -u program-runner -n 40"; fi
+# --since, not -n: a plain tail can hand back the PREVIOUS boot's summary while
+# journald is still flushing this one, which reads as "nothing changed" when in
+# fact everything did. Anything older than this restart is not this restart.
+SUMMARY="$(journalctl -u program-runner --since "-90 seconds" --no-pager 2>/dev/null | grep -E '\[runner\] (ceilings|SAFETY CLAMP|egress|listening|persist)' | tail -6 || true)"
+if [ -n "$SUMMARY" ]; then printf '%s\n' "$SUMMARY"
+else skip "journald has not flushed this boot yet — run: journalctl -u program-runner --since '-2 min'"; fi
 
 say "Done"
 cat <<EOF
@@ -189,7 +193,9 @@ cat <<EOF
   deliberately-locked-down setup. If the lines above say egress is DISABLED and
   you want pip/npm to work, run:
 
-      sudo bash $SRC/setup-egress.sh && sudo systemctl restart program-runner
+      sudo bash $SRC/setup-egress.sh
+      sudo RUNNER_CONFIG=$CONFIG node $SRC/selftest.mjs      # expect: RESULT: PASS
+      sudo systemctl restart program-runner
 
   Then check the app: Settings → Program Foundry → Test connection.
 EOF
