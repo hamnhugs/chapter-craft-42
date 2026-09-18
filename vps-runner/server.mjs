@@ -166,8 +166,8 @@ function release() { active--; const next = waiters.shift(); if (next) { active+
 // Async jobs can hold a slot for up to ASYNC_MAX_TIMEOUT_MS, so cap the lane:
 // on a multi-slot box at least one slot always stays free for interactive runs;
 // on a single-slot box the one slot is shared. Callers that must not wait
-// behind a long hold (cron dispatches, interactive runs) send no_wait and get
-// an honest "busy"; only hermetic verify jobs still queue.
+// behind a long hold (cron dispatches, interactive runs, and verification)
+// send no_wait and get an honest "busy" rather than parking in the queue.
 let asyncActive = 0;
 const asyncLaneMax = () => Math.max(1, CONCURRENCY_EFF - 1);
 
@@ -396,6 +396,11 @@ async function runJob(job) {
       releaseStateLock = await acquireStateLock(`${key}:${epoch}`);
       const sd = await ensureStateDir(key, epoch);
       if (sd.error) return { status: "error", exit_code: null, stdout: "", stderr: sd.error, ms: Date.now() - started };
+      // NOTE: /state is the one mount without noexec — Docker exposes no
+      // noexec option for a bind mount, so a persist program can keep an
+      // executable across runs. If that matters to you, put state_dir on a
+      // filesystem mounted noexec on the host; everything else here (/tmp,
+      // /dev/shm) is noexec already.
       stateArgs = ["-v", `${sd.path}:/state`];
     } else if (mode === "run" && manifest.persist === true) {
       stateArgs = ["--tmpfs", "/state:size=64m,mode=0700,nosuid,nodev"];
@@ -544,13 +549,24 @@ async function healthCanary() {
 }
 
 // ── HTTP ─────────────────────────────────────────────────────────────────────
+const MAX_BODY_BYTES = 2 * 1024 * 1024;
+
+// Returns { body, tooLarge }. It used to return the TRUNCATED buffer, whose
+// HMAC of course did not match, so an oversize payload was reported as
+// "unauthorized: bad signature" — a security-shaped answer to a size problem,
+// and unfixable by the caller because nothing said what was wrong.
 function readBody(req) {
   return new Promise((resolve) => {
     const chunks = [];
     let size = 0;
-    req.on("data", (c) => { size += c.length; if (size <= 2 * 1024 * 1024) chunks.push(c); });
-    req.on("end", () => resolve(Buffer.concat(chunks)));
-    req.on("error", () => resolve(Buffer.from("")));
+    let tooLarge = false;
+    req.on("data", (c) => {
+      size += c.length;
+      if (size > MAX_BODY_BYTES) { tooLarge = true; return; }
+      chunks.push(c);
+    });
+    req.on("end", () => resolve({ body: Buffer.concat(chunks), tooLarge }));
+    req.on("error", () => resolve({ body: Buffer.from(""), tooLarge: false }));
   });
 }
 const send = (res, status, obj) => { const b = JSON.stringify(obj); res.writeHead(status, { "Content-Type": "application/json" }); res.end(b); };
@@ -564,7 +580,10 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, "http://localhost");
     const path = url.pathname;
-    const raw = await readBody(req);
+    const { body: raw, tooLarge } = await readBody(req);
+    // Answered BEFORE the signature check: the MAC can never match a body we
+    // refused to buffer, so checking it first would always say "bad signature".
+    if (tooLarge) return send(res, 413, { ok: false, error: `payload too large (limit ${MAX_BODY_BYTES} bytes)` });
 
     // The signature covers pathname + query (identical to pathname when there is
     // no query, so pre-query clients keep verifying): /result?run_id=… must not

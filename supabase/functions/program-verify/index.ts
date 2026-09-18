@@ -27,7 +27,20 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const VERIFY_TIMEOUT_MS = 30_000;
+// A verify job's socket deadline must OUTLAST the job it dispatches: the runner
+// soft-kills at the program's own timeout + 2s, so a flat 30s deadline meant any
+// program declaring timeout_ms above ~25s could never be verified — every case
+// threw, sandboxDown latched, and the approval card said "could not be checked"
+// for a perfectly good program. Computed per program below, ceilinged so a
+// pathological manifest cannot hold the chat turn open.
+const VERIFY_SOCKET_CEILING_MS = 90_000;
+const VERIFY_SOCKET_HEADROOM_MS = 20_000;
+// Whole-call budget. forge_program awaits this verification INLINE, so the
+// chat turn is blocked for however long it takes: 6 examples + 1 invariant run
+// at up to a minute each is minutes of silence. Once the budget is spent the
+// remaining cases are simply not run and the verdict is inconclusive — an
+// honest "not fully checked" beats a hung turn.
+const VERIFY_BUDGET_MS = 120_000;
 const MAX_CASES = 6;
 const VERIFY_RATE_PER_MIN = 15; // verify + run share this per-user budget
 
@@ -63,8 +76,16 @@ serve(async (req) => {
     if (pErr) return fail("PROGRAM_NOT_MIGRATED", `Could not read the program: ${pErr.message}`);
     if (!program) return fail("PROGRAM_NOT_APPROVED", "No program with that id.");
 
-    const { data: fp } = await supabase.rpc("program_fingerprint", { p_program_id: programId });
+    // The report is BOUND to this fingerprint — approve_program refuses a report
+    // whose fingerprint is not the program's current one. Swallowing this error
+    // wrote a report pinned to "", told the client "passed", and then approval
+    // failed with "this program has not been verified for its current code",
+    // which is unfixable by retrying. Fail here instead, where it is legible.
+    const { data: fp, error: fpErr } = await supabase.rpc("program_fingerprint", { p_program_id: programId });
     const fingerprint = String(fp || "");
+    if (fpErr || !fingerprint) {
+      return fail("PROGRAM_REQUEST_FAILED", `Could not fingerprint the program: ${fpErr?.message || "empty fingerprint"}`);
+    }
 
     // Runner connection.
     const { data: settings } = await supabase
@@ -77,11 +98,14 @@ serve(async (req) => {
 
     const service = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const writeReport = async (verdict: string, checks: Check[]) => {
-      await service.from("agent_programs").update({
+      // Checked: an unwritten report means approval will refuse later with a
+      // message about code that never changed. Better to say so now.
+      const { error } = await service.from("agent_programs").update({
         verified_at: new Date().toISOString(),
         verifier_fingerprint: fingerprint,
         verifier_report: { verdict, checks, fingerprint },
       }).eq("id", programId);
+      if (error) throw new Error(`Could not record the verification report: ${error.message}`);
     };
 
     if (!runnerUrl || !signingKey || !keyId) {
@@ -113,13 +137,24 @@ serve(async (req) => {
 
     // The hermetic manifest: forced offline + secretless. The runner enforces
     // this for a verify job regardless; sending it neutered is defense in depth.
-    const hermeticManifest = { network: "none", allowed_hosts: [], secrets: [], timeout_ms: Number((program.manifest as any)?.timeout_ms) || 15000 };
+    const jobTimeoutMs = Number((program.manifest as any)?.timeout_ms) || 15000;
+    const hermeticManifest = { network: "none", allowed_hosts: [], secrets: [], timeout_ms: jobTimeoutMs };
+    const socketTimeoutMs = Math.min(VERIFY_SOCKET_CEILING_MS, jobTimeoutMs + VERIFY_SOCKET_HEADROOM_MS);
+    const startedAt = Date.now();
+    const budgetSpent = () => Date.now() - startedAt >= VERIFY_BUDGET_MS;
 
-    const runOnce = async (args: unknown): Promise<{ ok: boolean; exit: number; stdout: string; sandboxDown: boolean }> => {
+    const runOnce = async (args: unknown): Promise<{ ok: boolean; exit: number; stdout: string; sandboxDown: boolean; busy?: boolean }> => {
       try {
-        const r = await callRunner(conn, "POST", "/run", { mode: "verify", language: program.language, code: program.code, manifest: hermeticManifest, args }, VERIFY_TIMEOUT_MS);
+        // no_wait, exactly as program-run sends it: a scheduled long run can
+        // hold the runner's only slot for an hour, and parking in its queue
+        // would blow this deadline and report a healthy sandbox as down.
+        const r = await callRunner(conn, "POST", "/run", { mode: "verify", language: program.language, code: program.code, manifest: hermeticManifest, no_wait: true, args }, socketTimeoutMs);
         const rb = (r.body || {}) as Record<string, unknown>;
         const status = String(rb.status || (r.status >= 200 && r.status < 300 ? "ok" : "error"));
+        // Contention is not a broken sandbox: with no_wait the runner answers
+        // 429/busy while a scheduled long run holds the slot. Calling that
+        // "sandbox unavailable" would tell the user their VPS is down.
+        if (r.status === 429 || status === "busy") return { ok: false, exit: -1, stdout: "", sandboxDown: false, busy: true };
         if (status === "sandbox_unavailable" || r.status < 200 || r.status >= 300) return { ok: false, exit: -1, stdout: "", sandboxDown: true };
         return { ok: status === "ok", exit: typeof rb.exit_code === "number" ? rb.exit_code : (status === "ok" ? 0 : 1), stdout: typeof rb.stdout === "string" ? rb.stdout : "", sandboxDown: false };
       } catch {
@@ -129,13 +164,19 @@ serve(async (req) => {
 
     const checks: Check[] = [];
     let sandboxDown = false;
+    // Distinct from sandboxDown: the runner is fine, we simply stopped asking
+    // it. Recording this as "sandbox_unavailable" would blame a healthy VPS.
+    let budgetOut = false;
+    let runnerBusy = false;
 
     // Each author example: run with its args, require exit 0 and (if given) the
     // expected substring in stdout. This is the independent oracle the user
     // approved alongside the code.
     for (let i = 0; i < examples.length; i++) {
+      if (budgetSpent()) { budgetOut = true; break; }
       const ex = examples[i];
       const res = await runOnce(ex.args ?? {});
+      if (res.busy) { runnerBusy = true; break; }
       if (res.sandboxDown) { sandboxDown = true; break; }
       const exitOk = res.exit === 0;
       const expectOk = typeof ex.expect === "string" && ex.expect.length > 0 ? res.stdout.includes(ex.expect) : exitOk;
@@ -143,9 +184,10 @@ serve(async (req) => {
     }
 
     // Invariants evaluated against the first example's run (or an empty run).
-    if (!sandboxDown && invariants.length > 0) {
+    if (!sandboxDown && !budgetOut && !runnerBusy && !budgetSpent() && invariants.length > 0) {
       const res = await runOnce(examples[0]?.args ?? {});
-      if (res.sandboxDown) sandboxDown = true;
+      if (res.busy) runnerBusy = true;
+      else if (res.sandboxDown) sandboxDown = true;
       else {
         for (let i = 0; i < invariants.length; i++) {
           const inv = invariants[i].toLowerCase();
@@ -158,13 +200,20 @@ serve(async (req) => {
     }
 
     let verdict: string;
-    if (sandboxDown) verdict = "inconclusive";
+    if (sandboxDown || budgetOut || runnerBusy) verdict = "inconclusive";
     else if (checks.length === 0) verdict = "inconclusive";
     else if (checks.every((c) => c.passed)) verdict = "passed";
     else verdict = "failed";
 
     await writeReport(verdict, checks);
-    await service.from("program_runs").update({ status: sandboxDown ? "sandbox_unavailable" : "ok" }).eq("id", verifyRunId);
+    await service.from("program_runs").update({
+      status: sandboxDown ? "sandbox_unavailable" : "ok",
+      error: runnerBusy
+        ? "runner busy — a scheduled long run is using the sandbox, so the program was not checked"
+        : budgetOut
+          ? `verification stopped after ${Math.round(VERIFY_BUDGET_MS / 1000)}s — not every case was run`
+          : null,
+    }).eq("id", verifyRunId);
     return json({ ok: true, verdict, checks });
   } catch (e) {
     return fail("PROGRAM_REQUEST_FAILED", (e as Error)?.message || "program-verify failed", 500);

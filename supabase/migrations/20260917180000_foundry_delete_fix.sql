@@ -174,3 +174,37 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+-- ── stranded interactive runs ────────────────────────────────────────────────
+-- program-run writes a 'pending' row BEFORE dispatch (so a burst rate-limits
+-- itself honestly) and settles it when the runner answers. If the edge worker
+-- dies mid-flight nothing settles it: the row stays 'pending' forever and keeps
+-- counting against the user's 20/min and 500/day budget, so a single crash
+-- silently shrinks their quota for a day. sweep_orphan_cron_runs only ever
+-- looked at mode='cron'; it now also settles interactive runs that have been
+-- pending far longer than any interactive run can legally take (the edge
+-- function's own ceiling is ~90s).
+CREATE OR REPLACE FUNCTION public.sweep_orphan_cron_runs()
+RETURNS integer
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_catalog
+AS $$
+DECLARE n int; m int;
+BEGIN
+  UPDATE program_runs r SET status = 'lost',
+    error = 'orphaned: the scheduler lost track of this run before it settled'
+  WHERE r.mode = 'cron' AND r.status = 'pending'
+    AND r.created_at < now() - interval '6 hours'
+    AND NOT EXISTS (SELECT 1 FROM program_schedules s WHERE s.active_run_id = r.id);
+  GET DIAGNOSTICS n = ROW_COUNT;
+
+  UPDATE program_runs r SET status = 'lost',
+    error = 'orphaned: the request died before the run settled'
+  WHERE r.mode IN ('run', 'verify') AND r.status = 'pending'
+    AND r.created_at < now() - interval '30 minutes';
+  GET DIAGNOSTICS m = ROW_COUNT;
+
+  RETURN n + m;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.sweep_orphan_cron_runs() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.sweep_orphan_cron_runs() TO service_role;

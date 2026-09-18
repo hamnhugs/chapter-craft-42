@@ -95,7 +95,17 @@ const ProgramApprovalCard: React.FC<{ proposal: ProgramProposal }> = ({ proposal
 
   const onReject = async () => {
     try {
-      await (supabase.from("agent_programs" as any) as any).delete().eq("id", proposal.program_id).eq("status", "draft");
+      // supabase-js RESOLVES { data, error } — it does not throw. Ignoring
+      // `error` here meant a refused delete still announced "Discarded" while
+      // the draft sat in the list, which is exactly the lie this card must not
+      // tell. `.select()` also lets us say whether a row actually went.
+      const { data, error } = await (supabase.from("agent_programs" as any) as any)
+        .delete().eq("id", proposal.program_id).eq("status", "draft").select("id");
+      if (error) throw error;
+      if (!data || (data as unknown[]).length === 0) {
+        toast.error(`Draft "${proposal.name}" was not discarded — it is no longer a draft, or already gone.`);
+        return;
+      }
       setState("rejected");
       toast.success(`Draft "${proposal.name}" discarded.`);
     } catch (e) {

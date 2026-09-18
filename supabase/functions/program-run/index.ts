@@ -27,7 +27,15 @@ const corsHeaders = {
 };
 
 const RUN_TIMEOUT_MS = 90_000;
-const HEALTH_TIMEOUT_MS = 15_000;
+// Must EXCEED the runner's own health canary (it runs a real gVisor container
+// with a 15s timer). Matching it exactly meant a cold image or a slow sentry
+// boot raced the two deadlines and "Test connection" reported a perfectly
+// healthy runner as unreachable.
+const HEALTH_TIMEOUT_MS = 25_000;
+/** Args ride to the VPS as an env var. Nothing capped them anywhere along the
+ *  path, so a runaway object became a multi-megabyte request the runner then
+ *  refused. Refuse it here, where the error can name the actual problem. */
+const MAX_ARGS_BYTES = 64 * 1024;
 const RATE_PER_MIN = 20;
 const RATE_PER_DAY = 500;
 
@@ -81,6 +89,12 @@ serve(async (req) => {
 
     // ── run ─────────────────────────────────────────────────────────────────
     const programId = String(body?.program_id || "").trim();
+    const argsBytes = (() => {
+      try { return new TextEncoder().encode(JSON.stringify(body?.args ?? {})).length; } catch { return Infinity; }
+    })();
+    if (argsBytes > MAX_ARGS_BYTES) {
+      return fail("PROGRAM_REQUEST_FAILED", `Arguments are ${argsBytes === Infinity ? "not serialisable" : `${argsBytes} bytes; the limit is ${MAX_ARGS_BYTES}`}. Pass a reference the program can read instead of inlining the data.`);
+    }
     if (!programId) return fail("PROGRAM_REQUEST_FAILED", "program_id required", 400);
 
     const { data: program, error: pErr } = await supabase
@@ -114,9 +128,15 @@ serve(async (req) => {
     const nowMs = Date.now();
     const sinceMin = new Date(nowMs - 60_000).toISOString();
     const sinceDay = new Date(nowMs - 86_400_000).toISOString();
+    // Deferrals are not runs. A busy runner ('skipped') or an unreachable one
+    // ('sandbox_unavailable') never executed anything, and counting them burned
+    // the user's budget for work that did not happen — so an outage used to
+    // lock them out on top of being down. program-cron already excluded these;
+    // this is the same rule on the interactive path.
+    const NOT_RUN = "(skipped,sandbox_unavailable,lost)";
     const [{ count: perMin }, { count: perDay }] = await Promise.all([
-      service.from("program_runs").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("mode", "run").gte("created_at", sinceMin),
-      service.from("program_runs").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("mode", "run").gte("created_at", sinceDay),
+      service.from("program_runs").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("mode", "run").not("status", "in", NOT_RUN).gte("created_at", sinceMin),
+      service.from("program_runs").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("mode", "run").not("status", "in", NOT_RUN).gte("created_at", sinceDay),
     ]);
     if ((perMin ?? 0) > RATE_PER_MIN || (perDay ?? 0) > RATE_PER_DAY) {
       await service.from("program_runs").delete().eq("id", runId);
