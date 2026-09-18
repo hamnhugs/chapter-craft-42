@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import {
-  programsAvailable, listPrograms, disableProgram,
+  programsAvailable, listPrograms, disableProgram, deleteProgramsByName,
   listSchedules, setProgramSchedule, pauseProgramSchedule, deleteProgramSchedule, cronHealth, latestCronOutcomes,
   type AgentProgramRow, type ProgramScheduleRow, type CronHealth, type ProgramRunRow,
 } from "@/lib/programFoundry";
@@ -236,6 +236,23 @@ const ProgramRunnerSettings: React.FC = () => {
     }
   }, []);
 
+  /** Delete the program outright. Disable was the only control here, and it is
+   *  a one-way ban (the guard forbids re-enabling), so there was no way to get
+   *  rid of a program from this screen at all — only by asking the assistant.
+   *  Deletes every version of the name plus its Toolshed card, same as
+   *  delete_program does. */
+  const onDeleteName = useCallback(async (name: string) => {
+    if (!confirm(`Delete "${name}" permanently, including every version of it? The source is only stored here — this cannot be undone.`)) return;
+    try {
+      const { deleted, cardRemoved } = await deleteProgramsByName(name);
+      if (deleted === 0) { toast.error(`"${name}" was not deleted — nothing matched it.`); return; }
+      toast.success(`"${name}" deleted — ${deleted} version${deleted === 1 ? "" : "s"}${cardRemoved ? " and its Toolshed card" : ""}`);
+      void refresh();
+    } catch (e) {
+      toast.error(`Could not delete: ${String((e as Error)?.message || e).slice(0, 160)}`);
+    }
+  }, [refresh]);
+
   const onDisableName = useCallback(async (name: string) => {
     if (!confirm(`Disable "${name}" permanently? It can never be re-approved under this name, even if re-forged. (You can still delete it.)`)) return;
     try { await disableProgram(name); toast.success(`"${name}" disabled`); void refresh(); }
@@ -338,9 +355,12 @@ const ProgramRunnerSettings: React.FC = () => {
                   <p className="truncate text-sm text-on-surface">{p.name} <span className="text-xs text-on-surface-variant">v{p.version} · {p.status} · {p.language}</span></p>
                   <p className="truncate text-xs text-on-surface-variant">{(p.manifest as any)?.network === "allowlist" ? "network: allowlist" : "no network"}{Array.isArray((p.manifest as any)?.secrets) && (p.manifest as any).secrets.length > 0 ? ` · secrets: ${(p.manifest as any).secrets.join(", ")}` : ""}</p>
                 </div>
-                {p.status !== "disabled" && (
-                  <button onClick={() => onDisableName(p.name)} className="shrink-0 rounded border border-red-500/40 px-2 py-1 text-[11px] text-red-500">Disable</button>
-                )}
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {p.status !== "disabled" && (
+                    <button onClick={() => onDisableName(p.name)} className="shrink-0 rounded border border-red-500/40 px-2 py-1 text-[11px] text-red-500">Disable</button>
+                  )}
+                  <button onClick={() => onDeleteName(p.name)} className="shrink-0 rounded border border-outline/40 px-2 py-1 text-[11px] text-on-surface-variant hover:border-red-500/40 hover:text-red-500">Delete</button>
+                </div>
               </div>
               {p.status === "approved" && programRunnerConfigured && schedulesReady === true && (
                 <ScheduleControl program={p} schedule={schedules.get(p.id)} longRuns={longRuns} lastCron={cronRuns.get(p.id)} onChanged={refresh} />
