@@ -307,6 +307,26 @@ connection failure in stderr — which is still safe; nothing left the box.
 
 ---
 
+## 7a. Updating an existing runner — one command
+
+If the runner is already installed, you do not need any of the steps below by
+hand. From the repo checkout on the VPS:
+
+```bash
+cd /path/to/chapter-craft-42     # wherever you cloned it
+sudo bash vps-runner/update.sh
+```
+
+It pulls the latest code, copies it into the installed location, opens up the
+limits described in 7b (auto-sized resources, room for pip/npm, persistence on,
+the package index hosts allowed), creates the state directory with the right
+owner, restarts the service, and prints what the runner decided for your box.
+Your config is backed up first, anything you set deliberately is left alone, and
+running it twice changes nothing the second time.
+
+Lost the checkout? `sudo find / -path '*vps-runner/server.mjs' 2>/dev/null` finds
+the installed copy; clone the repo again anywhere and run the script from there.
+
 ## 7b. Giving programs room to work
 
 Two switches turn this from "runs a short snippet" into "can actually build
