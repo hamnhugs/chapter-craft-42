@@ -83,8 +83,12 @@ function headers(apiKey: string): Record<string, string> {
   };
 }
 
-/** The app legitimately sends up to three system messages per turn (main
- *  prompt, rolling summary, pinned focus). OpenRouter and the NVIDIA relay
+/** The app legitimately sends up to five system messages per turn (book
+ *  context, main prompt, pinned focus, rolling summary, and the switchable
+ *  prompt layer, in that order). The merge below preserves that order, which
+ *  matters: Gemini caches implicitly off the token prefix, so the switchable
+ *  layer staying LAST is what keeps a prompt switch from invalidating the
+ *  ~23K of instructions above it. OpenRouter and the NVIDIA relay
  *  pass them through verbatim, but Google's OpenAI-compat layer documents a
  *  single systemInstruction and its folding of extras is unverifiable — so
  *  this adapter merges all string-content system messages into one, in

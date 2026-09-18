@@ -516,6 +516,31 @@ describe("book context block: built from the frozen roster, first on the wire, h
     expect(bookIdx).toBeLessThan(sysIdx);
   });
 
+  it("puts the switchable prompt layer LAST, below everything the cache protects", () => {
+    // The whole point of giving the per-turn prompt its own message is that
+    // changing it must not invalidate the ~23K instruction prompt. That only
+    // holds while it sits BELOW the stable head and below the rolling summary;
+    // promote it and every switch re-writes the prefix it was meant to spare.
+    const wmAt = CTX.indexOf("const leadingSystem: any[] = [");
+    const wm = CTX.slice(wmAt, CTX.indexOf("];", wmAt));
+    const turnIdx = wm.indexOf("turnPromptBlock");
+    expect(turnIdx).toBeGreaterThan(-1);
+    expect(wm.indexOf("content: systemPrompt")).toBeLessThan(turnIdx);
+    expect(wm.indexOf("focusBlock")).toBeLessThan(turnIdx);
+    expect(wm.indexOf("summaryNote")).toBeLessThan(turnIdx);
+  });
+
+  it("counts the stable cache breakpoint from the FRONT of the system block", () => {
+    // Counting back from the end silently encoded "exactly one optional tail
+    // member". A second one made the marker land on churning bytes, which buys
+    // cache WRITES that are never read — worse than no breakpoint, and
+    // invisible except on the bill.
+    expect(CTX).toContain("const stableSystemEnd = (bookBlock?.message ? 1 : 0) + (focusBlock ? 1 : 0);");
+    // Matched as CODE, not prose: the comment above that line quotes the old
+    // expression on purpose, and a reviewer must be able to keep it there.
+    expect(CTX).not.toContain("const stableSystemEnd = leadingSystem.length");
+  });
+
   it("is inbound text for the salvage pass — book quotes are transcription, not authorship", () => {
     expect(scanBody).toContain("bookBlock?.message");
   });

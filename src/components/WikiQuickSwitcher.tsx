@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useSyncExternalStore } from "react";
 import { toast } from "sonner";
-import { Check, Sparkles, Lock, Plus, Minus, Link2 } from "lucide-react";
+import { Check, Sparkles, Lock, Plus, Minus, Link2, Brain } from "lucide-react";
 import {
   CommandDialog,
   CommandInput,
@@ -15,6 +15,9 @@ import { computeLockedWikiIds, MAX_ACTIVE_NEURONS } from "@/lib/neuronAccess";
 import { openPricing } from "@/components/PricingDialog";
 import { openChainDialog } from "@/components/ChainDialog";
 import { useChains, touchChainUsed, NeuronChain } from "@/lib/chainsApi";
+import { useAuth } from "@/hooks/useAuth";
+import { usePromptPresets } from "@/hooks/usePromptPresets";
+import { turnPromptStore } from "@/lib/promptRouting";
 
 // Global keyboard-driven wiki switcher. Toggle with Cmd+K (Mac) / Ctrl+K (others).
 // Listens for keydown anywhere; ignores input/textarea/contenteditable focus
@@ -40,7 +43,32 @@ const WikiQuickSwitcher: React.FC = () => {
   const { wikis, activeWikiId, activeWikiIds, setActiveWiki, setActiveNeurons, toggleNeuronInSession, setActiveTab } = useApp();
   const { isPaid, loaded: planLoaded } = usePlan();
   const { chains } = useChains();
+  const { user } = useAuth();
+  const { presets, activePreset } = usePromptPresets();
   const [open, setOpen] = useState(false);
+
+  // The palette is already the fastest way to change what Counsel is thinking
+  // WITH; prompts are what it is thinking AS, so they belong on the same
+  // keystroke. Pin lives in the session store (see promptRouting.ts) so the
+  // choice survives onto hands-free turns, which never touch the composer.
+  turnPromptStore.init(user?.id ?? null);
+  const promptSelection = useSyncExternalStore(
+    useCallback((cb: () => void) => turnPromptStore.subscribe(cb), []),
+    () => turnPromptStore.get(),
+    () => turnPromptStore.get(),
+  );
+
+  const handlePickPrompt = useCallback(
+    (id: string) => {
+      if (id === "__auto") turnPromptStore.set({ mode: "auto" });
+      else if (id === "__plain") turnPromptStore.set({ mode: "plain" });
+      else turnPromptStore.set({ mode: "pinned", presetId: id });
+      const name = id === "__auto" ? "Auto" : id === "__plain" ? "Plain" : presets.find((p) => p.id === id)?.name || "prompt";
+      toast.success(`Prompt: ${name}`);
+      setOpen(false);
+    },
+    [presets],
+  );
 
   // Locked neurons (free plan) stay visible but can't be loaded — same rule
   // as the BRAIN tab cards and the database itself.
@@ -198,6 +226,32 @@ const WikiQuickSwitcher: React.FC = () => {
                     </span>
                   </div>
                 </div>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+        {presets.length > 0 && (
+          <CommandGroup heading="Prompts">
+            {[
+              { id: "__auto", name: "Auto", hint: activePreset?.name || "no default set", pinned: promptSelection.mode === "auto" },
+              { id: "__plain", name: "Plain — no prompt", hint: "", pinned: promptSelection.mode === "plain" },
+              ...presets.map((p) => ({
+                id: p.id,
+                name: p.name,
+                hint: p.scope === "voice" ? "voice only" : "",
+                pinned: promptSelection.mode === "pinned" && promptSelection.presetId === p.id,
+              })),
+            ].map((row) => (
+              <CommandItem
+                key={row.id}
+                value={`prompt ${row.name} ${row.id}`}
+                onSelect={() => handlePickPrompt(row.id)}
+                className="flex items-center gap-3 py-2.5"
+              >
+                <Brain className={`w-3.5 h-3.5 shrink-0 ${row.pinned ? "text-primary" : "text-muted-foreground"}`} />
+                <span className="flex-1 min-w-0 font-medium truncate">{row.name}</span>
+                {row.hint && <span className="text-[10px] text-muted-foreground shrink-0">{row.hint}</span>}
+                {row.pinned && <Check className="w-3.5 h-3.5 text-primary shrink-0" />}
               </CommandItem>
             ))}
           </CommandGroup>

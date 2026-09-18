@@ -34,6 +34,7 @@ import MediaReveal from "@/components/MediaReveal";
 import WorkingMemoryPanel from "@/components/WorkingMemoryPanel";
 import WorkspaceShell from "@/components/WorkspaceShell";
 import ToolStatusPanel from "@/components/ToolStatusPanel";
+import PromptSwitcher from "@/components/PromptSwitcher";
 import type { Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle, useWorkspaceItems } from "@/lib/workspaceStore";
 import { focusStatesForPinned } from "@/lib/chatFocus";
@@ -1070,6 +1071,22 @@ const ChatPanel: React.FC = () => {
                 </div>
               </details>
             )}
+            {/* Prompt receipt. Only rendered when a saved prompt was in play at
+                all, so ordinary turns stay uncluttered — but when one WAS in
+                play it always shows, including the cases where it did not
+                apply. "Editor is on" while the request carried nothing is the
+                exact failure this row exists to make visible. */}
+            {msg.role === "assistant" && msg.usedPrompt && (msg.usedPrompt.id || msg.usedPrompt.source === "manual") && (
+              <details className="mb-2 ml-4">
+                <summary className="cursor-pointer list-none inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md bg-primary-container/20 text-on-surface-variant hover:bg-primary-container/30 transition-colors">
+                  <span className="material-symbols-outlined text-xs">psychology</span>
+                  {msg.usedPrompt.name
+                    ? `Prompt: ${msg.usedPrompt.name}${msg.usedPrompt.source === "manual" ? "" : " · default"}`
+                    : "Prompt: none"}
+                </summary>
+                <p className="mt-1.5 text-[11px] text-on-surface-variant px-2">{msg.usedPrompt.why}</p>
+              </details>
+            )}
             {msg.role === "assistant" && msg.usedBooks && msg.usedBooks.length > 0 && (
               <details className="mb-2 ml-4">
                 <summary className="cursor-pointer list-none inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md bg-primary-container/20 text-on-surface-variant hover:bg-primary-container/30 transition-colors">
@@ -1608,6 +1625,11 @@ const ChatPanel: React.FC = () => {
                       : `Reading: ${activeWiki?.name || "no neuron"}`}
                 </span>
               </button>
+              {/* Which saved prompt is steering this conversation. Sits beside
+                  the "Reading:" chip because it is the same kind of claim —
+                  what is actually shaping the next reply — and because a
+                  switcher buried in Settings is a switcher nobody uses. */}
+              <PromptSwitcher onManage={() => openSettings("prompts")} />
               {/* Sibling of the "Reading:" chip, and the same kind of claim:
                   what the assistant can actually reach. Four separate gates
                   could empty its hands and only one of them ever said so.

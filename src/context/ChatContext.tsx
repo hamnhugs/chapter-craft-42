@@ -29,6 +29,8 @@ import { workspaceStore, deriveResearchTitle } from "@/lib/workspaceStore";
 import { extractCodeBlocks, excludeArtifactDuplicates } from "@/lib/workspaceFiles";
 import { buildFocusBlock, type UsedFocusItem } from "@/lib/chatFocus";
 import { focusBookId } from "@/lib/counselFocus";
+import { resolveTurnPrompt, turnPromptStore, type UsedPrompt } from "@/lib/promptRouting";
+import { computeCacheBreakpoints } from "@/lib/cacheLayout";
 import { makeCatalogEnqueuer } from "@/lib/catalogJobs";
 import {
   bookContextStore, selectContextBooks, hydrateBooksForContext,
@@ -75,6 +77,11 @@ export interface ChatMessage {
    *  ("N books in context") that makes the loaded-books claim falsifiable.
    *  Transient, like usedFocus. */
   usedBooks?: UsedBookContext[];
+  /** Which saved prompt shaped this reply — the receipt that keeps the
+   *  switcher honest. A chip that says "Editor" while the request carried
+   *  something else is the classic persona-switcher bug; this is stamped from
+   *  what actually went on the wire, never from intent. Transient. */
+  usedPrompt?: UsedPrompt;
   /** Generated/recalled images rendered inline in the bubble (from the
    *  generate_image / edit_image / show_image tools). */
   images?: ChatImageRef[];
@@ -185,6 +192,10 @@ interface SendOpts {
    *  upload a first-class library image the assistant can act on, and is
    *  persisted on the user message so the id survives reloads. */
   images?: Array<{ dataUrl: string; mime?: string; ref?: ChatImageRef; memoryId?: string; storagePath?: string }>;
+  /** Pin a saved prompt for this one send, overriding the session switcher.
+   *  `undefined` = use whatever Counsel's switcher says; `null` = no prompt
+   *  this turn. For programmatic sends and (later) the router. */
+  promptPresetId?: string | null;
 }
 
 interface ChatContextValue {
@@ -460,7 +471,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const providerKeys = { apiKey, geminiApiKey, nvidiaKeyLast4 };
 
   const { isPaid, loaded: planLoaded } = usePlan();
-  const { getActiveBodyForScope, migrate } = usePromptPresets();
+  const { presets, getActiveBodyForScope, migrate } = usePromptPresets();
 
   const catalogSettingsRef = useRef({ autoCatalogOnUpload: false, model: "", keys: {} as { apiKey?: string; geminiApiKey?: string; nvidiaKeyLast4?: string } });
   catalogSettingsRef.current = {
@@ -1050,6 +1061,27 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const deepResearch = (isVoice ? voiceDeepResearch : chatDeepResearch) && isPaid;
       const scopedPromptBody = getActiveBodyForScope(isVoice ? "voice" : "chat");
       const promptToInject = scopedPromptBody || customSystemPrompt;
+      // The switchable prompt layer. Resolved HERE, beside the body that is
+      // about to be inlined at the top of the stable prompt, because the only
+      // way to decide whether an override adds anything is to compare the two
+      // bodies. `opts.promptPresetId` wins over the session store so a
+      // programmatic send can pin a prompt without touching what the user has
+      // chosen in Counsel; the store is what carries a manual pick onto
+      // hands-free turns, which never go through the composer.
+      turnPromptStore.init(userIdRef.current);
+      const turnPromptSelection =
+        opts?.promptPresetId === undefined
+          ? turnPromptStore.get()
+          : opts.promptPresetId === null
+            ? ({ mode: "plain" } as const)
+            : ({ mode: "pinned", presetId: opts.promptPresetId } as const);
+      const turnPrompt = resolveTurnPrompt({
+        presets,
+        selection: turnPromptSelection,
+        lane: isVoice ? "voice" : "chat",
+        inlinedBody: promptToInject,
+      });
+      const turnPromptBlock = turnPrompt.block;
       // Hard per-reply sentence cap (user setting; 0 = off). Digest passes
       // capExempt and Deep Research turns are exempt — both are long-form by
       // request. Enforced three ways: prompt steering (below), a streaming
@@ -1448,7 +1480,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // PROMPT-CACHE LAYOUT. Providers cache the longest byte-identical PREFIX
       // of a request, so the order runs from most to least stable: book block,
       // instructions, pinned focus, rolling summary (changes every ~6
-      // messages), history (append-only). The per-turn context — retrieved
+      // messages), the switchable prompt layer (changes whenever the user or
+      // the router picks a different prompt — which is exactly why it is down
+      // here and not at the top of the instructions, where it used to live),
+      // history (append-only). The per-turn context — retrieved
       // memories, the ranked Foundry roster — rides at the END of the latest
       // user message: placed in the system prompt it changed every turn and
       // made every history token a cache miss on every request. Next turn
@@ -1463,21 +1498,43 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         { role: "system", content: systemPrompt },
         ...(focusBlock ? [{ role: "system", content: focusBlock.message }] : []),
         ...(summaryNote ? [{ role: "system", content: summaryNote }] : []),
+        // The switchable prompt layer rides LAST — below every breakpoint that
+        // protects the stable head, so changing it (the Counsel switcher, and
+        // later the router) re-writes only these bytes and never the ~23K of
+        // instructions, the book block or the pinned focus. Last is also the
+        // closest an instruction can sit to the question, which is where it is
+        // actually obeyed. Empty string when nothing overrides the default, so
+        // an untouched user's request stays byte-identical.
+        ...(turnPromptBlock ? [{ role: "system", content: turnPromptBlock }] : []),
       ];
       const workingMessages: any[] = [...leadingSystem, ...historyWithContext];
       /** Where Anthropic-style explicit caches may mark "reusable up to here":
-       *  the end of the stable system block (the summary is excluded when
-       *  present — it churns), the user's own words in the latest message,
-       *  and — once tool rounds have appended — the newest message, so each
-       *  round reads the previous round's prefix. */
-      const stableSystemEnd = leadingSystem.length - 1 - (summaryNote ? 1 : 0);
+       *  the end of the stable system block (the rolling summary and the
+       *  switchable prompt are both excluded — they churn), the end of the
+       *  whole system block, the user's own words in the latest message, and
+       *  — once tool rounds have appended — the newest message, so each round
+       *  reads the previous round's prefix. */
+      // Counted from the FRONT, never back from the end. The stable head is
+      // book?, instructions, focus? — so its last index is fixed by the two
+      // LEADING optionals and nothing appended after it can move it. The old
+      // `leadingSystem.length - 1 - (summaryNote ? 1 : 0)` encoded "exactly one
+      // optional tail member"; the switchable prompt made that false, and the
+      // failure is silent — the marker lands on churning bytes and buys cache
+      // WRITES with no reads, which is worse than no breakpoint at all.
+      const stableSystemEnd = (bookBlock?.message ? 1 : 0) + (focusBlock ? 1 : 0);
+      // One marker covers BOTH churning tails (rolling summary, switchable
+      // prompt), which is why the new layer costs no breakpoint slot — and the
+      // budget is four, above which the adapter silently drops the last entry.
+      const leadingSystemEnd = leadingSystem.length - 1;
       const latestUserIndex = workingMessages.length - 1;
-      const cacheBreakpointsFor = (msgs: any[]): CacheBreakpoint[] => [
-        { index: stableSystemEnd },
-        ...(summaryNote ? [{ index: leadingSystem.length - 1 }] : []),
-        { index: latestUserIndex, tailChars: turnContextSuffix.length },
-        ...(msgs.length - 1 > latestUserIndex ? [{ index: msgs.length - 1 }] : []),
-      ];
+      const cacheBreakpointsFor = (msgs: any[]): CacheBreakpoint[] =>
+        computeCacheBreakpoints({
+          stableSystemEnd,
+          leadingSystemEnd,
+          latestUserIndex,
+          tailChars: turnContextSuffix.length,
+          totalMessages: msgs.length,
+        });
       // Focus receipt stamped only HERE — after the embedding-model and
       // provider-key gates — so an error bubble from a send that never
       // reached a provider can't claim "Focused on N files". The usedBooks
@@ -1516,7 +1573,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // actually carried; stamping at assembly time would let a refused
         // connection leave an error bubble asserting "N books in context".
         const usedB = bookBlock && bookBlock.used.length > 0 ? bookBlock.used : undefined;
-        setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, toolAccess: turnToolAccess, ...(usedB ? { usedBooks: usedB } : {}) } : m)));
+        // Same rule for the prompt receipt: it describes the request this
+        // reply actually rode on, so it commits with the first byte back and
+        // never at assembly time.
+        setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, toolAccess: turnToolAccess, usedPrompt: turnPrompt.used, ...(usedB ? { usedBooks: usedB } : {}) } : m)));
       };
       /** Re-stamp after calls had to be salvaged out of the reply's prose.
        *  A NEW object every time, never a mutation of the stamped one: the
@@ -2490,7 +2550,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // foundryReady are the raw inputs computeToolGates now takes (it draws the
     // opt-in and availability distinction itself, so the pre-combined
     // forgeEnabled/runEnabled are no longer read here).
-    [apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, studioTools, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, autoShowMemoryImages, foundryEnabled, forgeOptIn, runOptIn, foundryReady, chatToolPermissions, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, burplexityApiToken, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, updateBookTitle, loadChapterText, loadChapterTextStrict, setActiveBookSilent,
+    [apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, studioTools, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, autoShowMemoryImages, foundryEnabled, forgeOptIn, runOptIn, foundryReady, chatToolPermissions, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, presets, burplexityApiToken, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, updateBookTitle, loadChapterText, loadChapterTextStrict, setActiveBookSilent,
       getBooks, getActiveBookId, getShelves, multiShelf, createShelf, renameShelf, deleteShelf, setBookShelfMembership, addBook, addChapters, removeBook, loadFocus, enqueueCatalog, trashAvailable, refreshTrash, restoreBook]
   );
 
