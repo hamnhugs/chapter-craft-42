@@ -9,6 +9,8 @@ import {
   AUTO_SELECTION,
   type ResolvablePreset,
   type TurnPromptSelection,
+  decideRoute,
+  ROUTE_MIN_TURNS_BETWEEN_SWITCHES,
 } from "@/lib/promptRouting";
 import { computeCacheBreakpoints, MAX_CACHE_BREAKPOINTS } from "@/lib/cacheLayout";
 
@@ -332,5 +334,140 @@ describe("the voice sentence cannot drift from the builder", () => {
     // string is a drift hazard, so this pins them together.
     const src = readFileSync(resolve(__dirname, "../lib/buildChatSystemPrompt.ts"), "utf8");
     expect(src).toContain(VOICE_BREVITY_SENTENCE);
+  });
+});
+
+describe("decideRoute", () => {
+  const cand = (id: string, similarity: number, name = id) => ({ id, name, similarity });
+  const base = {
+    candidates: [] as Array<{ id: string; name: string; similarity: number }>,
+    activeId: null as string | null,
+    activeSimilarity: null as number | null,
+    topMemoryScore: null as number | null,
+    plainOnRecall: true,
+    turnsSinceSwitch: 99,
+  };
+
+  it("does nothing when no prompt has routing enabled", () => {
+    expect(decideRoute(base).action).toBe("keep");
+  });
+
+  it("switches when the winner is confident and clearly ahead of both rivals", () => {
+    const d = decideRoute({
+      ...base,
+      candidates: [cand("critic", 0.91, "Critic"), cand("editor", 0.6)],
+      activeId: "editor",
+      activeSimilarity: 0.6,
+    });
+    expect(d.action).toBe("switch");
+    expect(d.promptId).toBe("critic");
+    expect(d.why).toContain("Critic");
+  });
+
+  it("refuses to switch on a thin margin over the prompt already on", () => {
+    const d = decideRoute({
+      ...base,
+      candidates: [cand("critic", 0.82), cand("other", 0.1)],
+      activeId: "editor",
+      activeSimilarity: 0.79, // 0.03 behind — inside ROUTE_MARGIN
+    });
+    expect(d.action).toBe("keep");
+  });
+
+  it("refuses to switch when two prompts fit about equally", () => {
+    const d = decideRoute({
+      ...base,
+      candidates: [cand("a", 0.9, "A"), cand("b", 0.87, "B")],
+      activeId: null,
+      activeSimilarity: 0,
+    });
+    // Without this, two near-identical prompts trade the conversation on noise.
+    expect(d.action).toBe("keep");
+    expect(d.why).toContain("equally");
+  });
+
+  it("keeps a confident incumbent even when something scores higher", () => {
+    const d = decideRoute({
+      ...base,
+      candidates: [cand("critic", 0.95), cand("x", 0.1)],
+      activeId: "editor",
+      activeSimilarity: 0.8, // already above ROUTE_CONFIDENT
+    });
+    expect(d.action).toBe("keep");
+  });
+
+  it("will not switch twice in quick succession", () => {
+    const input = {
+      ...base,
+      candidates: [cand("critic", 0.95), cand("x", 0.1)],
+      activeId: "editor",
+      activeSimilarity: 0.2,
+      turnsSinceSwitch: 1,
+    };
+    expect(decideRoute(input).action).toBe("keep");
+    expect(decideRoute({ ...input, turnsSinceSwitch: ROUTE_MIN_TURNS_BETWEEN_SWITCHES }).action).toBe("switch");
+  });
+
+  it("stands down on a recall-dominated turn, and says why (PRISM)", () => {
+    const input = {
+      ...base,
+      candidates: [cand("critic", 0.95), cand("x", 0.1)],
+      activeId: "editor",
+      activeSimilarity: 0.2,
+      topMemoryScore: 0.85,
+    };
+    const guarded = decideRoute(input);
+    expect(guarded.action).toBe("keep");
+    expect(guarded.why).toContain("recall");
+    // ...and the guard is a setting, not a law.
+    expect(decideRoute({ ...input, plainOnRecall: false }).action).toBe("switch");
+  });
+
+  it("parks the turn as evidence when nothing fits at all", () => {
+    const d = decideRoute({ ...base, candidates: [cand("critic", 0.3)] });
+    expect(d.action).toBe("propose_new");
+    expect(d.promptId).toBeNull();
+  });
+
+  it("never switches to the prompt that is already in force", () => {
+    const d = decideRoute({
+      ...base,
+      candidates: [cand("editor", 0.99)],
+      activeId: "editor",
+      activeSimilarity: 0.99,
+    });
+    expect(d.action).toBe("keep");
+  });
+
+  it("always reports the scores it decided on", () => {
+    const d = decideRoute({
+      ...base,
+      candidates: [cand("a", 0.9), cand("b", 0.4)],
+      activeSimilarity: 0.5,
+    });
+    expect(d.scores).toEqual({ s_max: 0.9, s_active: 0.5, s_2nd: 0.4, novelty: 1 - 0.9 });
+  });
+
+  it("is biased toward keeping: a random matrix switches only rarely", () => {
+    // Guards against a future edit that quietly makes the router eager. This
+    // is a behavioural budget, not a proof — but an edit that doubles the
+    // switch rate will trip it.
+    let switches = 0, total = 0;
+    for (let a = 0; a <= 10; a++) {
+      for (let m = 0; m <= 10; m++) {
+        for (let s = 0; s <= 10; s += 2) {
+          total++;
+          const d = decideRoute({
+            ...base,
+            candidates: [cand("w", m / 10, "W"), cand("r", s / 10, "R")],
+            activeId: "cur",
+            activeSimilarity: a / 10,
+          });
+          if (d.action === "switch") switches++;
+        }
+      }
+    }
+    expect(switches / total).toBeLessThan(0.25);
+    expect(switches).toBeGreaterThan(0); // and it does still fire
   });
 });

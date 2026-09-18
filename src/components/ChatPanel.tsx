@@ -35,6 +35,8 @@ import WorkingMemoryPanel from "@/components/WorkingMemoryPanel";
 import WorkspaceShell from "@/components/WorkspaceShell";
 import ToolStatusPanel from "@/components/ToolStatusPanel";
 import PromptSwitcher from "@/components/PromptSwitcher";
+import { turnPromptStore } from "@/lib/promptRouting";
+import { markLastPromptRouteCorrected } from "@/lib/promptRoutingApi";
 import type { Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle, useWorkspaceItems } from "@/lib/workspaceStore";
 import { focusStatesForPinned } from "@/lib/chatFocus";
@@ -1085,6 +1087,22 @@ const ChatPanel: React.FC = () => {
                     : "Prompt: none"}
                 </summary>
                 <p className="mt-1.5 text-[11px] text-on-surface-variant px-2">{msg.usedPrompt.why}</p>
+                {/* An automatic switch must always be one tap away from being
+                    undone, and the undo must also TELL the router it was
+                    wrong — otherwise it makes the same call tomorrow. */}
+                {msg.usedPrompt.source === "auto" && (
+                  <button
+                    onClick={() => {
+                      const back = msg.usedPrompt?.replacedId;
+                      turnPromptStore.set(back ? { mode: "pinned", presetId: back } : { mode: "plain" });
+                      void markLastPromptRouteCorrected();
+                      toast.success(back ? "Switched back — the AI won't change it again this conversation." : "Prompt turned off for this conversation.");
+                    }}
+                    className="mt-1 ml-2 text-[11px] text-primary hover:underline"
+                  >
+                    Not this one — put it back
+                  </button>
+                )}
               </details>
             )}
             {msg.role === "assistant" && msg.usedBooks && msg.usedBooks.length > 0 && (

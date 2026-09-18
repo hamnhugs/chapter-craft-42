@@ -29,7 +29,8 @@ import { workspaceStore, deriveResearchTitle } from "@/lib/workspaceStore";
 import { extractCodeBlocks, excludeArtifactDuplicates } from "@/lib/workspaceFiles";
 import { buildFocusBlock, type UsedFocusItem } from "@/lib/chatFocus";
 import { focusBookId } from "@/lib/counselFocus";
-import { resolveTurnPrompt, turnPromptStore, type UsedPrompt } from "@/lib/promptRouting";
+import { decideRoute, resolveTurnPrompt, turnPromptStore, type UsedPrompt } from "@/lib/promptRouting";
+import { logPromptRoute, parkIncubatorTurn } from "@/lib/promptRoutingApi";
 import { computeCacheBreakpoints } from "@/lib/cacheLayout";
 import { makeCatalogEnqueuer } from "@/lib/catalogJobs";
 import {
@@ -471,7 +472,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const providerKeys = { apiKey, geminiApiKey, nvidiaKeyLast4 };
 
   const { isPaid, loaded: planLoaded } = usePlan();
-  const { presets, getActiveBodyForScope, migrate } = usePromptPresets();
+  const { presets, getActiveBodyForScope, migrate, routingEnabled: promptRoutingEnabled, plainOnRecall, routingSchemaReady } = usePromptPresets();
 
   const catalogSettingsRef = useRef({ autoCatalogOnUpload: false, model: "", keys: {} as { apiKey?: string; geminiApiKey?: string; nvidiaKeyLast4?: string } });
   catalogSettingsRef.current = {
@@ -738,6 +739,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // `user` from its deps — the messagesRef pattern): reading user?.id from
   // the closure would go stale across login/logout.
   const userIdRef = useRef<string | null>(null);
+  /** Anti-flap bookkeeping for the prompt router: how many turns this session
+   *  has sent, and which turn last changed the prompt. A ref, not state — it
+   *  must never re-render anything, and it is read once per send. */
+  const promptRouteRef = useRef({ sends: 0, lastSwitchSend: -Infinity });
   useEffect(() => {
     userIdRef.current = user?.id ?? null;
     workspaceStore.setUser(user?.id ?? null);
@@ -1075,13 +1080,16 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           : opts.promptPresetId === null
             ? ({ mode: "plain" } as const)
             : ({ mode: "pinned", presetId: opts.promptPresetId } as const);
-      const turnPrompt = resolveTurnPrompt({
+      // `let`, because the router may replace this after the prompt build —
+      // the routing scores ride back on the retrieval call the build makes, so
+      // the decision is simply not knowable before it.
+      let turnPrompt = resolveTurnPrompt({
         presets,
         selection: turnPromptSelection,
         lane: isVoice ? "voice" : "chat",
         inlinedBody: promptToInject,
       });
-      const turnPromptBlock = turnPrompt.block;
+      promptRouteRef.current.sends += 1;
       // Hard per-reply sentence cap (user setting; 0 = off). Digest passes
       // capExempt and Deep Research turns are exempt — both are long-form by
       // request. Enforced three ways: prompt steering (below), a streaming
@@ -1213,8 +1221,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ...selectContextBooks(books, bookContextStore.get(), activeBookId ?? null).map((b) => b.id),
         ])],
       });
-      const { stablePrompt: systemPrompt, turnContext, usedMemories, memoryImages, inboundCards } = preflightBlocked
-        ? { stablePrompt: "", turnContext: "", usedMemories: [] as UsedMemory[], memoryImages: [] as MemoryImageCandidate[], inboundCards: [] as string[] }
+      const { stablePrompt: systemPrompt, turnContext, usedMemories, memoryImages, inboundCards, routing } = preflightBlocked
+        ? { stablePrompt: "", turnContext: "", usedMemories: [] as UsedMemory[], memoryImages: [] as MemoryImageCandidate[], inboundCards: [] as string[], routing: null }
         : await buildChatSystemPrompt({
         books,
         selectedBook,
@@ -1238,12 +1246,61 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         offeredTools: [...offeredNames],
         previousAssistantText,
         highlights: turnHighlights,
+        // Routing rides on the embedding retrieval already pays for, so this
+        // adds no call and no latency. Asked for only in `auto` — a prompt the
+        // user pinned by hand is not the router's to reconsider.
+        routePrompts: routingSchemaReady && promptRoutingEnabled && turnPromptSelection.mode === "auto"
+          ? { enabled: true, activeId: turnPrompt.used.id }
+          : null,
         // Same selection the book block is built from below; a book whose
         // block fails to hydrate still has `get_book` for its chapter ids.
         booksInContext: offeredNames.has("get_book")
           ? selectContextBooks(books, bookContextStore.get(), activeBookId ?? null).map((b) => b.id)
           : [],
       });
+
+      // ── Prompt routing: apply the decision, or don't ──────────────────────
+      // Everything the router needs came back on the retrieval call above, so
+      // this costs nothing but arithmetic. decideRoute is pure and heavily
+      // biased toward KEEP: a persona that changes every message is worse than
+      // one that is slightly wrong, because the user stops being able to
+      // predict what the assistant will be.
+      let turnPromptBlock = turnPrompt.block;
+      if (routing && turnPromptSelection.mode === "auto") {
+        const decision = decideRoute({
+          candidates: routing.candidates || [],
+          activeId: turnPrompt.used.id,
+          activeSimilarity: routing.active_similarity,
+          topMemoryScore: routing.top_memory_score,
+          plainOnRecall,
+          turnsSinceSwitch: promptRouteRef.current.sends - promptRouteRef.current.lastSwitchSend,
+        });
+        if (decision.action === "switch" && decision.promptId) {
+          const routed = resolveTurnPrompt({
+            presets,
+            selection: { mode: "pinned", presetId: decision.promptId },
+            lane: isVoice ? "voice" : "chat",
+            inlinedBody: promptToInject,
+          });
+          // Only honour the switch if resolving it actually produced something
+          // — scope, an empty body or a deleted row can all veto it, and the
+          // receipt must describe what rode, not what was intended.
+          if (routed.used.id) {
+            const replacedId = turnPrompt.used.id;
+            turnPrompt = { block: routed.block, used: { ...routed.used, source: "auto", why: decision.why, replacedId } };
+            turnPromptBlock = routed.block;
+            promptRouteRef.current.lastSwitchSend = promptRouteRef.current.sends;
+          }
+        }
+        // Nothing the user has saved fits this kind of request. Park it as
+        // evidence: enough of these clustering together is what earns the
+        // assistant the right to propose a new prompt, without needing a chat
+        // tool it could fire off on a whim.
+        if (decision.action === "propose_new") void parkIncubatorTurn(trimmed);
+        // Logged whatever was decided, including "keep" — an accuracy read
+        // that only saw the switches would flatter the router.
+        void logPromptRoute(decision, turnPrompt.used.id);
+      }
 
       // Sliding window: replace messages older than the window with the
       // rolling summary (when one exists). Until the background summarizer

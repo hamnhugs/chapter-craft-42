@@ -1,6 +1,6 @@
 import { BookDocument } from "@/types/library";
 import { isAssistantBook, isYoutubeTranscript } from "@/lib/bookProvenance";
-import { fetchKnowledgeEntries, retrieveKnowledge, filterSupersededNodes, fetchCardPointers, type CardPointerRow } from "@/lib/knowledgeApi";
+import { fetchKnowledgeEntries, retrieveKnowledge, filterSupersededNodes, fetchCardPointers, type CardPointerRow, type RetrievalResult } from "@/lib/knowledgeApi";
 import { fetchImagesForEntries } from "@/lib/imageGen";
 import { getRecallStates, type MemoryImageCandidate, type RecallState } from "@/lib/memoryLens";
 import { listTools } from "@/lib/toolFoundry";
@@ -64,6 +64,11 @@ interface BuildOpts {
   /** Reader highlights chosen for this message (highlights.ts
    *  selectTurnHighlights) — rendered in the per-message context. */
   highlights?: TurnHighlights | null;
+  /** Score the user's saved prompts against this turn, riding on the embedding
+   *  retrieval already pays for. The builder only CARRIES the result back in
+   *  `routing` — which prompt wins is policy, decided by decideRoute() in
+   *  promptRouting.ts where it can be tested without a network. */
+  routePrompts?: { enabled: boolean; activeId: string | null } | null;
 }
 
 /** A memory entry that was injected into the prompt — surfaced in the UI so
@@ -101,6 +106,10 @@ export interface BuiltPrompt {
    *  every card fits inside the salvage module's per-source comparison
    *  share. */
   inboundCards: string[];
+  /** How well each routing-enabled prompt matches this turn, when the caller
+   *  asked for it. Carried, never acted on, here. null = not asked for, the
+   *  migration is unapplied, or nothing has routing enabled. */
+  routing?: RetrievalResult["routing"];
 }
 
 // ── Untrusted-content fencing ────────────────────────────────────────────────
@@ -390,7 +399,7 @@ export function applyRetrievalBudget(
 //     the context best, so the retrieved memories — the most query-specific,
 //     highest-value content — go LAST, right before the conversation.
 export async function buildChatSystemPrompt({
-  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeNeurons = [], allNeurons, reflex = true, maxReplySentences = 0, foundryTools = false, programTools = false, leanMode = "full", offeredTools, previousAssistantText, booksInContext, highlights,
+  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeNeurons = [], allNeurons, reflex = true, maxReplySentences = 0, foundryTools = false, programTools = false, leanMode = "full", offeredTools, previousAssistantText, booksInContext, highlights, routePrompts = null,
 }: BuildOpts): Promise<BuiltPrompt> {
   const parts: string[] = [];
   // Per-turn sections (see BuiltPrompt.turnContext). Never pushed into
@@ -1040,6 +1049,19 @@ export async function buildChatSystemPrompt({
   // most query-specific content, and end-of-context placement is where the
   // model recalls it best. Nodes arrive ranked best-first.
   const retrievalQuery = retrievalQueryFor(latestUserQuery, previousAssistantText);
+  // Prompt routing rides on the FIRST retrieval call only — whichever path
+  // this turn takes. Asking every call in the multi-neuron fan-out would
+  // re-score the same prompts N times against the same query for the same
+  // answer.
+  const routeArgs = routePrompts?.enabled
+    ? { route_prompts: true, active_prompt_id: routePrompts.activeId }
+    : {};
+  let routing: RetrievalResult["routing"] = null;
+  const captureRouting = <T,>(r: T): T => {
+    const got = (r as RetrievalResult | null)?.routing;
+    if (got && !routing) routing = got;
+    return r;
+  };
   if (retrievalQuery) {
     try {
       let retrieval: { nodes: any[]; edges: any[]; search?: string };
@@ -1049,7 +1071,7 @@ export async function buildChatSystemPrompt({
       // no `scoped_wiki_ids`, and its unscoped result must not be used — that
       // would silently widen retrieval past the loaded neurons.
       const single = !allNeurons && scopeIds.length > 1
-        ? await retrieveKnowledge(retrievalQuery, { deep: deepResearch, wiki_ids: scopeIds }).catch(() => null)
+        ? await retrieveKnowledge(retrievalQuery, { deep: deepResearch, wiki_ids: scopeIds, ...routeArgs }).then(captureRouting).catch(() => null)
         : null;
       if (single && Array.isArray(single.scoped_wiki_ids)) {
         const nameById = new Map(activeNeurons.map((n) => [n.id, n.name]));
@@ -1065,7 +1087,8 @@ export async function buildChatSystemPrompt({
           deep: deepResearch,
           // null = unscoped (all neurons); RLS still hides locked-neuron content.
           wiki_id: allNeurons ? null : scopeIds[0] ?? null,
-        });
+          ...routeArgs,
+        }).then(captureRouting) as any;
       } else {
         // Multi-neuron: fan out one scoped call per loaded neuron against the
         // already-deployed knowledge-retrieve function, then fuse client-side.
@@ -1076,8 +1099,10 @@ export async function buildChatSystemPrompt({
         // loaded neuron is represented for cross-linking.
         const nameById = new Map(activeNeurons.map((n) => [n.id, n.name]));
         const perWiki = await Promise.all(
-          scopeIds.map((id) =>
-            retrieveKnowledge(retrievalQuery, { deep: deepResearch, wiki_id: id })
+          scopeIds.map((id, i) =>
+            // Only the first neuron's call carries the routing ask.
+            retrieveKnowledge(retrievalQuery, { deep: deepResearch, wiki_id: id, ...(i === 0 ? routeArgs : {}) })
+              .then(captureRouting)
               .then((r) => ({ wikiId: id, r }))
               .catch(() => null),
           ),
@@ -1400,5 +1425,6 @@ export async function buildChatSystemPrompt({
     usedMemories,
     memoryImages,
     inboundCards,
+    routing,
   };
 }

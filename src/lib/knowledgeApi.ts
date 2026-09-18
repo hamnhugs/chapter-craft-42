@@ -332,6 +332,14 @@ export interface RetrievalResult {
   search?: "v2" | "legacy";
   scoped_wiki_ids?: string[] | null;
   dropped?: { seeds_below_cosine: number; below_relative_floor: number };
+  /** Prompt routing, returned only when the caller asked for it. Absent or
+   *  null means the feature is off, the migration is unapplied, or no prompt
+   *  has routing enabled — never an error. */
+  routing?: {
+    candidates: Array<{ id: string; name: string; similarity: number }>;
+    active_similarity: number | null;
+    top_memory_score: number | null;
+  } | null;
 }
 
 async function callEdge(fnName: string, body: unknown): Promise<any> {
@@ -355,7 +363,15 @@ export async function retrieveKnowledge(
   query: string,
   /** wiki_ids: all loaded neurons in ONE call (server fuses); wiki_id: legacy
    *  single scope. limit: max nodes (default 18, deep 30, max 50). */
-  opts: { depth?: number; match_count?: number; deep?: boolean; wiki_id?: string | null; wiki_ids?: string[] | null; limit?: number } = {},
+  opts: {
+    depth?: number; match_count?: number; deep?: boolean;
+    wiki_id?: string | null; wiki_ids?: string[] | null; limit?: number;
+    /** Score the user's routing-enabled prompts against this same query. Rides
+     *  on the embedding this call already computes, so it costs nothing extra
+     *  — which is why it belongs here and not in its own request. */
+    route_prompts?: boolean;
+    active_prompt_id?: string | null;
+  } = {},
 ): Promise<RetrievalResult> {
   return callEdge("knowledge-retrieve", { query, ...opts });
 }

@@ -59,6 +59,9 @@ export interface UsedPrompt {
   source: PromptSource;
   /** Plain-language reason, shown verbatim in the receipt. */
   why: string;
+  /** Only set when the ROUTER changed the prompt: what was in force before,
+   *  so the reply's Undo can put it back in one tap. null = nothing was. */
+  replacedId?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -273,3 +276,143 @@ export function renderTurnPromptBlock(input: { name: string; body: string; lane:
  *  `promptRouting.test.ts`, which asserts the builder still contains it. */
 export const VOICE_BREVITY_SENTENCE =
   "You are speaking through a voice interface. Keep replies conversational and concise (usually 1–3 sentences) unless the user explicitly asks for depth. Avoid heavy markdown/lists when the answer will be read aloud.";
+
+// ---------------------------------------------------------------------------
+// The router
+//
+// Deliberately the same shape, and the same numbers, as the Smart Filing
+// router that already decides which neuron a memory belongs in
+// (supabase/functions/smart-file/index.ts). Those thresholds have been in
+// production for months; inventing fresh ones for the same kind of decision
+// would mean starting the tuning over for no reason, and a reader who knows
+// one router would not recognise the other.
+//
+// It is a PURE function. Every input it needs is passed in — no clock, no
+// storage, no network — so every branch below is reachable from a test, which
+// is the only way a heuristic like this stays honest as it is tuned.
+// ---------------------------------------------------------------------------
+
+/** Above this, a prompt is a confident match for the turn. */
+export const ROUTE_CONFIDENT = 0.78;
+/** How far ahead the winner must be, both of the prompt already in force and
+ *  of the runner-up. Without the second test, two near-identical prompts
+ *  would trade the conversation back and forth on noise. */
+export const ROUTE_MARGIN = 0.08;
+/** Below this, nothing the user has written fits — evidence that a prompt is
+ *  MISSING, which is what the incubator collects. */
+export const ROUTE_NOVELTY = 0.55;
+/** Anti-flap: a switch has to live for a few turns before another is allowed.
+ *  A persona that changes every message is worse than one that is slightly
+ *  wrong, because the user cannot learn what the assistant will do. */
+export const ROUTE_MIN_TURNS_BETWEEN_SWITCHES = 3;
+/** When the best retrieved memory scores above this, the turn is dominated by
+ *  recall rather than by style. See the PRISM note on `plainOnRecall`. */
+export const ROUTE_RECALL_STRONG = 0.7;
+
+export interface RouteCandidate {
+  id: string;
+  name: string;
+  similarity: number;
+}
+
+export interface RouteInput {
+  /** Best first, as knowledge-retrieve returns them. */
+  candidates: RouteCandidate[];
+  /** The prompt in force right now, if any. */
+  activeId: string | null;
+  activeSimilarity: number | null;
+  /** Best retrieved-memory similarity for this turn, or null when unknown. */
+  topMemoryScore: number | null;
+  /** User setting, default ON. */
+  plainOnRecall: boolean;
+  /** Turns since the last automatic switch. */
+  turnsSinceSwitch: number;
+}
+
+export interface RouteDecision {
+  action: "keep" | "switch" | "propose_new";
+  /** The prompt to switch TO, when action is "switch". */
+  promptId: string | null;
+  promptName: string | null;
+  /** Plain language, shown to the user verbatim. */
+  why: string;
+  /** Logged to prompt_routing_decisions so accuracy is measurable. */
+  scores: { s_max: number; s_active: number; s_2nd: number; novelty: number };
+}
+
+/**
+ * Pick the prompt for this turn — or, much more often, decline to.
+ *
+ * The bias is heavily toward KEEP. A router that switches eagerly feels
+ * possessed rather than helpful, and every switch costs the user their sense
+ * of what the assistant is currently being.
+ */
+export function decideRoute(input: RouteInput): RouteDecision {
+  const { candidates, activeId, activeSimilarity, topMemoryScore, plainOnRecall, turnsSinceSwitch } = input;
+
+  const s_max = candidates[0]?.similarity ?? 0;
+  const s_2nd = candidates[1]?.similarity ?? 0;
+  const s_active = activeSimilarity ?? 0;
+  const novelty = 1 - s_max;
+  const scores = { s_max, s_active, s_2nd, novelty };
+
+  const keep = (why: string): RouteDecision => ({ action: "keep", promptId: null, promptName: null, why, scores });
+
+  if (candidates.length === 0) return keep("No prompts are set up for routing.");
+
+  const winner = candidates[0];
+
+  // Nothing fits. Park the turn as evidence rather than forcing a bad match —
+  // this is what eventually earns the assistant the right to propose a prompt.
+  if (s_max < ROUTE_NOVELTY) {
+    return {
+      action: "propose_new",
+      promptId: null,
+      promptName: null,
+      why: `Nothing you have saved fits this (best match ${pct(s_max)}).`,
+      scores,
+    };
+  }
+
+  // PRISM (arXiv 2603.18507): expert personas reliably improve alignment-style
+  // tasks and reliably DAMAGE factual recall — 68.0% vs 71.6% on MMLU. When the
+  // turn is mostly "what do I know about X", wearing a persona over the top of
+  // the answer makes it worse, so the router stands down and says so.
+  if (plainOnRecall && topMemoryScore !== null && topMemoryScore >= ROUTE_RECALL_STRONG && winner.id !== activeId) {
+    return keep("This is mostly a recall question, so the voice was left alone — personas cost accuracy on those.");
+  }
+
+  if (s_active >= ROUTE_CONFIDENT) {
+    return keep("The prompt already in force fits this well.");
+  }
+
+  if (winner.id === activeId) {
+    return keep("The prompt already in force is still the best fit.");
+  }
+
+  if (s_max < ROUTE_CONFIDENT) {
+    return keep(`No prompt fits this confidently enough to switch (best ${pct(s_max)}).`);
+  }
+
+  if (s_max - s_active < ROUTE_MARGIN) {
+    return keep(`"${winner.name}" is not clearly better than what is already on.`);
+  }
+
+  if (s_max - s_2nd < ROUTE_MARGIN) {
+    return keep(`"${winner.name}" and "${candidates[1]?.name}" fit about equally, so nothing was changed.`);
+  }
+
+  if (turnsSinceSwitch < ROUTE_MIN_TURNS_BETWEEN_SWITCHES) {
+    return keep("The prompt changed very recently — waiting a few turns before changing it again.");
+  }
+
+  return {
+    action: "switch",
+    promptId: winner.id,
+    promptName: winner.name,
+    why: `Switched to "${winner.name}" — it matches this request ${pct(winner.similarity)} against ${pct(s_active)} for what was on.`,
+    scores,
+  };
+}
+
+const pct = (n: number) => `${Math.round(Math.max(0, Math.min(1, n)) * 100)}%`;
