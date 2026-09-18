@@ -12,7 +12,7 @@ import PocketScreen from "@/components/PocketScreen";
 import { LensImageFrame, MemoryChips } from "@/components/MemoryLensStrip";
 import ToolApprovalCard from "@/components/ToolApprovalCard";
 import ProgramApprovalCard from "@/components/ProgramApprovalCard";
-import { Loader2, StickyNote, BookmarkPlus } from "lucide-react";
+import { Loader2, BookmarkPlus } from "lucide-react";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { isToolBlocked } from "@/lib/leanMode";
 import { TOOL_PERMISSION } from "@/lib/toolPermissions";
@@ -43,7 +43,7 @@ import { focusStatesForPinned } from "@/lib/chatFocus";
 import { bookContextStore, selectContextBooks } from "@/lib/chatBooks";
 import { focusBookId } from "@/lib/counselFocus";
 import BookContextPicker from "@/components/BookContextPicker";
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import CounselToolsSheet from "@/components/CounselToolsSheet";
 import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations, isSearchRateLimited } from "@/lib/chatTools";
 import { useDownloadableTtsId, downloadTtsAudio } from "@/lib/ttsAudioCache";
 import { fileToDownscaledDataUrl, isAcceptedImage, uploadChatImage, registerUploadedImage, removeUploadedChatImage, type PendingChatImage } from "@/lib/imageUpload";
@@ -186,7 +186,6 @@ const ChatPanel: React.FC = () => {
     if (up) void up.then(({ storagePath }) => removeUploadedChatImage(storagePath)).catch(() => {});
   }, []);
   const [deepSearching, setDeepSearching] = useState(false);
-  const [digesting, setDigesting] = useState(false);
 
   // ---- @mention autocomplete over master assets ----
   // `mention` is the "@tok|en" under the caret, or null (popup closed). It is
@@ -205,6 +204,7 @@ const ChatPanel: React.FC = () => {
 
   // ---- Voice features absorbed from the former Echo (Voice) tab ----
   const [notesPanelOpen, setNotesPanelOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   // Configured in the Settings tab; read-only here.
   const [voiceQuickSearch] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_KEY) === "true");
   const [pendingSearchCount, setPendingSearchCount] = useState(0);
@@ -733,26 +733,18 @@ const ChatPanel: React.FC = () => {
     }
   };
 
-  // Audio Digest: summarize the conversation in a chosen format and (when a
-  // reply isn't already being spoken) read it aloud.
-  const DIGEST_PROMPTS: Record<"brief" | "deep" | "critique", string> = {
-    brief: "Give me a concise digest of our conversation so far: key topics covered, any decisions or conclusions reached, important insights, and open questions remaining.",
-    deep: "Give me a thorough deep-dive digest of our conversation: break down each topic in detail with its full context and reasoning, the connections between ideas, the decisions reached, and all open questions.",
-    critique: "Give me a critical review (critique) of our conversation so far: question the assumptions, point out gaps, weak reasoning, or missing perspectives, and suggest what to reconsider or explore next.",
-  };
-  const handleDigest = async (format: "brief" | "deep" | "critique") => {
-    if (messages.length < 2) { toast.error("Nothing to digest yet"); return; }
-    setDigesting(true);
-    try {
-      const reply = await sendMessage(DIGEST_PROMPTS[format], { capExempt: true });
-      // Speak it unless a reply is already being spoken (auto-read / hands-free).
-      if (reply && reply.trim() && !autoReadReplies && !handsFree.active) {
-        speak(reply, { id: `digest-${Date.now()}` });
-      }
-    } finally {
-      setDigesting(false);
-    }
-  };
+  /** Something to send: typed text, or an image waiting to go with it. */
+  const canSend = !!input.trim() || pendingImages.length > 0;
+
+  /** The textarea reserves exactly the room the corner buttons actually take,
+   *  rather than a constant `pr-20` that assumed both were always there. Each
+   *  button is 36px with an 8px gap, inside a row inset 8px from the edge. */
+  const composerPadRight =
+    (dictation.supported ? 1 : 0) + (isLoading || canSend ? 1 : 0) === 2
+      ? "pr-24"
+      : (dictation.supported || isLoading || canSend)
+        ? "pr-14"
+        : "pr-4";
 
   const handleSend = async () => {
     if (isLoading || sendingRef.current) return; // a reply is streaming — use Stop first
@@ -1588,170 +1580,170 @@ const ChatPanel: React.FC = () => {
                 inputMode={handsFree.active ? "none" : undefined}
                 aria-label="Message The Librarian"
                 placeholder={dictation.isListening ? "Listening… speak now" : (apiKey || nvidiaKeyLast4 || geminiApiKey) ? "Ask about your books, or drop an image…" : "Add an API key in Settings to start chatting"}
-                rows={1} className="bg-surface-container-high border-none rounded-xl text-foreground py-3 pl-4 pr-20 focus:ring-1 focus:ring-primary/40 resize-none min-h-[50px] max-h-[220px] overflow-y-auto"
+                rows={1} className={`bg-surface-container-high border-none rounded-xl text-foreground py-3 pl-4 ${composerPadRight} focus:ring-1 focus:ring-primary/40 resize-none min-h-[50px] max-h-[220px] overflow-y-auto`}
               />
 
-              {dictation.supported && (
-                <button
-                  type="button"
-                  onClick={handleMicToggle}
-                  title={dictation.isListening ? "Stop dictation" : "Dictate message"}
-                  aria-label={dictation.isListening ? "Stop dictation" : "Dictate message"}
-                  className={`absolute right-11 bottom-2 p-1.5 rounded-lg transition-all active:scale-90 ${dictation.isListening ? "bg-destructive text-destructive-foreground animate-pulse" : "bg-surface-container-highest text-on-surface-variant hover:text-primary"}`}
-                >
-                  <span className="material-symbols-outlined text-lg" style={dictation.isListening ? { fontVariationSettings: "'FILL' 1" } : undefined}>
-                    {dictation.isListening ? "mic_off" : "mic"}
-                  </span>
-                </button>
-              )}
-              {isLoading ? (
-                <button
-                  onClick={() => abort()}
-                  title="Stop generating"
-                  aria-label="Stop generating"
-                  className="absolute right-2 bottom-2 p-1.5 bg-destructive text-destructive-foreground rounded-lg hover:brightness-110 active:scale-90 transition-all"
-                >
-                  <span className="material-symbols-outlined text-lg">stop</span>
-                </button>
-              ) : (
-                <button
-                  onClick={handleSend}
-                  disabled={!input.trim() && pendingImages.length === 0}
-                  title="Send"
-                  aria-label="Send"
-                  className="absolute right-2 bottom-2 p-1.5 bg-primary-container text-on-primary-container rounded-lg hover:brightness-110 active:scale-90 transition-all disabled:opacity-50"
-                >
-                  <span className="material-symbols-outlined text-lg">send</span>
-                </button>
-              )}
+              {/* Mic and Send share one flow row instead of each carrying its
+                  own `right-N` offset. The old offsets (right-11 and right-2)
+                  left 6px between two ~30px buttons, which is under every
+                  platform's floor and too tight to grow: expanding both hit
+                  regions to 44px would have made them OVERLAP. A flex row with
+                  `gap-2` gives each a 36px face and a 44px target (the
+                  `after:-inset-[4px]` pad) whose edges meet but never cross —
+                  WCAG 2.2 SC 2.5.5 / Apple's 44pt, without a chunkier button.
+                  `touch-action: manipulation` drops the legacy 300ms
+                  double-tap-zoom delay while leaving pinch-zoom alone. */}
+              <div className="absolute right-2 bottom-2 flex items-center gap-2" style={{ touchAction: "manipulation" }}>
+                {dictation.supported && (
+                  <button
+                    type="button"
+                    onClick={handleMicToggle}
+                    title={dictation.isListening ? "Stop dictation" : "Dictate message"}
+                    aria-label={dictation.isListening ? "Stop dictation" : "Dictate message"}
+                    className={`relative h-9 w-9 flex items-center justify-center rounded-lg transition-all active:scale-90 after:content-[''] after:absolute after:-inset-[4px] ${dictation.isListening ? "bg-destructive text-destructive-foreground animate-pulse" : "bg-surface-container-highest text-on-surface-variant hover:text-primary"}`}
+                  >
+                    <span className="material-symbols-outlined text-lg" style={dictation.isListening ? { fontVariationSettings: "'FILL' 1" } : undefined}>
+                      {dictation.isListening ? "mic_off" : "mic"}
+                    </span>
+                  </button>
+                )}
+                {/* Send is RENDERED ONLY WHEN THERE IS SOMETHING TO SEND, the
+                    way every major assistant's composer now behaves. A disabled
+                    button still occupies the corner your thumb reaches for; an
+                    absent one cannot be hit by mistake at all, which is the
+                    cheapest accidental-activation fix available. */}
+                {isLoading ? (
+                  <button
+                    onClick={() => abort()}
+                    title="Stop generating"
+                    aria-label="Stop generating"
+                    className="relative h-9 w-9 flex items-center justify-center bg-destructive text-destructive-foreground rounded-lg hover:brightness-110 active:scale-90 transition-all after:content-[''] after:absolute after:-inset-[4px]"
+                  >
+                    <span className="material-symbols-outlined text-lg">stop</span>
+                  </button>
+                ) : canSend ? (
+                  <button
+                    onClick={handleSend}
+                    title="Send"
+                    aria-label="Send"
+                    className="relative h-9 w-9 flex items-center justify-center bg-primary-container text-on-primary-container rounded-lg hover:brightness-110 active:scale-90 transition-all after:content-[''] after:absolute after:-inset-[4px]"
+                  >
+                    <span className="material-symbols-outlined text-lg">send</span>
+                  </button>
+                ) : null}
+              </div>
             </div>
           </div>
-          <div className="flex justify-between items-center px-2">
-            <div className="flex items-center gap-4 flex-nowrap overflow-x-auto hide-scrollbar snap-x flex-1 min-w-0 [&>*]:shrink-0 [&>*]:snap-start [&>*]:min-h-[40px] md:flex-wrap md:overflow-visible md:[&>*]:min-h-0">
-              {/* Scope indicator — always shows what Counsel can read (NotebookLM-style transparency). */}
+          {/* THE COMPOSER'S STATUS STRIP — what is ON, and one way in to
+              everything else.
+
+              This replaced a thirteen-chip `overflow-x-auto` scroller that sat
+              directly beneath the send button. A horizontal scroller under the
+              highest-consequence control on the screen means every flick to
+              reach a far chip is a gesture begun on top of a live toggle; the
+              prompt switcher made it worse by opening on the down-event
+              (PromptSwitcher has the detail). The row also never fitted, so
+              most of it was off-screen anyway — hiding by scroll, which is the
+              worst kind, because nothing tells you there is more.
+
+              What is left WRAPS (`flex-wrap`), never scrolls, and is only
+              rendered when it has something to report. Chips are a claim about
+              the next message, not a control panel: "Deep Research ON" is here
+              because it changes the answer; "Settings" is not, because it does
+              not. `touch-action: manipulation` drops the legacy 300ms
+              double-tap-zoom delay without disabling pinch-zoom. */}
+          <div className="flex items-center gap-2 px-2 flex-wrap" style={{ touchAction: "manipulation" }}>
+            <button
+              type="button"
+              onClick={() => setToolsOpen(true)}
+              aria-haspopup="dialog"
+              aria-expanded={toolsOpen}
+              aria-label="Tools — context, modes and session"
+              title="Tools — context, modes and session"
+              className="min-h-[44px] px-3 -ml-1 rounded-xl text-[10px] font-bold uppercase tracking-widest flex items-center gap-1.5 text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors"
+            >
+              <span className="material-symbols-outlined text-base" aria-hidden>tune</span> Tools
+            </button>
+
+            {/* The tool-reach claim. Four separate gates could empty the
+                assistant's hands and only one of them ever said so, so this
+                stays in the composer rather than moving into the sheet. Held
+                back until settings have loaded — until then every permission
+                reads at its default and the chip would spend the first moment
+                of the session describing a configuration that isn't the
+                user's. */}
+            {loaded && (
+              <ToolStatusPanel
+                gates={toolGates}
+                onOpenSettings={openSettings}
+                lastTurn={lastTurnToolAccess}
+                // Undefined until the count actually lands (and whenever the
+                // Foundry's one-time setup hasn't run), which the panel reads
+                // as "say nothing" — the loading moment must not assert that
+                // the user has no library.
+                approvedToolCount={approvedToolCount}
+              />
+            )}
+
+            {/* Which saved prompt is steering this conversation — shown only
+                when one actually applies to the next reply. When nothing is
+                steering, the chip said "Auto" forever and taught nobody
+                anything; the switcher itself still lives in the sheet. */}
+            <PromptSwitcher onManage={() => openSettings("prompts")} onlyWhenApplied />
+
+            {chatDeepResearch && isPaid && (
               <button
-                onClick={() => openSettings("research")}
-                title="What Counsel can read — click to change in Settings"
-                className="text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 text-on-surface-variant hover:text-primary transition-colors max-w-[180px]"
+                onClick={() => setChatDeepResearch(false)}
+                title="Deep Research is on — tap to turn it off"
+                className="min-h-[44px] text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 text-primary-container hover:text-primary transition-colors"
               >
-                <span className="material-symbols-outlined text-sm" aria-hidden>neurology</span>
-                <span className="truncate">
-                  {accessAllNeurons && isPaid
-                    ? "Reading: all neurons"
-                    : activeWikis.length > 1
-                      ? `Reading: ${activeWikis.length} neurons`
-                      : `Reading: ${activeWiki?.name || "no neuron"}`}
-                </span>
+                <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>science</span> Deep Research
               </button>
-              {/* Which saved prompt is steering this conversation. Sits beside
-                  the "Reading:" chip because it is the same kind of claim —
-                  what is actually shaping the next reply — and because a
-                  switcher buried in Settings is a switcher nobody uses. */}
-              <PromptSwitcher onManage={() => openSettings("prompts")} />
-              {/* Sibling of the "Reading:" chip, and the same kind of claim:
-                  what the assistant can actually reach. Four separate gates
-                  could empty its hands and only one of them ever said so.
-                  Held back until settings have loaded — until then every
-                  permission reads at its default and the chip would spend the
-                  first moment of the session describing a configuration that
-                  isn't the user's. */}
-              {loaded && (
-                <ToolStatusPanel
-                  gates={toolGates}
-                  onOpenSettings={openSettings}
-                  lastTurn={lastTurnToolAccess}
-                  // Undefined until the count actually lands (and whenever the
-                  // Foundry's one-time setup hasn't run), which the panel reads
-                  // as "say nothing" — the loading moment must not assert that
-                  // the user has no library.
-                  approvedToolCount={approvedToolCount}
-                />
-              )}
-              <button onClick={() => { if (!isPaid) { openPricing("deep-research"); return; } setChatDeepResearch(!chatDeepResearch); }} title={isPaid ? undefined : "Deep Research is a Pro feature"} className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${chatDeepResearch && isPaid ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`}>
-                <span className="material-symbols-outlined text-sm" style={chatDeepResearch && isPaid ? { fontVariationSettings: "'FILL' 1" } : {}}>{isPaid ? "science" : "lock"}</span> Deep Research {chatDeepResearch && isPaid ? "ON" : "OFF"}
+            )}
+            {autoReadReplies && (
+              <button
+                onClick={() => { stopSpeaking(); setAutoReadReplies(false); }}
+                title="Replies are read aloud — tap to stop"
+                className="min-h-[44px] text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 text-primary-container hover:text-primary transition-colors"
+              >
+                <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>volume_up</span> Read Aloud
               </button>
-              <button onClick={() => { if (autoReadReplies) stopSpeaking(); setAutoReadReplies(!autoReadReplies); }} className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${autoReadReplies ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`} title="Read replies aloud">
-                <span className="material-symbols-outlined text-sm" style={autoReadReplies ? { fontVariationSettings: "'FILL' 1" } : {}}>{autoReadReplies ? "volume_up" : "volume_off"}</span> Read Aloud {autoReadReplies ? "ON" : "OFF"}
+            )}
+            {handsFree.supported && handsFree.active && (
+              <button
+                onClick={handsFree.toggle}
+                aria-pressed
+                title="Hands-free is on — tap to turn it off"
+                className="min-h-[44px] text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 text-primary-container hover:text-primary transition-colors"
+              >
+                <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>graphic_eq</span> Hands-free
               </button>
-              {handsFree.supported && (
-                <button onClick={handsFree.toggle} aria-pressed={handsFree.active} className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${handsFree.active ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`} title="Hands-free conversation — just talk">
-                  <span className="material-symbols-outlined text-sm" style={handsFree.active ? { fontVariationSettings: "'FILL' 1" } : {}}>{handsFree.active ? "graphic_eq" : "record_voice_over"}</span> Hands-free {handsFree.active ? "ON" : "OFF"}
-                </button>
-              )}
-              {burplexityApiToken && (
-                <button
-                  onClick={handleDeepWebSearch}
-                  disabled={deepSearching || !input.trim() || isLoading}
-                  className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-1 hover:text-primary transition-colors disabled:opacity-40"
-                  title="Run a one-shot web search on the current input"
-                >
-                  {deepSearching ? <Loader2 className="w-3 h-3 animate-spin" /> : <span className="material-symbols-outlined text-sm">travel_explore</span>} Web Search
-                </button>
-              )}
-              {pendingSearchCount > 0 && (
-                <span className="text-[10px] font-bold uppercase tracking-widest text-primary-container flex items-center gap-1">
-                  <Loader2 className="w-3 h-3 animate-spin" /> Searching ({pendingSearchCount})
-                </span>
-              )}
-              {messages.length >= 2 && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      disabled={digesting || isLoading}
-                      className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-1 hover:text-primary transition-colors disabled:opacity-40"
-                      title="Digest this conversation (read aloud)"
-                    >
-                      {digesting ? <Loader2 className="w-3 h-3 animate-spin" /> : <span className="material-symbols-outlined text-sm">summarize</span>} Digest
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="min-w-[160px]">
-                    <DropdownMenuItem onClick={() => handleDigest("brief")}>
-                      <span className="material-symbols-outlined text-base mr-2">short_text</span> Brief
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => handleDigest("deep")}>
-                      <span className="material-symbols-outlined text-base mr-2">menu_book</span> Deep dive
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => handleDigest("critique")}>
-                      <span className="material-symbols-outlined text-base mr-2">rate_review</span> Critique
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
+            )}
+            {contextBooks.length > 0 && (
               <button
                 onClick={() => setBooksPickerOpen(true)}
-                aria-pressed={contextBooks.length > 0}
-                className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${contextBooks.length > 0 ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`}
-                title="Load books or a shelf as chat context"
+                aria-pressed
+                title="Books loaded as chat context — tap to change"
+                className="min-h-[44px] text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 text-primary-container hover:text-primary transition-colors"
               >
-                <span className="material-symbols-outlined text-sm" style={contextBooks.length > 0 ? { fontVariationSettings: "'FILL' 1" } : {}}>auto_stories</span>
-                Books{contextBooks.length > 0 ? ` (${contextBooks.length})` : ""}
+                <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>auto_stories</span> Books ({contextBooks.length})
               </button>
+            )}
+            {workspaceOpen && (
               <button
-                onClick={() => setWorkspaceOpen((v) => !v)}
-                aria-pressed={workspaceOpen}
-                className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${workspaceOpen ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`}
-                title="Workspace — saved files & research"
+                onClick={() => setWorkspaceOpen(false)}
+                aria-pressed
+                title="Workspace is open — tap to close"
+                className="min-h-[44px] text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 text-primary-container hover:text-primary transition-colors"
               >
-                <span className="material-symbols-outlined text-sm" style={workspaceOpen ? { fontVariationSettings: "'FILL' 1" } : {}}>folder_open</span>
-                Files{workspaceCount > 0 ? ` (${workspaceCount})` : ""}
+                <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>folder_open</span> Files{workspaceCount > 0 ? ` (${workspaceCount})` : ""}
               </button>
-              <button
-                onClick={() => setNotesPanelOpen((v) => !v)}
-                aria-pressed={notesPanelOpen}
-                className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${notesPanelOpen ? "text-primary-container" : "text-on-surface-variant hover:text-primary"}`}
-                title="Notes"
-              >
-                <StickyNote className="w-3.5 h-3.5" /> Notes
-              </button>
-              <button onClick={() => openSettings()} className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-1 hover:text-primary transition-colors" title="Open the Settings tab">
-                <span className="material-symbols-outlined text-sm">tune</span> Settings
-              </button>
-              {messages.length > 0 && (
-                <button onClick={() => { stopSpeaking(); clearChat(); }} className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-1 hover:text-primary transition-colors">
-                  <span className="material-symbols-outlined text-sm">delete</span> Clear
-                </button>
-              )}
-            </div>
+            )}
+            {pendingSearchCount > 0 && (
+              <span className="min-h-[44px] text-[10px] font-bold uppercase tracking-widest text-primary-container flex items-center gap-1">
+                <Loader2 className="w-3 h-3 animate-spin" /> Searching ({pendingSearchCount})
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -1775,6 +1767,47 @@ const ChatPanel: React.FC = () => {
       />
 
       <VoiceNotesPanel open={notesPanelOpen} onClose={() => setNotesPanelOpen(false)} />
+
+      {/* Everything the composer's chip row used to carry. Mounted here, beside
+          the other panels, so the composer itself stays a composer. */}
+      <CounselToolsSheet
+        open={toolsOpen}
+        onOpenChange={setToolsOpen}
+        readingLabel={
+          accessAllNeurons && isPaid
+            ? "Reading: all neurons"
+            : activeWikis.length > 1
+              ? `Reading: ${activeWikis.length} neurons`
+              : `Reading: ${activeWiki?.name || "no neuron"}`
+        }
+        onOpenResearchSettings={() => openSettings("research")}
+        contextBookCount={contextBooks.length}
+        onOpenBooks={() => setBooksPickerOpen(true)}
+        workspaceCount={workspaceCount}
+        workspaceOpen={workspaceOpen}
+        onToggleWorkspace={() => setWorkspaceOpen((v) => !v)}
+        notesOpen={notesPanelOpen}
+        onToggleNotes={() => setNotesPanelOpen((v) => !v)}
+        deepResearch={chatDeepResearch}
+        deepResearchAllowed={isPaid}
+        onToggleDeepResearch={() => {
+          if (!isPaid) { setToolsOpen(false); openPricing("deep-research"); return; }
+          setChatDeepResearch(!chatDeepResearch);
+        }}
+        autoReadReplies={autoReadReplies}
+        onToggleReadAloud={() => { if (autoReadReplies) stopSpeaking(); setAutoReadReplies(!autoReadReplies); }}
+        handsFreeSupported={handsFree.supported}
+        handsFreeActive={handsFree.active}
+        onToggleHandsFree={handsFree.toggle}
+        webSearchAvailable={!!burplexityApiToken}
+        webSearchBusy={deepSearching}
+        webSearchDisabled={deepSearching || !input.trim() || isLoading}
+        onWebSearch={handleDeepWebSearch}
+        onManagePrompts={() => openSettings("prompts")}
+        onOpenSettings={() => openSettings()}
+        canClear={messages.length > 0}
+        onClear={() => { stopSpeaking(); clearChat(); }}
+      />
     </div>
   );
 };

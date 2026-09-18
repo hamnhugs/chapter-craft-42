@@ -260,7 +260,17 @@ const Index: React.FC = () => {
       <div className="flex flex-1 overflow-hidden">
         <TabletRail tabs={visibleTabs} activeTab={activeTab} setActiveTab={setActiveTab} />
 
-        <div className="flex-1 overflow-hidden pb-20 md:pb-0">
+        {/* Clearance for the fixed bottom nav, which is `h-16` (4rem) PLUS
+            `env(safe-area-inset-bottom)` — see the <nav> below. A flat `pb-20`
+            covered only the 4rem and left the extra 1rem as breathing room, so
+            on any device with a home indicator (~34px) the nav stood ~98px
+            tall against 80px of clearance and the last ~18px of the tab —
+            in Counsel, the bottom of the composer — sat underneath a
+            `fixed z-50` bar that swallowed the taps. The 5rem keeps that 1rem
+            of breathing room exactly as it was; the `env()` term is the fix.
+            Resolves to 0 at `md` and up, where the nav is `md:hidden` and the
+            tablet rail takes over. */}
+        <div className="flex-1 overflow-hidden pb-[calc(5rem+env(safe-area-inset-bottom,0px))] md:pb-0">
           {activeTab === "library" ? (
             <Library />
           ) : activeTab === "chat" ? (

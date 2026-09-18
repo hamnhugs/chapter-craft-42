@@ -205,11 +205,15 @@ describe("Index.tsx — h-screen → h-app", () => {
 
   it("does not touch the tablet rail or the bottom nav (verified correct for landscape phones)", () => {
     // At 852 px wide the rail shows (md:flex lg:hidden — 80 px of 852, on the
-    // abundant axis) and the bottom nav stays hidden (md:hidden), so pb-20
-    // md:pb-0 correctly resolves to 0. Pinned so a later "landscape fix" does
-    // not undo an already-correct behaviour.
+    // abundant axis) and the bottom nav stays hidden (md:hidden), so the tab
+    // content's bottom padding correctly resolves to 0. Pinned so a later
+    // "landscape fix" does not undo an already-correct behaviour.
+    //
+    // Only `md:pb-0` is asserted, not the mobile value beside it: that value is
+    // nav-clearance arithmetic (4rem of nav + safe-area inset + breathing
+    // room) and is free to change. The invariant is that it switches OFF at md.
     expect(INDEX).toContain("md:flex lg:hidden");
-    expect(INDEX).toContain("pb-20 md:pb-0");
+    expect(INDEX).toMatch(/className="flex-1 overflow-hidden pb-\S+ md:pb-0"/);
   });
 });
 

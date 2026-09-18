@@ -31,7 +31,7 @@ import { resolve } from "node:path";
  *
  *   Index.tsx      <div className="flex flex-col h-app bg-background">
  *     └ Index.tsx  <div className="flex flex-1 overflow-hidden">
- *         └ Index  <div className="flex-1 overflow-hidden pb-20 md:pb-0">
+ *         └ Index  <div className="flex-1 overflow-hidden pb-[calc(…)] md:pb-0">
  *             └ ChatPanel <div className="flex h-full overflow-hidden">
  *                 └ WorkspaceShell root
  *
@@ -124,7 +124,14 @@ describe("no containing-block trigger anywhere on the workspace ancestor chain",
     },
     {
       file: "src/pages/Index.tsx",
-      anchor: /className="flex-1 overflow-hidden pb-20 md:pb-0"/,
+      // The bottom padding is deliberately loose, exactly as the Index root
+      // tolerates `h-screen` OR `h-app` above: its VALUE is nav-clearance
+      // arithmetic that has already changed once (flat `pb-20` → one that adds
+      // `env(safe-area-inset-bottom)`), and padding of any value is not a
+      // containing-block trigger. This test must not become the thing that
+      // blocks a legitimate clearance fix. `md:pb-0` stays in the anchor
+      // because that half IS an invariant — see workspaceIntegration.
+      anchor: /className="flex-1 overflow-hidden pb-[^"]*md:pb-0"/,
       label: "Index tab content",
     },
     {

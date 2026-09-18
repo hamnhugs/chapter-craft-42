@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useSyncExternalStore } from "react";
+import React, { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { usePromptPresets } from "@/hooks/usePromptPresets";
 import { turnPromptStore, type TurnPromptSelection } from "@/lib/promptRouting";
@@ -30,7 +30,18 @@ import {
  * talking.
  */
 
-const PromptSwitcher: React.FC<{ onManage: () => void }> = ({ onManage }) => {
+const PromptSwitcher: React.FC<{
+  onManage: () => void;
+  /**
+   * Render nothing unless a saved prompt actually shapes the next reply.
+   *
+   * The composer's status strip states what is acting on the next message, so
+   * a chip reading "Auto" — the default, true for most users forever — is a
+   * line of permanent furniture that reports nothing. In the tool sheet the
+   * switcher is always rendered, because there it IS the control.
+   */
+  onlyWhenApplied?: boolean;
+}> = ({ onManage, onlyWhenApplied }) => {
   const { user } = useAuth();
   const { presets } = usePromptPresets();
   const { applyBindings, describeBindings } = usePromptBindings();
@@ -80,10 +91,33 @@ const PromptSwitcher: React.FC<{ onManage: () => void }> = ({ onManage }) => {
     if (changed) toast.success(`${p.name} — ${changed}`);
   };
 
+  // OPEN ON TAP, NOT ON TOUCH-DOWN. Radix's DropdownMenuTrigger calls
+  // `onOpenToggle()` from `onPointerDown` (react-dropdown-menu dist, the
+  // trigger's composed pointerdown handler). This chip lives in Counsel's
+  // horizontally-scrolling tool row, so on a phone the finger that lands here
+  // to FLICK THE ROW SIDEWAYS has already opened the prompt menu before it has
+  // moved a pixel — and changing which prompt is steering the conversation is
+  // not a harmless thing to do by accident.
+  //
+  // `preventDefault()` on pointerdown suppresses Radix's toggle (their
+  // `composeEventHandlers` skips the internal handler once the event is
+  // default-prevented), and the menu is driven from `onClick` instead. That
+  // hands the scroll-vs-tap decision to the browser, which already declines to
+  // fire `click` when the gesture turned into a scroll — the behaviour WCAG
+  // 2.2 SC 2.5.2 (Pointer Cancellation) is asking for. Keyboard activation is
+  // untouched: Radix opens on Enter/Space from its own `onKeyDown`.
+  const [open, setOpen] = useState(false);
+
+  // After every hook — an early return above `useState` would change the hook
+  // count between renders as `applies` flips.
+  if (onlyWhenApplied && !applies) return null;
+
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <button
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={() => setOpen((v) => !v)}
           title={title}
           aria-label={`Prompt: ${label}`}
           className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors max-w-[170px] ${
