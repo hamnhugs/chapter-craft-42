@@ -1,7 +1,8 @@
-# Variable system prompts — Phase 1: the switcher
+# Variable system prompts — switcher, router, and earned proposals
 
-Shipped 2026-09-18 on `new1`. **No migration.** Phase 1 is pure client code and
-works on the schema that is already deployed.
+Shipped 2026-09-18 on `new1` in three phases. Phase 1 (the switcher) is pure
+client code and needs no migration. Phases 2-3 need one idempotent additive
+migration plus two edge-function deploys — see "Applying the migration" below.
 
 ## The problem
 
@@ -17,7 +18,7 @@ it*. That is why making prompts switchable was an architecture change rather
 than a dropdown — a fast switcher over the old layout would have quietly made
 every switch expensive.
 
-## What changed
+## Phase 1 — what changed
 
 ### 1. The switchable layer moved to its own system message, last
 
@@ -123,19 +124,135 @@ asserts the builder still contains it verbatim, so the two copies cannot drift.
 - `src/test/promptRouting.test.ts`, plus two new source-level pins in
   `src/test/chatContextWiring.test.ts`.
 
+Phases 2-3 add: `src/lib/promptRoutingApi.ts`,
+`supabase/migrations/20260919000000_prompt_routing.sql`,
+`supabase/functions/prompt-incubator-sweep/`, `routePrompts()` inside
+`supabase/functions/knowledge-retrieve/`, and the routing controls plus
+proposal cards in `src/components/PromptLibrary.tsx`.
+
+## Phase 2 — the router
+
+### Why it is free
+
+`knowledge-retrieve` already embeds the user's turn on every message. Scoring
+the saved prompts needs exactly that vector and nothing else, so the match
+happens **inside the same call**: no second embedding, no extra round trip, no
+added latency. Anywhere else would have meant paying to embed the same words
+twice per message, forever.
+
+The edge function returns **data, never a decision** — a similarity per prompt,
+the incumbent's similarity, and how strongly the turn leaned on retrieved
+memory. Policy lives in `decideRoute()` in `src/lib/promptRouting.ts`, where it
+is pure and every branch is reachable from a test.
+
+Prompt embeddings are self-healing: a prompt with no vector, or one written by a
+previous embedding model, is re-embedded inside the same call and written back.
+There is no separate pipeline to run, forget, or fail.
+
+### The decision
+
+Thresholds are Smart Filing's, unchanged (`smart-file/index.ts`), because it is
+the same kind of decision and fresh numbers would restart that tuning:
+`confident 0.78`, `margin 0.08`, `novelty 0.55`.
+
+The router is heavily biased toward **keep**, and a test enforces it: across a
+generated matrix of scores it switches on under a quarter. It will not switch
+
+- on a thin margin over the prompt already in force,
+- when two prompts fit about equally (two near-identical prompts would otherwise
+  trade the conversation back and forth on noise),
+- twice inside three turns,
+- or to the prompt that is already on.
+
+**The recall guard.** PRISM (arXiv 2603.18507) measured expert personas
+improving alignment-style tasks and *damaging* factual recall — 68.0% vs 71.6%
+on MMLU. So when a turn is dominated by retrieved memory, the router leaves the
+voice alone and says so. A setting, on by default, not a law.
+
+### Being wrong without becoming a nuisance
+
+Every decision is logged, including `keep` — an accuracy read that only saw the
+switches would flatter the router. Each auto-switch's receipt carries one tap
+that puts the old prompt back **and** records `user_corrected`, so a router the
+user keeps overruling has the evidence to stop. Identical to Smart Filing's
+propose → correct → auto-pause loop.
+
+### The one honest limitation
+
+`prompt_presets` has `neuron_ids`, `book_id` and `tool_permissions`, and they
+are wired into the schema, but **the router does not apply context bindings**.
+Retrieval is scoped by the loaded neurons, and routing rides *on* retrieval, so
+a prompt that rebinds neurons would be deciding scope after scope was used.
+Applying it from the next turn was rejected: the receipt would then describe a
+scope the reply did not actually have. Bindings are therefore a manual-switch
+feature, and are not yet surfaced in the UI. (`tool_permissions` may only ever
+narrow the roster — granting stays with the existing permission gates.)
+
+## Phase 3 — proposals the assistant earns
+
+`supabase/functions/prompt-incubator-sweep` mirrors `incubator-sweep`, which
+already proposes new neurons from orphaned memories:
+
+1. A turn the router scored `propose_new` parks a ≤200-character gist.
+2. The sweep embeds parked gists, clusters them greedily (≥5 members, cosine
+   ≥0.62), and makes **one** structured drafting call per cluster.
+3. A name colliding with an existing prompt is dropped; at most 3 proposals per
+   user are ever pending.
+4. The proposal appears in Settings → Prompts with its **exact body text**, the
+   messages it was drafted from, and a plain statement that the AI wrote it.
+
+**The safety property is structural, not procedural.** A proposal lives only in
+`prompt_proposals` — a table the prompt builder never reads — so nothing the
+assistant drafts has ever been in front of the model. Only the user pressing
+Approve creates a `prompt_presets` row, and it is created **inactive with
+routing off**: approving a suggestion means "this is worth keeping", not "start
+using this on my next message". That is why this feature needs none of the
+SECURITY DEFINER / GUC / immutable-row apparatus the Tool and Program Foundries
+need — there is no draft state on the live table to escalate out of.
+
+The sweep is triggered when the Prompt Library is opened, throttled to once per
+six hours per device. It costs a model call, and the only place its output can
+be seen is the panel the user just opened; a background schedule would spend
+money drafting suggestions nobody is there to read.
+
+The gists are quoted to the drafting model as **evidence to describe, never
+instructions to follow** — but what makes that safe is the human gate, not the
+wording.
+
+## Why no chat tool
+
+`CHAT_TOOL_DEFINITIONS.length === 80`, and `toolRosterBudget.test.ts` caps it at
+80 with a documented rationale (measured degradation past 30–50 tools). Adding
+`propose_prompt` would have meant spending that budget — and, worse, letting the
+model suggest a prompt whenever it felt like it. Earning the suggestion from
+accumulated evidence is both cheaper and better behaved.
+
+## Applying the migration (the one user action)
+
+Paste into Lovable's chat:
+
+> Please run the repo migration
+> `supabase/migrations/20260919000000_prompt_routing.sql` exactly as written,
+> without modifications. It is idempotent and purely additive. Then redeploy the
+> edge function `knowledge-retrieve` and deploy the new edge function
+> `prompt-incubator-sweep`.
+
+Until that is done the app behaves exactly as it does today: every client path
+feature-detects on 42703 / PGRST204 / PGRST205, the routing UI does not appear,
+and `ChatContext` never asks for routing. The migration was verified by applying
+it twice against PGlite — existing presets keep their values, and all three
+CHECK constraints refuse bad input.
+
 ## Not in this phase
 
-Phase 2 (automatic routing, prompts that bind neurons/books/tools) and Phase 3
-(the prompt Incubator, which lets the assistant *earn* the right to propose a
-new prompt from accumulated evidence rather than a chat tool — the roster is
-full at 80/80) both need one idempotent additive migration and a
-`knowledge-retrieve` redeploy. The design for both is in the approved plan; the
-routing math reuses Smart Filing's constants (`confident_threshold` 0.78,
-`REROUTE_MARGIN` 0.08, `novelty_threshold` 0.55) and its
-propose→approve→`user_corrected`→auto-pause loop.
 
-One research note that shapes Phase 2: PRISM (arXiv 2603.18507) found expert
-personas reliably help alignment-style tasks and reliably *damage* factual
-recall (MMLU 68.0% under a persona vs 71.6% plain). The router will therefore
-keep a plain voice on memory-recall turns rather than applying a persona
-uniformly.
+- **Context bindings in the router** — see "The one honest limitation" above.
+  The columns exist; applying them needs retrieval to be re-run inside the
+  builder when a switch changes the neuron scope.
+- **Auto-pause.** `promptRoutingAccuracy()` is written and returns the numbers;
+  nothing reads it yet to switch routing off on the user's behalf.
+- **Anchors.** Worth stating plainly, because it was asked for: an anchor in
+  this codebase is a *locator* — a verified pointer from a memory card into a
+  chapter — not a switchable mode. There is nothing to bind a prompt to. The
+  real book-level tie is `book_id`, routed off the existing Counsel focus
+  (`src/lib/counselFocus.ts`), and it is part of the unbuilt bindings work.

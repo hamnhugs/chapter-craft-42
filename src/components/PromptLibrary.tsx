@@ -10,6 +10,7 @@ import {
   acceptPromptProposal,
   dismissPromptProposal,
   fetchPromptProposals,
+  runPromptIncubatorSweep,
   type PromptProposal,
 } from "@/lib/promptRoutingApi";
 
@@ -49,6 +50,14 @@ const PromptLibrary: React.FC<Props> = ({ scopeHint }) => {
     setProposals(routingSchemaReady ? await fetchPromptProposals() : []);
   }, [routingSchemaReady]);
   useEffect(() => { loadProposals(); }, [loadProposals]);
+  // Opening this panel is the only moment a new suggestion can be seen, so it
+  // is the only moment worth paying to look for one. Throttled per device.
+  useEffect(() => {
+    if (!routingSchemaReady) return;
+    let cancelled = false;
+    runPromptIncubatorSweep().then(() => { if (!cancelled) loadProposals(); });
+    return () => { cancelled = true; };
+  }, [routingSchemaReady, loadProposals]);
 
   const beginNew = () => { setDraft(EMPTY_DRAFT); setEditingId("new"); };
   const beginEdit = (p: PromptPreset) => {

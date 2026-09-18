@@ -25,6 +25,7 @@ export interface PromptProposal {
   when_to_use: string;
   rationale: string;
   sample_gists: string[];
+  member_turn_ids: string[];
   created_at: string;
 }
 
@@ -132,7 +133,7 @@ export async function fetchPromptProposals(): Promise<PromptProposal[]> {
   try {
     const { data, error } = await supabase
       .from("prompt_proposals" as never)
-      .select("id, proposed_name, proposed_body, when_to_use, rationale, sample_gists, created_at")
+      .select("id, proposed_name, proposed_body, when_to_use, rationale, sample_gists, member_turn_ids, created_at")
       .eq("status", "pending")
       .order("created_at", { ascending: false });
     if (error || !data) return [];
@@ -176,12 +177,17 @@ export async function acceptPromptProposal(p: PromptProposal): Promise<void> {
     .eq("id", p.id);
   if (updErr) throw updErr;
 
-  // The turns that justified it are spent — they must not seed a second,
-  // near-identical proposal on the next sweep.
-  await supabase
-    .from("prompt_incubator_turns" as never)
-    .update({ status: "promoted" } as never)
-    .eq("status", "clustered");
+  // The turns that justified THIS proposal are spent — they must not seed a
+  // second, near-identical one on the next sweep. Scoped to its own members:
+  // retiring every clustered row would also silently consume the evidence
+  // behind the other proposals still sitting in the list unapproved.
+  const members = p.member_turn_ids || [];
+  if (members.length > 0) {
+    await supabase
+      .from("prompt_incubator_turns" as never)
+      .update({ status: "promoted" } as never)
+      .in("id", members);
+  }
 }
 
 export async function dismissPromptProposal(id: string): Promise<void> {
@@ -190,4 +196,32 @@ export async function dismissPromptProposal(id: string): Promise<void> {
     .update({ status: "dismissed" } as never)
     .eq("id", id);
   if (error) throw error;
+}
+
+/**
+ * Run the incubator sweep, at most once every few hours per device.
+ *
+ * Called when the Prompt Library is opened rather than on a timer: the sweep
+ * costs a model call, and the only place its output is visible is the panel
+ * the user just opened. A background schedule would spend money drafting
+ * suggestions nobody is there to read.
+ */
+const SWEEP_THROTTLE_MS = 6 * 60 * 60 * 1000;
+const SWEEP_KEY = "prompt_incubator_last_sweep";
+
+export async function runPromptIncubatorSweep(): Promise<void> {
+  try {
+    const last = Number(localStorage.getItem(SWEEP_KEY) || 0);
+    if (Number.isFinite(last) && Date.now() - last < SWEEP_THROTTLE_MS) return;
+    localStorage.setItem(SWEEP_KEY, String(Date.now()));
+  } catch {
+    // No storage (private mode): run it, but do not loop on every render —
+    // the caller only invokes this on mount.
+  }
+  try {
+    await supabase.functions.invoke("prompt-incubator-sweep", { body: {} });
+  } catch {
+    // Pre-deploy, offline, or no key configured. There is nothing to tell the
+    // user: they did not ask for this, they opened a settings panel.
+  }
 }
