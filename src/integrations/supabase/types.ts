@@ -1741,38 +1741,203 @@ export type Database = {
         }
         Relationships: []
       }
-      prompt_presets: {
+      prompt_incubator_turns: {
         Row: {
-          body: string
           created_at: string
+          embedding: string | null
+          embedding_model: string | null
+          expires_at: string
+          gist: string
           id: string
-          is_active: boolean
-          name: string
-          scope: string
-          updated_at: string
+          status: string
           user_id: string
         }
         Insert: {
-          body?: string
           created_at?: string
+          embedding?: string | null
+          embedding_model?: string | null
+          expires_at?: string
+          gist?: string
           id?: string
-          is_active?: boolean
-          name: string
-          scope?: string
-          updated_at?: string
+          status?: string
           user_id: string
         }
         Update: {
-          body?: string
           created_at?: string
+          embedding?: string | null
+          embedding_model?: string | null
+          expires_at?: string
+          gist?: string
           id?: string
-          is_active?: boolean
-          name?: string
-          scope?: string
-          updated_at?: string
+          status?: string
           user_id?: string
         }
         Relationships: []
+      }
+      prompt_presets: {
+        Row: {
+          approved_at: string | null
+          body: string
+          book_id: string | null
+          confident_threshold: number
+          created_at: string
+          embedding: string | null
+          embedding_model: string | null
+          id: string
+          is_active: boolean
+          name: string
+          neuron_ids: string[]
+          novelty_threshold: number
+          origin: string
+          routing_enabled: boolean
+          scope: string
+          tool_permissions: Json | null
+          updated_at: string
+          user_id: string
+          when_to_use: string
+        }
+        Insert: {
+          approved_at?: string | null
+          body?: string
+          book_id?: string | null
+          confident_threshold?: number
+          created_at?: string
+          embedding?: string | null
+          embedding_model?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          neuron_ids?: string[]
+          novelty_threshold?: number
+          origin?: string
+          routing_enabled?: boolean
+          scope?: string
+          tool_permissions?: Json | null
+          updated_at?: string
+          user_id: string
+          when_to_use?: string
+        }
+        Update: {
+          approved_at?: string | null
+          body?: string
+          book_id?: string | null
+          confident_threshold?: number
+          created_at?: string
+          embedding?: string | null
+          embedding_model?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          neuron_ids?: string[]
+          novelty_threshold?: number
+          origin?: string
+          routing_enabled?: boolean
+          scope?: string
+          tool_permissions?: Json | null
+          updated_at?: string
+          user_id?: string
+          when_to_use?: string
+        }
+        Relationships: []
+      }
+      prompt_proposals: {
+        Row: {
+          created_at: string
+          id: string
+          member_turn_ids: string[]
+          proposed_body: string
+          proposed_name: string
+          rationale: string
+          sample_gists: string[]
+          status: string
+          updated_at: string
+          user_id: string
+          when_to_use: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          member_turn_ids?: string[]
+          proposed_body?: string
+          proposed_name: string
+          rationale?: string
+          sample_gists?: string[]
+          status?: string
+          updated_at?: string
+          user_id: string
+          when_to_use?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          member_turn_ids?: string[]
+          proposed_body?: string
+          proposed_name?: string
+          rationale?: string
+          sample_gists?: string[]
+          status?: string
+          updated_at?: string
+          user_id?: string
+          when_to_use?: string
+        }
+        Relationships: []
+      }
+      prompt_routing_decisions: {
+        Row: {
+          created_at: string
+          final_prompt_id: string | null
+          id: string
+          novelty: number | null
+          proposed_action: string
+          proposed_prompt_id: string | null
+          s_2nd: number | null
+          s_active: number | null
+          s_max: number | null
+          user_corrected: boolean
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          final_prompt_id?: string | null
+          id?: string
+          novelty?: number | null
+          proposed_action: string
+          proposed_prompt_id?: string | null
+          s_2nd?: number | null
+          s_active?: number | null
+          s_max?: number | null
+          user_corrected?: boolean
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          final_prompt_id?: string | null
+          id?: string
+          novelty?: number | null
+          proposed_action?: string
+          proposed_prompt_id?: string | null
+          s_2nd?: number | null
+          s_active?: number | null
+          s_max?: number | null
+          user_corrected?: boolean
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prompt_routing_decisions_final_prompt_id_fkey"
+            columns: ["final_prompt_id"]
+            isOneToOne: false
+            referencedRelation: "prompt_presets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prompt_routing_decisions_proposed_prompt_id_fkey"
+            columns: ["proposed_prompt_id"]
+            isOneToOne: false
+            referencedRelation: "prompt_presets"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       reroute_suggestions: {
         Row: {
@@ -2201,6 +2366,8 @@ export type Database = {
           program_runner_last4: string | null
           program_runner_signing_key: string | null
           program_runner_url: string | null
+          prompt_plain_on_recall: boolean
+          prompt_routing_enabled: boolean
           saved_image_models: Json
           saved_models: Json | null
           saved_video_models: Json | null
@@ -2269,6 +2436,8 @@ export type Database = {
           program_runner_last4?: string | null
           program_runner_signing_key?: string | null
           program_runner_url?: string | null
+          prompt_plain_on_recall?: boolean
+          prompt_routing_enabled?: boolean
           saved_image_models?: Json
           saved_models?: Json | null
           saved_video_models?: Json | null
@@ -2337,6 +2506,8 @@ export type Database = {
           program_runner_last4?: string | null
           program_runner_signing_key?: string | null
           program_runner_url?: string | null
+          prompt_plain_on_recall?: boolean
+          prompt_routing_enabled?: boolean
           saved_image_models?: Json
           saved_models?: Json | null
           saved_video_models?: Json | null
