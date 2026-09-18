@@ -392,6 +392,72 @@ export type Database = {
         }
         Relationships: []
       }
+      book_highlights: {
+        Row: {
+          book_id: string
+          chapter_id: string | null
+          char_end: number | null
+          char_start: number | null
+          created_at: string
+          id: string
+          note: string | null
+          page: number | null
+          pos_end: number
+          pos_start: number
+          prefix: string
+          quote: string
+          suffix: string
+          user_id: string
+        }
+        Insert: {
+          book_id: string
+          chapter_id?: string | null
+          char_end?: number | null
+          char_start?: number | null
+          created_at?: string
+          id?: string
+          note?: string | null
+          page?: number | null
+          pos_end: number
+          pos_start: number
+          prefix?: string
+          quote: string
+          suffix?: string
+          user_id?: string
+        }
+        Update: {
+          book_id?: string
+          chapter_id?: string | null
+          char_end?: number | null
+          char_start?: number | null
+          created_at?: string
+          id?: string
+          note?: string | null
+          page?: number | null
+          pos_end?: number
+          pos_start?: number
+          prefix?: string
+          quote?: string
+          suffix?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "book_highlights_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
+            referencedRelation: "books"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "book_highlights_chapter_id_fkey"
+            columns: ["chapter_id"]
+            isOneToOne: false
+            referencedRelation: "chapters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       book_shelf_members: {
         Row: {
           book_id: string

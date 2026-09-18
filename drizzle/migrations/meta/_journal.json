@@ -71,6 +71,13 @@
       "when": 1789636722873,
       "tag": "0009_rpc_caller_scoping",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789645956056,
+      "tag": "0010_book_highlights",
+      "breakpoints": true
     }
   ]
 }
