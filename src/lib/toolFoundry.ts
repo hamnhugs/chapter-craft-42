@@ -354,24 +354,65 @@ export async function listTools(opts: { status?: string } = {}): Promise<AgentTo
   return (data as AgentToolRow[]) || [];
 }
 
+/**
+ * Remove the Toolshed retrieval card for a deleted tool or program.
+ *
+ * Deleting the agent_tools / agent_programs row was never the whole deletion:
+ * approval also files a card in the Toolshed neuron (chatTools' mirrorApproved
+ * / programFoundry's mirrorApprovedProgram), and that card is what memory
+ * retrieval finds. Leaving it behind means the assistant keeps rediscovering —
+ * and offering — a tool whose code is gone, which reads to the user as "it
+ * wasn't deleted". Titles are deterministic (`Tool: name` / `Program: name`,
+ * see toolshed.ts), so the card can be found without storing a back-reference.
+ *
+ * Best-effort by contract: the row is already gone when this runs, so a
+ * failure here must never turn a successful deletion into a thrown error.
+ * Returns how many cards were removed (0 when there was none, or when the
+ * lookup failed).
+ */
+export async function deleteToolshedCard(title: string): Promise<number> {
+  try {
+    const { data: wikis } = await (supabase.from("wikis" as any) as any)
+      .select("id").ilike("name", "Toolshed").limit(1);
+    const wikiId = (wikis as Array<{ id: string }> | null)?.[0]?.id;
+    if (!wikiId) return 0;
+    const { data, error } = await supabase
+      .from("knowledge_entries")
+      .delete()
+      .eq("wiki_id", wikiId)
+      .eq("title", title)
+      .select("id");
+    if (error) return 0;
+    const removed = ((data as Array<{ id: string }> | null) || []).length;
+    if (removed > 0) {
+      try { window.dispatchEvent(new Event("knowledge-entries-changed")); } catch { /* no-op */ }
+    }
+    return removed;
+  } catch {
+    return 0;
+  }
+}
+
 /** Permanently delete every version of a tool by name (RLS scopes this to the
- *  signed-in user). Deleting the whole name — not one row — is the honest
- *  behaviour: superseded versions are history of the SAME tool, and leaving
- *  them behind means `list_tools` keeps surfacing a tool the user asked to be
- *  rid of. Returns the versions that were removed so the caller can report a
- *  fact rather than an assumption. */
+ *  signed-in user), and the Toolshed card that made it findable. Deleting the
+ *  whole name — not one row — is the honest behaviour: superseded versions are
+ *  history of the SAME tool, and leaving them behind means `list_tools` keeps
+ *  surfacing a tool the user asked to be rid of. Returns the versions that were
+ *  removed so the caller can report a fact rather than an assumption. */
 export async function deleteToolsByName(
   name: string,
-): Promise<{ deleted: number; versions: number[] }> {
+): Promise<{ deleted: number; versions: number[]; cardRemoved: boolean }> {
   const { data, error } = await (supabase.from("agent_tools" as any) as any)
     .delete()
     .eq("name", name)
     .select("id, version");
   if (error) throw error;
   const rows = (data as { id: string; version: number }[]) || [];
+  const cardRemoved = rows.length > 0 ? (await deleteToolshedCard(`Tool: ${name}`)) > 0 : false;
   return {
     deleted: rows.length,
     versions: rows.map((r) => Number(r.version) || 0).sort((a, b) => a - b),
+    cardRemoved,
   };
 }
 

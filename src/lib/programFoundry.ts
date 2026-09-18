@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { embedEntriesSoon } from "@/lib/knowledgeApi";
 import { buildProgramCard } from "@/lib/toolshed";
+import { deleteToolshedCard } from "@/lib/toolFoundry";
 
 /**
  * Program Foundry — lifecycle plumbing for AI-authored PROGRAMS.
@@ -306,14 +307,18 @@ export async function resolveProgramByName(name: string): Promise<AgentProgramRo
     ?? rows[0];
 }
 
-export async function deleteProgramsByName(name: string): Promise<{ deleted: number; versions: number[] }> {
+/** Delete every version of a program by name, and the Toolshed card that made
+ *  it findable — see deleteToolshedCard: a card left behind keeps the assistant
+ *  offering a program whose code is gone. */
+export async function deleteProgramsByName(name: string): Promise<{ deleted: number; versions: number[]; cardRemoved: boolean }> {
   const { data, error } = await (supabase.from("agent_programs" as any) as any)
     .delete()
     .eq("name", name)
     .select("id, version");
   if (error) throw error;
   const rows = (data as { id: string; version: number }[]) || [];
-  return { deleted: rows.length, versions: rows.map((r) => Number(r.version) || 0).sort((a, b) => a - b) };
+  const cardRemoved = rows.length > 0 ? (await deleteToolshedCard(`Program: ${name}`)) > 0 : false;
+  return { deleted: rows.length, versions: rows.map((r) => Number(r.version) || 0).sort((a, b) => a - b), cardRemoved };
 }
 
 // ── run audit (read-only; program_runs is written server-side) ───────────────

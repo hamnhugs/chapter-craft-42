@@ -8,6 +8,7 @@ import {
   approveTool,
   auditRunSettle,
   auditRunStart,
+  deleteToolsByName,
   foundryAvailable,
   latestApprovalSha,
   latestToolRun,
@@ -332,12 +333,40 @@ const ToolFoundrySettings: React.FC<ToolFoundrySettingsProps> = ({ onCapability 
     }
   };
 
+  /**
+   * Delete the TOOL, not one row of it.
+   *
+   * This used to delete by id, which was wrong twice over: the other versions
+   * of the same name stayed behind (so the tool reappeared in the list), and
+   * the Toolshed card stayed behind too (so the assistant kept rediscovering
+   * and offering a tool whose code was gone). deleteToolsByName does both, and
+   * reports what actually went.
+   */
   const remove = async (t: AgentToolRow) => {
-    if (!window.confirm(`Delete tool "${t.name}" (v${t.version}) permanently?`)) return;
+    const versions = tools.filter((x) => x.name === t.name).length;
+    const extra = versions > 1 ? ` This removes all ${versions} versions of it.` : "";
+    if (!window.confirm(`Delete tool "${t.name}" permanently?${extra} This cannot be undone.`)) return;
+    try {
+      const { deleted, cardRemoved } = await deleteToolsByName(t.name);
+      if (deleted === 0) {
+        toast.error(`"${t.name}" was not deleted — nothing matched it.`);
+        return;
+      }
+      toast.success(`"${t.name}" deleted — ${deleted} version${deleted === 1 ? "" : "s"}${cardRemoved ? " and its Toolshed card" : ""}`);
+      void refresh();
+    } catch (e) {
+      toast.error(String((e as Error)?.message || e));
+    }
+  };
+
+  /** Discard ONE draft. The only case where the other versions of the name
+   *  must survive — a rejected draft is not a decision about the live tool. */
+  const discard = async (t: AgentToolRow) => {
+    if (!window.confirm(`Discard the unapproved draft of "${t.name}" (v${t.version})?`)) return;
     try {
       const { error } = await (supabase.from("agent_tools" as any) as any).delete().eq("id", t.id);
       if (error) throw error;
-      toast.success(`"${t.name}" deleted`);
+      toast.success(`Draft of "${t.name}" discarded`);
       void refresh();
     } catch (e) {
       toast.error(String((e as Error)?.message || e));
@@ -637,7 +666,10 @@ const ToolFoundrySettings: React.FC<ToolFoundrySettingsProps> = ({ onCapability 
           </p>
           <ul className="flex flex-col gap-2">
             {tampered.map((t) => renderRow(t, (
-              <button onClick={() => setStatus(t, "disabled")} className="text-[10px] font-bold uppercase tracking-widest text-destructive hover:underline">Disable</button>
+              <div className="flex items-center gap-2">
+                <button onClick={() => void setStatus(t, "disabled")} className="text-[10px] font-bold uppercase tracking-widest text-destructive hover:underline">Disable</button>
+                <button onClick={() => void remove(t)} className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant hover:text-destructive">Delete</button>
+              </div>
             )))}
           </ul>
         </div>
@@ -676,7 +708,7 @@ const ToolFoundrySettings: React.FC<ToolFoundrySettingsProps> = ({ onCapability 
                 >
                   {busy === t.id ? "…" : "Approve"}
                 </button>
-                <button onClick={() => void remove(t)} className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant hover:text-destructive">Discard</button>
+                <button onClick={() => void discard(t)} className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant hover:text-destructive">Discard</button>
               </div>
             )))}
           </ul>
