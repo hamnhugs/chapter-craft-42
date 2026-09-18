@@ -1,4 +1,4 @@
-import React, { useCallback, useSyncExternalStore } from "react";
+import React, { useCallback, useEffect, useSyncExternalStore } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { usePromptPresets } from "@/hooks/usePromptPresets";
 import { turnPromptStore, type TurnPromptSelection } from "@/lib/promptRouting";
@@ -32,8 +32,10 @@ const PromptSwitcher: React.FC<{ onManage: () => void }> = ({ onManage }) => {
   const { user } = useAuth();
   const { presets } = usePromptPresets();
 
-  // Idempotent per uid; cheap enough to call on every render.
-  turnPromptStore.init(user?.id ?? null);
+  // In an effect, never during render: init() notifies subscribers, and a
+  // store notification raised while React is rendering schedules an update
+  // from inside a render pass. Same shape as bookContextStore's callers.
+  useEffect(() => { turnPromptStore.init(user?.id ?? null); }, [user?.id]);
   const selection = useSyncExternalStore(
     useCallback((cb) => turnPromptStore.subscribe(cb), []),
     () => turnPromptStore.get(),

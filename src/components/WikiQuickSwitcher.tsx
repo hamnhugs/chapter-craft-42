@@ -51,7 +51,10 @@ const WikiQuickSwitcher: React.FC = () => {
   // WITH; prompts are what it is thinking AS, so they belong on the same
   // keystroke. Pin lives in the session store (see promptRouting.ts) so the
   // choice survives onto hands-free turns, which never touch the composer.
-  turnPromptStore.init(user?.id ?? null);
+  // In an effect, never during render: init() notifies subscribers, and a
+  // store notification raised while React is rendering schedules an update
+  // from inside a render pass. Same shape as bookContextStore's callers.
+  useEffect(() => { turnPromptStore.init(user?.id ?? null); }, [user?.id]);
   const promptSelection = useSyncExternalStore(
     useCallback((cb: () => void) => turnPromptStore.subscribe(cb), []),
     () => turnPromptStore.get(),
