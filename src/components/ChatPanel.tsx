@@ -44,6 +44,8 @@ import { bookContextStore, selectContextBooks } from "@/lib/chatBooks";
 import { focusBookId } from "@/lib/counselFocus";
 import BookContextPicker from "@/components/BookContextPicker";
 import CounselToolsSheet from "@/components/CounselToolsSheet";
+import BookWorm from "@/components/BookWorm";
+import { useBookWorm } from "@/hooks/useBookWorm";
 import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations, isSearchRateLimited } from "@/lib/chatTools";
 import { useDownloadableTtsId, downloadTtsAudio } from "@/lib/ttsAudioCache";
 import { fileToDownscaledDataUrl, isAcceptedImage, uploadChatImage, registerUploadedImage, removeUploadedChatImage, type PendingChatImage } from "@/lib/imageUpload";
@@ -302,6 +304,22 @@ const ChatPanel: React.FC = () => {
       const base = inputBeforeDictationRef.current;
       setInput((base ? base + " " : "") + text);
     },
+  });
+
+  // The BookWorm. Every signal it reads is state this panel already had; the
+  // derivation, the timers and the discourse-boundary edge detection all live
+  // in the hook. See src/lib/sprite/wormAnimator.ts for why it stops moving.
+  const lastMsg = messages[messages.length - 1];
+  const worm = useBookWorm({
+    isLoading,
+    lastId: lastMsg?.id,
+    lastRole: lastMsg?.role,
+    lastText: lastMsg?.content || "",
+    input,
+    speakingId,
+    speakChunk: speakProgress?.index ?? null,
+    listening: handsFree.state === "listening" || dictation.isListening,
+    working: deepSearching || pendingSearchCount > 0,
   });
   const handleMicToggle = () => {
     if (!dictation.supported) { toast.error("Voice input not supported in this browser."); return; }
@@ -1037,7 +1055,16 @@ const ChatPanel: React.FC = () => {
       <div className="sr-only" aria-live="polite" aria-atomic="false">{srAnnounce}</div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-hidden relative">
+        {/* The BookWorm sits on the floor of the transcript, above the
+            composer and below the text. `relative` on the parent is what it
+            anchors to; pointer-events are off inside the component, so it can
+            never eat a tap meant for a bubble behind it. */}
+        {worm.enabled && (
+          <div className="absolute bottom-0 right-1 z-10 pointer-events-none select-none">
+            <BookWorm ref={worm.ref} mood={worm.mood} voiceSource={worm.voiceSource} size={64} className="w-[52px] sm:w-16 h-auto" />
+          </div>
+        )}
         <div ref={messagesContainerRef} role="log" aria-label="Conversation with The Librarian" aria-live="off" onScroll={() => { if (Date.now() >= programmaticScrollUntilRef.current) lastTranscriptInteractionRef.current = Date.now(); }} onPointerDown={() => { lastTranscriptInteractionRef.current = Date.now(); }} onWheel={() => { lastTranscriptInteractionRef.current = Date.now(); }} onTouchMove={() => { lastTranscriptInteractionRef.current = Date.now(); }} className="h-full overflow-auto px-4 py-6 space-y-6 hide-scrollbar [overflow-anchor:none]">
 
         {messages.length > 0 && hasEarlier && (
@@ -1870,6 +1897,8 @@ const ChatPanel: React.FC = () => {
         onManagePrompts={() => openSettings("prompts")}
         onOpenSettings={() => openSettings()}
         canClear={messages.length > 0}
+        wormEnabled={worm.enabled}
+        onToggleWorm={() => worm.setEnabled(!worm.enabled)}
         onClear={() => { stopSpeaking(); clearChat(); }}
       />
     </div>

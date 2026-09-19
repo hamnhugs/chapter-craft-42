@@ -1,0 +1,610 @@
+import { describe, it, expect } from "vitest";
+import { readFileSync } from "fs";
+import { resolve } from "path";
+import {
+  poseWorm,
+  REST_PARAMS,
+  SHAPE_COUNT,
+  VIEW_H,
+  VIEW_W,
+  type WormParams,
+} from "@/lib/sprite/wormGeometry";
+import { WormAnimator, type Mood } from "@/lib/sprite/wormAnimator";
+import { resolveWormMood, CHEER_MS, OOPS_MS, SLEEP_MS, WATCH_MS, type MoodSignals } from "@/lib/sprite/wormMood";
+
+/**
+ * The BookWorm — the companion sprite in Counsel.
+ *
+ * WHAT THIS PROTECTS. Four of these are regressions for defects that actually
+ * happened while building it, and they are the reason this file exists rather
+ * than a smoke test:
+ *
+ *   1. THE SPRINGS EXPLODED. Semi-implicit Euler on a spring diverges once
+ *      dt > 2 / (w * (z + sqrt(z^2+1))). For the gaze spring (k=2600) that
+ *      threshold is 16.2ms and a 60fps frame is 16.67ms — so it was unstable on
+ *      every single frame, and `lookX` reached 6e11 within a few seconds. It
+ *      was invisible in a filmstrip because a pupil offset that large clamps.
+ *      Caught only by asserting the animator comes to rest. Hence "settles".
+ *
+ *   2. IT NEVER STOPPED MOVING. WCAG 2.2 SC 2.2.2 (Level A) requires a
+ *      mechanism to pause, stop or hide motion that starts automatically, runs
+ *      past five seconds and sits beside other content. It is a
+ *      NON-INTERFERENCE criterion: failing it fails the whole page, not just
+ *      this corner. The worm's conformance rests on coming to a complete stop
+ *      inside that window on its own. If a future mood table entry, oscillator
+ *      or impulse breaks that, this suite fails loudly.
+ *
+ *   3. THE SHAPE LIST HAS TO BE FIXED-LENGTH. BookWorm.tsx builds its SVG once
+ *      and then writes attributes onto element refs by index at 60fps. If
+ *      poseWorm ever emits a different count, order or kind for some parameter
+ *      combination, the component silently paints a circle's radius onto an
+ *      ellipse and the face falls apart. The contract is asserted here because
+ *      it cannot be asserted at the call site.
+ *
+ *   4. THE VOICE TAP CAN SILENCE THE APP. createMediaElementSource REROUTES an
+ *      element: from that moment its audio reaches the speakers only through
+ *      the graph you built. If the destination connect is moved after anything
+ *      that can throw, a failure there makes Counsel permanently mute — far
+ *      worse than a still mouth. The connect ORDER is load-bearing.
+ *
+ * Style follows counselComposer.test.ts: pure logic is exercised directly, and
+ * the structural invariants of the component are source assertions, because the
+ * component needs a DOM, an AudioContext and rAF to mount.
+ */
+
+const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
+const stripComments = (s: string): string =>
+  s.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:/\\])\/\/[^\n]*/gm, "$1");
+
+const COMPONENT = stripComments(read("src/components/BookWorm.tsx"));
+const TAP = stripComments(read("src/lib/sprite/voiceTap.ts"));
+const READ_ALOUD = stripComments(read("src/hooks/useReadAloud.ts"));
+const PANEL = stripComments(read("src/components/ChatPanel.tsx"));
+const SHEET = stripComments(read("src/components/CounselToolsSheet.tsx"));
+
+const ALL_MOODS: Mood[] = ["sleep", "idle", "watch", "listen", "think", "read", "speak", "cheer", "oops"];
+
+/** A fixed stream, so a failure means the animator changed, not the dice. */
+const seeded = (s: number) => () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+
+const run = (a: WormAnimator, seconds: number, each?: (p: WormParams, t: number) => void) => {
+  let p = a.step(16.67);
+  for (let i = 1; i < Math.round(seconds * 60); i++) {
+    p = a.step(16.67);
+    each?.(p, i / 60);
+  }
+  return p;
+};
+
+describe("the shape list is a fixed-length contract, not a suggestion", () => {
+  // BookWorm.tsx addresses elements by index forever after mount.
+  const wild: Partial<WormParams>[] = [
+    {},
+    { curl: 3.6, stretch: 1.6, girth: 1.2 },
+    { lidL: 1, lidR: 1, mouthOpen: 1, glasses: 0, glint: 1 },
+    { lidL: -0.4, lidR: 0.5, mouthSmile: -1, mouthWide: -1, browL: 0.8 },
+    { baseAngle: 0, curl: -2, stretch: 0.55, mouthWide: 1, phase: 99 },
+  ];
+
+  it("always emits exactly SHAPE_COUNT shapes", () => {
+    for (const w of wild) {
+      expect(poseWorm({ ...REST_PARAMS, ...w }).shapes.length).toBe(SHAPE_COUNT);
+    }
+  });
+
+  it("keeps keys and element kinds identical in the same order", () => {
+    const base = poseWorm(REST_PARAMS).shapes;
+    for (const w of wild) {
+      const other = poseWorm({ ...REST_PARAMS, ...w }).shapes;
+      expect(other.map((s) => s.key)).toEqual(base.map((s) => s.key));
+      expect(other.map((s) => s.k)).toEqual(base.map((s) => s.k));
+    }
+  });
+
+  it("gives every shape a unique key", () => {
+    const keys = poseWorm(REST_PARAMS).shapes.map((s) => s.key);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("never emits NaN, even for parameters no mood produces", () => {
+    for (const w of wild) {
+      for (const s of poseWorm({ ...REST_PARAMS, ...w }).shapes) {
+        const nums = Object.values(s).filter((v) => typeof v === "number") as number[];
+        for (const n of nums) expect(Number.isFinite(n)).toBe(true);
+        if (s.k === "path") expect(s.d).not.toMatch(/NaN|Infinity|undefined/);
+      }
+    }
+  });
+});
+
+describe("the body is a body", () => {
+  it("anchors the tail and moves the head, not the other way round", () => {
+    // The worm is rooted to a floor. If the tail drifts it reads as sliding.
+    const a = poseWorm(REST_PARAMS);
+    // Note the parameters: curl and stretch push the head in OPPOSITE
+    // directions along the chord, and at (2.2, 1.3) they very nearly cancel —
+    // the first version of this test asserted on that pair and measured a 2px
+    // move. Leaning the whole body is the unambiguous case.
+    const b = poseWorm({ ...REST_PARAMS, baseAngle: -Math.PI / 2 + 0.8, curl: 1.5 });
+    expect(a.spine[0]).toEqual(b.spine[0]);
+    expect(Math.hypot(a.head.p.x - b.head.p.x, a.head.p.y - b.head.p.y)).toBeGreaterThan(10);
+  });
+
+  it("conserves volume: a stretched worm is a thinner worm", () => {
+    // Without this, stretch reads as the whole creature scaling up, which is
+    // the commonest tell of fake squash-and-stretch.
+    const tall = poseWorm({ ...REST_PARAMS, stretch: 1.4, curl: 0 });
+    const squat = poseWorm({ ...REST_PARAMS, stretch: 0.7, curl: 0 });
+    expect(tall.head.r).toBeLessThan(squat.head.r);
+  });
+
+  it("keeps the head attached to the neck at every curl", () => {
+    // A gap between the two shapes reads as a severed head.
+    for (const curl of [-2, -0.5, 0, 1.2, 2.4, 3.6]) {
+      const p = poseWorm({ ...REST_PARAMS, curl });
+      const neck = p.spine[p.spine.length - 1];
+      const gap = Math.hypot(p.head.p.x - neck.x, p.head.p.y - neck.y);
+      expect(gap).toBeLessThan(p.head.r);
+    }
+  });
+
+  it("stays inside its own viewBox however far it coils", () => {
+    // The coiled moods threw the head clean out of frame until `baseAngle`
+    // became the tail-to-head CHORD rather than the tail's own tangent.
+    for (const curl of [-1.2, 0, 1.5, 2.4, 3.4]) {
+      for (const stretch of [0.8, 1, 1.3]) {
+        const p = poseWorm({ ...REST_PARAMS, curl, stretch });
+        expect(p.head.p.x).toBeGreaterThan(0);
+        expect(p.head.p.x).toBeLessThan(VIEW_W);
+        expect(p.head.p.y).toBeGreaterThan(0);
+        expect(p.head.p.y).toBeLessThan(VIEH_OR_H());
+      }
+    }
+    function VIEH_OR_H() {
+      return VIEW_H;
+    }
+  });
+
+  it("closes the eye into a lash line rather than a white sliver", () => {
+    const open = poseWorm(REST_PARAMS).shapes;
+    const shut = poseWorm({ ...REST_PARAMS, lidL: 1, lidR: 1 }).shapes;
+    const at = (list: typeof open, key: string) => list.find((s) => s.key === key)!;
+    expect(at(open, "lashL").op).toBeLessThan(0.05);
+    expect(at(shut, "lashL").op).toBeGreaterThan(0.95);
+    expect(at(shut, "eyeL").op).toBeLessThan(0.05);
+    expect(at(shut, "pupilL").op).toBeLessThan(0.05);
+  });
+
+  it("shrinks the pupil as the eye widens, not the reverse", () => {
+    // A startled eye is mostly white. Scaling the pupil WITH the opening makes
+    // a wide eye read merely as a bigger eye.
+    const wide = poseWorm({ ...REST_PARAMS, lidL: -0.4 }).shapes.find((s) => s.key === "pupilL")!;
+    const squint = poseWorm({ ...REST_PARAMS, lidL: 0.6 }).shapes.find((s) => s.key === "pupilL")!;
+    if (wide.k !== "circle" || squint.k !== "circle") throw new Error("pupil must stay a circle");
+    expect(wide.r).toBeLessThan(squint.r);
+  });
+});
+
+describe("it comes to a complete stop — WCAG 2.2 SC 2.2.2", () => {
+  // See note 2 at the top. This is the conformance story for the whole feature.
+  it.each(ALL_MOODS)("settles within five seconds: %s", (mood) => {
+    const a = new WormAnimator({ rng: seeded(11), mood });
+    a.pop(1);
+    a.glint();
+    a.clause();
+    let settledAt = -1;
+    for (let i = 0; i < 60 * 12; i++) {
+      a.step(16.67);
+      if (settledAt < 0 && a.isSettled()) settledAt = i / 60;
+    }
+    expect(settledAt).toBeGreaterThan(0);
+    expect(settledAt).toBeLessThanOrEqual(5);
+  });
+
+  it("emits identical numbers frame after frame once settled", () => {
+    // If a settled worm still varies, the host's loop can never stop.
+    const a = new WormAnimator({ rng: seeded(3), mood: "idle" });
+    run(a, 8);
+    const p1 = a.step(16.67);
+    const p2 = a.step(16.67);
+    for (const k of Object.keys(p1) as (keyof WormParams)[]) {
+      expect(Math.abs(p1[k] - p2[k])).toBeLessThan(1e-6);
+    }
+  });
+
+  it("stops blinking once settled — a still drawing has still eyes", () => {
+    const a = new WormAnimator({ rng: seeded(5), mood: "idle" });
+    run(a, 7);
+    let moved = 0;
+    run(a, 6, (p) => {
+      if (p.lidL > 0.02) moved++;
+    });
+    expect(moved).toBe(0);
+  });
+
+  it("wakes again on the next conversational beat", () => {
+    const a = new WormAnimator({ rng: seeded(9), mood: "idle" });
+    run(a, 8);
+    expect(a.isSettled()).toBe(true);
+    a.topicChange();
+    a.step(16.67);
+    expect(a.isSettled()).toBe(false);
+  });
+
+  it("goes still almost at once under reduced motion", () => {
+    const a = new WormAnimator({ rng: seeded(2), mood: "idle", reduced: true });
+    a.setMood("cheer");
+    a.pop(1);
+    let settledAt = -1;
+    for (let i = 0; i < 60 * 6; i++) {
+      a.step(16.67);
+      if (settledAt < 0 && a.isSettled()) settledAt = i / 60;
+    }
+    expect(settledAt).toBeGreaterThan(0);
+    expect(settledAt).toBeLessThan(3);
+  });
+
+  it("runs no oscillator at all under reduced motion", () => {
+    const a = new WormAnimator({ rng: seeded(4), mood: "speak", reduced: true });
+    a.setVoice(1, 1);
+    let jaw = 0;
+    let wave = 0;
+    run(a, 4, (p) => {
+      jaw = Math.max(jaw, p.mouthOpen);
+      wave = Math.max(wave, Math.abs(p.wave));
+    });
+    expect(jaw).toBeLessThan(0.02);
+    expect(wave).toBeLessThan(0.02);
+  });
+});
+
+describe("the springs are numerically stable", () => {
+  // Regression for note 1: the gaze spring diverged at exactly 60fps.
+  it("never diverges at any plausible frame time", () => {
+    for (const dt of [8, 16.67, 20, 33.3, 50, 120, 400]) {
+      const a = new WormAnimator({ rng: seeded(13), mood: "idle" });
+      for (let i = 0; i < 400; i++) {
+        const p = a.step(dt);
+        a.setMood(i % 40 === 0 ? "think" : i % 23 === 0 ? "cheer" : "idle");
+        for (const k of Object.keys(p) as (keyof WormParams)[]) {
+          expect(Number.isFinite(p[k])).toBe(true);
+        }
+        expect(Math.abs(p.lookX)).toBeLessThanOrEqual(1.01);
+        expect(Math.abs(p.lookY)).toBeLessThanOrEqual(1.01);
+        expect(p.stretch).toBeLessThan(2);
+        expect(p.stretch).toBeGreaterThan(0.4);
+      }
+    }
+  });
+
+  it("survives a backgrounded tab handing it a huge dt", () => {
+    const a = new WormAnimator({ rng: seeded(17), mood: "think" });
+    a.step(30_000);
+    const p = a.step(16.67);
+    for (const k of Object.keys(p) as (keyof WormParams)[]) expect(Number.isFinite(p[k])).toBe(true);
+  });
+});
+
+describe("the idle behaviour is the measured kind", () => {
+  it("blinks least while reading and most while speaking", () => {
+    // Bentivoglio et al. 1997: 17/min at rest, 26 in conversation, 4.5 reading.
+    // Reproducing that ordering is what stops the face looking mechanical.
+    const count = (mood: Mood) => {
+      const a = new WormAnimator({ rng: seeded(29), mood });
+      let blinks = 0;
+      let wasShut = false;
+      for (let i = 0; i < 60 * 60; i++) {
+        // Keep the motion budget topped up, or it settles and stops blinking.
+        if (i % 30 === 0) a.bump();
+        const p = a.step(16.67);
+        const shut = p.lidL > 0.8;
+        if (shut && !wasShut) blinks++;
+        wasShut = shut;
+      }
+      return blinks;
+    };
+    const reading = count("read");
+    const idle = count("idle");
+    const speaking = count("speak");
+    expect(reading).toBeLessThan(idle);
+    expect(idle).toBeLessThan(speaking);
+    expect(reading).toBeGreaterThan(0);
+  });
+
+  it("does not blink on a metronome", () => {
+    // Evenly-spaced blinking is the single clearest tell that a face is code.
+    // Inter-blink intervals in people are log-normal (Bentivoglio; Cruz 2010),
+    // not uniform and not Poisson.
+    const a = new WormAnimator({ rng: seeded(31), mood: "idle" });
+    const gaps: number[] = [];
+    let lastAt = 0;
+    let wasShut = false;
+    for (let i = 0; i < 60 * 180; i++) {
+      if (i % 30 === 0) a.bump();
+      const p = a.step(16.67);
+      const shut = p.lidL > 0.8;
+      if (shut && !wasShut) {
+        if (lastAt) gaps.push((i - lastAt) / 60);
+        lastAt = i;
+      }
+      wasShut = shut;
+    }
+    expect(gaps.length).toBeGreaterThan(8);
+    const mean = gaps.reduce((s, g) => s + g, 0) / gaps.length;
+    const sd = Math.sqrt(gaps.reduce((s, g) => s + (g - mean) ** 2, 0) / gaps.length);
+    // Right-skewed with a real tail: a metronome would have sd near zero.
+    expect(sd / mean).toBeGreaterThan(0.25);
+    expect(Math.max(...gaps)).toBeGreaterThan(mean);
+  });
+
+  it("blinks just after a clause, and later after a topic change", () => {
+    // Hömke et al. put conversational blinks at a median +20ms from the clause
+    // end; Nakano et al. put the first blink after a topic change at 400-600ms.
+    // They are different rules and the worm uses both.
+    const firstBlink = (fire: (a: WormAnimator) => void) => {
+      const a = new WormAnimator({ rng: seeded(41), mood: "speak" });
+      fire(a);
+      for (let i = 0; i < 60 * 2; i++) {
+        if (a.step(16.67).lidL > 0.5) return i / 60;
+      }
+      return Infinity;
+    };
+    const clauseAt = firstBlink((a) => a.clause());
+    const topicAt = firstBlink((a) => a.topicChange());
+    expect(clauseAt).toBeLessThan(0.2);
+    expect(topicAt).toBeGreaterThan(0.35);
+    expect(topicAt).toBeLessThan(0.85);
+  });
+
+  it("anticipates before it pops — the body compresses first", () => {
+    // A spring cannot do this: its nature is to move toward its target. The
+    // anticipation is an authored curve, which is why impulses exist.
+    const a = new WormAnimator({ rng: seeded(43), mood: "idle" });
+    const rest = a.step(16.67).stretch;
+    a.pop(1);
+    let low = Infinity;
+    let high = -Infinity;
+    let lowAt = 0;
+    let highAt = 0;
+    run(a, 0.8, (p, t) => {
+      if (p.stretch < low) { low = p.stretch; lowAt = t; }
+      if (p.stretch > high) { high = p.stretch; highAt = t; }
+    });
+    expect(low).toBeLessThan(rest - 0.03);
+    expect(high).toBeGreaterThan(rest + 0.1);
+    expect(lowAt).toBeLessThan(highAt);
+  });
+
+  it("changes the wave phase smoothly when the rate changes", () => {
+    // Sampling sin(t * rate) instead of integrating looks identical until a
+    // rate changes, at which point the phase jumps and the whole body snaps.
+    const a = new WormAnimator({ rng: seeded(47), mood: "idle" });
+    run(a, 2);
+    let prev = a.step(16.67).phase;
+    a.setMood("speak");
+    let worst = 0;
+    run(a, 2, (p) => {
+      let d = p.phase - prev;
+      if (d < -Math.PI) d += Math.PI * 2;
+      worst = Math.max(worst, Math.abs(d));
+      prev = p.phase;
+    });
+    expect(worst).toBeLessThan(0.6);
+  });
+
+  it("opens the lid more slowly than it closes it", () => {
+    // Kwon et al. 2013: the opening phase runs 2-3x the closing phase. A
+    // symmetric blink reads as a dropped frame.
+    const a = new WormAnimator({ rng: seeded(53), mood: "idle" });
+    a.blinkAfter(0.01);
+    let closing = 0;
+    let opening = 0;
+    let prev = 0;
+    run(a, 1.2, (p) => {
+      if (p.lidL > prev + 1e-6) closing++;
+      else if (p.lidL < prev - 1e-6 && p.lidL > 0.001) opening++;
+      prev = p.lidL;
+    });
+    expect(closing).toBeGreaterThan(0);
+    expect(opening).toBeGreaterThan(closing * 1.5);
+  });
+
+  it("gives its idle oscillators incommensurate periods, so it never loops", () => {
+    // Live2D's trick: no two periods share a rational ratio, so the
+    // superposition has no visible repeat. Free aliveness.
+    const SRC = stripComments(read("src/lib/sprite/wormAnimator.ts"));
+    expect(SRC).toContain("SWAY_A_SEC = 6.5345");
+    expect(SRC).toContain("SWAY_B_SEC = 3.5345");
+    expect(SRC).toMatch(/breathSec: 4\.2345/);
+  });
+});
+
+describe("the mood ladder", () => {
+  const base: MoodSignals = {
+    speaking: false,
+    listening: false,
+    thinking: false,
+    streamingText: false,
+    failed: false,
+    typing: false,
+    sinceTypedMs: 1e9,
+    sinceDoneMs: 1e9,
+    idleMs: 0,
+  };
+  const m = (o: Partial<MoodSignals>) => resolveWormMood({ ...base, ...o }).mood;
+
+  it("puts speech above everything — the mouth must match the audio", () => {
+    expect(m({ speaking: true, listening: true, thinking: true, failed: true })).toBe("speak");
+  });
+
+  it("puts an open microphone above thinking", () => {
+    expect(m({ listening: true, thinking: true })).toBe("listen");
+  });
+
+  it("separates waiting for a reply from reading one", () => {
+    expect(m({ thinking: true })).toBe("think");
+    expect(m({ thinking: true, streamingText: true })).toBe("read");
+  });
+
+  it("lets a failure cancel the celebration", () => {
+    expect(m({ sinceDoneMs: 200 })).toBe("cheer");
+    expect(m({ sinceDoneMs: 200, failed: true })).toBe("oops");
+  });
+
+  it("stops celebrating, and stops sulking, on schedule", () => {
+    expect(m({ sinceDoneMs: CHEER_MS - 1 })).toBe("cheer");
+    expect(m({ sinceDoneMs: CHEER_MS + 1 })).toBe("idle");
+    expect(m({ sinceDoneMs: OOPS_MS + 1, failed: true })).toBe("idle");
+  });
+
+  it("keeps watching a moment past the last keystroke", () => {
+    // Otherwise it flicks in and out between words.
+    expect(m({ typing: true, sinceTypedMs: WATCH_MS - 1 })).toBe("watch");
+    expect(m({ typing: true, sinceTypedMs: WATCH_MS + 1 })).toBe("idle");
+  });
+
+  it("sleeps only after a long silence", () => {
+    expect(m({ idleMs: SLEEP_MS - 1 })).toBe("idle");
+    expect(m({ idleMs: SLEEP_MS })).toBe("sleep");
+  });
+
+  it("reports when to look again instead of asking to be polled", () => {
+    // A companion that needs a ticking interval just to notice it should look
+    // sleepy costs more than it gives.
+    expect(resolveWormMood({ ...base, sinceDoneMs: 500 }).recheckInMs).toBe(CHEER_MS - 500);
+    expect(resolveWormMood({ ...base, speaking: true }).recheckInMs).toBe(Infinity);
+  });
+});
+
+describe("the component is a decoration and behaves like one", () => {
+  it("is hidden from assistive tech and never takes a tap", () => {
+    // Every state it reflects is already in text elsewhere on the bar, so it
+    // must cost a screen-reader user nothing — and it sits over the transcript.
+    expect(COMPONENT).toContain('aria-hidden="true"');
+    expect(COMPONENT).toContain('focusable="false"');
+    expect(COMPONENT).toContain('pointerEvents: "none"');
+    expect(PANEL).toContain("pointer-events-none select-none");
+  });
+
+  it("stops scheduling frames when the animator settles", () => {
+    expect(COMPONENT).toMatch(/if \(a\.isSettled\(\)\) \{\s*raf\.current = null;\s*return;/);
+  });
+
+  it("stops when the tab is hidden or it scrolls out of view", () => {
+    expect(COMPONENT).toContain('document.addEventListener("visibilitychange"');
+    expect(COMPONENT).toContain("new IntersectionObserver");
+  });
+
+  it("listens for prefers-reduced-motion changing, not just its value at mount", () => {
+    // The media query only affects CSS by itself; anything driven from JS has
+    // to stop what is already in flight.
+    expect(COMPONENT).toContain('mq.addEventListener?.("change"');
+    expect(COMPONENT).toContain("setReduced(mq.matches)");
+  });
+
+  it("paints by writing attributes, never by re-rendering", () => {
+    // 35 nodes through React at 60fps is real money on a mid-range Android.
+    expect(COMPONENT).toContain("el.setAttribute");
+    expect(COMPONENT).not.toContain("useState");
+  });
+
+  it("samples the voice inside the frame, not through React state", () => {
+    expect(COMPONENT).toContain("voiceRef.current?.()");
+  });
+
+  it("ships a real control, because reduced-motion alone does not satisfy 2.2.2", () => {
+    expect(SHEET).toContain('label="Companion"');
+    expect(SHEET).toContain("wormEnabled");
+    expect(PANEL).toContain("worm.setEnabled(!worm.enabled)");
+  });
+});
+
+describe("the voice tap cannot silence the app", () => {
+  it("connects the destination before it builds anything that can throw", () => {
+    // createMediaElementSource REROUTES the element. If this order is inverted,
+    // a failure anywhere after it leaves Counsel permanently mute.
+    const src = TAP.indexOf("createMediaElementSource");
+    const dest = TAP.indexOf("source.connect(ctx.destination)");
+    const analyser = TAP.indexOf("createAnalyser");
+    expect(src).toBeGreaterThan(-1);
+    expect(dest).toBeGreaterThan(src);
+    expect(analyser).toBeGreaterThan(dest);
+  });
+
+  it("never routes the same element twice", () => {
+    // A second call on one element throws, and the element in useReadAloud is
+    // created once and reused by every session for the life of the document.
+    expect(TAP).toContain("new WeakSet<HTMLAudioElement>()");
+    expect(TAP).toContain("routed.has(el)");
+  });
+
+  it("swallows every failure — a still mouth beats no audio", () => {
+    expect(TAP).toMatch(/catch \{[\s\S]*?return false;/);
+  });
+
+  it("allocates its buffers once, not per frame", () => {
+    const readFn = TAP.slice(TAP.indexOf("export function readVoice"));
+    expect(readFn).not.toContain("new Uint8Array");
+  });
+
+  it("keeps the analysis lag low, against the stock defaults", () => {
+    // smoothingTimeConstant 0.8 is a ~75ms EMA at 60fps; with the window that
+    // is ~96ms of lag before a pixel moves. The asymmetry matters: a mouth may
+    // be ~125ms late but only ~45ms early, and Android output latency already
+    // pushes this tap toward early.
+    expect(TAP).toContain("analyser.fftSize = 1024");
+    expect(TAP).toContain("analyser.smoothingTimeConstant = 0.1");
+  });
+
+  it("is attached where the audio element is created, and nowhere else", () => {
+    expect(READ_ALOUD).toContain("attachVoiceTap(audio)");
+    expect(READ_ALOUD.split("attachVoiceTap(").length - 1).toBe(1);
+    expect(READ_ALOUD).toContain("resumeVoiceTap()");
+  });
+
+  it("falls back to a synthetic envelope when the engine cannot be analysed", () => {
+    // speechSynthesis output never enters the page's audio graph at all.
+    const HOOK = stripComments(read("src/hooks/useBookWorm.ts"));
+    expect(HOOK).toContain("readVoice() ?? syntheticVoice(");
+  });
+});
+
+describe("it does not poll", () => {
+  it("scans streamed text incrementally, not from the top on every delta", () => {
+    // This effect runs on every token. Re-matching the whole accumulated reply
+    // each time is O(n^2) on the main thread during the busiest part of a turn.
+    const HOOK = stripComments(read("src/hooks/useBookWorm.ts"));
+    expect(HOOK).toContain("sig.lastText.slice(scannedTo.current)");
+    expect(HOOK).not.toContain("sig.lastText.match(");
+  });
+
+  it("schedules one timeout at the next possible change", () => {
+    const HOOK = stripComments(read("src/hooks/useBookWorm.ts"));
+    expect(HOOK).toContain("setTimeout(evaluate");
+    expect(HOOK).not.toContain("setInterval");
+  });
+
+  it("remembers the user's choice, and survives storage being unavailable", () => {
+    const HOOK = stripComments(read("src/hooks/useBookWorm.ts"));
+    expect(HOOK).toContain('const STORAGE_KEY = "counsel_bookworm"');
+    expect(HOOK).toMatch(/localStorage\.getItem\(STORAGE_KEY\)[\s\S]{0,80}catch/);
+    expect(HOOK).toMatch(/localStorage\.setItem\(STORAGE_KEY[\s\S]{0,120}catch/);
+  });
+});
+
+describe("the geometry stays cheap", () => {
+  it("builds a pose fast enough to be free at 60fps", () => {
+    const t0 = performance.now();
+    for (let i = 0; i < 2000; i++) poseWorm({ ...REST_PARAMS, phase: i * 0.01, curl: (i % 30) / 10 });
+    const perPose = (performance.now() - t0) / 2000;
+    // A 60fps frame is 16.67ms. Generous bound: CI machines are noisy.
+    expect(perPose).toBeLessThan(1);
+  });
+
+  it("rounds its path numbers, which land in the DOM every frame", () => {
+    const d = (poseWorm(REST_PARAMS).shapes.find((s) => s.key === "body") as { d: string }).d;
+    for (const n of d.match(/-?\d+\.\d+/g) || []) {
+      expect(n.split(".")[1].length).toBeLessThanOrEqual(2);
+    }
+  });
+});
