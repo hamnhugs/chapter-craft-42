@@ -77,6 +77,9 @@ const ChatPanel: React.FC = () => {
   } = useReadAloud();
   // Configured in the Settings tab; re-read here on mount (tab switches remount this panel).
   const [bargeInEnabled] = useState(() => localStorage.getItem("hands_free_barge_in") === "true");
+  // Defaults ON: the pocket screen shipped before it was a setting, so an
+  // absent key has to mean enabled or every existing user silently loses it.
+  const [pocketScreenEnabled] = useState(() => localStorage.getItem("hands_free_pocket_screen") !== "false");
   const handsFree = useHandsFree({
     onUtterance: (text) => sendMessage(text, { voiceMode: true, modelOverride: voiceModel || undefined }),
     // Hands-free has its own speech speed (read-aloud buttons keep ttsRate).
@@ -309,6 +312,10 @@ const ChatPanel: React.FC = () => {
   // The BookWorm. Every signal it reads is state this panel already had; the
   // derivation, the timers and the discourse-boundary edge detection all live
   // in the hook. See src/lib/sprite/wormAnimator.ts for why it stops moving.
+  // While the pocket guard is up it covers the whole screen, so the
+  // transcript's worm would be animating where nobody can see it. The pocket
+  // screen owns the visible one for as long as it is armed.
+  const [pocketArmed, setPocketArmed] = useState(false);
   const lastMsg = messages[messages.length - 1];
   const worm = useBookWorm({
     isLoading,
@@ -1060,7 +1067,7 @@ const ChatPanel: React.FC = () => {
             composer and below the text. `relative` on the parent is what it
             anchors to; pointer-events are off inside the component, so it can
             never eat a tap meant for a bubble behind it. */}
-        {worm.enabled && (
+        {worm.enabled && !pocketArmed && (
           <div className="absolute bottom-0 right-1 z-10 pointer-events-none select-none">
             <BookWorm ref={worm.ref} mood={worm.mood} voiceSource={worm.voiceSource} onPet={worm.onPet} size={64} className="w-[52px] sm:w-16 h-auto" />
           </div>
@@ -1450,7 +1457,14 @@ const ChatPanel: React.FC = () => {
       )}
 
       {/* Pocket screen: hands-free touch guard on phones (arms after idle) */}
-      <PocketScreen active={handsFree.active} state={handsFree.state} />
+      <PocketScreen
+          active={handsFree.active && pocketScreenEnabled}
+          state={handsFree.state}
+          wormEnabled={worm.enabled}
+          voiceSource={worm.voiceSource}
+          speakChunk={speakProgress?.index ?? null}
+          onArmedChange={setPocketArmed}
+        />
 
       {/* Book-context picker (Books button + shelf "Chat with this shelf") */}
       <BookContextPicker open={booksPickerOpen} onOpenChange={setBooksPickerOpen} />

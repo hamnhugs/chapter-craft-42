@@ -52,13 +52,18 @@ const INK: Record<Ink, string> = {
   ring: "var(--worm-dark, #33604B)",
   eyeWhite: "var(--worm-eye, #FBFDFB)",
   pupil: "var(--worm-pupil, #1A241E)",
-  spec: "var(--worm-eye, #FBFDFB)",
   mouth: "var(--worm-mouth, #2B1A22)",
   tongue: "var(--worm-tongue, #D98099)",
-  brow: "var(--worm-pupil, #1A241E)",
   glass: "var(--worm-eye, #FBFDFB)",
-  frame: "var(--worm-pupil, #1A241E)",
-  shadow: "var(--worm-dark, #33604B)",
+  // These four share a value by default but get their own escape hatch,
+  // because on a black ground the defaults collapse: the catchlight vanishes
+  // into the eye it sits on, the glasses and brows vanish into the pupil they
+  // are drawn with, and a contact shadow is a smudge under a creature that is
+  // not standing on anything. The pocket screen overrides exactly these.
+  spec: "var(--worm-spec, var(--worm-eye, #FBFDFB))",
+  brow: "var(--worm-brow, var(--worm-pupil, #1A241E))",
+  frame: "var(--worm-frame, var(--worm-pupil, #1A241E))",
+  shadow: "var(--worm-shadow, var(--worm-dark, #33604B))",
 };
 
 export interface BookWormHandle {

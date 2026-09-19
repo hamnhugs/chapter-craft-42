@@ -62,6 +62,8 @@ const TAP = stripComments(read("src/lib/sprite/voiceTap.ts"));
 const READ_ALOUD = stripComments(read("src/hooks/useReadAloud.ts"));
 const PANEL = stripComments(read("src/components/ChatPanel.tsx"));
 const SHEET = stripComments(read("src/components/CounselToolsSheet.tsx"));
+const POCKET = stripComments(read("src/components/PocketScreen.tsx"));
+const SETTINGS = stripComments(read("src/components/SettingsPanel.tsx"));
 
 const ALL_MOODS: Mood[] = ["sleep", "idle", "watch", "listen", "think", "read", "speak", "cheer", "oops"];
 
@@ -730,6 +732,102 @@ describe("the browser voice drives the mouth from word events", () => {
     expect(READ_ALOUD).toContain("u.onboundary = (e: SpeechSynthesisEvent)");
     expect(READ_ALOUD).toContain("noteWordBoundary(e.charLength)");
     expect(READ_ALOUD).toMatch(/if \(e\.name === "sentence"\) return;/);
+  });
+});
+
+
+describe("it shows up on the pocket screen too", () => {
+  // The hands-free guard is a near-black full-screen overlay that arms after
+  // 12s untouched, for a phone sitting in a pocket with the mic live. Adding a
+  // character to it is only defensible if it respects what that screen is for.
+
+  it("never swallows the double tap that dismisses the guard", () => {
+    // THE important one. That gesture is the only way out of this overlay, and
+    // a worm that ate it would strand the user on a black screen. No `onPet`
+    // means no shape opts into hit testing at all.
+    const mount = POCKET.slice(POCKET.indexOf("<BookWorm"), POCKET.indexOf("/>", POCKET.indexOf("<BookWorm")));
+    expect(mount).not.toContain("onPet");
+    expect(POCKET).toContain('<div className="pointer-events-none"');
+  });
+
+  it("dims the creature rather than just shrinking it", () => {
+    // Full-saturation green on an overlay whose whole point is that OLED pixels
+    // are off would defeat the screen.
+    expect(POCKET).toContain("const DIM_WORM");
+    for (const v of ["--worm-body", "--worm-dark", "--worm-eye", "--worm-spec", "--worm-pupil"]) {
+      expect(POCKET).toContain(v);
+    }
+  });
+
+  it("lights the contour brighter than the fill, which is backwards on purpose", () => {
+    // On black it is the edge that describes the shape, not the mass — the
+    // inverse of the daylight scheme, where the outline is the darkest ink.
+    const alpha = (token: string) => {
+      const m = POCKET.match(new RegExp(`"${token}" as string\\]: "rgba\\([^)]*?,\\s*([0-9.]+)\\)"`));
+      if (!m) throw new Error("no " + token);
+      return Number(m[1]);
+    };
+    expect(alpha("--worm-dark")).toBeGreaterThan(alpha("--worm-body"));
+    expect(alpha("--worm-spec")).toBeGreaterThan(alpha("--worm-eye"));
+  });
+
+  it("drops the contact shadow — it is not standing on anything out there", () => {
+    expect(POCKET).toMatch(/--worm-shadow[^\n]*transparent/);
+  });
+
+  it("keeps the status glyph, which is the only explicit listening signal", () => {
+    // The worm is decorative and aria-hidden. "Is it listening to me?" is not a
+    // question to answer in mime.
+    expect(POCKET).toContain("material-symbols-outlined");
+    expect(POCKET).toMatch(/state === "listening" \? "mic"/);
+  });
+
+  it("maps every hands-free state onto a mood", () => {
+    expect(POCKET).toContain("const MOOD_FOR: Record<string, Mood>");
+    for (const k of ["listening", "thinking", "speaking"]) expect(POCKET).toContain(k + ":");
+    // `idle` is the fallback rather than a key, so an unknown state is safe.
+    expect(POCKET).toContain('MOOD_FOR[state] ?? "idle"');
+  });
+
+  it("respects the companion being switched off", () => {
+    expect(POCKET).toContain("{wormEnabled && (");
+    expect(PANEL).toContain("wormEnabled={worm.enabled}");
+  });
+
+  it("stands the transcript worm down while the guard covers it", () => {
+    // Otherwise two animators run, one of them behind an opaque overlay.
+    expect(POCKET).toContain("onArmedChange?.(guarding)");
+    expect(PANEL).toContain("onArmedChange={setPocketArmed}");
+    expect(PANEL).toContain("{worm.enabled && !pocketArmed && (");
+  });
+
+  it("still blinks at spoken clause boundaries", () => {
+    expect(POCKET).toContain("wormRef.current?.clause()");
+    expect(PANEL).toMatch(/speakChunk=\{speakProgress\?\.index \?\? null\}/);
+  });
+
+  it("can be switched off in Settings, and defaults ON", () => {
+    // The pocket screen shipped before it was a setting, so an absent key has
+    // to read as enabled or every existing user silently loses the guard.
+    expect(SETTINGS).toContain('const POCKET_SCREEN_KEY = "hands_free_pocket_screen"');
+    expect(SETTINGS).toContain('localStorage.getItem(POCKET_SCREEN_KEY) !== "false"');
+    expect(SETTINGS).toContain("localStorage.setItem(POCKET_SCREEN_KEY, String(pocketScreen))");
+    expect(SETTINGS).toContain("<FieldLabel>Pocket screen (hands-free, phones)</FieldLabel>");
+    expect(SETTINGS).toContain('ariaLabel="Enable the hands-free pocket screen"');
+  });
+
+  it("is gated on that setting where it mounts", () => {
+    expect(PANEL).toContain('localStorage.getItem("hands_free_pocket_screen") !== "false"');
+    expect(PANEL).toContain("active={handsFree.active && pocketScreenEnabled}");
+  });
+
+  it("gives the dark-ground colours their own variables", () => {
+    // On black the defaults collapse: the catchlight vanishes into the eye, the
+    // glasses and brows into the pupil they share a value with.
+    expect(COMPONENT).toContain("var(--worm-spec, var(--worm-eye");
+    expect(COMPONENT).toContain("var(--worm-brow, var(--worm-pupil");
+    expect(COMPONENT).toContain("var(--worm-frame, var(--worm-pupil");
+    expect(COMPONENT).toContain("var(--worm-shadow, var(--worm-dark");
   });
 });
 

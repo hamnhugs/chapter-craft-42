@@ -18,6 +18,7 @@ framer-motion, and no image asset.
 | `src/lib/sprite/wormMood.ts` | Pure priority ladder from conversation state to mood. |
 | `src/lib/sprite/voiceTap.ts` | `AnalyserNode` on the TTS audio element. |
 | `src/components/BookWorm.tsx` | Mounts the SVG once, then paints attributes. |
+| `src/components/PocketScreen.tsx` | The hands-free guard; hosts a dimmed second worm. |
 | `src/hooks/useBookWorm.ts` | Wires it to ChatPanel; owns all edge detection. |
 | `scripts/worm{Sheet,Film,Moods}.ts` | Offline render harnesses — the drawing loop. |
 
@@ -96,6 +97,49 @@ on Android Chrome (crbug 40715888), and absent on network voices — so if none
 has arrived in 1.5 s the envelope falls back to a free-running syllable rhythm.
 That decision is made from whether an event actually showed up, never from
 sniffing the browser.
+
+### On the pocket screen
+
+`PocketScreen` is the hands-free touch guard: a near-black full-screen overlay
+that arms after 12 s untouched, for a phone sitting in a pocket with the mic
+live. The worm appears there too, mapped straight off the hands-free FSM
+(`listening → listen`, `thinking → think`, `speaking → speak`), with the mouth
+still driven by the live voice and an acknowledgement blink at each spoken
+clause.
+
+Four things make it defensible on a screen whose entire job is to be dark and
+inert:
+
+- **It cannot eat the double tap.** No `onPet` is passed, so no shape opts into
+  hit testing and every touch reaches the overlay's own handler. That gesture is
+  the only way out of the guard; a worm that swallowed it would strand the user
+  on a black screen.
+- **It is dimmed, not merely shrunk.** `DIM_WORM` overrides the creature's CSS
+  variables down to the status glyph's register, with the **contour brighter
+  than the fill** — the inverse of the daylight scheme, because on black it is
+  the edge that describes the shape, not the mass. Nearly every pixel stays off
+  on an OLED, which is what this overlay is protecting. The contact shadow is
+  set transparent: it is not standing on anything out there.
+- **It stops.** The motion budget runs out 4.8 s after the last event, so a
+  phone in a pocket with nothing happening shows a still image with no frame
+  loop running.
+- **The glyph stays.** The worm is decorative and `aria-hidden`; the
+  mic/thinking glyph is the only explicit "is it listening to me" signal on that
+  screen, and that is not a question to answer in mime.
+
+The guard itself is now a setting — **Settings → Voice & Speech → Pocket
+screen** (`hands_free_pocket_screen`), defaulting **on**, because it shipped
+before it was a setting and an absent key has to read as enabled or existing
+users silently lose it.
+
+`PocketScreen` reports its armed state up so ChatPanel drops the transcript's
+worm while the guard is up — otherwise two animators run, one of them behind an
+opaque overlay.
+
+Four colour variables (`--worm-spec`, `--worm-brow`, `--worm-frame`,
+`--worm-shadow`) exist for exactly this: on black the defaults collapse, since
+the catchlight shares a value with the eye it sits on and the glasses and brows
+share one with the pupil.
 
 ### Tap to pet
 

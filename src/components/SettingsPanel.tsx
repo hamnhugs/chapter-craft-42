@@ -51,6 +51,9 @@ import { FIGURE_MODELS_PAID, FIGURE_MODELS_FREE, DEFAULT_FIGURE_MODEL } from "@/
 const VOICE_QUICK_SEARCH_KEY = "voice_quick_search";
 const VOICE_QUICK_SEARCH_MODEL_KEY = "voice_quick_search_model";
 const BARGE_IN_KEY = "hands_free_barge_in";
+/** The pocket screen defaults ON — it is a battery and phantom-tap guard, and
+ *  it existed before it was a setting, so absence must read as enabled. */
+const POCKET_SCREEN_KEY = "hands_free_pocket_screen";
 
 const SECTIONS = [
   { id: "models", icon: "tune", title: "AI Models & Keys" },
@@ -344,9 +347,11 @@ const SettingsPanel: React.FC = () => {
   const [voiceQuickSearch, setVoiceQuickSearch] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_KEY) === "true");
   const [voiceQuickSearchModel, setVoiceQuickSearchModel] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_MODEL_KEY) || "");
   const [bargeInEnabled, setBargeInEnabled] = useState(() => localStorage.getItem(BARGE_IN_KEY) === "true");
+  const [pocketScreen, setPocketScreen] = useState(() => localStorage.getItem(POCKET_SCREEN_KEY) !== "false");
   useEffect(() => { localStorage.setItem(VOICE_QUICK_SEARCH_KEY, String(voiceQuickSearch)); }, [voiceQuickSearch]);
   useEffect(() => { localStorage.setItem(VOICE_QUICK_SEARCH_MODEL_KEY, voiceQuickSearchModel); }, [voiceQuickSearchModel]);
   useEffect(() => { localStorage.setItem(BARGE_IN_KEY, String(bargeInEnabled)); }, [bargeInEnabled]);
+  useEffect(() => { localStorage.setItem(POCKET_SCREEN_KEY, String(pocketScreen)); }, [pocketScreen]);
 
   // Memory mode (Supabase-backed; Neuron tab re-reads on mount).
   const [memoryMode, setMemoryModeState] = useState<MemoryMode>("recording");
@@ -931,6 +936,18 @@ const SettingsPanel: React.FC = () => {
                   />
                 </div>
                 <Hint>When on, hands-free keeps listening while the assistant speaks and stops it the moment you start talking. Headphones give the most reliable results.</Hint>
+              </div>
+              <div>
+                <FieldLabel>Pocket screen (hands-free, phones)</FieldLabel>
+                <div className="mt-1.5">
+                  <ToggleRow
+                    text={pocketScreen ? "On — dims after 12s untouched, double-tap to wake" : "Off — the screen stays as it is"}
+                    checked={pocketScreen}
+                    onChange={setPocketScreen}
+                    ariaLabel="Enable the hands-free pocket screen"
+                  />
+                </div>
+                <Hint>Hands-free holds the screen awake for the mic, which leaves a bright, touch-live display in your pocket. After 12 seconds untouched this covers it with a near-black layer that swallows stray taps — the BookWorm keeps you company on it. Double-tap to get the screen back.</Hint>
               </div>
             </Section>
 
