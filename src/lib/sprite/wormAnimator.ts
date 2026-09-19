@@ -280,6 +280,11 @@ const NOD = (u: number): number => {
  *  rather than a realisation. */
 const FLASH = (u: number): number => Math.pow(1 - u, 2.2);
 
+/** Snap into the expression, then return to composure slowly. A reaction that
+ *  fades at the same rate it arrived reads as a dimmer switch rather than as
+ *  being pleased about something. */
+const DELIGHT = (u: number): number => (u < 0.12 ? u / 0.12 : Math.pow(1 - (u - 0.12) / 0.88, 1.6));
+
 /**
  * One breath, as a fraction of full inhalation, over a normalised cycle.
  *
@@ -361,7 +366,20 @@ export class WormAnimator {
   private gazeY = 0;
   private scanX = -0.8;
 
-  private impulses: { stretch: Impulse[]; tilt: Impulse[]; glint: Impulse[] } = { stretch: [], tilt: [], glint: [] };
+  private impulses: { stretch: Impulse[]; tilt: Impulse[]; glint: Impulse[]; smile: Impulse[]; lid: Impulse[] } = {
+    stretch: [],
+    tilt: [],
+    glint: [],
+    smile: [],
+    lid: [],
+  };
+
+  /** Petting, and how recently. Three quick ones in a row earn a bigger
+   *  reaction than three spread out — the difference between being greeted and
+   *  being fussed over. */
+  private petAt = -Infinity;
+  private petRun = 0;
+  private clock = 0;
 
   private voice = 0;
   private voiceTarget = 0;
@@ -437,6 +455,8 @@ export class WormAnimator {
       this.impulses.stretch.length = 0;
       this.impulses.tilt.length = 0;
       this.impulses.glint.length = 0;
+      this.impulses.smile.length = 0;
+      this.impulses.lid.length = 0;
       this.queued.length = 0;
       this.blinkT = -1;
     }
@@ -499,6 +519,31 @@ export class WormAnimator {
     this.bump();
     if (this.reduced) return;
     this.blinkAfter(0.4 + this.rng() * 0.2, HOLD_SHORT);
+  }
+
+  /**
+   * Someone touched the worm.
+   *
+   * Deliberately NOT a mood: petting is a moment, not a state, and routing it
+   * through the mood ladder would mean it outranked whatever the conversation
+   * was actually doing. It is a stack of impulses over whatever pose is
+   * current, so the worm can be delighted while still thinking.
+   */
+  pet() {
+    this.bump();
+    if (this.reduced) return;
+    // Motion triggered by interaction is SC 2.3.3 territory; under reduced
+    // motion the bump() above still wakes it from sleep, but nothing moves.
+    this.petRun = this.clock - this.petAt < 2.5 ? Math.min(this.petRun + 1, 4) : 1;
+    this.petAt = this.clock;
+    const big = this.petRun >= 3;
+
+    this.impulses.smile.push({ t: 0, dur: big ? 1.7 : 1.2, amp: big ? 0.8 : 0.55, curve: DELIGHT });
+    this.impulses.lid.push({ t: 0, dur: big ? 1.7 : 1.2, amp: big ? 0.62 : 0.45, curve: DELIGHT });
+    this.pop(big ? 1.05 : 0.55);
+    this.nod(big ? 0.6 : 0.35);
+    // A blink on contact. People blink when touched; so does this.
+    this.blinkAfter(0.04, HOLD_SHORT);
   }
 
   blinkAfter(delay: number, hold = HOLD_SHORT) {
@@ -606,6 +651,7 @@ export class WormAnimator {
    */
   step(dtMs: number): WormParams {
     const dt = clamp(dtMs, 0, 50) / 1000;
+    this.clock += dt;
     const m = MOODS[this.mood];
 
     // --- motion budget ----------------------------------------------------
@@ -714,6 +760,8 @@ export class WormAnimator {
     const impStretch = this.runImpulses(this.impulses.stretch, dt);
     const impTilt = this.runImpulses(this.impulses.tilt, dt);
     const glint = clamp(this.runImpulses(this.impulses.glint, dt), 0, 1);
+    const impSmile = this.runImpulses(this.impulses.smile, dt);
+    const impLid = this.runImpulses(this.impulses.lid, dt);
 
     // --- assemble ---------------------------------------------------------
     // Breath is centred on its own mean so the resting girth is 1 whatever the
@@ -735,7 +783,11 @@ export class WormAnimator {
     this.lag += (headState - this.lag) * clamp(dt * 11, 0, 1);
     const antennaLag = clamp((headState - this.lag) * 2.6, -0.9, 0.9);
 
-    const lid = this.sLid.x + (1 - this.sLid.x) * blinkEnv;
+    // The squint rides on top of the mood's own lids, and the blink rides on
+    // top of that — so a blink still fully closes the eye however pleased the
+    // worm currently is.
+    const squint = clamp(this.sLid.x + impLid, -0.4, 1);
+    const lid = squint + (1 - squint) * blinkEnv;
 
     // --- settle detection -------------------------------------------------
     const quiet =
@@ -745,6 +797,8 @@ export class WormAnimator {
       this.impulses.stretch.length === 0 &&
       this.impulses.tilt.length === 0 &&
       this.impulses.glint.length === 0 &&
+      this.impulses.smile.length === 0 &&
+      this.impulses.lid.length === 0 &&
       this.voice < 0.01 &&
       this.sBase.atRest(m.baseAngle) &&
       this.sCurl.atRest(m.curl) &&
@@ -774,7 +828,7 @@ export class WormAnimator {
       browL: this.sBrow.x,
       browR: this.sBrow.x,
       mouthOpen: this.sJaw.x,
-      mouthSmile: this.sSmile.x,
+      mouthSmile: clamp(this.sSmile.x + impSmile, -1, 1),
       mouthWide: this.sWide.x,
       antennaLag,
       glasses: 1,

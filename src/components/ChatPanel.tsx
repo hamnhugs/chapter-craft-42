@@ -1062,7 +1062,7 @@ const ChatPanel: React.FC = () => {
             never eat a tap meant for a bubble behind it. */}
         {worm.enabled && (
           <div className="absolute bottom-0 right-1 z-10 pointer-events-none select-none">
-            <BookWorm ref={worm.ref} mood={worm.mood} voiceSource={worm.voiceSource} size={64} className="w-[52px] sm:w-16 h-auto" />
+            <BookWorm ref={worm.ref} mood={worm.mood} voiceSource={worm.voiceSource} onPet={worm.onPet} size={64} className="w-[52px] sm:w-16 h-auto" />
           </div>
         )}
         <div ref={messagesContainerRef} role="log" aria-label="Conversation with The Librarian" aria-live="off" onScroll={() => { if (Date.now() >= programmaticScrollUntilRef.current) lastTranscriptInteractionRef.current = Date.now(); }} onPointerDown={() => { lastTranscriptInteractionRef.current = Date.now(); }} onWheel={() => { lastTranscriptInteractionRef.current = Date.now(); }} onTouchMove={() => { lastTranscriptInteractionRef.current = Date.now(); }} className="h-full overflow-auto px-4 py-6 space-y-6 hide-scrollbar [overflow-anchor:none]">

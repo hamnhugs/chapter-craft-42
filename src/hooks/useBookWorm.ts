@@ -56,6 +56,9 @@ export interface BookWormWiring {
   mood: Mood;
   ref: React.RefObject<BookWormHandle>;
   voiceSource: () => { level: number; wide: number } | null;
+  /** Passed to the component so a tap resets the idle clock. The reaction
+   *  itself lives in the animator; this is only about waking up. */
+  onPet: () => void;
   enabled: boolean;
   setEnabled: (v: boolean) => void;
 }
@@ -74,6 +77,9 @@ export function useBookWorm(sig: BookWormSignals): BookWormWiring {
   const ref = useRef<BookWormHandle>(null);
   const [enabled, setEnabledState] = useState(readEnabled);
   const [mood, setMood] = useState<Mood>("idle");
+  /** Bumped on a pet purely to re-run the mood ladder — a worm that has just
+   *  been prodded should not stay asleep until the next message. */
+  const [petNonce, setPetNonce] = useState(0);
 
   const setEnabled = useCallback((v: boolean) => {
     setEnabledState(v);
@@ -183,6 +189,11 @@ export function useBookWorm(sig: BookWormSignals): BookWormWiring {
     bump();
   }, [sig.listening, sig.speakingId]);
 
+  const onPet = useCallback(() => {
+    eventAt.current = Date.now();
+    setPetNonce((n) => n + 1);
+  }, []);
+
   // --- the ladder, re-run only when it could actually change ---------------
   const streamingText = sig.isLoading && sig.lastRole === "assistant" && sig.lastText.trim().length > 0;
 
@@ -211,7 +222,7 @@ export function useBookWorm(sig: BookWormSignals): BookWormWiring {
     return () => {
       if (timer) clearTimeout(timer);
     };
-  }, [sig.speakingId, sig.listening, sig.isLoading, streamingText, sig.input, sig.lastId]);
+  }, [sig.speakingId, sig.listening, sig.isLoading, streamingText, sig.input, sig.lastId, petNonce]);
 
   /**
    * Read the live voice, or fall back.
@@ -227,5 +238,5 @@ export function useBookWorm(sig: BookWormSignals): BookWormWiring {
     [],
   );
 
-  return { mood, ref, voiceSource, enabled, setEnabled };
+  return { mood, ref, voiceSource, onPet, enabled, setEnabled };
 }

@@ -34,7 +34,7 @@ const svg = (s: Shape): string => {
 };
 
 /** A clip is a schedule: at time t (seconds), do something. */
-type Beat = { t: number; mood?: Mood; pop?: number; nod?: number; glint?: boolean; clause?: boolean; topic?: boolean };
+type Beat = { t: number; mood?: Mood; pop?: number; nod?: number; glint?: boolean; clause?: boolean; topic?: boolean; pet?: boolean };
 interface Clip { dur: number; beats: Beat[]; voice?: (t: number) => number; reduced?: boolean }
 
 const CLIPS: Record<string, Clip> = {
@@ -70,6 +70,8 @@ const CLIPS: Record<string, Clip> = {
       return Math.pow(syl, 0.6) * phrase;
     },
   },
+  pet: { dur: 2.6, beats: [{ t: 0.05, mood: "read" }, { t: 0.45, pet: true }] },
+  fuss: { dur: 3.2, beats: [{ t: 0.05, mood: "idle" }, { t: 0.4, pet: true }, { t: 0.75, pet: true }, { t: 1.1, pet: true }] },
   wake: { dur: 3.5, beats: [{ t: 0.05, mood: "sleep" }, { t: 1.5, mood: "idle" }] },
   fail: { dur: 3.5, beats: [{ t: 0.05, mood: "think" }, { t: 1.4, mood: "oops" }, { t: 3.0, mood: "idle" }] },
   listen: { dur: 3.5, beats: [{ t: 0.05, mood: "idle" }, { t: 0.8, mood: "listen" }] },
@@ -100,6 +102,7 @@ for (let i = 0; t < clip.dur; i++, t += DT / 1000) {
     if (b.glint) anim.glint();
     if (b.clause) anim.clause();
     if (b.topic) anim.topicChange();
+    if (b.pet) anim.pet();
   }
   if (clip.voice) anim.setVoice(clip.voice(t));
   const params = anim.step(DT);

@@ -75,6 +75,54 @@ samples. `speechSynthesis` output never enters the page's audio graph at all
   mouth but 45 ms for an *early* one, and Android output latency (up to ~150 ms)
   already pushes this tap toward early.
 
+### On the browser voice, word events drive the mouth
+
+`speechSynthesis` output never enters the page's audio graph, so there is
+nothing to measure — but there *is* something to listen for. `useReadAloud` was
+binding `u.onboundary` straight to a heartbeat bump and dropping the events.
+They now feed `noteWordBoundary(charLength)`, which pins the mouth to real word
+onsets: you notice a mouth that opens at the wrong *time* long before you notice
+one making the wrong *shape*.
+
+`charLength` is the only hint the event gives about how long a word takes to
+say, so it sets how long the mouth stays busy — "a" and "extraordinarily" should
+not produce the same shape. Inside a word, a ~5.4 Hz carrier articulates the
+syllables; after it, a fast decay and then silence, which is what makes the gaps
+between words read as gaps. Sentence boundaries are skipped, or the worm would
+gape once per sentence.
+
+It degrades in one step. Boundary events are reliable on desktop Chrome, broken
+on Android Chrome (crbug 40715888), and absent on network voices — so if none
+has arrived in 1.5 s the envelope falls back to a free-running syllable rhythm.
+That decision is made from whether an event actually showed up, never from
+sniffing the browser.
+
+### Tap to pet
+
+The worm reacts to being touched: a squash, a nod, a blink on contact, and a
+brief smile-and-squint laid over whatever pose it is already in. Three taps
+inside 2.5 s earn a bigger reaction than three spread out — the difference
+between being greeted and being fussed over.
+
+Two details carry it:
+
+**It is a reaction, not a mood.** Petting is a moment. Routing it through the
+mood ladder would mean it outranked whatever the conversation was actually
+doing; as a stack of impulses, the worm can be delighted while still thinking.
+
+**Only its own ink is tappable.** The `<svg>` and its wrapper are
+`pointer-events: none` and exactly two fills — body and head — opt back in, so
+the target is the creature's silhouette rather than its bounding box. A tap one
+pixel outside goes through to the message behind it, and so does a tap on the
+eyes or glasses, which stay `none` and let the hit fall through to the head.
+This leaves a target under SC 2.5.8's 24×24, which is a deliberate trade: the
+only way to enlarge it is to start swallowing taps meant for the transcript,
+which is the worse harm and falls on everybody rather than on a hidden extra.
+
+The tap fires on **pointer-up past a movement threshold**, never on pointer-down
+— this repo has paid for that lesson once already, in the composer's prompt
+switcher, and the worm sits exactly where a thumb lands to start a scroll.
+
 > **`createMediaElementSource` reroutes the element.** From that call its audio
 > reaches the speakers only through the graph you build. `voiceTap.ts` connects
 > `ctx.destination` *first*, before the analyser exists, so a later failure
@@ -90,6 +138,7 @@ samples. `speechSynthesis` output never enters the page's audio graph at all
 | Lid phases | open 2–3× slower than close | Kwon et al. 2013, *J R Soc Interface*, 600 fps |
 | Blink at a clause end | +20–50 ms, ~15% long (≥410 ms), long ones paired with a nod | Hömke, Holler & Levinson 2017, *RLSI* 50(1) |
 | Blink after a topic change | 400–600 ms | Nakano et al. 2009, *Proc R Soc B* 276 |
+| Blink on being touched | immediate | people blink when touched; so does this |
 | Breathing | 0.24–0.31 Hz, inhale:hold:exhale ≈ 1.2:0.5:1.0 | Live2D `CubismBreath`; TalkingHead |
 | Non-looping idle | incommensurate oscillator periods (6.5345 s, 3.5345 s…) | Live2D |
 
@@ -127,9 +176,14 @@ is brutal about which moods are actually distinguishable.
 
 ## Known limitations
 
-- Amplitude-driven lip sync is **Inworld-only**. With the browser voice the
-  mouth moves on a plausible rhythm that does not match the words. At 64 px,
-  driving a 20 px mouth, this is not visible; a motionless mouth would be.
+- Amplitude-driven lip sync is **Inworld-only**. The browser voice gets
+  word-onset timing from `boundary` events instead, which is accurate in *when*
+  the mouth moves but not in *what shape* it makes — and on Android Chrome,
+  where those events are broken, it falls back to a plausible rhythm that does
+  not match the words at all. At 64 px, driving a 20 px mouth, none of this is
+  visible; a motionless mouth would be.
+- Petting has no keyboard equivalent. It is decorative and `aria-hidden`, and
+  nothing is conveyed or achieved by it, so there is nothing to miss.
 - The worm overlays the bottom-right of the transcript. It is
   `pointer-events: none` so it can never eat a tap, but it can visually overlap
   a long assistant bubble.

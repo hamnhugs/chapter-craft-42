@@ -73,6 +73,8 @@ export interface BookWormHandle {
   glint(): void;
   /** Live voice, 0..1 loudness and -1..1 vowel spread. */
   voice(level: number, wide?: number): void;
+  /** Someone touched it. */
+  pet(): void;
 }
 
 export interface BookWormProps {
@@ -88,6 +90,10 @@ export interface BookWormProps {
    * the one signal in this whole feature that cannot afford either.
    */
   voiceSource?: () => { level: number; wide: number } | null;
+  /** Called when the worm is tapped, so the host can reset its own idle clock
+   *  (a petted worm should stop being asleep). The reaction itself is handled
+   *  in here — it is animation, not application state. */
+  onPet?: () => void;
   /** Rendered width in CSS pixels. Height follows the viewBox. */
   size?: number;
   className?: string;
@@ -105,7 +111,7 @@ function readReduced(): boolean {
 }
 
 const BookWorm = React.forwardRef<BookWormHandle, BookWormProps>(function BookWorm(
-  { mood, voiceSource, size = 64, className },
+  { mood, voiceSource, onPet, size = 64, className },
   ref,
 ) {
   const nodes = useRef<(SVGElement | null)[]>([]);
@@ -206,6 +212,10 @@ const BookWorm = React.forwardRef<BookWormHandle, BookWormProps>(function BookWo
         anim.current?.setVoice(level, wide);
         if (level > 0.02) kick();
       },
+      pet: () => {
+        anim.current?.pet();
+        kick();
+      },
     }),
     [kick],
   );
@@ -272,6 +282,68 @@ const BookWorm = React.forwardRef<BookWormHandle, BookWormProps>(function BookWo
 
   useEffect(() => stop, [stop]);
 
+  /**
+   * Tap to pet.
+   *
+   * ON POINTER-UP, WITH A MOVEMENT THRESHOLD — never on pointer-down. This
+   * repo has already paid for that lesson once: the composer's prompt switcher
+   * opened on the DOWN event and fired before the finger had travelled, which
+   * is a documented defect with its own test. The worm sits at the bottom-right
+   * of the transcript, which is exactly where a thumb lands to start a scroll,
+   * so firing on down would pet it on every flick.
+   */
+  const down = useRef<{ x: number; y: number; t: number } | null>(null);
+
+  const onDown = useCallback((e: React.PointerEvent) => {
+    down.current = { x: e.clientX, y: e.clientY, t: e.timeStamp };
+  }, []);
+
+  const onUp = useCallback(
+    (e: React.PointerEvent) => {
+      const d = down.current;
+      down.current = null;
+      if (!d) return;
+      // A drag, a scroll or a long press is not a tap.
+      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 10) return;
+      if (e.timeStamp - d.t > 700) return;
+      anim.current?.pet();
+      kick();
+      onPet?.();
+    },
+    [kick, onPet],
+  );
+
+  /**
+   * Only the worm's own ink is tappable.
+   *
+   * The <svg> and its wrapper are `pointer-events: none`, and these two fills
+   * opt back in — a descendant may re-enable hit testing under a `none`
+   * ancestor. So the target is the creature's actual silhouette, not its
+   * bounding box: a tap one pixel outside the body goes straight through to the
+   * message bubble behind it, and so does a tap on the eyes or glasses, which
+   * stay `none` and let the hit fall through to the head beneath.
+   *
+   * This does leave a target under the 24x24 of SC 2.5.8, and that is a
+   * deliberate trade rather than an oversight: petting is a pure easter egg
+   * that conveys nothing and does nothing, while the only way to enlarge it is
+   * to start swallowing taps meant for the transcript — which is the worse harm
+   * of the two, and would fall on everybody rather than on a hidden extra.
+   */
+  const hit = useMemo(
+    () =>
+      onPet === undefined
+        ? undefined
+        : ({
+            style: { pointerEvents: "auto" as const, cursor: "pointer", touchAction: "manipulation" as const },
+            onPointerDown: onDown,
+            onPointerUp: onUp,
+            onPointerCancel: () => {
+              down.current = null;
+            },
+          } as const),
+    [onPet, onDown, onUp],
+  );
+
   /** Rendered once. After this the component never re-renders: `mood` changes
    *  go to the animator, not to React. */
   const initial = useMemo(() => poseWorm(REST_PARAMS).shapes, []);
@@ -298,6 +370,7 @@ const BookWorm = React.forwardRef<BookWormHandle, BookWormProps>(function BookWo
           ...(s.sw != null ? { strokeWidth: s.sw } : {}),
           ...(s.op != null ? { opacity: s.op } : {}),
           ...(s.cap ? { strokeLinecap: "round" as const, strokeLinejoin: "round" as const } : {}),
+          ...(hit && (s.key === "body" || s.key === "head") ? hit : {}),
         };
         if (s.k === "path") return <path {...common} d={s.d} />;
         if (s.k === "circle") return <circle {...common} cx={s.cx} cy={s.cy} r={s.r} />;

@@ -10,6 +10,7 @@ import {
   type WormParams,
 } from "@/lib/sprite/wormGeometry";
 import { WormAnimator, type Mood } from "@/lib/sprite/wormAnimator";
+import { noteWordBoundary, syntheticVoice, hasWordBoundaries } from "@/lib/sprite/voiceTap";
 import { resolveWormMood, CHEER_MS, OOPS_MS, SLEEP_MS, WATCH_MS, type MoodSignals } from "@/lib/sprite/wormMood";
 
 /**
@@ -192,6 +193,7 @@ describe("it comes to a complete stop — WCAG 2.2 SC 2.2.2", () => {
     a.pop(1);
     a.glint();
     a.clause();
+    a.pet();
     let settledAt = -1;
     for (let i = 0; i < 60 * 12; i++) {
       a.step(16.67);
@@ -589,6 +591,145 @@ describe("it does not poll", () => {
     expect(HOOK).toContain('const STORAGE_KEY = "counsel_bookworm"');
     expect(HOOK).toMatch(/localStorage\.getItem\(STORAGE_KEY\)[\s\S]{0,80}catch/);
     expect(HOOK).toMatch(/localStorage\.setItem\(STORAGE_KEY[\s\S]{0,120}catch/);
+  });
+});
+
+
+describe("tap to pet", () => {
+  const smileAfter = (build: (a: WormAnimator) => void, seconds: number) => {
+    const a = new WormAnimator({ rng: seeded(61), mood: "idle" });
+    a.step(16.67);
+    build(a);
+    let peak = -Infinity;
+    run(a, seconds, (p) => {
+      peak = Math.max(peak, p.mouthSmile);
+    });
+    return peak;
+  };
+
+  it("is a reaction laid over the mood, not a mood of its own", () => {
+    // Routing it through the mood ladder would mean a pet outranked whatever
+    // the conversation was actually doing.
+    const a = new WormAnimator({ rng: seeded(62), mood: "think" });
+    a.step(16.67);
+    a.pet();
+    run(a, 0.4);
+    expect(a.getMood()).toBe("think");
+  });
+
+  it("smiles and squints, then returns to composure", () => {
+    const a = new WormAnimator({ rng: seeded(63), mood: "idle" });
+    const rest = a.step(16.67);
+    a.pet();
+    let peakSmile = -Infinity;
+    let peakLid = -Infinity;
+    run(a, 0.5, (p) => {
+      peakSmile = Math.max(peakSmile, p.mouthSmile);
+      peakLid = Math.max(peakLid, p.lidL);
+    });
+    expect(peakSmile).toBeGreaterThan(rest.mouthSmile + 0.2);
+    expect(peakLid).toBeGreaterThan(0.3);
+    // ...and then lets go of it. A reaction that never resolves is a mood.
+    const after = run(a, 3);
+    expect(Math.abs(after.mouthSmile - rest.mouthSmile)).toBeLessThan(0.08)
+  });
+
+  it("reacts harder to being fussed over than to being greeted", () => {
+    const once = smileAfter((a) => a.pet(), 1);
+    const thrice = smileAfter((a) => {
+      a.pet();
+      for (let i = 0; i < 12; i++) a.step(16.67);
+      a.pet();
+      for (let i = 0; i < 12; i++) a.step(16.67);
+      a.pet();
+    }, 1);
+    expect(thrice).toBeGreaterThan(once);
+  });
+
+  it("wakes a sleeping worm even under reduced motion", () => {
+    // The reaction is suppressed, but bump() still runs — so the host's mood
+    // ladder leaves "sleep". Being unable to rouse it would be a bug, not
+    // restraint.
+    const a = new WormAnimator({ rng: seeded(64), mood: "sleep", reduced: true });
+    run(a, 6);
+    expect(a.isSettled()).toBe(true);
+    a.pet();
+    a.step(16.67);
+    expect(a.isSettled()).toBe(false);
+  });
+
+  it("moves nothing under reduced motion", () => {
+    const a = new WormAnimator({ rng: seeded(65), mood: "idle", reduced: true });
+    const before = a.step(16.67);
+    a.pet();
+    let peak = -Infinity;
+    run(a, 1, (p) => {
+      peak = Math.max(peak, p.mouthSmile);
+    });
+    expect(peak).toBeLessThanOrEqual(before.mouthSmile + 1e-6);
+  });
+
+  it("fires on pointer-UP past a movement threshold, never on pointer-down", () => {
+    // The composer's prompt switcher already shipped this bug once: it opened
+    // on the DOWN event and fired before the finger had travelled. The worm
+    // sits where a thumb lands to start a scroll, so down-to-pet would fire on
+    // every flick.
+    expect(COMPONENT).toContain("onPointerUp");
+    expect(COMPONENT).toContain("onPointerCancel");
+    expect(COMPONENT).toMatch(/Math\.hypot\(e\.clientX - d\.x, e\.clientY - d\.y\) > 10/);
+    const onDown = COMPONENT.slice(COMPONENT.indexOf("const onDown"), COMPONENT.indexOf("const onUp"));
+    expect(onDown).not.toContain("pet()");
+  });
+
+  it("makes only the worm's own ink tappable", () => {
+    // The svg stays pointer-events:none and exactly two fills opt back in, so
+    // a tap beside the worm — or on its eyes — falls through to the transcript.
+    expect(COMPONENT).toContain('pointerEvents: "none"');
+    expect(COMPONENT).toContain('pointerEvents: "auto" as const');
+    expect(COMPONENT).toMatch(/s\.key === "body" \|\| s\.key === "head"/);
+  });
+});
+
+describe("the browser voice drives the mouth from word events", () => {
+  const T = () => (typeof performance !== "undefined" ? performance.now() : Date.now()) / 1000;
+
+  it("falls back to a free-running rhythm when no word event is recent", () => {
+    // Stale by construction, so this holds whatever earlier tests did to the
+    // module's state.
+    const t0 = T();
+    let moved = 0;
+    for (let i = 0; i < 60; i++) {
+      if (syntheticVoice(t0 + 10 + i / 60).level > 0.25) moved++;
+    }
+    expect(moved).toBeGreaterThan(5);
+  });
+
+  it("opens the mouth across a word and closes it in the gap after", () => {
+    const t0 = T();
+    noteWordBoundary(4);
+    expect(hasWordBoundaries()).toBe(true);
+    // charLength 4 -> ~214ms of word; sample the middle of it, then well past.
+    expect(syntheticVoice(t0 + 0.107).level).toBeGreaterThan(0.5);
+    expect(syntheticVoice(t0 + 0.6).level).toBeLessThan(0.1);
+  });
+
+  it("keeps a long word busy longer than a short one", () => {
+    // "a" and "extraordinarily" should not produce the same shape, and
+    // charLength is the only hint the boundary event gives.
+    const short = T();
+    noteWordBoundary(1);
+    const shortLate = syntheticVoice(short + 0.3).level;
+    const long = T();
+    noteWordBoundary(14);
+    const longLate = syntheticVoice(long + 0.3).level;
+    expect(longLate).toBeGreaterThan(shortLate + 0.3);
+  });
+
+  it("is wired to the boundary event, and skips sentence boundaries", () => {
+    // A sentence boundary would gape once per sentence instead of per word.
+    expect(READ_ALOUD).toContain("u.onboundary = (e: SpeechSynthesisEvent)");
+    expect(READ_ALOUD).toContain("noteWordBoundary(e.charLength)");
+    expect(READ_ALOUD).toMatch(/if \(e\.name === "sentence"\) return;/);
   });
 });
 

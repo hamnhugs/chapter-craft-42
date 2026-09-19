@@ -8,7 +8,7 @@ import {
   completeTtsCapture,
   discardTtsCapture,
 } from "@/lib/ttsAudioCache";
-import { attachVoiceTap, resumeVoiceTap } from "@/lib/sprite/voiceTap";
+import { attachVoiceTap, noteWordBoundary, resumeVoiceTap } from "@/lib/sprite/voiceTap";
 
 // Unified read-aloud for the merged Chat ("Talk") surface.
 //
@@ -487,7 +487,15 @@ export function useReadAloud(): ReadAloudController {
             setSpeakingId(id);
             setProgress({ id, index: idx, total: chunks.length, text: chunks[idx], mode: "browser" });
           };
-          u.onboundary = bumpHeartbeat;
+          u.onboundary = (e: SpeechSynthesisEvent) => {
+            bumpHeartbeat();
+            // These word events used to be dropped on the floor. On the browser
+            // voice there is no waveform to analyse, so they are the only
+            // sync signal that exists — they drive the BookWorm's mouth.
+            // Sentence boundaries would gape once per sentence, so skip them.
+            if (e.name === "sentence") return;
+            noteWordBoundary(e.charLength);
+          };
           if (idx === chunks.length - 1) {
             const fin = () => {
               if (!live()) return;

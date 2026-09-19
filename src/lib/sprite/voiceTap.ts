@@ -175,19 +175,79 @@ export function readVoice(): VoiceReading | null {
   return { level, wide: lastWide };
 }
 
-/**
- * The fallback mouth, for when the voice cannot be analysed — the browser
- * speechSynthesis path, or a failed tap.
+/* ---------------------------------------------------------------------------
+ * The fallback mouth, for when the waveform cannot be analysed.
  *
- * Not random noise: two incommensurate sine components near 4.4Hz, which is
- * roughly the syllable rate of running English, shaped so it spends more time
- * near closed than open. It will never match the words, and at 64px, driving a
- * 20px mouth, nobody can tell. A still mouth over playing audio, on the other
- * hand, is immediately obvious.
+ * `speechSynthesis` output never enters the page's audio graph, so on that path
+ * there is nothing to measure — but there IS something to listen for. The
+ * `boundary` event fires as each word begins, and `useReadAloud` was throwing
+ * those away into a heartbeat bump. Fed through here they pin the mouth to real
+ * word onsets, which is most of what sync actually is: you notice a mouth that
+ * opens at the wrong TIME long before you notice one making the wrong SHAPE.
+ *
+ * It is not available everywhere. Boundary events are reliable on desktop
+ * Chrome and broken on Android Chrome (crbug 40715888), and network voices
+ * generally emit none at all. So this degrades in one step: word-driven when
+ * boundaries are arriving, free-running syllables when they are not, decided by
+ * whether one showed up recently rather than by sniffing the browser.
+ * ------------------------------------------------------------------------- */
+
+/** Seconds, on the same clock the caller passes to `syntheticVoice`. */
+const nowSeconds = (): number =>
+  (typeof performance !== "undefined" ? performance.now() : Date.now()) / 1000;
+
+let boundaryAt = -Infinity;
+let boundaryDur = 0.2;
+let sawBoundary = false;
+/** Past this with no word event, assume the engine does not emit them. */
+const BOUNDARY_STALE = 1.5;
+
+/**
+ * A word just started. `charLength` comes from the boundary event and is the
+ * only hint available about how long the word will take to say, so it sets how
+ * long the mouth stays busy — "a" and "extraordinarily" should not produce the
+ * same shape.
  */
-export function syntheticVoice(tSeconds: number): VoiceReading {
-  const a = Math.sin(tSeconds * 4.4 * Math.PI * 2);
-  const b = Math.sin(tSeconds * 2.7345 * Math.PI * 2 + 1.1);
+export function noteWordBoundary(charLength?: number): void {
+  boundaryAt = nowSeconds();
+  sawBoundary = true;
+  const n = typeof charLength === "number" && charLength > 0 ? charLength : 4;
+  boundaryDur = Math.min(0.42, Math.max(0.1, 0.07 + n * 0.036));
+}
+
+/** True once any word event has been seen this session. Diagnostics only. */
+export function hasWordBoundaries(): boolean {
+  return sawBoundary;
+}
+
+/** Two incommensurate components near 4.4Hz — roughly the syllable rate of
+ *  running English — shaped to spend more time closed than open. */
+function freeRunning(t: number): VoiceReading {
+  const a = Math.sin(t * 4.4 * Math.PI * 2);
+  const b = Math.sin(t * 2.7345 * Math.PI * 2 + 1.1);
   const env = Math.max(0, a * 0.62 + b * 0.38);
   return { level: Math.pow(env, 0.75), wide: b * 0.45 };
+}
+
+/**
+ * `tSeconds` must be on the same clock as `noteWordBoundary` uses —
+ * `performance.now() / 1000`. Mixing clocks here would put the mouth an
+ * arbitrary constant away from the words, which is the one error this whole
+ * mechanism exists to avoid.
+ */
+export function syntheticVoice(tSeconds: number): VoiceReading {
+  const since = tSeconds - boundaryAt;
+  if (!sawBoundary || since < 0 || since > BOUNDARY_STALE) return freeRunning(tSeconds);
+
+  // Inside the word: a raised arc over its estimated duration, modulated by a
+  // ~5.4Hz carrier so a long word visibly articulates instead of being one
+  // sustained gape. After it: a fast decay, then silence until the next word —
+  // which is the part that makes the gaps between words read as gaps.
+  const u = since / boundaryDur;
+  const shape = u <= 1 ? Math.sin(Math.PI * Math.pow(u, 0.8)) : Math.exp(-(since - boundaryDur) * 12);
+  const syllable = 0.66 + 0.34 * Math.abs(Math.sin(since * Math.PI * 5.4));
+  return {
+    level: Math.max(0, Math.min(1, shape * syllable)),
+    wide: Math.sin(tSeconds * 2.7345 * Math.PI * 2 + 1.1) * 0.45,
+  };
 }
