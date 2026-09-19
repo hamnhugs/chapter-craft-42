@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;0,6..72,800;1,6..72,400;1,6..72,600;1,6..72,700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
 
 @tailwind base;
@@ -7,71 +7,73 @@
 
 @layer base {
   :root {
-    --font-headline: 'Newsreader', Georgia, serif;
-    --font-body: 'Inter', system-ui, sans-serif;
-    --font-display: 'Newsreader', Georgia, serif;
-    --background: 0 0% 7.5%;
+    --font-headline: 'Space Grotesk', system-ui, sans-serif;
+    --font-body: 'Space Grotesk', system-ui, sans-serif;
+    --font-display: 'Space Grotesk', system-ui, sans-serif;
+    --font-label: 'Space Grotesk', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --background: 265 61% 11%;
 
-    --foreground: 20 4% 89%;
+    --foreground: 270 100% 93%;
 
-    --card: 0 0% 16.5%;
-    --card-foreground: 20 4% 89%;
+    --card: 265 42% 16%;
+    --card-foreground: 270 100% 93%;
 
-    --popover: 0 0% 12.5%;
-    --popover-foreground: 20 4% 89%;
+    --popover: 265 51% 13%;
+    --popover-foreground: 270 100% 93%;
 
-    --primary: 38 100% 83%;
-    --primary-foreground: 30 100% 13%;
+    --primary: 286 100% 85%;
+    --primary-foreground: 284 100% 22%;
 
-    --secondary: 58 22% 71%;
-    --secondary-foreground: 60 33% 8%;
+    --secondary: 186 100% 91%;
+    --secondary-foreground: 265 61% 11%;
 
-    --muted: 0 0% 16.5%;
-    --muted-foreground: 36 18% 67%;
+    --muted: 265 35% 18%;
+    --muted-foreground: 291 18% 80%;
 
-    --accent: 43 100% 50%;
-    --accent-foreground: 30 100% 13%;
+    --accent: 331 100% 45%;
+    --accent-foreground: 0 0% 100%;
 
-    --destructive: 6 75% 84%;
-    --destructive-foreground: 0 100% 2%;
+    --destructive: 5 100% 84%;
+    --destructive-foreground: 356 100% 21%;
 
-    --border: 30 15% 20%;
-    --input: 0 0% 16.5%;
-    --ring: 43 100% 50%;
+    --border: 265 73% 9%;
+    --input: 265 42% 16%;
+    --ring: 184 100% 49%;
 
     --radius: 0.75rem;
 
-    --sidebar-background: 0 0% 11%;
-    --sidebar-foreground: 20 4% 89%;
-    --sidebar-primary: 43 100% 50%;
-    --sidebar-primary-foreground: 30 100% 13%;
-    --sidebar-accent: 60 13% 16%;
-    --sidebar-accent-foreground: 20 4% 89%;
-    --sidebar-border: 30 15% 20%;
-    --sidebar-ring: 43 100% 50%;
+    --sidebar-background: 265 51% 13%;
+    --sidebar-foreground: 270 100% 93%;
+    --sidebar-primary: 284 100% 50%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 265 42% 16%;
+    --sidebar-accent-foreground: 270 100% 93%;
+    --sidebar-border: 265 73% 9%;
+    --sidebar-ring: 184 100% 49%;
 
-    --viewer-bg: 0 0% 7.5%;
-    --toolbar-bg: 0 0% 11%;
-    --book-spine: 43 100% 50%;
+    --viewer-bg: 265 61% 11%;
+    --toolbar-bg: 265 73% 9%;
+    --book-spine: 284 100% 50%;
 
     /* M3 surface tokens */
-    --surface-container-lowest: 0 0% 5.5%;
-    --surface-container-low: 0 0% 11%;
-    --surface-container: 0 0% 12.5%;
-    --surface-container-high: 0 0% 16.5%;
-    --surface-container-highest: 0 0% 20.8%;
-    --outline: 30 15% 54%;
-    --outline-variant: 30 20% 25.5%;
-    --on-surface-variant: 36 18% 74%;
-    --primary-container: 43 100% 50%;
-    --on-primary-container: 30 100% 21.5%;
-    --secondary-container: 60 29% 16.5%;
-    --on-secondary-container: 58 20% 73.5%;
-    --error-container: 0 100% 29%;
-    --on-error-container: 6 100% 91%;
-    --tertiary: 192 100% 85%;
-    --tertiary-container: 189 100% 50%;
-    --primary-fixed-dim: 43 97% 49%;
+    --surface-container-lowest: 265 73% 9%;
+    --surface-container-low: 266 45% 15%;
+    --surface-container: 265 42% 16%;
+    --surface-container-high: 264 35% 21%;
+    --surface-container-highest: 263 28% 25%;
+    --outline: 292 9% 59%;
+    --outline-variant: 289 13% 30%;
+    --on-surface-variant: 291 18% 80%;
+    --primary-container: 284 100% 50%;
+    --on-primary-container: 0 0% 100%;
+    --secondary-container: 265 35% 18%;
+    --on-secondary-container: 186 100% 91%;
+    --error-container: 356 100% 29%;
+    --on-error-container: 5 100% 91%;
+    --tertiary: 286 100% 85%;
+    --tertiary-container: 284 100% 50%;
+    --primary-fixed-dim: 284 100% 50%;
   }
 
   .dark {
@@ -565,4 +567,674 @@
 }
 [data-theme="dexters-lab"] [data-book-card]:hover::after {
   transform: translateY(0);
+}
+
+/* =====================================================================
+   AURORA (2026) — liquid-glass slate + chromatic @property accent
+   Forward-looking theme. HSL token contract lives in themes.ts; the
+   oklch-native pipeline, animated hue, mesh background and glass
+   surfaces live here. Everything degrades cleanly on older engines.
+   ===================================================================== */
+
+/* Registered animated custom property — typed as an angle so the browser
+   can interpolate the accent hue smoothly. Unsupported engines ignore it
+   and fall back to the static --accent token from themes.ts. */
+@property --aurora-hue {
+  syntax: '<angle>';
+  inherits: true;
+  initial-value: 220deg;
+}
+@keyframes aurora-hue-cycle {
+  from { --aurora-hue: 220deg; }
+  to   { --aurora-hue: 580deg; }
+}
+
+:root[data-theme="aurora"] {
+  /* oklch-native tokens — consume directly (no hsl() wrapper) */
+  --aur-ink:      oklch(0.18 0.04 260);
+  --aur-paper:    oklch(0.95 0.02  90);
+  --aur-glass:    oklch(0.26 0.04 260 / 0.55);
+  --aur-glass-hi: oklch(0.32 0.05 260 / 0.65);
+  --aur-line:     oklch(0.50 0.04 260 / 0.35);
+  --aur-mint:     oklch(0.86 0.13 175);
+  --aur-cyan:     oklch(0.78 0.13 210);
+  --aur-lilac:    oklch(0.78 0.16 295);
+  --aur-peach:    oklch(0.82 0.14  50);
+  --aur-rose:     oklch(0.74 0.20  20);
+
+  /* Animated chromatic accent driven by the registered @property hue */
+  --aur-accent: oklch(0.78 0.16 var(--aurora-hue));
+
+  /* Five-stop chromatic mesh, oklch stops so in-between colours stay
+     perceptually uniform as the hue cycles. */
+  --aur-mesh:
+    radial-gradient(at 20% 20%, oklch(0.78 0.16 var(--aurora-hue))                  0%, transparent 50%),
+    radial-gradient(at 80% 30%, oklch(0.76 0.15 calc(var(--aurora-hue) + 80deg))    0%, transparent 55%),
+    radial-gradient(at 70% 80%, oklch(0.74 0.17 calc(var(--aurora-hue) + 160deg))   0%, transparent 50%),
+    radial-gradient(at 20% 90%, oklch(0.72 0.18 calc(var(--aurora-hue) + 240deg))   0%, transparent 60%),
+    var(--aur-ink);
+
+  animation: aurora-hue-cycle 24s linear infinite;
+}
+
+/* Drifting chromatic mesh as the page canvas */
+[data-theme="aurora"] body {
+  background: var(--aur-mesh) !important;
+  background-attachment: fixed;
+}
+
+/* Liquid-glass cards — the surfaces the app actually paints */
+[data-theme="aurora"] .bg-card,
+[data-theme="aurora"] [data-aur-glass],
+[data-theme="aurora"] .bg-surface-container,
+[data-theme="aurora"] .bg-surface-container-low,
+[data-theme="aurora"] .bg-surface-container-high {
+  background: var(--aur-glass) !important;
+  border: 1px solid var(--aur-line);
+  border-radius: 18px;
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in oklab, white 18%, transparent),
+    inset 0 0 0 1px color-mix(in oklab, white 4%, transparent),
+    0 24px 60px -24px color-mix(in oklab, black 70%, transparent);
+}
+
+/* Dialogs / popovers / menus — brighter glass */
+[data-theme="aurora"] [role="dialog"],
+[data-theme="aurora"] [role="menu"],
+[data-theme="aurora"] [data-radix-popper-content-wrapper] > * {
+  background: var(--aur-glass-hi) !important;
+  border: 1px solid var(--aur-line) !important;
+  border-radius: 18px !important;
+  backdrop-filter: blur(32px) saturate(180%);
+  -webkit-backdrop-filter: blur(32px) saturate(180%);
+}
+
+/* Chromatic glass primary buttons */
+[data-theme="aurora"] button.bg-primary,
+[data-theme="aurora"] button.bg-accent,
+[data-theme="aurora"] button[data-sticker-btn] {
+  background:
+    radial-gradient(120% 120% at 30% 0%, color-mix(in oklab, white 24%, transparent), transparent 60%),
+    var(--aur-accent) !important;
+  color: var(--aur-ink) !important;
+  border: 1px solid color-mix(in oklab, white 28%, transparent) !important;
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in oklab, white 40%, transparent),
+    0 8px 24px -8px color-mix(in oklab, var(--aur-accent) 65%, transparent);
+  transition: transform 180ms cubic-bezier(.2,.8,.2,1), box-shadow 220ms ease;
+}
+[data-theme="aurora"] button.bg-primary:hover,
+[data-theme="aurora"] button.bg-accent:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 0 color-mix(in oklab, white 40%, transparent),
+    0 14px 32px -8px color-mix(in oklab, var(--aur-accent) 75%, transparent);
+}
+[data-theme="aurora"] button.bg-primary:active,
+[data-theme="aurora"] button.bg-accent:active { transform: translateY(0); }
+
+/* Selection + focus */
+[data-theme="aurora"] ::selection {
+  background: color-mix(in oklab, var(--aur-accent) 60%, transparent);
+  color: var(--aur-paper);
+}
+[data-theme="aurora"] *:focus-visible {
+  outline: 2px solid var(--aur-cyan) !important;
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+/* Active nav tab — chromatic accent bar instead of amber underline */
+[data-theme="aurora"] [data-app-header] nav button.text-accent,
+[data-theme="aurora"] [data-app-header] nav button[aria-current="page"] {
+  border-bottom-color: transparent !important;
+  position: relative;
+  color: var(--aur-paper) !important;
+}
+[data-theme="aurora"] [data-app-header] nav button.text-accent::after,
+[data-theme="aurora"] [data-app-header] nav button[aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: -6px;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--aur-mint), var(--aur-lilac));
+}
+
+/* =====================================================================
+   2026 modern-CSS toolkit — usable in any theme, all @supports-gated
+   ===================================================================== */
+
+/* Balanced headlines, orphan-free paragraphs */
+@supports (text-wrap: balance) {
+  h1, h2, .cc-balance { text-wrap: balance; }
+  p, .cc-pretty { text-wrap: pretty; }
+}
+
+/* Container queries — the book grid responds to its own column width,
+   not the viewport, so it stays correct under future split-pane layouts.
+ *
+ * This sits on the SHELVES VIEW's root, deliberately not on `<main>`.
+ * `container-type` applies layout containment, and layout containment makes an
+ * element a containing block for `position: fixed` descendants — which would
+ * capture LibraryGraph's `fixed inset-0 z-[100]` expanded mind map and paint
+ * "fullscreen" as main's 32,000px-tall box, clipped by the Vault's own
+ * `overflow-auto`. Chromium 148 measured as NOT confining it (a `fixed`
+ * `inset: 0` probe inside `main` reported the full 375x812 viewport), so this
+ * has never been a live bug here — but the spec says it should, engines
+ * disagree, and the repo has already shipped this exact failure once with
+ * aurora's `backdrop-filter` confining MediaFrame's fullscreen.
+ *
+ * The shelves view contains the only `.book-grid` and no fixed-position
+ * descendant, so scoping the container there costs nothing — the element is a
+ * stretched flex child of `main`, so it is exactly the width `main`'s content
+ * box was — and takes the whole question off the table.
+ * Pinned by src/test/vaultMobileLayout.test.ts. */
+.cc-container { container-type: inline-size; container-name: main; }
+
+/* ── The Vault grid ───────────────────────────────────────────────────────
+ *
+ * EVERY track is `minmax(0, 1fr)`, never a bare `1fr`.
+ *
+ * `1fr` is shorthand for `minmax(auto, 1fr)`, and that `auto` floor is the
+ * widest grid ITEM's min-content contribution — which a `1fr` share can never
+ * shrink below. So a single book whose title carries one unbreakable token
+ * sizes every card in the Vault. Measured on the live app at a 375px viewport:
+ * one Anna's Archive filename-as-title with a 32-char MD5 in it
+ * ("… -- d5659d01fa25730be5e83fbdc52e192c -- Anna's Archive") has a 436.61px
+ * min-content width at `text-2xl`, which set a 484.61px track inside a 327px
+ * container and pushed all 54 cards 158px off-screen — horizontally scrolling
+ * the whole Vault to 509px. The other 53 books were blameless.
+ *
+ * `minmax(0, …)` removes the floor, so no single book's metadata can size the
+ * grid again — the class of bug, not the one title. `.cc-book-title` below
+ * additionally makes such tokens WRAP rather than be clipped by the card's
+ * `overflow-hidden`, and `[data-book-card]`'s inline-size containment zeroes
+ * the contribution a third time. Any one of the three is sufficient; the bug
+ * was expensive enough to be worth all three.
+ */
+.book-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+}
+@supports (container-type: inline-size) {
+  /* Two-up as soon as two cards can carry a cover and a title — the phone
+     bookshelf convention (Apple Books, Kindle). 300px of container = two
+     144px cards. */
+  @container main (min-width: 300px)  { .book-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @container main (min-width: 640px)  { .book-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem; } }
+  @container main (min-width: 1024px) { .book-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+}
+
+/* ── The book card ────────────────────────────────────────────────────────
+ *
+ * The card is its OWN query container, so its density follows the width of the
+ * box actually being laid out rather than the viewport's. This is the same law
+ * the workspace layout kernel is built on (src/lib/workspaceLayout.ts): a
+ * rotated phone is 852x393, so it clears every viewport breakpoint in the
+ * stylesheet while its cards are still ~390px. A viewport breakpoint cannot
+ * express "this card is narrow"; a container query is exactly that statement.
+ *
+ * Inline-size containment also zeroes the card's min-content contribution,
+ * which is the third of the three independent guards on the grid blowout above.
+ */
+[data-book-card] { container-type: inline-size; container-name: bookcard; }
+
+/* Book titles are frequently raw filenames (PDF metadata, Anna's Archive,
+   YouTube transcript imports) carrying hashes, ISBNs and underscore runs with
+   no soft break opportunity. `anywhere` — not `break-word` — because only
+   `anywhere` also collapses the MIN-CONTENT width, which is what the grid
+   track and the flex row are sized from. */
+.cc-book-title { overflow-wrap: anywhere; }
+
+/* The narrow card's overflow menu is in the DOM at every size and revealed by
+   the compact blocks below. One JSX position with swapped class strings, never
+   two branches rendering the same subtree — a branch swap would remount the
+   card and drop the dropdown's open state mid-interaction.
+
+   THIS RULE MUST STAY ABOVE THE COMPACT BLOCKS. `@container` and `@media` add
+   no specificity, so the reveal and this default are both (0,1,0) and SOURCE
+   ORDER alone decides. With this rule underneath them the menu was
+   unconditionally `display: none` and no narrow card ever had a secondary
+   action — pinned by src/test/vaultMobileLayout.test.ts. */
+[data-cc-narrow] { display: none; }
+
+/* The compact card. Declared twice on purpose: a container query cannot see
+   viewport HEIGHT, and a landscape phone (852x393) has wide cards inside a
+   viewport too short to show even one full-height card. 480px is
+   SHORT_VIEWPORT_MAX_HEIGHT from the layout kernel, kept in sync by
+   src/test/vaultMobileLayout.test.ts. */
+@supports (container-type: inline-size) {
+  @container bookcard (max-width: 260px) {
+    .cc-book-cover   { aspect-ratio: 4 / 3; }
+    .cc-book-info    { padding: 0.625rem; }
+    .cc-book-title   { font-size: 0.9375rem; line-height: 1.2rem; margin-bottom: 0.125rem; }
+    .cc-book-meta    { font-size: 0.625rem; letter-spacing: 0.04em; margin-bottom: 0.25rem; }
+    .cc-book-tags    { display: none; }
+    .cc-book-status  { min-height: 0; margin-bottom: 0.5rem; }
+    .cc-book-actions { gap: 0.375rem; }
+    .cc-book-open    { padding-top: 0.5rem; padding-bottom: 0.5rem; font-size: 0.8125rem; }
+    /* The rename <input> shares cc-book-title (for overflow-wrap) — but iOS
+       Safari zooms the page when a focused input computes under 16px, so the
+       compact 15px must never reach it. (0,1,1) beats the (0,1,0) shrink. */
+    input.cc-book-title { font-size: 1rem; }
+    [data-cc-wide]   { display: none; }
+    [data-cc-narrow] { display: inline-flex; }
+  }
+}
+@media (max-height: 480px) {
+  .cc-book-cover   { aspect-ratio: 4 / 3; }
+  /* Short-viewport EXTRA (no container-query twin): on a landscape phone the
+     cards are wide — 351px at 852x393 — so a 4/3 cover alone is 263px of a
+     393px viewport and one book fills the screen. Capping the cover lets the
+     grid show ~3 books per screen instead of 1.7. `object-cover` on the image
+     crops rather than distorts. */
+  .cc-book-cover   { max-height: 7.5rem; }
+  .cc-book-info    { padding: 0.625rem; }
+  .cc-book-title   { font-size: 0.9375rem; line-height: 1.2rem; margin-bottom: 0.125rem; }
+  .cc-book-meta    { font-size: 0.625rem; letter-spacing: 0.04em; margin-bottom: 0.25rem; }
+  .cc-book-tags    { display: none; }
+  .cc-book-status  { min-height: 0; margin-bottom: 0.5rem; }
+  .cc-book-actions { gap: 0.375rem; }
+  .cc-book-open    { padding-top: 0.5rem; padding-bottom: 0.5rem; font-size: 0.8125rem; }
+  input.cc-book-title { font-size: 1rem; }
+  [data-cc-wide]   { display: none; }
+  [data-cc-narrow] { display: inline-flex; }
+}
+
+/* `:hover` LATCHES on iOS: the first tap fires it and it stays until you tap
+   something else, so a "lift on hover" card sits raised after every tap. Where
+   there is no hover, there is no lift. */
+@media (hover: none) {
+  /* Doubled attribute selector, (0,3,0): Tailwind emits its PSEUDO-CLASS
+     variants (`.hover\:-translate-y-1:hover`, (0,2,0)) after this file's own
+     rules, so a single `[data-book-card]:hover` (also (0,2,0)) loses the tie
+     on source order and ships as dead code. Same trick, same reason, as
+     `.cc-vault-title.cc-vault-title`. */
+  [data-book-card][data-book-card]:hover { transform: none; }
+}
+
+/* ── The Vault's own page chrome ──────────────────────────────────────────
+ *
+ * Media queries, not container queries, and ONLY here: `.cc-vault-main` IS the
+ * `main` query container, and a container cannot query itself.
+ *
+ * The condition is `(max-width: 640px) OR (max-height: 480px)` because
+ * geometry is two-dimensional. A landscape phone is 852x393 — it clears every
+ * width breakpoint in this stylesheet while having less vertical room than the
+ * portrait phone the width query was written for. 480px is
+ * SHORT_VIEWPORT_MAX_HEIGHT from src/lib/workspaceLayout.ts.
+ *
+ * Measured before this rule, at 375x812: 1,216px of scrolling stood between
+ * the top of the Vault and the first book card — a 386px dropzone, a 48px
+ * headline and 48px of gap between every one of six stacked sections.
+ */
+@media (max-width: 640px), (max-height: 480px) {
+  .cc-vault-main {
+    /* `viewport-fit=cover` is set in index.html, so on a notched phone held
+       sideways the display cutout eats into the layout viewport. `max()`
+       keeps the normal 1rem everywhere else. */
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+    padding-top: 1.25rem;
+    padding-bottom: 1.25rem;
+    gap: 1.25rem;
+  }
+  /* Doubled selector, (0,2,0). Tailwind emits its RESPONSIVE variants after
+     this file's own rules, so `md:text-7xl` on the same element wins a
+     (0,1,0) tie on source order — and `md` is 768, which every phone clears
+     in landscape. Measured 72px at 852x393 before the doubling. Same trick,
+     and the same reason, as `.cc-measure.cc-measure`. */
+  .cc-vault-title.cc-vault-title { font-size: 2.25rem; line-height: 2.5rem; }
+  .cc-vault-dropzone { padding: 1.25rem; }
+  .cc-vault-dropzone .cc-dropzone-icon { width: 3rem; height: 3rem; margin-bottom: 0.5rem; }
+  .cc-vault-dropzone .cc-dropzone-title { font-size: 1.125rem; line-height: 1.5rem; }
+  .cc-vault-dropzone .cc-dropzone-hint { margin-bottom: 0.75rem; font-size: 0.75rem; }
+  .cc-vault-dropzone .cc-dropzone-actions button { padding-left: 1.25rem; padding-right: 1.25rem; }
+}
+
+/* ── Hover-only affordances on a touch screen ─────────────────────────────
+ *
+ * `opacity-0 group-hover:opacity-100` hides a control behind an event a touch
+ * screen never fires. Measured on the live app: the per-book shelf menu and the
+ * shelf card's Chat / Rename / Delete buttons all sat at opacity 0 with
+ * `(any-hover: hover)` false — putting a book on a shelf, renaming a shelf and
+ * deleting a shelf were unreachable on a phone, with no other route to any of
+ * them.
+ *
+ * This is the sanctioned use of a capability probe: `hover: none` decides
+ * whether an AFFORDANCE is revealed and how big its target is. It never picks a
+ * layout mode — that stays a pure function of geometry.
+ */
+@media (hover: none) {
+  .cc-hover-reveal { opacity: 1; }
+  /* A touch TABLET has wide cards (no container reveal) and a tall viewport
+     (no height reveal), so without this the overflow menu — the only touch
+     route to Rename — existed on no tablet. Revealing it everywhere hover
+     doesn't exist is an affordance decision, not a layout one: the wide
+     buttons remain, and Rename gains its one touch route. */
+  [data-cc-narrow] { display: inline-flex; }
+  /* WCAG 2.2 SC 2.5.8 is a 24px floor; 44px is the platform guidance. These
+     controls sit ON a tappable card, where a miss opens the book instead — so
+     the book card's shelf trigger gets the full 44. The shelf card's three
+     actions share a 155px-wide card at two-up, where three 44px targets would
+     span the whole card, so they take 32 — still clear of the 24px floor. */
+  .cc-tap-44, .cc-tap-32 {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .cc-tap-44 { min-width: 44px; min-height: 44px; }
+  .cc-tap-32 { min-width: 32px; min-height: 32px; }
+}
+
+/* Liquid-glass surface utility (any theme; really sings under Aurora) */
+.cc-glass {
+  background: color-mix(in oklab, hsl(var(--card)) 60%, transparent);
+  border: 1px solid color-mix(in oklab, hsl(var(--foreground)) 12%, transparent);
+  border-radius: 16px;
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+}
+
+/* View Transitions cross-fade — kicks in when navigation is wrapped in
+   document.startViewTransition (see AppContext.setActiveTab). */
+@supports (view-transition-name: root) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 380ms;
+    animation-timing-function: cubic-bezier(.2,.8,.2,1);
+  }
+  ::view-transition-old(root) { animation-name: cc-vt-out; }
+  ::view-transition-new(root) { animation-name: cc-vt-in; }
+  @keyframes cc-vt-in  { from { opacity: 0; transform: translateY(6px); } }
+  @keyframes cc-vt-out { to   { opacity: 0; transform: translateY(-6px); } }
+}
+
+/* Scroll-driven reading-progress bar — no JS loop. Add a
+   <div class="cc-scroll-progress" /> at the top of a scrolling region. */
+@supports (animation-timeline: scroll()) {
+  .cc-scroll-progress {
+    position: fixed; inset: 0 0 auto 0;
+    height: 3px;
+    background: linear-gradient(90deg, hsl(var(--accent)), hsl(var(--primary)));
+    transform-origin: 0 50%;
+    animation: cc-scroll-grow linear;
+    animation-timeline: scroll(root block);
+    z-index: 100;
+  }
+  @keyframes cc-scroll-grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+}
+
+/* Honour reduced-motion: settle animated tokens */
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="aurora"] { animation: none !important; }
+  ::view-transition-old(root),
+  ::view-transition-new(root) { animation-duration: 1ms !important; }
+}
+
+/* While a chat-media overlay fullscreen is open (MediaFrame's CSS fallback,
+   used where the native Fullscreen API is unavailable), no ancestor of the
+   frame may create a containing block for fixed positioning — otherwise the
+   "fullscreen" box is confined to the message bubble. Aurora's glass bubbles
+   do exactly that via backdrop-filter, so neutralize every containing-block
+   trigger on the bubble while the overlay is up (it is hidden behind the
+   overlay anyway, so nothing visibly changes). */
+html.cc-media-overlay-open .message-bubble-ai,
+html.cc-media-overlay-open .message-bubble-user {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  filter: none !important;
+  transform: none !important;
+  will-change: auto !important;
+  contain: none !important;
+}
+
+/* ============================================================
+   DESOLATE LAB — industrial minimalism / isolated terminal.
+   Sharp corners, no shadows, tonal layering, CRT glass overlay.
+   ============================================================ */
+
+/* Sharp shape language: every element 0px radius (square pips per spec) */
+[data-theme="desolate-lab"] *,
+[data-theme="desolate-lab"] *::before,
+[data-theme="desolate-lab"] *::after {
+  border-radius: 0 !important;
+}
+
+/* Shadows are strictly prohibited — hierarchy via tonal layers + borders */
+[data-theme="desolate-lab"] * {
+  box-shadow: none !important;
+}
+
+/* Selection — white on the void */
+[data-theme="desolate-lab"] ::selection {
+  background: hsl(0 0% 100%);
+  color: hsl(180 5% 11%);
+}
+
+/* Focus — 1px white rule, no glow */
+[data-theme="desolate-lab"] *:focus-visible {
+  outline: 1px solid hsl(0 0% 100%) !important;
+  outline-offset: 2px;
+}
+
+/* Terminal chrome: buttons, tabs, menu items speak in mono uppercase */
+[data-theme="desolate-lab"] button,
+[data-theme="desolate-lab"] [role="tab"],
+[data-theme="desolate-lab"] [role="menuitem"],
+[data-theme="desolate-lab"] [role="option"],
+[data-theme="desolate-lab"] label,
+[data-theme="desolate-lab"] .font-label {
+  font-family: var(--font-label);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* Headlines — tight, dense, industrial */
+[data-theme="desolate-lab"] h1,
+[data-theme="desolate-lab"] h2,
+[data-theme="desolate-lab"] h3 {
+  letter-spacing: -0.03em;
+}
+
+/* Inputs — thin-stroke boxes, mono entry */
+[data-theme="desolate-lab"] input,
+[data-theme="desolate-lab"] textarea,
+[data-theme="desolate-lab"] select {
+  border: 1px solid hsl(var(--outline-variant)) !important;
+  background: hsl(var(--surface-container-lowest));
+  caret-color: hsl(0 0% 100%);
+}
+
+/* Ultra-thin, non-rounded scrollbars — a gray line against the dark */
+[data-theme="desolate-lab"] ::-webkit-scrollbar { width: 6px; height: 6px; }
+[data-theme="desolate-lab"] ::-webkit-scrollbar-track { background: transparent; }
+[data-theme="desolate-lab"] ::-webkit-scrollbar-thumb {
+  background: hsl(210 3% 27%);
+  border-radius: 0;
+}
+[data-theme="desolate-lab"] ::-webkit-scrollbar-thumb:hover { background: hsl(195 2% 56%); }
+
+/* CRT glass: scanlines + vignette + a lone pulsing signal at center */
+[data-theme="desolate-lab"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.22) 0px,
+    rgba(0, 0, 0, 0.22) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  opacity: 0.35;
+}
+[data-theme="desolate-lab"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 70% 60% at 50% 45%, rgba(60, 90, 120, 0.10) 0%, transparent 60%),
+    radial-gradient(ellipse 120% 100% at 50% 50%, transparent 55%, rgba(0, 0, 0, 0.55) 100%);
+  animation: desolate-signal 8s ease-in-out infinite;
+}
+@keyframes desolate-signal {
+  0%, 100% { opacity: 0.85; }
+  50% { opacity: 1; }
+}
+
+/* Honour reduced-motion: freeze the signal pulse */
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="desolate-lab"] body::after { animation: none !important; }
+}
+
+/* Desolate Lab dialogs/overlays — heavy black glass, 1px structural border */
+[data-theme="desolate-lab"] [role="dialog"],
+[data-theme="desolate-lab"] [role="menu"],
+[data-theme="desolate-lab"] [data-radix-popper-content-wrapper] > * {
+  border: 1px solid hsl(210 3% 27%) !important;
+  background: hsl(0 0% 5%) !important;
+}
+
+/* ── Read-along (Read tab) ───────────────────────────────────────────────
+   The word highlight takes its colours from the live theme tokens, so it
+   recolours instantly on a theme switch. Aurora's accent is animated, so the
+   pill cycles hue with the rest of that theme. */
+.read-along-pill,
+.read-along-ghost {
+  --ra-fill: hsl(var(--primary-container));
+  --ra-glow: hsl(var(--primary));
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: var(--ra-radius, 6px);
+  opacity: 0;
+  will-change: transform, width, height;
+}
+[data-theme="aurora"] .read-along-pill,
+[data-theme="aurora"] .read-along-ghost {
+  --ra-fill: var(--aur-accent);
+  --ra-glow: var(--aur-accent);
+}
+.read-along-pill {
+  background: color-mix(in oklab, var(--ra-fill) 42%, transparent);
+  box-shadow:
+    0 0 0 2px color-mix(in oklab, var(--ra-glow) 85%, transparent),
+    0 0 16px 3px color-mix(in oklab, var(--ra-glow) 55%, transparent);
+  transition:
+    transform 150ms cubic-bezier(0.2, 0.9, 0.25, 1.15),
+    width 150ms cubic-bezier(0.2, 0.9, 0.25, 1.15),
+    height 150ms ease,
+    opacity 200ms ease;
+}
+/* Trailing comet: slower, softer, so the eye follows the motion. */
+.read-along-ghost {
+  background: color-mix(in oklab, var(--ra-glow) 30%, transparent);
+  filter: blur(6px);
+  transition:
+    transform 420ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    width 420ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    height 420ms ease,
+    opacity 300ms ease;
+}
+/* PDF pages are canvas "paper": multiply tints the paper and keeps the
+   printed ink at full contrast under the pill. */
+.read-along-pdf.read-along-pill { mix-blend-mode: multiply; background: color-mix(in oklab, var(--ra-fill) 70%, transparent); }
+.read-along-pdf.read-along-ghost { mix-blend-mode: multiply; }
+
+@keyframes ra-burst {
+  0% { transform: translate(-50%, -50%) rotate(var(--a)) translateY(0) scale(1); opacity: 1; }
+  100% { transform: translate(-50%, -50%) rotate(var(--a)) translateY(-46px) scale(0.2); opacity: 0; }
+}
+.ra-particle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-radius: 9999px;
+  pointer-events: none;
+  background: var(--c, hsl(var(--primary)));
+  animation: ra-burst 900ms cubic-bezier(0.15, 0.8, 0.3, 1) forwards;
+  animation-delay: var(--d, 0ms);
+}
+@keyframes ra-pop {
+  0% { transform: translateY(6px) scale(0.85); opacity: 0; }
+  20% { transform: translateY(0) scale(1.06); opacity: 1; }
+  80% { transform: translateY(-2px) scale(1); opacity: 1; }
+  100% { transform: translateY(-10px) scale(0.98); opacity: 0; }
+}
+.ra-pop { animation: ra-pop 2200ms ease forwards; }
+@keyframes ra-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.12); }
+}
+.ra-pulse { animation: ra-pulse 1.4s ease-in-out infinite; }
+@keyframes ra-flame {
+  0%, 100% { transform: translateY(0) rotate(-4deg); }
+  50% { transform: translateY(-1px) rotate(5deg); }
+}
+.ra-flame { display: inline-block; animation: ra-flame 1.1s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .read-along-pill { transition: opacity 120ms linear; }
+  .read-along-ghost { display: none; }
+  .ra-particle, .ra-pulse, .ra-flame { animation: none; }
+  .ra-particle { display: none; }
+  .ra-pop { animation-duration: 2200ms; animation-name: none; }
+}
+@media (forced-colors: active) {
+  .read-along-pill { background: transparent; mix-blend-mode: normal; box-shadow: none; outline: 2px solid Highlight; }
+  .read-along-ghost { display: none; }
+}
+/* HTML books: the pill floats over the iframe, so it stays translucent and
+   the word's own text is recoloured (::highlight) to keep it legible. */
+.read-along-html.read-along-pill { background: color-mix(in oklab, var(--ra-fill) 16%, transparent); }
+
+/* ── Saved highlights (Read tab) ─────────────────────────────────────────
+   Their own hue (gold, or teal when the theme's primary is near gold — see
+   highlightHue), never the read-along colour. PDF pages get boxes under the
+   text layer with a soft glow; HTML books use ::highlight inside the iframe
+   (useReaderHighlights). Read-along's pill paints above these. */
+.user-hl-layer {
+  --uh-hue: 45;
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+.user-hl {
+  position: absolute;
+  border-radius: 3px;
+  mix-blend-mode: multiply;
+  background: hsl(var(--uh-hue) 100% 62% / 0.5);
+  box-shadow: 0 0 10px 2px hsl(var(--uh-hue) 100% 55% / 0.5);
+}
+.user-hl-fresh { animation: uh-bloom 900ms ease-out; }
+@keyframes uh-bloom {
+  0% { opacity: 0.2; box-shadow: 0 0 0 0 hsl(var(--uh-hue) 100% 55% / 0); }
+  45% { opacity: 1; box-shadow: 0 0 22px 7px hsl(var(--uh-hue) 100% 55% / 0.75); }
+  100% { box-shadow: 0 0 10px 2px hsl(var(--uh-hue) 100% 55% / 0.5); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .user-hl-fresh { animation: none; }
+}
+@media (forced-colors: active) {
+  .user-hl {
+    forced-color-adjust: none;
+    mix-blend-mode: normal;
+    background: transparent;
+    box-shadow: none;
+    outline: 2px solid Mark;
+  }
 }

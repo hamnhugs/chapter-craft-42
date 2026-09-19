@@ -1,0 +1,3 @@
+# These files are deployed byte-for-byte to a Linux VPS (scp from any OS).
+# CRLF endings would break bash/systemd/Dockerfile parsing — pin LF always.
+* text eol=lf

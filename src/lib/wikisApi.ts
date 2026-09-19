@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 
 export interface Wiki {
@@ -29,20 +30,19 @@ export async function fetchWikis(): Promise<Wiki[]> {
 }
 
 export async function fetchWikisWithStats(): Promise<WikiWithStats[]> {
-  const [wikis, counts] = await Promise.all([
-    fetchWikis(),
-    supabase
-      .from("knowledge_entries")
-      .select("wiki_id" as any),
-  ]);
-
-  const countMap = new Map<string, number>();
-  for (const row of ((counts.data || []) as unknown as Array<{ wiki_id: string | null }>)) {
-    if (!row.wiki_id) continue;
-    countMap.set(row.wiki_id, (countMap.get(row.wiki_id) || 0) + 1);
-  }
-
-  return wikis.map((w) => ({ ...w, entry_count: countMap.get(w.id) || 0 }));
+  // One exact HEAD count per wiki. The old path selected wiki_id for EVERY
+  // entry and counted client-side — which PostgREST silently truncated at
+  // 1000 rows, so a large library under-reported every neuron's size.
+  const wikis = await fetchWikis();
+  const counts = await Promise.all(
+    wikis.map((w) =>
+      (supabase.from("knowledge_entries") as any)
+        .select("id", { count: "exact", head: true })
+        .eq("wiki_id", w.id)
+        .then((r: { count: number | null }) => r.count ?? 0, () => 0) as Promise<number>,
+    ),
+  );
+  return wikis.map((w, i) => ({ ...w, entry_count: counts[i] }));
 }
 
 export async function createWiki(input: {
@@ -68,7 +68,7 @@ export async function createWiki(input: {
     .select()
     .single();
 
-  if (error || !data) throw error || new Error("Failed to create wiki");
+  if (error || !data) throw error || new Error("Failed to create neuron");
   return data as unknown as Wiki;
 }
 
@@ -85,23 +85,52 @@ export async function deleteWiki(id: string): Promise<void> {
   if (error) throw error;
 }
 
-export async function loadWiki(id: string): Promise<void> {
+/**
+ * Persist the loaded neuron set. ids[0] is the PRIMARY (written to
+ * active_wiki_id — the value every existing single-neuron code path and the
+ * knowledge-extract edge function read); the full ordered set goes to
+ * active_wiki_ids. Until the neuron-chains migration is applied the array
+ * column doesn't exist, so the upsert retries without it — the primary still
+ * persists and multi-load degrades to session-only.
+ */
+export async function loadWikiSet(ids: string[]): Promise<void> {
   const { data: userData } = await supabase.auth.getUser();
   if (!userData.user) throw new Error("Not signed in");
 
   const nowIso = new Date().toISOString();
+  if (ids.length > 0) {
+    await supabase.from("wikis" as any).update({ last_loaded_at: nowIso } as any).in("id", ids);
+  }
 
-  // Touch last_loaded_at
-  await supabase.from("wikis" as any).update({ last_loaded_at: nowIso } as any).eq("id", id);
-
-  // Upsert active_wiki_id in user_settings
-  const { error } = await supabase
+  const payload: Record<string, unknown> = {
+    user_id: userData.user.id,
+    active_wiki_id: ids[0] ?? null,
+    active_wiki_ids: ids,
+  };
+  let { error } = await supabase
     .from("user_settings")
-    .upsert(
-      { user_id: userData.user.id, active_wiki_id: id } as any,
-      { onConflict: "user_id" }
-    );
+    .upsert(payload as any, { onConflict: "user_id" });
+  if (error && /active_wiki_ids/i.test(error.message || "")) {
+    delete payload.active_wiki_ids;
+    ({ error } = await supabase
+      .from("user_settings")
+      .upsert(payload as any, { onConflict: "user_id" }));
+    // Multi-load "worked" in this session but won't survive a reload — say
+    // so instead of silently degrading.
+    if (!error && ids.length > 1) {
+      toast.info(
+        "Multi-neuron loading isn't fully set up yet — the database migration hasn't been applied, so only your primary neuron will persist.",
+        { id: "multi-neuron-migration" },
+      );
+    }
+  }
   if (error) throw error;
+}
+
+export async function loadWiki(id: string): Promise<void> {
+  // Single-load = replace the whole set (Arc-style: activation replaces
+  // visible context rather than appending to it).
+  await loadWikiSet([id]);
 }
 
 export async function fetchActiveWikiId(): Promise<string | null> {
@@ -111,4 +140,37 @@ export async function fetchActiveWikiId(): Promise<string | null> {
     .maybeSingle();
   if (error) throw error;
   return ((data as any)?.active_wiki_id as string | null) || null;
+}
+
+/**
+ * The loaded set as this browser session sees it — kept in sync by
+ * AppContext. Lets the AI chat tools honor session-only multi-loads while
+ * the migration is missing (the DB then only knows the primary), so the
+ * prompt's "search spans all loaded neurons" claim stays true.
+ */
+export const sessionActiveWikiIds = { current: [] as string[] };
+
+/**
+ * The loaded neuron set: primary + full ordered set. Two queries on purpose —
+ * a combined select would 400 (taking active_wiki_id down with it) while the
+ * active_wiki_ids column doesn't exist yet. setPersisted=false means the
+ * array column is missing (migration not applied) and `set` was derived from
+ * the primary alone.
+ */
+export async function fetchActiveWikiIds(): Promise<{ primary: string | null; set: string[]; setPersisted: boolean }> {
+  const primary = await fetchActiveWikiId();
+  let set: string[] = [];
+  let setPersisted = false;
+  {
+    const { data, error } = await supabase
+      .from("user_settings")
+      .select("active_wiki_ids" as any)
+      .maybeSingle();
+    if (!error) {
+      setPersisted = true;
+      set = (((data as any)?.active_wiki_ids as string[]) || []).filter(Boolean);
+    }
+  }
+  if (primary && !set.includes(primary)) set = [primary, ...set];
+  return { primary: primary ?? set[0] ?? null, set, setPersisted };
 }

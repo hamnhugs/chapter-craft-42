@@ -1,0 +1,16 @@
+{
+  "name": "chapter-craft-program-runner",
+  "version": "1.0.0",
+  "description": "Self-hosted service that executes Chapter Craft AI-authored programs in hardened gVisor (runsc) Docker sandboxes. Node built-ins only, zero dependencies.",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "selftest": "node selftest.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "private": true
+}

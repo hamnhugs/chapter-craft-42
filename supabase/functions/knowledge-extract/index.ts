@@ -1,6 +1,15 @@
+// ⚠ UNUSED — no caller since commit 522569b ("Remove the Save to Neuron button
+// beside Counsel's send button"), which removed the only UI path to
+// knowledgeApi.extractKnowledge(). Left deployed and unchanged on purpose
+// (this header is the only edit); memory is now written through the chat
+// tools (memory_entry_upsert / supersede_knowledge_entry). Before reviving it,
+// note it predates: the partial-index enqueue fix (enqueueEntry now routes
+// through an RPC), knowledge-embed's targeted embedding, and it still fires
+// embed-entries → smart-file, which may re-route entries between wikis.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { atomicitySplit, embedAndStore, probeAndLinkConflicts, type Candidate } from "../_shared/atomicity.ts";
+import { embedOne } from "../_shared/embed.ts";
 import { resolveWikiLlm } from "../_shared/wiki-llm.ts";
 import {
   checkRecordingMode,
@@ -22,6 +31,37 @@ interface ExtractedEntry {
   tags: string[];
   confidence: number;
   relationships: { target_title: string; relationship: string }[];
+}
+
+// Discriminative merge check (dentate-gyrus pattern separation): do two
+// statements assert the SAME claim (safe to merge) or DIFFERENT/opposite claims
+// (must stay separate)? Fail-safe returns true (merge) so a gateway hiccup never
+// regresses the existing dedup behavior.
+async function sameClaim(
+  llm: { url: string; headers: Record<string, string>; model: string },
+  existingContent: string,
+  newContent: string,
+): Promise<boolean> {
+  try {
+    const r = await fetch(llm.url, {
+      method: "POST",
+      headers: llm.headers,
+      body: JSON.stringify({
+        model: llm.model,
+        messages: [
+          { role: "system", content: "Decide whether two knowledge statements assert essentially the SAME claim (safe to merge into one) or DIFFERENT/contradictory claims (must be kept separate). Reply only via the tool." },
+          { role: "user", content: `A: ${existingContent.slice(0, 700)}\n\nB: ${newContent.slice(0, 700)}` },
+        ],
+        tools: [{ type: "function", function: { name: "judge", description: "Report the comparison", parameters: { type: "object", properties: { same_claim: { type: "boolean" } }, required: ["same_claim"] } } }],
+        tool_choice: { type: "function", function: { name: "judge" } },
+      }),
+    });
+    if (!r.ok) return true;
+    const d = await r.json();
+    const tc = d.choices?.[0]?.message?.tool_calls?.[0];
+    if (!tc) return true;
+    return JSON.parse(tc.function.arguments).same_claim !== false;
+  } catch { return true; }
 }
 
 serve(async (req) => {
@@ -231,23 +271,98 @@ Rules:
       }
     }
 
-    // Apply ADDs (atomic)
+    // Apply ADDs (atomic), with semantic dedup first.
+    // The LLM only sees titles + 100-char previews, so it misses duplicates
+    // that are worded differently ("Python classes explained" vs "How to use
+    // classes in Python"). Before inserting, compare the new entry's embedding
+    // against existing entries (Mem0-style ADD/UPDATE/NOOP adjudication):
+    //   similarity >= 0.92 → near-identical, skip (NOOP)
+    //   similarity >= 0.85 → same topic, merge into the existing entry (UPDATE)
+    //   otherwise          → genuinely new, insert (ADD)
+    const dedupIds = new Set((existingEntries || []).map((e: any) => e.id));
     for (const entry of atomicAdds) {
-      const { data: inserted, error: insertError } = await supabase
-        .from("knowledge_entries")
-        .insert({
-          user_id: user.id,
-          title: entry.title,
-          content: entry.content,
-          entry_type: entry.entry_type,
-          tags: entry.tags || [],
-          confidence: Math.min(1, Math.max(0, entry.confidence || 0.8)),
-          source_book_id: source_book_id || null,
-          wiki_id: effectiveWikiId,
-        } as any)
-        .select("id")
-        .single();
+      let dedupHit: { id: string; similarity: number } | null = null;
+      let topSim = 0;
+      try {
+        const vecPre = await embedOne(`${entry.title}\n${entry.content}`);
+        if (vecPre) {
+          const { data: near } = await supabase.rpc("match_knowledge", {
+            query_embedding: vecPre as any,
+            match_count: 3,
+          });
+          // Only entries in the dedup scope (active wiki) count as duplicates.
+          const top = ((near || []) as any[]).find(
+            (m) => dedupIds.has(m.id) && typeof m.similarity === "number",
+          );
+          if (top) {
+            topSim = top.similarity;
+            if (top.similarity >= 0.85) dedupHit = { id: top.id, similarity: top.similarity };
+          }
+        }
+      } catch (err) { console.warn("semantic dedup check failed, treating as ADD:", err); }
 
+      if (dedupHit && dedupHit.similarity >= 0.92) {
+        savedEntries.push({ ...entry, id: dedupHit.id, action: "SKIPPED_DUPLICATE" });
+        continue;
+      }
+      if (dedupHit) {
+        // Discriminative merge gate: in the 0.85–0.92 band only merge when the
+        // two entries assert the SAME claim, so distinct-but-similar (or
+        // opposite) facts aren't collapsed into one.
+        let merge = true;
+        try {
+          const { data: ex } = await supabase
+            .from("knowledge_entries").select("content").eq("id", dedupHit.id).eq("user_id", user.id).single();
+          if (ex?.content) merge = await sameClaim(llm, ex.content, entry.content);
+        } catch { merge = true; } // fail-safe: keep current merge behavior
+        if (merge) {
+          await supabase.from("knowledge_entries").update({
+            content: entry.content,
+            tags: entry.tags || [],
+            confidence: Math.min(1, Math.max(0, entry.confidence || 0.8)),
+          }).eq("id", dedupHit.id).eq("user_id", user.id);
+          const vec = await embedAndStore(supabase, dedupHit.id, user.id, entry.title, entry.content);
+          savedEntries.push({ ...entry, id: dedupHit.id, action: "UPDATED", embedding: vec });
+          continue;
+        }
+        // Different claim → keep it as a distinct memory (fall through to ADD).
+      }
+
+      // ADD — encoding salience: birth strength from novelty + confidence, so
+      // surprising/novel facts encode more strongly (hippocampal-VTA idea).
+      const novelty = Math.max(0, Math.min(1, 1 - topSim));
+      const conf = Math.min(1, Math.max(0, entry.confidence || 0.8));
+      const importance = Math.min(1, 0.4 + 0.35 * novelty + 0.25 * conf);
+      const encodingStrength = Math.min(1, 0.6 + 0.4 * importance);
+      const baseInsert: Record<string, unknown> = {
+        user_id: user.id,
+        title: entry.title,
+        content: entry.content,
+        entry_type: entry.entry_type,
+        tags: entry.tags || [],
+        confidence: conf,
+        source_book_id: source_book_id || null,
+        wiki_id: effectiveWikiId,
+      };
+      let inserted: any = null;
+      let insertError: any = null;
+      ({ data: inserted, error: insertError } = await supabase
+        .from("knowledge_entries")
+        .insert({ ...baseInsert, importance, surprise: novelty, encoding_strength: encodingStrength, vibrancy: encodingStrength } as any)
+        .select("id").single());
+      if (insertError) {
+        // ONLY retry when the salience columns aren't migrated yet. NOT on an
+        // RLS-filtered readback or a transient post-commit error — the first row
+        // may already have committed, so a blind retry would double-insert.
+        const msg = String(insertError.message || "");
+        const missingCol = insertError.code === "42703" || insertError.code === "PGRST204"
+          || /column .* does not exist/i.test(msg)
+          || /(importance|surprise|encoding_strength|vibrancy)/i.test(msg);
+        if (missingCol) {
+          ({ data: inserted, error: insertError } = await supabase
+            .from("knowledge_entries").insert(baseInsert as any).select("id").single());
+        }
+      }
       if (insertError) { console.error("insert failed:", insertError.message); continue; }
       if (!inserted) continue;
       const vec = await embedAndStore(supabase, inserted.id, user.id, entry.title, entry.content);
@@ -262,9 +377,11 @@ Rules:
     const conflictCount = await probeAndLinkConflicts(
       supabase,
       user.id,
-      savedEntries.filter((e) => e.id).map((e) => ({
-        id: e.id, title: e.title, content: e.content, embedding: e.embedding,
-      })),
+      savedEntries
+        .filter((e) => e.id && e.action !== "SKIPPED_DUPLICATE")
+        .map((e) => ({
+          id: e.id, title: e.title, content: e.content, embedding: e.embedding,
+        })),
     );
 
     if (conflictCount > 0) {

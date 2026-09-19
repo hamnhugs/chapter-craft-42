@@ -1,0 +1,509 @@
+// Tool availability — one place that decides which tools reach the model,
+// and the ONLY place that says why one didn't.
+//
+// WHY THIS FILE EXISTS. Four independent gates could pull a tool out of the
+// roster: the turn's model can't call functions at all (or turns them off on
+// image turns), the Tool Foundry is opt-in and off by default, Lean Mode
+// removes the paid generators, and a per-tool permission was switched off.
+// Exactly one of them — Lean Mode — ever explained itself. The other three
+// were silent to BOTH the user and the model, which produced the report this
+// file exists to answer: "the AI can't use the forge tool and I don't know
+// why." The switch existed; nothing on screen pointed at it.
+//
+// TWO LAYERS, ON PURPOSE, AND THEY MUST NOT BE MERGED.
+//   · Removal is for the MODEL. A capability it cannot see is one it cannot
+//     pretend to use; a tool that is merely described as unavailable gets
+//     fabricated instead. So a withheld tool is genuinely absent from the
+//     roster — this file only names what was taken and why.
+//   · Explanation is for the HUMAN. A typed code, one plain sentence, and the
+//     exact control that lifts it, rendered as a status surface the user can
+//     consult (ToolStatusPanel) rather than a banner repeated every turn —
+//     attention to a repeated warning collapses after two or three showings.
+//
+// The reasons here NEVER go into the system prompt. Permission and safety
+// language in a system prompt measurably suppresses legitimate tool use on
+// entirely benign requests, which is the same failure this file is fixing.
+// They go to the user's screen, and — as closed enum codes plus app-authored
+// sentences — into a tool result when a gated call is replayed from history.
+// A provider's own error text is never replayed into model context: error
+// strings carry implicit authority and are a first-class injection vector.
+//
+// COPY RULES for every string below. Present tense, the user's side of the
+// screen, and the real name of the real control ("Turn on “Forge new tools”
+// in Settings → Tool Foundry"). Never "not permitted", "not allowed",
+// "blocked", or "for safety": that vocabulary reads as blame, and it is the
+// exact register that suppresses tool use when a model sees it. The unit test
+// asserts this structurally against a word list — it is not a style note.
+
+import type { LeanMode } from "@/lib/leanMode";
+import { blockedTools, capabilityName } from "@/lib/leanMode";
+import { TOOL_PERMISSION, PERMISSION_GROUPS } from "@/lib/toolPermissions";
+import { STUDIO_TOOLS, VISUAL_ONLY_TOOLS } from "@/lib/studioTools";
+
+export type ToolGateCode =
+  | "available"
+  | "off_permission"
+  | "off_lean_mode"
+  | "off_studio"
+  | "off_voice"
+  | "off_foundry_optin"
+  | "off_foundry_unavailable"
+  | "off_program_optin"
+  | "off_program_unavailable"
+  | "off_model_no_tools"
+  | "off_model_image_turn";
+
+export interface ToolGate {
+  tool: string;
+  code: ToolGateCode;
+  /** One plain sentence, app-authored, no provider strings, no safety vocabulary. */
+  reason: string;
+  /** The exact control that lifts it, in the user's words. */
+  fix: string;
+  fixTarget: "settings_permissions" | "settings_foundry" | "settings_programs" | "settings_lean" | "settings_model" | "settings_studio" | "none";
+}
+
+export interface ToolGateInput {
+  toolNames: string[];
+  leanMode: LeanMode;
+  permissions: Record<string, boolean>;
+  forgeOptIn: boolean;
+  runOptIn: boolean;
+  foundryReady: boolean;
+  /** Program Foundry (VPS execution). Opt-ins are INVERTED like the tool Foundry's. */
+  forgeProgramOptIn: boolean;
+  runProgramOptIn: boolean;
+  /** Program Foundry is usable only when its migration has landed AND a VPS
+   *  runner is connected — one flag folds both so a verb whose first call would
+   *  fail is never offered. */
+  programReady: boolean;
+  /** false when the turn's model cannot call functions at all. */
+  providerSupportsTools: boolean;
+  /** true when this turn carries images AND the model disables tools on image turns. */
+  imageTurnDisablesTools: boolean;
+  /** Whether the production-studio pack rides this turn (studioTools.ts).
+   *  Omitted = on, so callers that predate the pack see no change. */
+  studioActive?: boolean;
+  /** Voice turn: visual-only tools have nothing to show a listener. */
+  voiceMode?: boolean;
+}
+
+/** The two Tool Foundry tools. Opt-in with INVERTED semantics (an explicit
+ *  `true` grants; everything else withholds), which is why they are absent
+ *  from TOOL_PERMISSION's default-allow map and gated by their own rules. */
+export const FORGE_TOOL = "forge_tool";
+export const RUN_TOOL = "run_tool";
+/** Reading a tool's source and dry-running a candidate ARE the repair loop, so
+ *  they ride with forging: being able to read code you have no way to rewrite
+ *  helps nobody. `list_tools` is the one plain survey and is useful the moment
+ *  either switch is on. This grouping must stay identical to the inline gate in
+ *  chatTools.ts's Foundry dispatch — same rule, two consumers. */
+export const FOUNDRY_REPAIR_TOOLS = ["read_tool", "test_tool", "delete_tool"] as const;
+export const FOUNDRY_SURVEY_TOOL = "list_tools";
+const NEEDS_FORGE = new Set<string>([FORGE_TOOL, ...FOUNDRY_REPAIR_TOOLS]);
+const FOUNDRY_TOOLS = new Set<string>([...NEEDS_FORGE, RUN_TOOL, FOUNDRY_SURVEY_TOOL]);
+/** Is this tool governed by the Tool Foundry's opt-in switches at all? */
+export function isFoundryTool(tool: string): boolean {
+  return FOUNDRY_TOOLS.has(tool);
+}
+
+/** The Program Foundry (VPS execution) mirror of the Tool Foundry constants.
+ *  Same INVERTED opt-in shape — an explicit `true` grants — and the same
+ *  grouping: reading and deleting ride with forging (they are the repair loop),
+ *  the survey needs only one switch, running is its own switch. Kept a separate
+ *  set from the Tool Foundry so a program verb is never confused with a tool
+ *  verb by any gate, and so the two Foundries can be enabled independently. */
+export const FORGE_PROGRAM = "forge_program";
+export const RUN_PROGRAM = "run_program";
+export const PROGRAM_REPAIR_TOOLS = ["read_program", "delete_program"] as const;
+export const PROGRAM_SURVEY_TOOL = "list_programs";
+const NEEDS_FORGE_PROGRAM = new Set<string>([FORGE_PROGRAM, ...PROGRAM_REPAIR_TOOLS]);
+const PROGRAM_TOOLS = new Set<string>([...NEEDS_FORGE_PROGRAM, RUN_PROGRAM, PROGRAM_SURVEY_TOOL]);
+/** Is this tool governed by the Program Foundry's opt-in switches at all? */
+export function isProgramTool(tool: string): boolean {
+  return PROGRAM_TOOLS.has(tool);
+}
+
+/** permission id → the label the settings screen actually renders. Naming the
+ *  control the user will hunt for beats paraphrasing it. */
+const PERMISSION_LABEL: Record<string, string> = {};
+for (const group of PERMISSION_GROUPS) {
+  for (const item of group.items) PERMISSION_LABEL[item.id] = item.label;
+}
+
+const upperFirst = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
+/** How a tool is named to the user: the settings toggle's own label when there
+ *  is one, otherwise the Lean Mode capability name. Naming the control the
+ *  user will hunt for beats paraphrasing it. */
+export function toolDisplayLabel(tool: string): string {
+  const permId = TOOL_PERMISSION[tool];
+  const label = permId ? PERMISSION_LABEL[permId] : undefined;
+  return label || upperFirst(capabilityName(tool));
+}
+
+/** The permission id a tool is governed by, if any — what an inline toggle in
+ *  the status panel has to write back. */
+export function permissionIdFor(tool: string): string | undefined {
+  return TOOL_PERMISSION[tool];
+}
+
+const permissionLabelFor = toolDisplayLabel;
+
+/**
+ * tool → the OTHER permission id its executor also requires.
+ *
+ * `supersede_memory_entry` has its own switch, and its executor additionally
+ * refuses every call when "Edit memory entries" is off — supersession is an
+ * update-class edit, so the same toggle governs both paths. Until this map
+ * existed the roster carried the verb and the prompt actively instructed its
+ * use, so each attempt cost a round trip to reach a hard refusal: a prompt, a
+ * roster and an executor disagreeing about one tool.
+ *
+ * Only add an entry when the executor refuses 100% of calls on that switch. A
+ * dependency that merely narrows what a tool can do belongs in the tool's own
+ * result, not here — withholding it would be the over-filtering failure.
+ */
+const DEPENDS_ON: Record<string, string> = {
+  supersede_memory_entry: "update_memory_entry",
+};
+
+/** The permission id that actually fired for `tool`, own switch first. */
+function firedPermissionId(tool: string, permissions: Record<string, boolean>): string | undefined {
+  const own = TOOL_PERMISSION[tool];
+  if (own && permissions[own] === false) return own;
+  const dep = DEPENDS_ON[tool];
+  return dep && permissions[dep] === false ? dep : undefined;
+}
+
+const permissionIdLabel = (id: string) => PERMISSION_LABEL[id] || id;
+
+interface GateRule {
+  code: ToolGateCode;
+  fixTarget: ToolGate["fixTarget"];
+  /** Does this rule withhold `tool` on this turn? */
+  applies: (tool: string, input: ToolGateInput) => boolean;
+  // Both take the input so a rule that can fire for more than one reason names
+  // the switch that ACTUALLY fired. Sending someone to a control that is
+  // already on is the same failure as saying nothing.
+  reason: (tool: string, input: ToolGateInput) => string;
+  fix: (tool: string, input: ToolGateInput) => string;
+  /** Copy for the grouped UI row, where one line covers several tools. */
+  groupReason: string;
+  groupFix: string;
+}
+
+// ── PRECEDENCE ──────────────────────────────────────────────────────────────
+// Ordered list of predicates, first match wins. The order is policy, not an
+// accident of nesting, and it is also the panel's display order:
+//
+//  1. off_model_no_tools      — nothing is sent at all, so it outranks every
+//  2. off_model_image_turn      per-tool switch. Reporting "web search is off
+//                               in your permissions" while the request carried
+//                               no `tools` field whatsoever would send the user
+//                               to fix a control that changes nothing.
+//  3. off_foundry_optin       — the switch the user can see and set. It comes
+//                               before availability because foundryReady is
+//                               only ever probed once an opt-in is true; with
+//                               both switches off it is false by construction,
+//                               and blaming an unapplied migration then would
+//                               be a lie for every default install.
+//  4. off_foundry_unavailable — opt-in is on but the one-time setup is missing.
+//  5. off_lean_mode           — a deliberate budget choice, one control.
+//  6. off_permission          — the narrowest gate, checked last.
+//
+// Only rules 3 and 4 ever look at a specific tool name; the rest are driven by
+// data (blockedTools, TOOL_PERMISSION) so a new tool is covered on the day it
+// is registered rather than the day someone remembers to add it here.
+const RULES: GateRule[] = [
+  {
+    code: "off_model_no_tools",
+    fixTarget: "settings_model",
+    applies: (_tool, input) => !input.providerSupportsTools,
+    reason: () => "The model set for this chat doesn't do tool calls, so no tools go out with your messages.",
+    fix: () => "Pick a tool-capable model under Settings → AI Models & Keys.",
+    groupReason: "The model set for this chat doesn't do tool calls, so no tools go out with your messages.",
+    groupFix: "Pick a tool-capable model under Settings → AI Models & Keys.",
+  },
+  {
+    code: "off_model_image_turn",
+    fixTarget: "settings_model",
+    applies: (_tool, input) => input.imageTurnDisablesTools,
+    reason: () =>
+      "This model drops its tools on any message that carries a picture, so this one goes out without them.",
+    fix: () => "Send the picture on its own and ask in a second message, or pick another model under Settings → AI Models & Keys.",
+    groupReason:
+      "This model drops its tools on any message that carries a picture, so this one goes out without them.",
+    groupFix: "Send the picture on its own and ask in a second message, or pick another model under Settings → AI Models & Keys.",
+  },
+  {
+    code: "off_foundry_optin",
+    fixTarget: "settings_foundry",
+    applies: (tool, input) =>
+      (NEEDS_FORGE.has(tool) && !input.forgeOptIn) ||
+      (tool === RUN_TOOL && !input.runOptIn) ||
+      (tool === FOUNDRY_SURVEY_TOOL && !input.forgeOptIn && !input.runOptIn),
+    reason: (tool) =>
+      tool === FORGE_TOOL
+        ? "Forging new tools is switched off, so the AI can't write code for itself."
+        : tool === RUN_TOOL
+          ? "Running forged tools is switched off, so the AI can't use the tools it has already built."
+          : tool === FOUNDRY_SURVEY_TOOL
+            ? "The Tool Foundry is switched off, so the AI can't see what tools it has built."
+            : "Forging new tools is switched off, so the AI can't read or test its own code to repair it.",
+    fix: (tool) =>
+      tool === RUN_TOOL
+        ? "Turn on “Run approved tools” in Settings → Tool Foundry."
+        : tool === FOUNDRY_SURVEY_TOOL
+          ? "Turn on either switch in Settings → Tool Foundry."
+          : "Turn on “Forge new tools” in Settings → Tool Foundry.",
+    groupReason: "The Tool Foundry switches are off, so the AI can't write or run code for itself.",
+    groupFix: "Turn on “Forge new tools” and “Run approved tools” in Settings → Tool Foundry.",
+  },
+  {
+    code: "off_foundry_unavailable",
+    fixTarget: "settings_foundry",
+    // test_tool is exempt: it is a pure sandbox scratchpad that touches no
+    // Foundry table, and executeFoundryTool already routes it around the
+    // migration probe for exactly this case. Withholding it here made that
+    // exemption dead code and told a user to run a database migration before
+    // the assistant could check a snippet that needs no database.
+    applies: (tool, input) => FOUNDRY_TOOLS.has(tool) && tool !== "test_tool" && !input.foundryReady,
+    reason: () => "The Tool Foundry is switched on, but its one-time database setup hasn't run on this account yet.",
+    fix: () => "Open Settings → Tool Foundry and paste the setup line it shows you into Lovable, then reload.",
+    groupReason: "The Tool Foundry is switched on, but its one-time database setup hasn't run on this account yet.",
+    groupFix: "Open Settings → Tool Foundry and paste the setup line it shows you into Lovable, then reload.",
+  },
+  {
+    // Program Foundry opt-in (INVERTED, like the tool Foundry) — same shape,
+    // its own switches. There is no per-verb migration exemption here: every
+    // program verb needs the runner, so none is a stand-alone scratchpad.
+    code: "off_program_optin",
+    fixTarget: "settings_programs",
+    applies: (tool, input) =>
+      (NEEDS_FORGE_PROGRAM.has(tool) && !input.forgeProgramOptIn) ||
+      (tool === RUN_PROGRAM && !input.runProgramOptIn) ||
+      (tool === PROGRAM_SURVEY_TOOL && !input.forgeProgramOptIn && !input.runProgramOptIn),
+    reason: (tool) =>
+      tool === FORGE_PROGRAM
+        ? "Forging VPS programs is switched off, so the AI can't write programs for your server."
+        : tool === RUN_PROGRAM
+          ? "Running VPS programs is switched off, so the AI can't use the programs it has already built."
+          : tool === PROGRAM_SURVEY_TOOL
+            ? "The Program Foundry is switched off, so the AI can't see what programs it has built."
+            : "Forging VPS programs is switched off, so the AI can't read or repair its own programs.",
+    fix: (tool) =>
+      tool === RUN_PROGRAM
+        ? "Turn on “Run approved programs” in Settings → Program Foundry."
+        : tool === PROGRAM_SURVEY_TOOL
+          ? "Turn on either switch in Settings → Program Foundry."
+          : "Turn on “Forge new programs” in Settings → Program Foundry.",
+    groupReason: "The Program Foundry switches are off, so the AI can't write or run programs on your server.",
+    groupFix: "Turn on “Forge new programs” and “Run approved programs” in Settings → Program Foundry.",
+  },
+  {
+    code: "off_program_unavailable",
+    fixTarget: "settings_programs",
+    applies: (tool, input) => PROGRAM_TOOLS.has(tool) && !input.programReady,
+    reason: () => "The Program Foundry is switched on, but it still needs its one-time database setup and a connected VPS runner.",
+    fix: () => "Open Settings → Program Foundry: run the setup line it shows you in Lovable, then connect your VPS.",
+    groupReason: "The Program Foundry is switched on, but it still needs its one-time database setup and a connected VPS runner.",
+    groupFix: "Open Settings → Program Foundry: run the setup line it shows you in Lovable, then connect your VPS.",
+  },
+  {
+    code: "off_lean_mode",
+    fixTarget: "settings_lean",
+    applies: (tool, input) => blockedTools(input.leanMode).includes(tool),
+    reason: (tool) => `${upperFirst(capabilityName(tool))} is off while Lean Mode is on.`,
+    fix: () => "Choose “Full” under Spending in Settings → AI Models & Keys.",
+    groupReason: "Lean Mode is on, which keeps the tools that cost money out of the AI's hands.",
+    groupFix: "Choose “Full” under Spending in Settings → AI Models & Keys.",
+  },
+  {
+    code: "off_studio",
+    fixTarget: "settings_studio",
+    applies: (tool, input) => input.studioActive === false && STUDIO_TOOLS.has(tool),
+    reason: (tool) => `${upperFirst(capabilityName(tool))} is part of the studio tools, which join a chat once it turns to video, 3D or blueprint work.`,
+    fix: () => "Ask for studio work (a video, a 3D model, a blueprint) and they join from that message, or set Studio tools to “Always” in Settings → AI Models & Keys.",
+    groupReason: "The studio tools (video, 3D, masters, blueprints, stage plans) join a chat once it turns to that kind of work, which keeps everyday messages smaller.",
+    groupFix: "Ask for studio work and they join from that message, or set Studio tools to “Always” in Settings → AI Models & Keys.",
+  },
+  {
+    code: "off_voice",
+    fixTarget: "none",
+    applies: (tool, input) => input.voiceMode === true && VISUAL_ONLY_TOOLS.has(tool),
+    reason: (tool) => `${upperFirst(capabilityName(tool))} draws something on screen, so it stays out of voice replies.`,
+    fix: () => "Switch to typed chat to get tables, documents and sheets.",
+    groupReason: "Tools that draw on screen stay out of voice replies.",
+    groupFix: "Switch to typed chat to get tables, documents and sheets.",
+  },
+  {
+    code: "off_permission",
+    fixTarget: "settings_permissions",
+    applies: (tool, input) => {
+      const permId = TOOL_PERMISSION[tool];
+      if (!!permId && input.permissions[permId] === false) return true;
+      // A tool whose EXECUTOR refuses 100% of calls on someone else's switch has
+      // to leave the roster on that switch too. Offering it was the mildest form
+      // of the bug this file exists to fix: the roster carried the verb, the
+      // prompt actively instructed its use, and every call came back a hard
+      // refusal — one wasted round trip per attempt, and a prompt, a roster and
+      // an executor that disagreed about the same tool.
+      const dependsOn = DEPENDS_ON[tool];
+      return !!dependsOn && input.permissions[dependsOn] === false;
+    },
+    reason: (tool, input) => {
+      const fired = firedPermissionId(tool, input.permissions);
+      return fired && fired !== TOOL_PERMISSION[tool]
+        ? `“${permissionLabelFor(tool)}” also needs “${permissionIdLabel(fired)}”, which is switched off in your AI permissions.`
+        : `“${permissionLabelFor(tool)}” is switched off in your AI permissions.`;
+    },
+    fix: (tool, input) => {
+      const fired = firedPermissionId(tool, input.permissions);
+      return `Turn “${fired ? permissionIdLabel(fired) : permissionLabelFor(tool)}” back on in Settings → AI Permissions.`;
+    },
+    groupReason: "These are switched off in your AI permissions.",
+    groupFix: "Turn the ones you want back on in Settings → AI Permissions.",
+  },
+];
+
+const AVAILABLE: Omit<ToolGate, "tool"> = {
+  code: "available",
+  reason: "On — this goes out with your messages.",
+  fix: "Nothing to change; it's already on.",
+  fixTarget: "none",
+};
+
+/** Every tool's status for ONE turn, in the order the names were given (Map
+ *  preserves insertion order, so the roster keeps its registration order). */
+export function computeToolGates(input: ToolGateInput): Map<string, ToolGate> {
+  const gates = new Map<string, ToolGate>();
+  for (const tool of input.toolNames) {
+    const rule = RULES.find((r) => r.applies(tool, input));
+    gates.set(
+      tool,
+      rule
+        ? { tool, code: rule.code, reason: rule.reason(tool, input), fix: rule.fix(tool, input), fixTarget: rule.fixTarget }
+        : { tool, ...AVAILABLE },
+    );
+  }
+  return gates;
+}
+
+/** The roster actually handed to the model. */
+export function availableToolNames(gates: Map<string, ToolGate>): string[] {
+  const out: string[] = [];
+  for (const [tool, gate] of gates) if (gate.code === "available") out.push(tool);
+  return out;
+}
+
+export function withheldGates(gates: Map<string, ToolGate>): ToolGate[] {
+  return Array.from(gates.values()).filter((g) => g.code !== "available");
+}
+
+/** What the model is told, per code. Deliberately separate from the
+ *  user-facing `reason`: that one is written to a person looking at their own
+ *  settings ("your AI permissions"), which reads as nonsense addressed to the
+ *  model. Both are app-authored constants — no provider text ever lands here. */
+const MODEL_FACT: Record<ToolGateCode, string> = {
+  available: "This tool is in your list for this turn.",
+  off_permission: "The user has switched this tool off in their AI permissions.",
+  off_lean_mode: "The user has Lean Mode on, which keeps the paid generators out of your list.",
+  off_studio: "The studio tools join the list once the conversation turns to video, 3D or blueprint work; they are not in your list this turn.",
+  off_voice: "This is a voice reply, so tools that only draw on screen are not in your list.",
+  off_foundry_optin: "The user has the Tool Foundry switch off, so the foundry tools are not in your list.",
+  off_foundry_unavailable: "The Tool Foundry's one-time database setup has not run on this account yet.",
+  off_program_optin: "The user has the Program Foundry switch off, so the program tools are not in your list.",
+  off_program_unavailable: "The Program Foundry's one-time database setup or the VPS runner connection is not ready on this account yet.",
+  off_model_no_tools: "The model answering this turn cannot call tools, so none were sent with the request.",
+  off_model_image_turn:
+    "This turn carries a picture and the model answering it drops tools on picture turns, so none were sent with the request.",
+};
+
+/** The terminal refusal an executor returns when a call is replayed from
+ *  history for a gated tool — the backstop for the roster omission, which is
+ *  the primary enforcement. Terminal on purpose: the documented default is for
+ *  models to retry a failed call two or three times, and a retry loop against
+ *  a switch only the user can flip burns tokens to arrive back here.
+ *
+ *  Call this only with a WITHHELD gate; an "available" gate has nothing to
+ *  refuse and would produce a contradictory result. */
+export function gateRefusal(gate: ToolGate): { error: string; code: ToolGateCode; retriable: false; fix: string } {
+  return {
+    error:
+      `${MODEL_FACT[gate.code]} '${gate.tool}' was not in your tool list for this turn, so this call came from ` +
+      `earlier in the conversation. This is final: do not retry it and do not substitute a different tool. Say so ` +
+      `in one sentence, tell the user what turns it back on (${gate.fix}), then give the best answer you can ` +
+      `without it.`,
+    code: gate.code,
+    retriable: false,
+    fix: gate.fix,
+  };
+}
+
+/** Groups withheld gates by code for the UI, in RULES order (most severe
+ *  first). A group of exactly one tool keeps that tool's specific wording —
+ *  "Forging new tools is switched off" beats "the Tool Foundry switches are
+ *  off" when only one of the two is actually off. */
+export function groupWithheld(gates: Map<string, ToolGate>): Array<{
+  code: ToolGateCode;
+  reason: string;
+  fix: string;
+  fixTarget: ToolGate["fixTarget"];
+  tools: string[];
+}> {
+  const byCode = new Map<ToolGateCode, ToolGate[]>();
+  for (const gate of withheldGates(gates)) {
+    const list = byCode.get(gate.code);
+    if (list) list.push(gate);
+    else byCode.set(gate.code, [gate]);
+  }
+  const out: Array<{ code: ToolGateCode; reason: string; fix: string; fixTarget: ToolGate["fixTarget"]; tools: string[] }> = [];
+  for (const rule of RULES) {
+    const group = byCode.get(rule.code);
+    if (!group) continue;
+    const single = group.length === 1 ? group[0] : null;
+    out.push({
+      code: rule.code,
+      reason: single ? single.reason : rule.groupReason,
+      fix: single ? single.fix : rule.groupFix,
+      fixTarget: rule.fixTarget,
+      tools: group.map((g) => g.tool),
+    });
+  }
+  return out;
+}
+
+/** Every string this module can put in front of a person or a model. The
+ *  copy-vocabulary test walks this so a new rule cannot slip past it. */
+export function allGateCopy(): string[] {
+  const out: string[] = [AVAILABLE.reason, AVAILABLE.fix, ...Object.values(MODEL_FACT)];
+  const probes = [
+    FORGE_TOOL, RUN_TOOL, "generate_video", "generate_image", "web_search",
+    "delete_chapter", "rename_book", "supersede_memory_entry", "some_new_tool",
+    FORGE_PROGRAM, RUN_PROGRAM, PROGRAM_SURVEY_TOOL, "read_program", "delete_program",
+    "create_blueprint_sheet", "render_blocks",
+  ];
+  // Two permission states, because off_permission now has two branches: the
+  // tool's own switch, and a DEPENDS_ON switch its executor also requires.
+  // Walking only one state would leave half the copy unchecked — and the
+  // unchecked half is the newer, less-read half.
+  const states: Array<Record<string, boolean>> = [
+    Object.fromEntries(Object.values(TOOL_PERMISSION).map((id) => [id, false])),
+    Object.fromEntries(Object.entries(DEPENDS_ON).map(([, dep]) => [dep, false])),
+  ];
+  for (const permissions of states) {
+    const input = {
+      toolNames: probes, leanMode: "full", permissions,
+      forgeOptIn: false, runOptIn: false, foundryReady: false,
+      forgeProgramOptIn: false, runProgramOptIn: false, programReady: false,
+      providerSupportsTools: false, imageTurnDisablesTools: false,
+      studioActive: false, voiceMode: true,
+    } as unknown as ToolGateInput;
+    for (const rule of RULES) {
+      out.push(rule.groupReason, rule.groupFix);
+      for (const tool of probes) out.push(rule.reason(tool, input), rule.fix(tool, input));
+    }
+  }
+  return out;
+}

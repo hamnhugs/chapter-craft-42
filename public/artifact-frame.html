@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  Artifact host frame.
+
+  Model-authored artifacts used to be rendered with iframe srcdoc. That stopped
+  working the moment the app gained its own CSP: srcdoc is a local scheme and
+  inherits the embedder's policy, which has no 'unsafe-inline', so every
+  scripted artifact rendered dead (styles applied, JS silently blocked). A
+  static same-origin document carries only its own policy — the one below — so
+  artifact scripts run again without loosening the app's policy.
+
+  Isolation is unchanged: the embedder sets sandbox="allow-scripts" WITHOUT
+  allow-same-origin, so this frame is opaque-origin — no cookies, no storage,
+  no parent access — and connect-src 'none' plus data:-only media means an
+  artifact has nowhere to send anything.
+
+  The artifact document arrives over postMessage from the embedder and is
+  written into this document; document.open() clones THIS document's policy
+  container, so the policy below still applies to everything written.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="x-dns-prefetch-control" content="off">
+<style>html,body{margin:0;background:#fff}</style>
+</head>
+<body><script>
+(function () {
+  "use strict";
+  var written = false;
+  window.addEventListener("message", function (e) {
+    if (written) return;
+    if (e.source !== window.parent) return;
+    var d = e.data;
+    if (!d || d.type !== "artifact" || typeof d.doc !== "string") return;
+    written = true;
+    document.open();
+    document.write(d.doc);
+    document.close();
+  });
+  // Tell the embedder we are listening; it replies with the artifact document.
+  try { window.parent.postMessage({ type: "artifact-frame-ready" }, "*"); } catch (err) {}
+})();
+</script></body>
+</html>

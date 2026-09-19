@@ -83,7 +83,13 @@ async function migrateLegacyLocalNotes() {
           content: n.text.trim(),
         }));
       if (rows.length > 0) {
-        await supabase.from("notes").insert(rows);
+        // Only discard the local copy once the insert is confirmed — on
+        // failure keep everything unmarked so the next open retries.
+        const { error } = await supabase.from("notes").insert(rows);
+        if (error) {
+          toast.error("Could not sync your saved notes — will retry later");
+          return;
+        }
       }
     }
     localStorage.removeItem(LEGACY_STORAGE_KEY);

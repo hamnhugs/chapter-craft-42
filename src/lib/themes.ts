@@ -1,7 +1,7 @@
 // Theme registry. Each theme defines HSL token overrides applied to :root
 // via the ThemeProvider, plus optional fonts loaded from Google Fonts.
 
-export type ThemeId = "amber-editorial" | "dexters-lab" | "fruit-stripe";
+export type ThemeId = "dexters-lab" | "fruit-stripe" | "aurora" | "desolate-lab";
 
 export interface ThemeDef {
   id: ThemeId;
@@ -12,6 +12,7 @@ export interface ThemeDef {
     headline: string; // CSS font-family value (UI headings)
     body: string;
     display?: string; // optional wordmark/hero font; falls back to headline
+    label?: string; // optional label/mono font; falls back to body
     googleFontsHref?: string; // <link href=...> to load
   };
   // HSL strings (e.g. "38 100% 83%") for CSS variables
@@ -19,52 +20,6 @@ export interface ThemeDef {
 }
 
 export const THEMES: ThemeDef[] = [
-  {
-    id: "amber-editorial",
-    name: "Amber Editorial",
-    description: "Warm cream & amber on charcoal. Default reading aesthetic.",
-    swatch: ["#131313", "#ffe2ab", "#ffb800"],
-    fonts: {
-      headline: "'Newsreader', Georgia, serif",
-      body: "'Inter', system-ui, sans-serif",
-      googleFontsHref:
-        "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;0,6..72,800;1,6..72,400;1,6..72,600;1,6..72,700&display=swap",
-    },
-    tokens: {
-      "--background": "0 0% 7.5%",
-      "--foreground": "20 4% 89%",
-      "--card": "0 0% 16.5%",
-      "--card-foreground": "20 4% 89%",
-      "--popover": "0 0% 12.5%",
-      "--popover-foreground": "20 4% 89%",
-      "--primary": "38 100% 83%",
-      "--primary-foreground": "30 100% 13%",
-      "--secondary": "58 22% 71%",
-      "--secondary-foreground": "60 33% 8%",
-      "--muted": "0 0% 16.5%",
-      "--muted-foreground": "36 18% 67%",
-      "--accent": "43 100% 50%",
-      "--accent-foreground": "30 100% 13%",
-      "--destructive": "6 75% 84%",
-      "--destructive-foreground": "0 100% 2%",
-      "--border": "30 15% 20%",
-      "--input": "0 0% 16.5%",
-      "--ring": "43 100% 50%",
-      "--surface-container-lowest": "0 0% 5.5%",
-      "--surface-container-low": "0 0% 11%",
-      "--surface-container": "0 0% 12.5%",
-      "--surface-container-high": "0 0% 16.5%",
-      "--surface-container-highest": "0 0% 20.8%",
-      "--outline": "30 15% 54%",
-      "--outline-variant": "30 20% 25.5%",
-      "--on-surface-variant": "36 18% 74%",
-      "--primary-container": "43 100% 50%",
-      "--on-primary-container": "30 100% 21.5%",
-      "--viewer-bg": "0 0% 7.5%",
-      "--toolbar-bg": "0 0% 11%",
-      "--book-spine": "43 100% 50%",
-    },
-  },
   {
     id: "dexters-lab",
     name: "Dexter's Laboratory",
@@ -181,9 +136,138 @@ export const THEMES: ThemeDef[] = [
       "--book-spine": "355 78% 56%",
     },
   },
+  {
+    id: "aurora",
+    name: "Aurora",
+    description: "Liquid-glass slate with a hue-cycling chromatic accent. Apple-Vision-OS frosted glass.",
+    swatch: ["#0e1426", "#9bb4ff", "#f3a7c4"],
+    fonts: {
+      headline: "'Instrument Serif', 'Newsreader', Georgia, serif",
+      body: "'Inter', system-ui, sans-serif",
+      display: "'Instrument Serif', 'Newsreader', Georgia, serif",
+      googleFontsHref:
+        "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&display=swap",
+    },
+    tokens: {
+      // Deep slate-navy canvas
+      "--background": "230 35% 7%",
+      // Warm cream
+      "--foreground": "220 30% 95%",
+      "--card": "230 30% 13%",
+      "--card-foreground": "220 30% 95%",
+      "--popover": "230 35% 11%",
+      "--popover-foreground": "220 30% 95%",
+      "--primary": "220 30% 95%",
+      "--primary-foreground": "230 35% 7%",
+      "--secondary": "220 20% 75%",
+      "--secondary-foreground": "230 35% 7%",
+      "--muted": "230 30% 13%",
+      "--muted-foreground": "220 18% 70%",
+      // Peach pop (overridden by the @property hue cycle where supported)
+      "--accent": "340 85% 70%",
+      "--accent-foreground": "230 35% 7%",
+      "--destructive": "10 90% 70%",
+      "--destructive-foreground": "0 0% 100%",
+      "--border": "225 25% 22%",
+      "--input": "230 30% 13%",
+      "--ring": "340 85% 70%",
+      "--surface-container-lowest": "230 35% 5%",
+      "--surface-container-low": "230 30% 9%",
+      "--surface-container": "230 30% 11%",
+      "--surface-container-high": "230 28% 14%",
+      "--surface-container-highest": "230 25% 18%",
+      "--outline": "225 25% 55%",
+      "--outline-variant": "225 25% 22%",
+      "--on-surface-variant": "220 22% 80%",
+      "--primary-container": "340 85% 70%",
+      "--on-primary-container": "230 35% 7%",
+      "--viewer-bg": "230 35% 7%",
+      "--toolbar-bg": "230 30% 9%",
+      "--book-spine": "340 85% 70%",
+    },
+  },
+  {
+    id: "desolate-lab",
+    name: "Desolate Lab",
+    description: "Isolated terminal — light-absorbing blacks, technical grays, one signal red.",
+    swatch: ["#131313", "#e5e2e1", "#b0564a"],
+    fonts: {
+      headline: "'Space Grotesk', system-ui, sans-serif",
+      body: "'Space Grotesk', system-ui, sans-serif",
+      display: "'Space Grotesk', system-ui, sans-serif",
+      label: "'JetBrains Mono', ui-monospace, monospace",
+      googleFontsHref:
+        "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap",
+    },
+    tokens: {
+      // Base charcoal #131313
+      "--background": "0 0% 7%",
+      // On-surface #e5e2e1
+      "--foreground": "20 7% 89%",
+      // Panel #1c1b1b (surface-container-low)
+      "--card": "0 3% 11%",
+      "--card-foreground": "20 7% 89%",
+      "--popover": "0 0% 5%",
+      "--popover-foreground": "20 7% 89%",
+      // Primary: pure white — reserved for critical text & high-impact triggers
+      "--primary": "0 0% 100%",
+      "--primary-foreground": "180 5% 11%",
+      // Secondary container #494949 → dark steel for the app
+      "--secondary": "0 0% 16%",
+      "--secondary-foreground": "20 7% 89%",
+      "--muted": "0 3% 11%",
+      // Outline #8e9192
+      "--muted-foreground": "195 2% 56%",
+      // Signal red (CRITICAL_DEPLETION) — the only hue in the facility
+      "--accent": "8 40% 49%",
+      "--accent-foreground": "0 0% 100%",
+      // Error #ffb4ab
+      "--destructive": "4 100% 84%",
+      "--destructive-foreground": "357 100% 21%",
+      // 1px structural borders #2a2a2a
+      "--border": "0 0% 16%",
+      "--input": "0 3% 11%",
+      // Focus ring: white
+      "--ring": "0 0% 100%",
+      // Sharp: every corner in the lab is 0px
+      "--radius": "0rem",
+      "--surface-container-lowest": "0 0% 5%",
+      "--surface-container-low": "0 3% 11%",
+      "--surface-container": "0 2% 12%",
+      "--surface-container-high": "0 0% 16%",
+      "--surface-container-highest": "60 2% 21%",
+      "--outline": "195 2% 56%",
+      // Outline-variant #444748
+      "--outline-variant": "210 3% 27%",
+      "--on-surface-variant": "210 4% 78%",
+      "--primary-container": "0 0% 89%",
+      "--on-primary-container": "180 5% 11%",
+      // Secondary container #494949 / on #b9b8b8
+      "--secondary-container": "0 0% 29%",
+      "--on-secondary-container": "0 0% 73%",
+      // Error container #93000a / on #ffdad6
+      "--error-container": "353 100% 29%",
+      "--on-error-container": "5 100% 92%",
+      "--tertiary": "0 0% 100%",
+      "--tertiary-container": "20 7% 89%",
+      "--primary-fixed-dim": "240 1% 78%",
+      "--viewer-bg": "0 0% 7%",
+      "--toolbar-bg": "0 0% 5%",
+      "--book-spine": "195 2% 56%",
+      // Sidebar rail — same tonal ladder
+      "--sidebar-background": "0 0% 5%",
+      "--sidebar-foreground": "20 7% 89%",
+      "--sidebar-primary": "0 0% 100%",
+      "--sidebar-primary-foreground": "180 5% 11%",
+      "--sidebar-accent": "0 0% 16%",
+      "--sidebar-accent-foreground": "20 7% 89%",
+      "--sidebar-border": "0 0% 16%",
+      "--sidebar-ring": "0 0% 100%",
+    },
+  },
 ];
 
-export const DEFAULT_THEME: ThemeId = "amber-editorial";
+export const DEFAULT_THEME: ThemeId = "dexters-lab";
 
 export function getTheme(id: ThemeId): ThemeDef {
   return THEMES.find((t) => t.id === id) ?? THEMES[0];

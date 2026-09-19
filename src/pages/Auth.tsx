@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { lovable } from "@/integrations/lovable";
 import { useToast } from "@/hooks/use-toast";
 
 const Auth: React.FC = () => {
@@ -7,7 +8,64 @@ const Auth: React.FC = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const { toast } = useToast();
+
+  useEffect(() => {
+    // OAuth failures come back as redirect params, never through the
+    // signInWithOAuth() call — surface them, else "nothing happens".
+    // (main.tsx rewrites bare #error=... fragments to #/auth?... so this
+    // page actually mounts to see them.)
+    const search = new URLSearchParams(window.location.search);
+    const hash = new URLSearchParams(
+      window.location.hash.replace(/^#\/?/, "").split("?").pop() ?? "",
+    );
+    const desc = search.get("error_description") || hash.get("error_description");
+    if (desc) {
+      // The param is attacker-craftable (any link can carry it), so cap the
+      // length and strip URLs rather than relaying arbitrary copy inside a
+      // trusted error toast.
+      const clean = desc.replace(/\+/g, " ").replace(/https?:\/\/\S+/gi, "").slice(0, 160).trim();
+      toast({ title: "Google sign in failed", description: clean, variant: "destructive" });
+      window.history.replaceState(null, "", `${window.location.pathname}#/auth`);
+      return;
+    }
+
+    // A ?code= still in the URL after client init means the PKCE exchange
+    // couldn't run here — the one-shot verifier only exists in the browser
+    // where the flow started (e.g. a confirmation email opened on another
+    // device). Without this the page just sits there, silently signed out.
+    if (search.get("code")) {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (!session) {
+          toast({
+            title: "Almost there",
+            description:
+              "That link couldn't finish signing you in on this device. Your email is confirmed — sign in here to continue.",
+          });
+          window.history.replaceState(null, "", `${window.location.pathname}#/auth`);
+        }
+      });
+      return;
+    }
+
+    // Managed Lovable OAuth works inside the editor iframe — no hand-off needed.
+
+    // Runs once on mount; toast is stable and handleGoogleSignIn is
+    // intentionally not a dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // If the user presses Back from Google's consent screen, the browser can
+  // restore this page from the back/forward cache with googleLoading still
+  // true — re-enable the button so sign-in can be retried.
+  useEffect(() => {
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) setGoogleLoading(false);
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,13 +93,26 @@ const Auth: React.FC = () => {
   };
 
   const handleGoogleSignIn = async () => {
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: window.location.origin },
+    setGoogleLoading(true);
+    // Clear any stale OpenRouter PKCE verifier so it can't hijack a return code.
+    localStorage.removeItem("or_oauth_verifier");
+
+    const result = await lovable.auth.signInWithOAuth("google", {
+      redirect_uri: window.location.origin,
     });
-    if (error) {
-      toast({ title: "Google sign in failed", description: error.message, variant: "destructive" });
+
+    if (result.error) {
+      toast({
+        title: "Google sign in failed",
+        description: result.error instanceof Error ? result.error.message : String(result.error),
+        variant: "destructive",
+      });
+      setGoogleLoading(false);
+      return;
     }
+    if (result.redirected) return;
+    // Session set by the SDK — pageshow handler resets loading if user comes Back.
+    setGoogleLoading(false);
   };
 
   return (
@@ -56,8 +127,8 @@ const Auth: React.FC = () => {
             <span className="material-symbols-outlined text-on-primary-container text-4xl">menu_book</span>
           </div>
           <div className="flex flex-col gap-1">
-            <h1 className="font-headline font-bold text-4xl tracking-tight text-primary">Chapter Craft</h1>
-            <p className="text-secondary italic font-headline text-lg">Curate your intellectual legacy.</p>
+            <h1 className="font-headline font-bold text-4xl tracking-tight text-primary">Bookworm Studio</h1>
+            <p className="text-secondary italic font-headline text-lg">{"\n"}</p>
           </div>
         </header>
 
@@ -87,7 +158,7 @@ const Auth: React.FC = () => {
                 <input
                   type="email" value={email} onChange={(e) => setEmail(e.target.value)} required
                   className="w-full bg-surface-container-low border-none rounded-xl py-4 pl-12 pr-4 text-foreground placeholder:text-on-surface-variant/50 focus:ring-1 focus:ring-primary/40 transition-all"
-                  placeholder="scholar@chaptercraft.com"
+                  placeholder="scholar@bookwormstudio.com"
                 />
               </div>
             </div>
@@ -119,14 +190,25 @@ const Auth: React.FC = () => {
             </div>
 
             <button
-              type="button" onClick={handleGoogleSignIn}
-              className="w-full py-3 bg-surface-container-high text-foreground border border-outline-variant/20 font-medium rounded-xl flex items-center justify-center gap-3 hover:bg-surface-container-highest transition-colors active:scale-95"
+              type="button" onClick={handleGoogleSignIn} disabled={googleLoading}
+              className="w-full py-3 bg-surface-container-high text-foreground border border-outline-variant/20 font-medium rounded-xl flex items-center justify-center gap-3 hover:bg-surface-container-highest transition-colors active:scale-95 disabled:opacity-60 disabled:cursor-wait"
             >
-              <span className="material-symbols-outlined">account_circle</span>
-              Google Account
+              {googleLoading ? (
+                <span className="material-symbols-outlined animate-spin text-xl">progress_activity</span>
+              ) : (
+                // Official multicolor "G" — Google's sign-in branding guidelines
+                <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden>
+                  <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+                  <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+                  <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+                  <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+                </svg>
+              )}
+              {googleLoading ? "Opening Google…" : "Continue with Google"}
             </button>
           </form>
         </section>
+
       </main>
 
       {/* Decorative */}

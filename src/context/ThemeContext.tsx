@@ -24,9 +24,15 @@ function loadGoogleFont(href: string) {
   if (link.href !== href) link.href = href;
 }
 
+// Tracks inline properties set by the previous theme so switching themes
+// never leaves stale overrides (e.g. desolate-lab's --radius: 0) behind.
+let appliedKeys: string[] = [];
+
 function applyTheme(id: ThemeId) {
   const theme = getTheme(id);
   const root = document.documentElement;
+  for (const k of appliedKeys) root.style.removeProperty(k);
+  appliedKeys = Object.keys(theme.tokens);
   for (const [k, v] of Object.entries(theme.tokens)) {
     root.style.setProperty(k, v);
   }
@@ -35,6 +41,7 @@ function applyTheme(id: ThemeId) {
     root.style.setProperty("--font-headline", theme.fonts.headline);
     root.style.setProperty("--font-body", theme.fonts.body);
     root.style.setProperty("--font-display", theme.fonts.display ?? theme.fonts.headline);
+    root.style.setProperty("--font-label", theme.fonts.label ?? theme.fonts.body);
     if (theme.fonts.googleFontsHref) loadGoogleFont(theme.fonts.googleFontsHref);
   }
 }

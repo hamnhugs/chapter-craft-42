@@ -1,0 +1,190 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   Workspace typography — the CSS half of "widening the panel must actually
+   improve the content". Imported from src/main.tsx AFTER src/index.css.
+
+   WHY THIS FILE EXISTS AT ALL.
+   `@tailwindcss/typography` is installed but is NOT registered in
+   tailwind.config.ts, so the `prose prose-sm prose-invert` classes on the
+   research view emit ZERO CSS. What is left is Tailwind's preflight, which
+   resets h1–h6 to `font-size: inherit; font-weight: inherit`, strips list
+   markers and padding from ul/ol, and zeroes every block margin. Net effect
+   today: a research report renders as one undifferentiated wall of text.
+   Registering the plugin would restyle every markdown surface in the app
+   (explicit non-goal), so the structure is restored here instead, scoped to
+   a class that only the workspace report view carries. Nothing outside
+   `.cc-measure` is touched.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* THE MEASURE CAP.
+ *
+ * The most-filed complaint about this exact UI pattern — including against
+ * Claude Code's own Plan panel — is that dragging a side panel wider "only
+ * grows empty margins". The opposite failure is just as bad: with no cap at
+ * all, a 900px panel produces a 900px line, ~130 characters, far past the
+ * ~75 where readability tops out. 78ch centred resolves both: up to roughly
+ * 690px the column IS the panel and every pixel of drag is line length; past
+ * that the surplus becomes symmetric gutter and the text stays readable.
+ *
+ * SPECIFICITY — this is the whole reason for the repeated class.
+ * The only live `.prose` rule in the app is
+ *   [data-theme="fruit-stripe"] .prose { max-width: 68ch }   (src/index.css)
+ * at specificity (0,2,0). A plain `.cc-measure` is (0,1,0) and loses; a
+ * DOUBLED `.cc-measure.cc-measure` is (0,2,0) and merely TIES, which would
+ * leave the cap depending on stylesheet import order. Tripling it to (0,3,0)
+ * wins outright and is order-independent. `max-w-none` was removed from the
+ * element for exactly this reason: at (0,1,0) it never won that fight, which
+ * is why reports have been unclamped in every theme except fruit-stripe.
+ *
+ * `html`-kind artifacts get NO cap. They are apps, they render inside
+ * ArtifactFrame, and full width is the entire point of the resize feature. */
+.cc-measure.cc-measure.cc-measure,
+.cc-measure-box.cc-measure-box.cc-measure-box {
+  max-width: 78ch;
+  margin-inline: auto;
+}
+
+/* `.cc-measure-box` is the CAP WITHOUT THE TYPOGRAPHY — the same column, for
+ * blocks the app renders itself rather than receiving from markdown. The
+ * research view's Sources list is the one that matters: it is a SIBLING of
+ * the prose, so without this it spans the whole panel while the report it
+ * belongs to is centred, and its `border-t` visibly overhangs the text on
+ * both sides at any width past ~690px. It cannot simply take `.cc-measure`,
+ * because the list rules below would put disc markers on a list that has
+ * never had them — a change at narrow width, which this ship does not make. */
+
+/* ── Flow ─────────────────────────────────────────────────────────────────
+   One spacing rule for every block, then headings override it. `* + *`
+   deliberately skips the first child so the report does not start with a
+   gap; the doubled selector below re-zeroes a leading heading, which would
+   otherwise win on its own (0,1,1) element specificity. */
+.cc-measure > * + * {
+  margin-top: 0.9em;
+}
+
+.cc-measure.cc-measure > :first-child {
+  margin-top: 0;
+}
+
+/* ── Headings ─────────────────────────────────────────────────────────────
+   Restores the hierarchy preflight erased. Sizes are em-relative so the
+   whole scale moves with the container's font-size. */
+.cc-measure h1,
+.cc-measure h2,
+.cc-measure h3,
+.cc-measure h4,
+.cc-measure h5,
+.cc-measure h6 {
+  font-weight: 700;
+  line-height: 1.25;
+  margin-top: 1.6em;
+  margin-bottom: 0.5em;
+  text-wrap: balance;
+}
+
+.cc-measure h1 { font-size: 1.5em; }
+.cc-measure h2 { font-size: 1.3em; }
+.cc-measure h3 { font-size: 1.125em; }
+.cc-measure h4,
+.cc-measure h5,
+.cc-measure h6 { font-size: 1em; }
+
+.cc-measure p {
+  line-height: 1.65;
+}
+
+/* ── Lists ────────────────────────────────────────────────────────────────
+   Preflight sets `list-style: none; padding: 0`, so without this a bulleted
+   report reads as unbroken prose. */
+.cc-measure ul {
+  list-style: disc;
+  padding-inline-start: 1.35em;
+}
+
+.cc-measure ol {
+  list-style: decimal;
+  padding-inline-start: 1.35em;
+}
+
+.cc-measure li::marker {
+  color: hsl(var(--on-surface-variant) / 0.7);
+}
+
+.cc-measure li + li,
+.cc-measure li > ul,
+.cc-measure li > ol {
+  margin-top: 0.3em;
+}
+
+/* ── Links ────────────────────────────────────────────────────────────────
+   Preflight sets `color: inherit; text-decoration: inherit`, which makes a
+   citation link indistinguishable from body text. */
+.cc-measure a {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ── Code ─────────────────────────────────────────────────────────────────
+   `overflow-x: auto` on the block is load-bearing: a long unbroken line must
+   scroll INSIDE the code block, never widen the panel and scroll the page
+   body sideways on a phone. */
+.cc-measure code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.875em;
+  background: hsl(var(--surface-container-high) / 0.6);
+  padding: 0.15em 0.35em;
+  border-radius: 0.35rem;
+}
+
+.cc-measure pre {
+  background: hsl(var(--surface-container-lowest) / 0.85);
+  border: 1px solid hsl(var(--outline-variant) / 0.25);
+  border-radius: 0.75rem;
+  padding: 0.85rem 1rem;
+  overflow-x: auto;
+  line-height: 1.5;
+}
+
+.cc-measure pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: 0.85em;
+}
+
+/* ── Quotes, rules, tables ───────────────────────────────────────────────
+   The table has no wrapper element of its own (react-markdown emits a bare
+   <table>), but its scroll container — the detail pane's `overflow-auto` —
+   already contains sideways overflow, so a wide table scrolls the report,
+   not the page. */
+.cc-measure blockquote {
+  border-inline-start: 3px solid hsl(var(--primary-container) / 0.5);
+  padding-inline-start: 0.9em;
+  color: hsl(var(--on-surface-variant));
+  font-style: italic;
+}
+
+.cc-measure hr {
+  border: 0;
+  border-top: 1px solid hsl(var(--outline-variant) / 0.35);
+  margin-block: 1.5em;
+}
+
+.cc-measure table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.925em;
+}
+
+.cc-measure th,
+.cc-measure td {
+  border: 1px solid hsl(var(--outline-variant) / 0.3);
+  padding: 0.4em 0.6em;
+  text-align: start;
+  vertical-align: top;
+}
+
+.cc-measure th {
+  background: hsl(var(--surface-container-high) / 0.5);
+  font-weight: 700;
+}

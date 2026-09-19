@@ -15,6 +15,10 @@ const ConflictNotifier: React.FC = () => {
   const [pulse, setPulse] = useState(false);
 
   const openConflictsTab = useCallback(() => {
+    // The live event only reaches WikiPanel when it's already mounted; when
+    // arriving from another tab the panel mounts AFTER this dispatch, so a
+    // flag lets it consume the intent on mount instead of losing it.
+    try { sessionStorage.setItem("open-conflicts-pending", "1"); } catch { /* private mode */ }
     setActiveTab("wiki" as any);
     // WikiPanel listens for this event and switches to its Conflicts view
     window.dispatchEvent(new CustomEvent("open-conflicts"));

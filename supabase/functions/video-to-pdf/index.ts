@@ -42,6 +42,25 @@ Deno.serve(async (req) => {
       const { videoUrl, formatForChapterize } = await req.json();
       if (!videoUrl?.trim()) return json({ error: "videoUrl required" }, 400);
 
+      // Restrict to YouTube hosts — the engine's fetcher would otherwise be
+      // pointed at arbitrary/internal URLs (SSRF). The client-side check is
+      // UX only; this is the real boundary.
+      let parsedUrl: URL;
+      try {
+        parsedUrl = new URL(videoUrl.trim());
+      } catch {
+        return json({ error: "Invalid URL" }, 400);
+      }
+      const ALLOWED_HOSTS = new Set([
+        "youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be",
+      ]);
+      if (
+        !/^https?:$/.test(parsedUrl.protocol) ||
+        !ALLOWED_HOSTS.has(parsedUrl.hostname.toLowerCase())
+      ) {
+        return json({ error: "Only YouTube URLs are supported" }, 400);
+      }
+
       const submitRes = await fetch(`${VIDEO_ENGINE_URL}/video/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -97,7 +116,12 @@ Deno.serve(async (req) => {
       }
 
       title = title || (job.video_url as string) || "Video Transcript";
-      const htmlContent = buildHtml(title, transcript);
+      const dlMeta = (job.metadata as Record<string, unknown> | null) || {};
+      const htmlContent = buildHtml(title, transcript, {
+        videoUrl: job.video_url as string,
+        channel: (dlMeta.channel as string) || null,
+        durationSeconds: (dlMeta.duration_seconds as number) || null,
+      });
 
       return new Response(htmlContent, {
         status: 200,
@@ -226,7 +250,11 @@ Deno.serve(async (req) => {
               .maybeSingle();
 
             if (!existingBook) {
-              const htmlContent = buildHtml(docTitle, finalTranscript);
+              const htmlContent = buildHtml(docTitle, finalTranscript, {
+                videoUrl: job.video_url as string,
+                channel: meta.channel ? channel : null,
+                durationSeconds: durationSecs ?? null,
+              });
               const htmlBytes = new TextEncoder().encode(htmlContent);
               const bookId = crypto.randomUUID();
               const storagePath = `${user.id}/${bookId}.html`;
@@ -238,11 +266,35 @@ Deno.serve(async (req) => {
               if (upErr) {
                 console.error("HTML library upload failed:", upErr);
               } else {
-                const { data: bookRow, error: insErr } = await supabase
-                  .from("books")
-                  .insert({ id: bookId, user_id: user.id, title: docTitle, file_name: fileName, page_count: 0 })
-                  .select("id")
-                  .single();
+                // Marked as a YouTube transcript at insert so every read door
+                // can say so (migration 20260917120000). Until that migration
+                // is applied the column rejects "youtube" (23514) or doesn't
+                // exist (42703/PGRST204): fall back to the reserved tag, and
+                // only then to an unmarked row — the banner inside the
+                // transcript still says what it is.
+                const base = { id: bookId, user_id: user.id, title: docTitle, file_name: fileName, page_count: 0 };
+                const insertBook = (row: Record<string, unknown>) =>
+                  supabase.from("books").insert(row).select("id").single();
+                const schemaMismatch = (e: { code?: string } | null) =>
+                  !!e && ["23514", "42703", "PGRST204"].includes(e.code ?? "");
+                let { data: bookRow, error: insErr } = await insertBook({
+                  ...base,
+                  source: "youtube",
+                  source_context: {
+                    kind: "youtube",
+                    video_url: job.video_url,
+                    channel: meta.channel ? channel : null,
+                    duration_seconds: durationSecs ?? null,
+                    job_id: jobId,
+                  },
+                });
+                if (schemaMismatch(insErr)) {
+                  ({ data: bookRow, error: insErr } = await insertBook({ ...base, tags: ["source:youtube"] }));
+                }
+                if (schemaMismatch(insErr)) {
+                  console.warn("video-to-pdf: books has no provenance or tags column; saving the transcript unmarked");
+                  ({ data: bookRow, error: insErr } = await insertBook(base));
+                }
 
                 if (insErr) {
                   console.error("HTML library insert failed:", insErr);
@@ -348,9 +400,32 @@ Output format:
 
 // ── HTML generation ──────────────────────────────────────────────────────────
 
-function buildHtml(title: string, transcript: string): string {
+interface VideoSource {
+  videoUrl: string;
+  channel: string | null;
+  durationSeconds: number | null;
+}
+
+function buildHtml(title: string, transcript: string, video?: VideoSource): string {
   const esc = (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+  // Says what this document is before anything else: an automatic transcript
+  // of a YouTube video, not a book or article.
+  let sourceBanner = "";
+  if (video) {
+    const secs = video.durationSeconds || 0;
+    const length = secs
+      ? (secs >= 3600 ? `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m` : `${Math.floor(secs / 60)}m ${Math.round(secs % 60)}s`)
+      : "";
+    const details = [video.channel, length].filter(Boolean).map((d) => esc(String(d))).join(" · ");
+    const safeUrl = /^https:\/\/(www\.|m\.)?(youtube\.com|youtu\.be)\//i.test(video.videoUrl) ? video.videoUrl : "";
+    sourceBanner = `<aside class="source-banner" role="note">
+    <p class="source-label">&#9654; YouTube video transcript</p>
+    <p>Automatically transcribed from a YouTube video${details ? ` (${details})` : ""}. It may contain transcription errors.</p>
+    ${safeUrl ? `<p class="source-url"><a href="${esc(safeUrl)}" target="_blank" rel="noopener noreferrer">${esc(safeUrl)}</a></p>` : ""}
+  </aside>`;
+  }
 
   type Section = { id: string; title: string; rawLines: string[] };
   const lines = transcript.split(/\r?\n/);
@@ -427,9 +502,18 @@ function buildHtml(title: string, transcript: string): string {
     .toc-label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #888; margin-bottom: 0.6rem; }
     .toc ol { padding-left: 1.2rem; }
     .toc li { margin: 0.3rem 0; font-size: 0.95rem; }
+    .source-banner { border: 1px solid #f1b4b4; border-left: 4px solid #d93025; background: #fdf1f0; border-radius: 10px; padding: 0.8rem 1.1rem; margin: 0 0 1.5rem; font-size: 0.9rem; line-height: 1.5; }
+    .source-banner p { margin: 0.2rem 0; }
+    .source-label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #b3261e; }
+    .source-url { word-break: break-all; font-size: 0.85rem; }
+    @media (prefers-color-scheme: dark) {
+      .source-banner { background: #2a1614; border-color: #5c2b27; border-left-color: #f28b82; }
+      .source-label { color: #f28b82; }
+    }
   </style>
 </head>
 <body>
+  ${sourceBanner}
   <h1>${esc(title)}</h1>
   ${tocHtml}
   ${preambleHtml}

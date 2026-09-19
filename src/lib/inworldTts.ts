@@ -72,3 +72,64 @@ export async function synthesizeSpeech(
   }
   return resp.arrayBuffer();
 }
+
+export interface TimedSpeech {
+  audio: ArrayBuffer;
+  /** Per-token timing (seconds from audio start), or null when unavailable. */
+  words: Array<{ text: string; start: number; end: number }> | null;
+}
+
+/**
+ * `synthesizeSpeech` plus Inworld WORD timestamps, for read-along highlighting.
+ * Tolerates an edge function that predates timestamp support: it answers with
+ * raw audio/mpeg, which comes back with `words: null` (caller estimates).
+ */
+export async function synthesizeSpeechWithTimestamps(
+  text: string,
+  voiceId: string,
+  model = "inworld-tts-2",
+  opts?: { signal?: AbortSignal; sampleRate?: number },
+): Promise<TimedSpeech> {
+  let cleanVoiceId = String(voiceId ?? "").trim();
+  if (!cleanVoiceId || cleanVoiceId === "undefined") cleanVoiceId = "Ashley";
+  const headers = await authHeaders();
+  const resp = await fetch(FUNCTIONS_BASE, {
+    method: "POST",
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text,
+      voice_id: cleanVoiceId,
+      model: (model && model.trim()) || "inworld-tts-2",
+      sample_rate: opts?.sampleRate ?? 24000,
+      timestamp_type: "WORD",
+    }),
+    signal: opts?.signal,
+  });
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => resp.statusText);
+    throw new Error(`${resp.status}: ${body}`);
+  }
+  if (!(resp.headers.get("Content-Type") || "").includes("application/json")) {
+    return { audio: await resp.arrayBuffer(), words: null };
+  }
+  const data = await resp.json();
+  const bin = Uint8Array.from(atob(String(data?.audioContent ?? "")), (c) => c.charCodeAt(0));
+  return { audio: bin.buffer, words: parseWordAlignment(data?.timestampInfo) };
+}
+
+/** Inworld `timestampInfo.wordAlignment` → flat timed tokens (null if absent/malformed). */
+export function parseWordAlignment(info: unknown): TimedSpeech["words"] {
+  const wa = (info as { wordAlignment?: Record<string, unknown> } | null)?.wordAlignment;
+  const words = wa?.words;
+  const starts = wa?.wordStartTimeSeconds;
+  const ends = wa?.wordEndTimeSeconds;
+  if (!Array.isArray(words) || !Array.isArray(starts) || !Array.isArray(ends)) return null;
+  const out: NonNullable<TimedSpeech["words"]> = [];
+  for (let i = 0; i < words.length; i++) {
+    const start = Number(starts[i]);
+    const end = Number(ends[i]);
+    if (!Number.isFinite(start)) continue;
+    out.push({ text: String(words[i] ?? ""), start, end: Number.isFinite(end) ? end : start });
+  }
+  return out.length ? out : null;
+}

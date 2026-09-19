@@ -1,4 +1,4 @@
-// Shared embedding helper used by knowledge-extract, knowledge-ingest, and embed-entries.
+// Shared embedding helper used by knowledge-extract and embed-entries.
 // Writes to knowledge_entries.embedding_v2 (halfvec(1536)) so it lives side-by-side
 // with the existing 768-dim `embedding` column used by knowledge-retrieve.
 
@@ -79,7 +79,9 @@ export async function embedAndStore(
       for (let j = 0; j < batch.length; j++) {
         const { error } = await supabase
           .from("knowledge_entries")
-          .update({ embedding_v2: vectorLiteral(vectors[j]), embedding_model: EMBED_MODEL })
+          // embedding_model describes the 768-dim `embedding` column (see
+          // _shared/embed.ts); stamping the v2 model here clobbered it.
+          .update({ embedding_v2: vectorLiteral(vectors[j]) })
           .eq("id", batch[j].id)
           .eq("user_id", userId);
         if (error) {

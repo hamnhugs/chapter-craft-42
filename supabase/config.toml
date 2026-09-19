@@ -9,9 +9,6 @@ verify_jwt = false
 [functions.knowledge-lint]
 verify_jwt = false
 
-[functions.knowledge-ingest]
-verify_jwt = false
-
 [functions.knowledge-consolidate]
 verify_jwt = false
 
@@ -27,5 +24,41 @@ verify_jwt = false
 [functions.wiki-drift-check]
 verify_jwt = false
 
+[functions.auto-structure]
+verify_jwt = false
 
+[functions.auto-tag]
+verify_jwt = false
+
+[functions.create-checkout]
+verify_jwt = false
+
+[functions.check-subscription]
+verify_jwt = false
+
+[functions.customer-portal]
+verify_jwt = false
+
+
+
+
+[functions.embed-image]
+verify_jwt = true
+
+[functions.describe-figures]
+verify_jwt = true
+
+[functions.nvidia-chat]
+verify_jwt = true
+
+# program-cron is woken by the pg_cron heartbeat with a Vault BEARER SECRET, not a
+# user JWT, so the platform gateway must NOT require a JWT — the function's own
+# constant-time bearer gate (PROGRAM_CRON_KEY) is the sole, deliberate auth on this
+# endpoint. program-run / program-verify are intentionally absent here: they take a
+# real user JWT and correctly keep the platform default verify_jwt=true.
+[functions.program-cron]
+verify_jwt = false
+
+[functions.prompt-incubator-sweep]
+verify_jwt = false
 

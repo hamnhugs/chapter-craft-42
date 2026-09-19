@@ -4,6 +4,11 @@ export interface Chapter {
   startPage: number;
   endPage: number;
   textContent: string;
+  /** One-line model-generated summary (catalog mode). Untrusted text —
+   *  every prompt/tool door sanitizes it on read. Absent until the user
+   *  generates the book's catalog (and until the gist migration is applied,
+   *  which every reader feature-detects). */
+  gist?: string | null;
 }
 
 export interface BookDocument {
@@ -15,4 +20,49 @@ export interface BookDocument {
   chapters: Chapter[];
   addedAt: number;
   coverImageUrl?: string;
+  /** Fixed-taxonomy category assigned by auto-tag (mind map hub). */
+  category?: string;
+  /** Free-form topic tags assigned by auto-tag (mind map edges + search). */
+  tags?: string[];
+  /** Model-authored book-level summary — the catalog layer ABOVE chapter
+   *  gists. Untrusted text, same contract as Chapter.gist: stored raw, every
+   *  prompt/tool door sanitizes it on read. Absent until generated, and
+   *  absent for the whole session if the books.summary migration
+   *  (20260902120000) has not been applied — every reader feature-detects. */
+  summary?: string | null;
+  /** Model id that authored `summary`. Surfaced in the UI so a summary is
+   *  never shown as unattributed book metadata. */
+  summaryModel?: string | null;
+  /** When `summary` was written (epoch ms), for staleness against chapters. */
+  summarizedAt?: number | null;
+  /** Who wrote the book: "user" (uploaded — the primary tier) or
+   *  "assistant" (written in-app at the user's request — a derived tier that
+   *  every read door labels). Set by the APP at insert, never by the model.
+   *  Absent until the provenance migration (20260903120000) is applied, in
+   *  which case the reserved tag carries it — read through bookProvenance's
+   *  `bookSource`, never by inspecting either field directly. */
+  source?: "user" | "assistant" | "youtube";
+  /** Model id that authored an assistant-written book. */
+  sourceModel?: string | null;
+  /** For assistant-written books: what was LOADED in the conversation when
+   *  it was written ({book_ids, shelf_id}) — computed by the app. */
+  sourceContext?: {
+    book_ids?: string[];
+    shelf_id?: string | null;
+    /** YouTube transcripts: the video it was transcribed from. */
+    kind?: "youtube";
+    video_url?: string;
+    channel?: string | null;
+    duration_seconds?: number | null;
+    job_id?: string;
+  } | null;
+  /** User-managed shelf ids (book_folders.id), non-exclusive; empty when
+   *  unshelved. Loaded from the book_shelf_members junction in deterministic
+   *  (book, shelf) order — the single source. books.folder_id is no longer
+   *  read: it could hold one shelf out of many and drifted (a shelf delete
+   *  SET NULLs it while other memberships remain), so it seeded a book on
+   *  three shelves as being on one. Empty also means "not loaded yet";
+   *  AppContext.membershipLoaded is what separates the two. */
+  folderIds: string[];
 }
+

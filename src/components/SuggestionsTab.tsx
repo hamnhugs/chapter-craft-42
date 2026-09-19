@@ -94,7 +94,7 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
     setRecomputing(true);
     try {
       const res = await recomputeCentroids();
-      toast.success(`Recomputed centroids for ${res.recomputed} of ${res.total_wikis} wikis`);
+      toast.success(`Recomputed centroids for ${res.recomputed} of ${res.total_wikis} neurons`);
     } catch (err: any) {
       toast.error(err.message || "Recompute failed");
     } finally {
@@ -135,7 +135,7 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
     try {
       const res = await runIncubatorSweep();
       if (res?.proposals > 0) {
-        toast.success(`Found ${res.proposals} new wiki ${res.proposals === 1 ? "proposal" : "proposals"}`);
+        toast.success(`Found ${res.proposals} new neuron ${res.proposals === 1 ? "proposal" : "proposals"}`);
       } else {
         toast.info("No new clusters ready yet — keep filing");
       }
@@ -151,7 +151,7 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
     setActing(p.id);
     try {
       await acceptProposal(p);
-      toast.success(`Created new wiki "${p.proposed_name}"`);
+      toast.success(`Created new neuron "${p.proposed_name}"`);
       setProposals((prev) => prev.filter((x) => x.id !== p.id));
       window.dispatchEvent(new Event("wikis-changed"));
       onChanged?.();
@@ -179,7 +179,7 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
     try {
       const res = await runDriftCheck();
       if (res.alerts > 0) toast.success(`Found ${res.alerts} health ${res.alerts === 1 ? "alert" : "alerts"}`);
-      else toast.info("All wikis look healthy");
+      else toast.info("All neurons look healthy");
       await load();
     } catch (err: any) {
       toast.error(err.message || "Drift check failed");
@@ -230,7 +230,7 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
           <div>
             <h3 className="font-headline font-bold text-lg text-foreground">Smart Filing</h3>
             <p className="text-sm text-on-surface-variant max-w-md">
-              Suggests where new knowledge fits best — and proposes brand-new wikis when a theme appears. Nothing moves without your tap.
+              Suggests where new knowledge fits best — and proposes brand-new neurons when a theme appears. Nothing moves without your tap.
             </p>
             {accuracy && accuracy.total >= 5 && (
               <p className="text-xs text-on-surface-variant pt-1 font-bold">
@@ -245,7 +245,7 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
             onClick={handleSweep}
             disabled={sweeping}
             className="text-xs font-bold text-on-surface-variant hover:text-foreground flex items-center gap-1.5 px-3 py-2 rounded-lg hover:bg-surface-container disabled:opacity-50"
-            title="Check the incubator for new wiki proposals"
+            title="Check the incubator for new neuron proposals"
           >
             {sweeping ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BookPlus className="w-3.5 h-3.5" />}
             Check incubator
@@ -254,7 +254,7 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
             onClick={handleDrift}
             disabled={drifting}
             className="text-xs font-bold text-on-surface-variant hover:text-foreground flex items-center gap-1.5 px-3 py-2 rounded-lg hover:bg-surface-container disabled:opacity-50"
-            title="Check wikis for drift (split / rename suggestions)"
+            title="Check neurons for drift (split / rename suggestions)"
           >
             {drifting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Activity className="w-3.5 h-3.5" />}
             Check drift
@@ -265,7 +265,7 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
             onClick={handleRecompute}
             disabled={recomputing}
             className="text-xs font-bold text-on-surface-variant hover:text-foreground flex items-center gap-1.5 px-3 py-2 rounded-lg hover:bg-surface-container disabled:opacity-50"
-            title="Refresh wiki centroids"
+            title="Refresh neuron centroids"
           >
             {recomputing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
             Recompute
@@ -309,7 +309,7 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
           <Sparkles className="w-10 h-10 opacity-40" />
           <p className="text-sm text-center max-w-sm">
             {enabled
-              ? "Smart Filing is watching. Reroute suggestions and new-wiki proposals will appear here as the system learns."
+              ? "Smart Filing is watching. Reroute suggestions and new-neuron proposals will appear here as the system learns."
               : "Turn on Smart Filing above to start getting routing suggestions."}
           </p>
         </div>
@@ -319,7 +319,7 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
           {healthAlerts.length > 0 && (
             <div className="space-y-3">
               <div className="text-xs font-bold uppercase tracking-widest text-on-surface-variant px-1">
-                Wiki Health · {healthAlerts.length}
+                Neuron Health · {healthAlerts.length}
               </div>
               {healthAlerts.map((a) => (
                 <div key={a.id} className="bg-surface-container-low rounded-2xl p-5 border border-outline-variant/10 space-y-3">
@@ -370,7 +370,7 @@ const SuggestionsTab: React.FC<Props> = ({ onChanged }) => {
           {proposals.length > 0 && (
             <div className="space-y-3">
               <div className="text-xs font-bold uppercase tracking-widest text-on-surface-variant px-1">
-                New Wiki Proposals · {proposals.length}
+                New Neuron Proposals · {proposals.length}
               </div>
               {proposals.map((p) => (
                 <div

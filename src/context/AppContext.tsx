@@ -1,10 +1,18 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
+import { flushSync } from "react-dom";
+import { toast } from "sonner";
 import { BookDocument, Chapter } from "@/types/library";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { Wiki, fetchWikis, fetchActiveWikiId, loadWiki as loadWikiApi, createWiki } from "@/lib/wikisApi";
+import { Wiki, fetchWikis, fetchActiveWikiIds, loadWiki as loadWikiApi, loadWikiSet, createWiki, sessionActiveWikiIds } from "@/lib/wikisApi";
+import { fetchShelfMembership, applyShelfDelta, type ShelfDelta } from "@/lib/shelfMembership";
+import { listFolders, createFolder, renameFolder, deleteFolder, type BookFolder } from "@/lib/bookFolders";
+import { applyLoad, describeLoad, focusChanged, focusEpoch, type FocusState, type LoadAction, type NeuronChoice } from "@/lib/counselFocus";
+import { bookContextStore } from "@/lib/chatBooks";
+import { ASSISTANT_TAG, mergeReservedTags } from "@/lib/bookProvenance";
+import { MAX_ACTIVE_NEURONS } from "@/lib/neuronAccess";
 
-type TabId = "library" | "viewer" | "chat" | "wiki" | "wikis" | "video" | "voice" | "chapterize";
+type TabId = "library" | "viewer" | "chat" | "wiki" | "wikis" | "settings" | "admin";
 
 interface AppState {
   books: BookDocument[];
@@ -13,25 +21,204 @@ interface AppState {
   wikis: Wiki[];
   activeWikiId: string | null;
   activeWiki: Wiki | undefined;
-  addBook: (book: BookDocument, sourceFile?: File) => Promise<void>;
-  removeBook: (id: string) => void;
+  /** Full ordered loaded set — [0] is the primary (= activeWikiId). */
+  activeWikiIds: string[];
+  /** Loaded neurons in order, primary first (ids resolved against `wikis`). */
+  activeWikis: Wiki[];
+  addBook: (book: BookDocument, sourceFile?: File, opts?: AddBookOptions) => Promise<string>;
+  /** Move a book to the Trash — or, when the trash migration is not applied,
+   *  delete it permanently (the result says which). Typed: a delete that
+   *  failed says so, and one that succeeded says what went with it. A purge
+   *  goes row first, storage cleanup after (an orphaned file is recoverable
+   *  garbage; an orphaned row with no file is a broken book). */
+  removeBook: (id: string) => Promise<RemoveBookResult>;
+  /** null until the first library load settles; false = the trash migration
+   *  (20260903130000) is not applied, so deleting is permanent. */
+  trashAvailable: boolean | null;
+  /** The Trash, newest first. Loaded on demand (refreshTrash), not at startup. */
+  trashedBooks: TrashedBook[];
+  trashLoading: boolean;
+  /** Fetch the Trash and purge anything past TRASH_RETENTION_DAYS. */
+  refreshTrash: () => Promise<void>;
+  /** Put a trashed book back in the library, exactly as it was. */
+  restoreBook: (id: string) => Promise<{ ok: true; title: string } | { ok: false; error: string }>;
+  /** Delete a trashed book forever (row, then storage). */
+  purgeBook: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Purge every trashed book. Resolves with how many went. */
+  emptyTrash: () => Promise<{ purged: number; failed: number }>;
   setActiveBook: (id: string) => void;
-  setActiveBookSilent: (id: string) => void;
+  setActiveBookSilent: (id: string | null) => void;
+  /** What the load dialog is asking about (null = dialog closed). */
+  pendingLoad: PendingLoad | null;
+  /** Entry points for loading from the Vault: each opens the neuron-pick dialog. */
+  requestBookLoad: (bookId: string) => void;
+  requestShelfLoad: (shelfId: string) => void;
+  requestBooksLoad: (bookIds: string[], label: string) => void;
+  /** Resolves the load dialog with the neuron choice (keep = Skip). For a
+   *  book, `alongside` opens it in the reader WITHOUT replacing the loaded
+   *  shelf/books. */
+  resolveLoad: (neurons: NeuronChoice, opts?: { alongside?: boolean }) => Promise<void>;
+  /** THE focus writer (docs/library-agent.md L4): every surface that changes
+   *  what Counsel discusses — the dialog, the picker's shelf switch, the AI
+   *  tool — goes through this. Neurons are written first (the async layer);
+   *  the toast with Undo is raised after they settle. */
+  loadFocus: (action: LoadAction, opts?: { toast?: boolean; navigate?: boolean }) => Promise<LoadReport>;
+  /** LIVE readers — synchronously current within a turn, unlike the render
+   *  snapshot a closure holds. Tools that compose (save → shelve → load) must
+   *  read through these. */
+  getBooks: () => BookDocument[];
+  getActiveBookId: () => string | null;
+  getShelves: () => BookFolder[];
   setActiveTab: (tab: TabId) => void;
   addChapter: (bookId: string, chapter: Chapter) => Promise<void>;
+  /** Bulk insert (one request per 100 rows, one state patch). */
+  addChapters: (bookId: string, chapters: Chapter[]) => Promise<void>;
   updateChapter: (bookId: string, chapterId: string, name: string) => void;
   removeChapter: (bookId: string, chapterId: string) => void;
   updateBookTitle: (bookId: string, newTitle: string) => void;
+  updateBookTags: (bookId: string, category: string | null, tags: string[]) => Promise<void>;
+  /** Toggle one shelf on/off for a book. Optimistic (state patches before
+   *  the write, inverse-delta rollback on failure); in multi-shelf mode a
+   *  check adds membership, in exclusive fallback it replaces it. */
+  toggleBookShelf: (bookId: string, shelfId: string) => Promise<void>;
+  /** Explicit membership write (a DELTA, never replace-the-set). Resolves
+   *  with the shelves the book LEFT when the exclusive fallback made an add
+   *  into a move. Unknown book id THROWS. */
+  setBookShelfMembership: (bookId: string, shelfId: string, member: boolean) => Promise<{ changed: boolean; moved_from: string[] }>;
+  /** THE shelf roster — one copy for the whole app. Membership already had
+   *  this law (books[].folderIds); the roster did not, so the Vault and the
+   *  chat picker each fetched their own and drifted: a shelf created in one
+   *  was invisible to the other, and a shelf deleted in one lingered as a
+   *  phantom that resolved to nothing. */
+  shelves: BookFolder[];
+  /** True until the first roster load settles (success or failure). */
+  shelvesLoading: boolean;
+  createShelf: (name: string) => Promise<BookFolder>;
+  renameShelf: (id: string, name: string) => Promise<void>;
+  /** Deletes the shelf AND drops it from every book's folderIds. The DB
+   *  cascades the junction rows; this keeps client state in step without a
+   *  reload or per-book writes. */
+  deleteShelf: (id: string) => Promise<void>;
+  /** Patch a freshly generated shelf digest into the roster. The DB write
+   *  happens in shelfDigest.ts; this only mirrors it locally. */
+  applyShelfDigest: (shelfId: string, summary: string, model: string) => void;
+  /** True once the shelf-membership junction is confirmed live this session —
+   *  until then shelf assignment is exclusive (one shelf per book). */
+  multiShelf: boolean;
+  /** False until the first membership read settles. Shelf UI must not state
+   *  a count before this: books load with EMPTY folderIds, so a count read
+   *  early is a confident zero rather than "not known yet". */
+  membershipLoaded: boolean;
   getActiveBook: () => BookDocument | undefined;
   loadBookFile: (bookId: string) => Promise<string>;
+  /** Fetch one chapter's text on demand (not loaded at startup). */
+  loadChapterText: (chapterId: string) => Promise<string>;
+  loadChapterTextStrict: (chapterId: string) => Promise<{ ok: boolean; text?: string; error?: string }>;
+  /** Fetch every chapter's text for one book on demand. */
+  loadBookChapterText: (bookId: string) => Promise<void>;
+  /** Patch freshly generated chapter gists into library state (catalog mode).
+   *  DB writes happen in chapterGists.ts; this only mirrors them locally. */
+  applyChapterGists: (gistById: Record<string, string>) => void;
+  /** Patch a freshly generated book summary into library state. The DB write
+   *  happens in bookSummary.ts; this only mirrors it locally. */
+  applyBookSummary: (bookId: string, summary: string, model: string) => void;
+
   refreshWikis: () => Promise<void>;
   setActiveWiki: (wikiId: string) => Promise<void>;
+  /** Replace the loaded set. ids[0] becomes the primary; capped at MAX_ACTIVE_NEURONS. */
+  setActiveNeurons: (wikiIds: string[]) => Promise<void>;
+  /** Add/remove a secondary neuron from the loaded set (primary can't be removed). Resolves to the new set. */
+  toggleNeuronInSession: (wikiId: string) => Promise<string[]>;
   signOut: () => void;
+}
+
+export type PendingLoad =
+  | { kind: "book"; bookId: string }
+  | { kind: "shelf"; shelfId: string }
+  | { kind: "books"; bookIds: string[]; label: string };
+
+export interface AddBookOptions {
+  /** Skip the file-name re-upload lookup and INSERT unconditionally — the
+   *  path for app-generated books, which must never enter the
+   *  update-and-overwrite branch (docs/library-agent.md §2). */
+  createOnly?: boolean;
+  /** Provenance, set by the APP. Written to books.source when the column
+   *  exists, else carried by the reserved tag (bookProvenance.ts). */
+  source?: "assistant";
+  sourceModel?: string;
+  sourceContext?: { book_ids?: string[]; shelf_id?: string | null };
+}
+
+export type RemoveBookResult =
+  | {
+      ok: true;
+      /** true = moved to the Trash (restorable); false = deleted permanently
+       *  (the trash migration is not applied in this session). Every caller
+       *  must report which — a delete that says "permanent" when it was a
+       *  trash, or the reverse, is the one lie this feature cannot tell. */
+      trashed: boolean;
+      deleted: { title: string; chapters: number; shelves: string[] };
+    }
+  | { ok: false; error: string };
+
+/** A book in the Trash. Deliberately thin: chapter rows are NOT loaded for
+ *  trashed books (they are untouched in the database and come back with the
+ *  book), so this carries only what the Trash list and a restore need. */
+export interface TrashedBook {
+  id: string;
+  title: string;
+  fileName: string;
+  pageCount: number;
+  /** epoch ms — when it was trashed. */
+  deletedAt: number;
+  source?: "user" | "assistant" | "youtube";
+}
+
+/** Books are deleted forever this long after they are trashed. Enforced
+ *  client-side when the Trash is opened (there is no cron), and stated in the
+ *  UI so the promise matches the mechanism. */
+export const TRASH_RETENTION_DAYS = 30;
+
+export interface LoadReport {
+  /** One sentence naming what changed and what was kept (describeLoad). */
+  summary: string;
+  changed: { selection: boolean; activeBookId: boolean; wikiIds: boolean };
+  /** Set when the neuron write failed; the book layers still applied. */
+  neuronError?: string;
+  prev: FocusState;
+  next: FocusState;
 }
 
 const AppContext = createContext<AppState | null>(null);
 
 const DEFAULT_STORAGE_EXTENSION = "pdf";
+
+/** The columns a restored book is rebuilt from. A superset of the base set:
+ *  the optional columns can only be missing when the trash column is missing
+ *  too (a restore is unreachable in that session), so no feature-detect
+ *  ladder is needed here. */
+const BOOK_COLUMNS_FOR_RESTORE =
+  "id, title, file_name, page_count, cover_image_url, created_at, category, tags, folder_id, summary, summary_model, summarized_at, source, source_model, source_context";
+
+/** Page through a Supabase select so a library bigger than the API's default
+ *  row cap still loads completely. Returns rows gathered so far plus the error
+ *  that stopped it (if any) — a partial library beats none. */
+const PAGE_SIZE = 500;
+async function fetchAllRows(
+  query: (from: number, to: number) => PromiseLike<{ data: any[] | null; error: any }>
+): Promise<{ rows: any[]; error: any }> {
+  const rows: any[] = [];
+  for (let page = 0; page < 40; page++) {
+    const from = page * PAGE_SIZE;
+    const { data, error } = await query(from, from + PAGE_SIZE - 1);
+    if (error) return { rows, error };
+    const batch = data || [];
+    rows.push(...batch);
+    if (batch.length < PAGE_SIZE) break;
+  }
+  return { rows, error: null };
+}
+
 
 const getFileExtension = (fileName: string) => {
   const parts = fileName.toLowerCase().split(".");
@@ -50,29 +237,134 @@ const getStoragePathsForBook = (userId: string, bookId: string, fileName: string
 };
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [books, setBooks] = useState<BookDocument[]>([]);
-  const [activeBookId, setActiveBookId] = useState<string | null>(null);
+  // books / shelves / activeBookId each keep a SYNCHRONOUS mirror. The
+  // setter wrappers apply a functional update themselves, against the mirror,
+  // then hand React the value — so a mutation that runs while the provider
+  // already has a pending update (a tool composing createShelf with a
+  // membership write in one microtask) still reads the truth, and never
+  // depends on React running the updater eagerly. Everything that reads
+  // "the current library" inside an async flow reads the mirror.
+  const [books, setBooksState] = useState<BookDocument[]>([]);
+  const booksRef = useRef<BookDocument[]>([]);
+  const setBooks = useCallback((u: BookDocument[] | ((prev: BookDocument[]) => BookDocument[])) => {
+    const next = typeof u === "function" ? u(booksRef.current) : u;
+    booksRef.current = next;
+    setBooksState(next);
+  }, []);
+  const [multiShelf, setMultiShelf] = useState(false);
+  const [membershipLoaded, setMembershipLoaded] = useState(false);
+  const [shelves, setShelvesState] = useState<BookFolder[]>([]);
+  const shelvesRef = useRef<BookFolder[]>([]);
+  const setShelves = useCallback((u: BookFolder[] | ((prev: BookFolder[]) => BookFolder[])) => {
+    const next = typeof u === "function" ? u(shelvesRef.current) : u;
+    shelvesRef.current = next;
+    setShelvesState(next);
+  }, []);
+  const [shelvesLoading, setShelvesLoading] = useState(true);
+  const [activeBookId, setActiveBookIdState] = useState<string | null>(null);
+  const activeBookIdRef = useRef<string | null>(null);
+  const setActiveBookId = useCallback((u: string | null | ((prev: string | null) => string | null)) => {
+    const next = typeof u === "function" ? u(activeBookIdRef.current) : u;
+    activeBookIdRef.current = next;
+    setActiveBookIdState(next);
+  }, []);
+  const [pendingLoad, setPendingLoad] = useState<PendingLoad | null>(null);
+  // The Trash. `trashAvailable` is learned by the startup read (first read IS
+  // the probe — house law, no HEAD probes) and read synchronously by every
+  // writer, so a delete never has to re-probe to know what it is doing.
+  const [trashAvailable, setTrashAvailableState] = useState<boolean | null>(null);
+  const trashAvailableRef = useRef<boolean | null>(null);
+  const setTrashAvailable = useCallback((v: boolean) => {
+    trashAvailableRef.current = v;
+    setTrashAvailableState(v);
+  }, []);
+  const [trashedBooks, setTrashedBooksState] = useState<TrashedBook[]>([]);
+  const trashedBooksRef = useRef<TrashedBook[]>([]);
+  const setTrashedBooks = useCallback((u: TrashedBook[] | ((prev: TrashedBook[]) => TrashedBook[])) => {
+    const next = typeof u === "function" ? u(trashedBooksRef.current) : u;
+    trashedBooksRef.current = next;
+    setTrashedBooksState(next);
+  }, []);
+  const [trashLoading, setTrashLoading] = useState(false);
+  // Restore-the-last-book runs once per signed-in session (guard ref).
+  const restoredBookRef = useRef(false);
   const [activeTab, setActiveTab] = useState<TabId>("library");
   const [wikis, setWikis] = useState<Wiki[]>([]);
   const [activeWikiId, setActiveWikiId] = useState<string | null>(null);
+  // Full ordered loaded set — invariant: activeWikiIds[0] === activeWikiId.
+  const [activeWikiIds, setActiveWikiIds] = useState<string[]>([]);
+  // Synchronously-updated mirror of the loaded set. Mutations read and write
+  // THIS (before their awaits), so two quick toggles compose instead of the
+  // second overwriting the first from a stale closure.
+  const activeWikiIdsRef = useRef<string[]>([]);
+
+  const commitActiveSet = useCallback((ids: string[]) => {
+    activeWikiIdsRef.current = ids;
+    sessionActiveWikiIds.current = ids; // chat tools read this when the DB can't hold the set
+    setActiveWikiId(ids[0] ?? null);
+    setActiveWikiIds(ids);
+  }, []);
   const { user, signOut } = useAuth();
 
+  // Navigate between tabs with a View Transitions cross-fade where supported.
+  // flushSync forces React to commit the new tab inside the transition's
+  // snapshot callback. Falls back to a plain update on older engines or when
+  // the user prefers reduced motion.
+  const navigateTab = useCallback((tab: TabId) => {
+    const doc = document as Document & {
+      startViewTransition?: (cb: () => void) => unknown;
+    };
+    const reduceMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (typeof doc.startViewTransition === "function" && !reduceMotion) {
+      doc.startViewTransition(() => flushSync(() => setActiveTab(tab)));
+    } else {
+      setActiveTab(tab);
+    }
+  }, []);
+
   const refreshWikis = useCallback(async () => {
-    if (!user) { setWikis([]); setActiveWikiId(null); return; }
+    if (!user) { setWikis([]); setActiveWikiId(null); setActiveWikiIds([]); activeWikiIdsRef.current = []; return; }
     try {
-      let [list, activeId] = await Promise.all([fetchWikis(), fetchActiveWikiId()]);
+      let [list, active] = await Promise.all([fetchWikis(), fetchActiveWikiIds()]);
       if (list.length === 0) {
-        const created = await createWiki({ name: "My Wiki", description: "Your default wiki — extracted knowledge lives here." });
+        const created = await createWiki({ name: "My 1st Neuron", description: "Your default neuron — extracted knowledge lives here." });
         await loadWikiApi(created.id);
-        list = [created]; activeId = created.id;
-      } else if (!activeId) {
+        list = [created]; active = { primary: created.id, set: [created.id], setPersisted: true };
+      }
+      // Self-heal: drop set members that no longer exist (deleted elsewhere;
+      // active_wiki_ids has no FK, so dead ids can linger there). If the
+      // primary itself is gone/null, promote the next loaded neuron — or fall
+      // back to the first wiki. Persist any repair: the DB primary is what
+      // the AI tools and the knowledge-extract edge function write to, so a
+      // local-only heal would leave them targeting NULL/dead ids forever.
+      const existing = new Set(list.map((w) => w.id));
+      let set = active.set.filter((id) => existing.has(id));
+      let primary = active.primary && existing.has(active.primary) ? active.primary : set[0] ?? null;
+      if (!primary) {
         const fallback = list[0];
         await loadWikiApi(fallback.id);
-        activeId = fallback.id;
+        primary = fallback.id;
+        set = [fallback.id];
+      } else {
+        if (set[0] !== primary) set = [primary, ...set.filter((id) => id !== primary)];
+        if (primary !== active.primary || set.length !== active.set.length) {
+          try { await loadWikiSet(set); } catch { /* best-effort — retried on next refresh */ }
+        }
       }
-      setWikis(list); setActiveWikiId(activeId);
+      // Pre-migration the array column can't persist the set — keep this
+      // session's extra loaded neurons instead of collapsing to the primary
+      // every time something unrelated triggers a refresh. (Post-migration
+      // setPersisted is true and the DB is authoritative.)
+      if (!active.setPersisted && activeWikiIdsRef.current[0] === primary) {
+        const extras = activeWikiIdsRef.current.filter((id) => existing.has(id) && !set.includes(id));
+        set = [...set, ...extras].slice(0, MAX_ACTIVE_NEURONS);
+      }
+      setWikis(list);
+      commitActiveSet(set);
     } catch (err) { console.error("Failed to load wikis:", err); }
-  }, [user]);
+  }, [user, commitActiveSet]);
 
   useEffect(() => { refreshWikis(); }, [refreshWikis]);
 
@@ -83,11 +375,127 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => window.removeEventListener("wiki-active-changed", handler);
   }, [refreshWikis]);
 
+  // Shared write path: claim the ref BEFORE the network round-trips so a
+  // second mutation started while this one is in flight composes with it
+  // (instead of overwriting from a stale snapshot); roll back on failure.
+  const applyActiveSet = useCallback(async (ids: string[]) => {
+    const prev = activeWikiIdsRef.current;
+    activeWikiIdsRef.current = ids;
+    try {
+      await loadWikiSet(ids);
+    } catch (err) {
+      // Only roll back if no later mutation has claimed the ref meanwhile.
+      if (activeWikiIdsRef.current === ids) activeWikiIdsRef.current = prev;
+      throw err;
+    }
+    commitActiveSet(activeWikiIdsRef.current);
+    const nowIso = new Date().toISOString();
+    setWikis((p) => p.map((w) => (ids.includes(w.id) ? { ...w, last_loaded_at: nowIso } : w)));
+  }, [commitActiveSet]);
+
   const setActiveWiki = useCallback(async (wikiId: string) => {
-    await loadWikiApi(wikiId);
-    setActiveWikiId(wikiId);
-    setWikis((prev) => prev.map((w) => (w.id === wikiId ? { ...w, last_loaded_at: new Date().toISOString() } : w)));
-  }, []);
+    // Single-load replaces the whole set (activation replaces context, never
+    // silently appends) — the long-standing behavior of every "Load" button.
+    await applyActiveSet([wikiId]);
+  }, [applyActiveSet]);
+
+  const setActiveNeurons = useCallback(async (wikiIds: string[]) => {
+    const ids = Array.from(new Set(wikiIds)).slice(0, MAX_ACTIVE_NEURONS);
+    if (ids.length === 0) throw new Error("No neurons to load — they may have been deleted.");
+    await applyActiveSet(ids);
+  }, [applyActiveSet]);
+
+  const toggleNeuronInSession = useCallback(async (wikiId: string): Promise<string[]> => {
+    const current = activeWikiIdsRef.current;
+    if (wikiId === current[0]) return current; // the primary can't be unloaded
+    let next: string[];
+    if (current.includes(wikiId)) {
+      next = current.filter((id) => id !== wikiId);
+    } else {
+      if (current.length >= MAX_ACTIVE_NEURONS) {
+        throw new Error(`You can load up to ${MAX_ACTIVE_NEURONS} neurons at once — unload one first.`);
+      }
+      next = [...current, wikiId];
+    }
+    await applyActiveSet(next);
+    return next;
+  }, [applyActiveSet]);
+
+  // ── Counsel's focus: one reducer, one writer ─────────────────────────────
+  // docs/library-agent.md §1. The reducer (counselFocus.applyLoad) is pure;
+  // this is the place that writes each layer through its owner, in the one
+  // order that keeps Undo honest: neurons first (async, can fail), then the
+  // two synchronous layers, then the epoch bump, then the toast.
+  const focusPrev = useCallback((): FocusState => {
+    bookContextStore.init(user?.id ?? null);
+    return {
+      selection: bookContextStore.get(),
+      activeBookId: activeBookIdRef.current,
+      wikiIds: activeWikiIdsRef.current,
+    };
+  }, [user?.id]);
+
+  const writeFocus = useCallback(async (
+    next: FocusState,
+    changed: { selection: boolean; activeBookId: boolean; wikiIds: boolean },
+  ): Promise<string | undefined> => {
+    let neuronError: string | undefined;
+    if (changed.wikiIds) {
+      try {
+        await applyActiveSet(next.wikiIds);
+      } catch (err) {
+        neuronError = err instanceof Error ? err.message : "Couldn't load the neuron";
+      }
+    }
+    if (changed.selection) bookContextStore.set(next.selection);
+    if (changed.activeBookId) setActiveBookId(next.activeBookId);
+    focusEpoch.bump();
+    return neuronError;
+  }, [applyActiveSet, setActiveBookId]);
+
+  const focusNames = useCallback(() => ({
+    shelf: (id: string) => shelvesRef.current.find((f) => f.id === id)?.name ?? "shelf",
+    book: (id: string) => booksRef.current.find((b) => b.id === id)?.title ?? "book",
+    wiki: (id: string) => wikis.find((w) => w.id === id)?.name ?? "neuron",
+  }), [wikis]);
+
+  /** Undo is an EPOCH problem: it runs only while nothing else has moved the
+   *  focus since the toast was raised (a picker toggle, a second load, a tool
+   *  call, a realtime delete) — restoring a snapshot over a later change
+   *  would clobber it. */
+  const undoFocus = useCallback(async (prev: FocusState, next: FocusState, epochAt: number) => {
+    if (focusEpoch.current() !== epochAt) {
+      toast.error("Focus changed since — nothing undone.");
+      return;
+    }
+    const err = await writeFocus(prev, focusChanged(next, prev));
+    toast(err ? `Restored the books; the neuron did not change: ${err}` : "Restored the previous focus.");
+  }, [writeFocus]);
+
+  const loadFocus = useCallback(async (
+    action: LoadAction,
+    opts: { toast?: boolean; navigate?: boolean } = {},
+  ): Promise<LoadReport> => {
+    const prev = focusPrev();
+    const outcome = applyLoad(prev, action);
+    const neuronError = await writeFocus(outcome.next, outcome.changed);
+    // A failed neuron write must not be narrated as a change.
+    const effective = neuronError
+      ? { next: { ...outcome.next, wikiIds: prev.wikiIds }, changed: { ...outcome.changed, wikiIds: false } }
+      : outcome;
+    const summary = describeLoad(prev, effective, focusNames()) +
+      (neuronError ? ` The neuron did not change: ${neuronError}` : "");
+    if (opts.navigate !== false) {
+      if (action.kind === "book") navigateTab("viewer");
+      else if (action.kind === "shelf" || action.kind === "books") navigateTab("chat");
+    }
+    const any = effective.changed.selection || effective.changed.activeBookId || effective.changed.wikiIds;
+    if (opts.toast !== false && any) {
+      const epochAt = focusEpoch.current();
+      toast(summary, { action: { label: "Undo", onClick: () => { void undoFocus(prev, effective.next, epochAt); } } });
+    }
+    return { summary, changed: effective.changed, neuronError, prev, next: effective.next };
+  }, [focusPrev, writeFocus, focusNames, navigateTab, undoFocus]);
 
   const getAuthenticatedUserId = useCallback(async () => {
     if (user?.id) return user.id;
@@ -110,64 +518,185 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!user) {
       setBooks([]);
       setActiveBookId(null);
+      setMultiShelf(false);
       return;
     }
 
+    let cancelled = false;
+
+    // Books first, chapter METADATA second, chapter TEXT never at startup.
+    // The old single fetch pulled every chapter's full text (megabytes on a
+    // real library) and threw the whole library away if it failed — which is
+    // how the chat ended up reporting "no books" while the Vault had 50.
     const loadBooks = async () => {
-      const [{ data: bookRows, error: booksError }, { data: chapterRows, error: chaptersError }] = await Promise.all([
-        supabase
-          .from("books")
-          .select("id, title, file_name, page_count, cover_image_url, created_at")
-          .eq("user_id", user.id)
-          .order("created_at", { ascending: false }),
-        supabase
-          .from("chapters")
-          .select("id, book_id, name, start_page, end_page, text_content, created_at")
-          .eq("user_id", user.id)
-          .order("created_at", { ascending: true }),
-      ]);
+      // First read IS the probe (house law — no HEAD probes): ask for the
+      // summary columns; a 42703 means the book-summary migration
+      // (20260902120000) isn't applied yet, so retry without them and this
+      // session runs a summary-less catalog. Same shape as the chapters.gist
+      // feature-detect below.
+      const BOOK_COLUMNS =
+        "id, title, file_name, page_count, cover_image_url, created_at, category, tags";
+      // TWO axes of optional columns, probed by the first read (house law —
+      // no HEAD probes). Down one axis: provenance (20260903120000) →
+      // summaries (20260902120000) → base, each 42703 stepping down. Across
+      // the other: `deleted_at` (20260903130000), which is both a column and
+      // a FILTER — live books are the ones where it is null, so every
+      // existing consumer of `books` (the context block, the reading tools,
+      // search, the picker) is trash-blind by construction.
+      //
+      // The chain steps down on 42703, so a 42703 that survives the BASE
+      // level can only be `deleted_at`: one retry without it settles
+      // trash-availability, and post-migration the whole thing is one request.
+      const loadBookRows = async (withTrash: boolean) => {
+        const trashCols = withTrash ? ", deleted_at" : "";
+        const scope = (q: any) => (withTrash ? q.is("deleted_at", null) : q);
+        const level = (cols: string) => fetchAllRows((from, to) =>
+          scope(
+            supabase
+              .from("books")
+              .select(cols)
+              .eq("user_id", user.id)
+          )
+            .order("created_at", { ascending: false })
+            .range(from, to)
+        );
+        const withProvenance = await level(`${BOOK_COLUMNS}, summary, summary_model, summarized_at, source, source_model, source_context${trashCols}`);
+        if (!withProvenance.error || (withProvenance.error as any)?.code !== "42703") return withProvenance;
+        const withSummary = await level(`${BOOK_COLUMNS}, summary, summary_model, summarized_at${trashCols}`);
+        if (!withSummary.error || (withSummary.error as any)?.code !== "42703") return withSummary;
+        return level(`${BOOK_COLUMNS}${trashCols}`);
+      };
+      let bookRows = await loadBookRows(true);
+      if (bookRows.error && (bookRows.error as any)?.code === "42703") {
+        // Only `deleted_at` can still be missing at the base level.
+        const untrashed = await loadBookRows(false);
+        if (!untrashed.error) setTrashAvailable(false);
+        bookRows = untrashed;
+      } else if (!bookRows.error) {
+        setTrashAvailable(true);
+      }
 
-      if (booksError) {
-        console.error("Failed to load books:", booksError);
+      if (cancelled) return;
+
+      if (bookRows.error) {
+        console.error("Failed to load books:", bookRows.error);
         return;
       }
 
-      if (chaptersError) {
-        console.error("Failed to load chapters:", chaptersError);
-        return;
-      }
+      const dbBooks: BookDocument[] = bookRows.rows.map((b: any) => ({
+        id: b.id,
+        title: b.title,
+        fileName: b.file_name,
+        fileData: "",
+        pageCount: b.page_count,
+        coverImageUrl: b.cover_image_url || undefined,
+        chapters: [],
+        addedAt: new Date(b.created_at).getTime(),
+        category: b.category || undefined,
+        tags: Array.isArray(b.tags) ? b.tags : [],
+        summary: b.summary ?? null,
+        summaryModel: b.summary_model ?? null,
+        summarizedAt: b.summarized_at ? new Date(b.summarized_at).getTime() : null,
+        ...(b.source === "assistant" || b.source === "user" || b.source === "youtube" ? { source: b.source } : {}),
+        sourceModel: b.source_model ?? null,
+        sourceContext: b.source_context ?? null,
+        // EMPTY until the junction read below, which is the only authority.
+        // books.folder_id is no longer selected or seeded from: it could hold
+        // one shelf out of many, so a book on three rendered as being on one
+        // — with the shelf menu's checkboxes wrong to match — for as long as
+        // that read took.
+        folderIds: [],
+      }));
+      // The library (and the chat's view of it) is usable from here on, even
+      // if chapters never arrive.
+      setBooks(dbBooks);
+      const initialIds = new Set(dbBooks.map((b) => b.id));
 
-      const chaptersByBookId = (chapterRows || []).reduce<Record<string, Chapter[]>>((acc, chapter: any) => {
-        if (!acc[chapter.book_id]) {
-          acc[chapter.book_id] = [];
+      // Chapters and shelf membership load concurrently and patch state
+      // INDEPENDENTLY — they touch disjoint fields, and gating one behind
+      // the other would delay whichever resolves first for no reason.
+      // First read IS the probe (house law — no HEAD probes): ask for the
+      // gist column; a 42703 means the Stage-1 catalog migration isn't
+      // applied yet, so retry without it and this session runs a gistless
+      // catalog. Any other error keeps the existing degradation (books stay,
+      // chapters are an enhancement).
+      const loadChapterRows = async () => {
+        const withGist = await fetchAllRows((from, to) =>
+          supabase
+            .from("chapters")
+            .select("id, book_id, name, start_page, end_page, created_at, gist")
+            .eq("user_id", user.id)
+            .order("created_at", { ascending: true })
+            .range(from, to)
+        );
+        if (!withGist.error || (withGist.error as any)?.code !== "42703") return withGist;
+        return fetchAllRows((from, to) =>
+          supabase
+            .from("chapters")
+            .select("id, book_id, name, start_page, end_page, created_at")
+            .eq("user_id", user.id)
+            .order("created_at", { ascending: true })
+            .range(from, to)
+        );
+      };
+      void loadChapterRows().then((chapterRows) => {
+        if (cancelled) return;
+
+        if (chapterRows.error) {
+          // Books stay. A chapter list is an enhancement, not a precondition.
+          console.error("Failed to load chapters:", chapterRows.error);
+          return;
         }
 
-        acc[chapter.book_id].push({
-          id: chapter.id,
-          name: chapter.name,
-          startPage: chapter.start_page,
-          endPage: chapter.end_page,
-          textContent: chapter.text_content,
+        const chaptersByBookId = chapterRows.rows.reduce<Record<string, Chapter[]>>((acc, chapter: any) => {
+          if (!acc[chapter.book_id]) acc[chapter.book_id] = [];
+          acc[chapter.book_id].push({
+            id: chapter.id,
+            name: chapter.name,
+            startPage: chapter.start_page,
+            endPage: chapter.end_page,
+            textContent: "",
+            gist: chapter.gist ?? null,
+          });
+          return acc;
+        }, {});
+
+        setBooks((prev) => prev.map((b) => ({ ...b, chapters: chaptersByBookId[b.id] || b.chapters })));
+      });
+
+      // With the mirror gone there is no second store to fall back on, so
+      // the three outcomes must stay distinguishable: memberships known,
+      // known to be none, and NOT known. Only the first two set
+      // membershipLoaded — a transient failure leaves the shelf UI saying
+      // "counting…" rather than reporting a zero it never read.
+      void fetchShelfMembership(user.id)
+        .then((membership) => {
+          if (cancelled) return;
+          if (!membership) {
+            // Junction table missing: there genuinely are no memberships.
+            // That is a settled answer, so the UI may stop counting.
+            setMembershipLoaded(true);
+            return;
+          }
+          setMultiShelf(true);
+          // Patch only books that existed when the snapshot was taken — a
+          // book that arrived after (realtime INSERT, upload) keeps its own
+          // folderIds; the snapshot can't speak for it.
+          setBooks((prev) => prev.map((b) =>
+            initialIds.has(b.id) ? { ...b, folderIds: membership.get(b.id) || [] } : b
+          ));
+          setMembershipLoaded(true);
+        })
+        .catch((e) => {
+          // Transient (network, auth). NOT the same claim as "no shelves":
+          // membershipLoaded stays false so nothing downstream states a count
+          // it never established.
+          if (cancelled) return;
+          console.error("Failed to load shelf membership:", e);
         });
-
-        return acc;
-      }, {});
-
-      if (bookRows) {
-        const dbBooks: BookDocument[] = bookRows.map((b: any) => ({
-          id: b.id,
-          title: b.title,
-          fileName: b.file_name,
-          fileData: "",
-          pageCount: b.page_count,
-          coverImageUrl: b.cover_image_url || undefined,
-          chapters: chaptersByBookId[b.id] || [],
-          addedAt: new Date(b.created_at).getTime(),
-        }));
-        setBooks(dbBooks);
-      }
     };
     loadBooks();
+
 
     // Realtime: auto-refresh library when books are added/removed elsewhere
     // (e.g. video transcript PDFs auto-saved by the edge function, mobile app uploads)
@@ -178,19 +707,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         { event: "INSERT", schema: "public", table: "books", filter: `user_id=eq.${user.id}` },
         async (payload) => {
           const b: any = payload.new;
-          const { data: chapterRows } = await supabase
+          // Same first-read-is-the-probe fallback as the startup load.
+          // "gist" is cast until Lovable's applied migration regenerates
+          // types.ts — same convention as every other pre-apply column.
+          let chapterRows: any[] | null = null;
+          let chErr: any = null;
+          ({ data: chapterRows, error: chErr } = (await supabase
             .from("chapters")
-            .select("id, name, start_page, end_page, text_content")
+            .select("id, name, start_page, end_page, gist" as any)
             .eq("book_id", b.id)
             .eq("user_id", b.user_id)
-            .order("created_at", { ascending: true });
+            .order("created_at", { ascending: true })) as any);
+          if (chErr && chErr.code === "42703") {
+            ({ data: chapterRows } = (await supabase
+              .from("chapters")
+              .select("id, name, start_page, end_page")
+              .eq("book_id", b.id)
+              .eq("user_id", b.user_id)
+              .order("created_at", { ascending: true })) as any);
+          }
           const chapters: Chapter[] = (chapterRows || []).map((c: any) => ({
             id: c.id,
             name: c.name,
             startPage: c.start_page,
             endPage: c.end_page,
-            textContent: c.text_content,
+            textContent: "",
+            gist: c.gist ?? null,
           }));
+
+          // A row that arrives already trashed is not an arrival (nothing
+          // writes one today; this keeps the invariant "books = live books"
+          // true whatever writes rows tomorrow).
+          if (b.deleted_at) return;
           setBooks((prev) => {
             if (prev.some((x) => x.id === b.id)) return prev;
             const newBook: BookDocument = {
@@ -202,7 +750,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               coverImageUrl: b.cover_image_url || undefined,
               chapters,
               addedAt: new Date(b.created_at).getTime(),
+              category: b.category || undefined,
+              tags: Array.isArray(b.tags) ? b.tags : [],
+              // A just-inserted book has no junction rows yet, and there is
+              // no mirror left to consult. Unshelved is the truth.
+              folderIds: [],
+              ...(b.source === "assistant" || b.source === "user" || b.source === "youtube" ? { source: b.source } : {}),
+              sourceModel: b.source_model ?? null,
+              sourceContext: b.source_context ?? null,
             };
+
             return [newBook, ...prev];
           });
         }
@@ -214,42 +771,109 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const oldId = (payload.old as any)?.id;
           if (!oldId) return;
           setBooks((prev) => prev.filter((b) => b.id !== oldId));
+          // A purge in another tab empties it from the Trash too.
+          setTrashedBooks((prev) => prev.filter((b) => b.id !== oldId));
           setActiveBookId((prev) => (prev === oldId ? null : prev));
         }
       )
       .subscribe();
 
     return () => {
+      cancelled = true;
       supabase.removeChannel(channel);
     };
   }, [user]);
 
-  const addBook = useCallback(async (book: BookDocument, sourceFile?: File) => {
+
+  // Allow the once-per-session restore to run again when the account changes.
+  useEffect(() => {
+    restoredBookRef.current = false;
+  }, [user?.id]);
+
+  // Restore the last-opened book across reloads — SILENTLY (no tab jump), so
+  // Counsel/the AI still knows which book is loaded after a refresh. Runs once,
+  // as soon as the library has loaded, and only if nothing is already active.
+  useEffect(() => {
+    if (!user || restoredBookRef.current || books.length === 0) return;
+    restoredBookRef.current = true;
+    if (activeBookId) return;
+    try {
+      const saved = localStorage.getItem(`cc_active_book_${user.id}`);
+      if (saved && books.some((b) => b.id === saved)) {
+        setActiveBookId(saved);
+      }
+    } catch {
+      /* localStorage unavailable — skip restore */
+    }
+  }, [user, books, activeBookId]);
+
+  // Persist the active book so it survives reloads (per-user key).
+  useEffect(() => {
+    if (!user) return;
+    try {
+      if (activeBookId) localStorage.setItem(`cc_active_book_${user.id}`, activeBookId);
+      else localStorage.removeItem(`cc_active_book_${user.id}`);
+    } catch {
+      /* localStorage unavailable — non-fatal */
+    }
+  }, [user, activeBookId]);
+
+  const addBook = useCallback(async (book: BookDocument, sourceFile?: File, opts?: AddBookOptions) => {
     if (!user) throw new Error("You must be signed in to upload books");
 
-    const { data: existingRow, error: existingRowError } = await supabase
-      .from("books")
-      .select("id, file_name")
-      .eq("user_id", user.id)
-      .ilike("file_name", book.fileName)
-      .limit(1)
-      .maybeSingle();
+    // Re-upload detection: a book with the same file name is UPDATED, not
+    // duplicated. ilike is a case-folding probe only — `%`/`_` are wildcards
+    // and PostgREST maps `*` to `%` after decoding (repo lesson), so the
+    // pattern is escaped AND the match is re-verified client-side. App-
+    // generated books skip the lookup entirely (createOnly): they can never
+    // enter the overwrite branch, whatever their name.
+    const escapeIlikeProbe = (v: string) => v.replace(/([\\%_])/g, "\\$1").replace(/\*/g, "_");
+    let existingRow: { id: string; file_name: string } | null = null;
+    if (!opts?.createOnly) {
+      // Trashed rows are EXCLUDED: re-uploading a file whose book is in the
+      // Trash must create a new book, not silently resurrect and overwrite
+      // the trashed one (the user deleted it; the Trash is theirs to restore
+      // deliberately). Only filtered when the column is known to exist.
+      let probeQuery: any = supabase
+        .from("books")
+        .select("id, file_name")
+        .eq("user_id", user.id)
+        .ilike("file_name", escapeIlikeProbe(book.fileName));
+      if (trashAvailableRef.current === true) probeQuery = probeQuery.is("deleted_at", null);
+      const { data: probe, error: existingRowError } = await probeQuery.limit(1).maybeSingle();
 
-    if (existingRowError) {
-      console.error("Failed to look up existing book record:", existingRowError);
-      throw existingRowError;
+      if (existingRowError) {
+        console.error("Failed to look up existing book record:", existingRowError);
+        throw existingRowError;
+      }
+      if (probe && String((probe as any).file_name).toLowerCase() === book.fileName.toLowerCase()) {
+        existingRow = probe as { id: string; file_name: string };
+      }
     }
+
+    // Provenance travels on the document from here on (in-memory truth), and
+    // to the row when the column exists.
+    let stamped: BookDocument = opts?.source
+      ? { ...book, source: opts.source, sourceModel: opts.sourceModel ?? null, sourceContext: opts.sourceContext ?? null }
+      : book;
 
     const existingBookId = existingRow?.id as string | undefined;
     let finalBookId = existingBookId || book.id;
     let createdNewBook = false;
 
     if (!existingBookId) {
-      const { data, error } = await supabase
-        .from("books")
-        .insert({ id: book.id, title: book.title, file_name: book.fileName, page_count: book.pageCount, user_id: user.id })
-        .select()
-        .single();
+      const base = { id: book.id, title: book.title, file_name: book.fileName, page_count: book.pageCount, user_id: user.id };
+      const withSource = opts?.source
+        ? { ...base, source: opts.source, source_model: opts.sourceModel ?? null, source_context: opts.sourceContext ?? null }
+        : base;
+      let { data, error } = await supabase.from("books").insert(withSource as any).select().single();
+      // First write IS the probe: 42703/PGRST204 means the provenance
+      // migration (20260903120000) isn't applied — insert without the
+      // columns and carry the fact on the reserved tag instead.
+      if (error && opts?.source && (error.code === "42703" || error.code === "PGRST204")) {
+        ({ data, error } = await supabase.from("books").insert({ ...base, tags: [ASSISTANT_TAG] } as any).select().single());
+        if (!error) stamped = { ...stamped, tags: mergeReservedTags([ASSISTANT_TAG], stamped.tags ?? []) };
+      }
 
       if (error || !data) {
         console.error("Failed to create book record:", error);
@@ -274,13 +898,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!sourceFile && !book.fileData) {
       setBooks((prev) => {
         const existingIndex = prev.findIndex((b) => b.id === finalBookId);
-        const nextBook = { ...book, id: finalBookId, fileData: "" };
+        const nextBook = { ...stamped, id: finalBookId, fileData: "" };
 
         if (existingIndex === -1) return [nextBook, ...prev];
 
         return prev.map((b) => (b.id === finalBookId ? { ...b, ...nextBook } : b));
       });
-      return;
+      return finalBookId;
     }
 
     try {
@@ -312,11 +936,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       setBooks((prev) => {
         const existingIndex = prev.findIndex((b) => b.id === finalBookId);
-        const nextBook = { ...book, id: finalBookId, fileData: cachedFileUrl };
+        const nextBook = { ...stamped, id: finalBookId, fileData: cachedFileUrl };
 
         if (existingIndex === -1) return [nextBook, ...prev];
 
-        return prev.map((b) => (b.id === finalBookId ? { ...b, ...nextBook } : b));
+        // Re-upload: the freshly constructed book carries folderIds: [] —
+        // keep the existing membership, a re-upload is not an unshelving.
+        return prev.map((b) => (b.id === finalBookId ? { ...b, ...nextBook, folderIds: b.folderIds } : b));
       });
     } catch (err) {
       console.error("Failed to upload document to storage:", err);
@@ -328,32 +954,272 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       throw err instanceof Error ? err : new Error("Document upload failed");
     }
+
+    return finalBookId;
   }, [user]);
 
-  const removeBook = useCallback(async (id: string) => {
-    const existingBook = books.find((book) => book.id === id);
-
-    if (user) {
-      const storagePaths = existingBook
-        ? getStoragePathsForBook(user.id, id, existingBook.fileName)
-        : [`${user.id}/${id}.pdf`];
-
+  /** The hard path: row first (chapters, junction rows and figure rows
+   *  cascade with it), then best-effort storage cleanup. Used by a purge and
+   *  by `removeBook` when the trash migration is not applied. */
+  const hardDeleteBook = useCallback(async (
+    id: string,
+    known?: { fileName?: string },
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (!user) return { ok: false, error: "Not signed in" };
+    const { data: gone, error } = await supabase
+      .from("books").delete().eq("id", id).eq("user_id", user.id).select("id");
+    if (error || !gone || gone.length === 0) {
+      console.error("Failed to delete book:", error);
+      return { ok: false, error: error?.message || "Book not found" };
+    }
+    // AFTER the row is gone: an orphaned object is recoverable garbage, never
+    // a broken book.
+    const fileName = known?.fileName;
+    const storagePaths = fileName
+      ? getStoragePathsForBook(user.id, id, fileName)
+      : [`${user.id}/${id}.pdf`];
+    try {
       await supabase.storage.from("book-pdfs").remove(Array.from(new Set(storagePaths)));
+    } catch (e) { console.error("Book row deleted; PDF cleanup failed:", e); }
+    // Extracted figures: their rows cascaded, but the JPEGs in
+    // generated-images would be orphaned forever — the rows were the only
+    // pointers to them.
+    try {
+      const dir = `${user.id}/figures/${id}`;
+      const { data: figs } = await supabase.storage.from("generated-images").list(dir, { limit: 200 });
+      if (figs && figs.length > 0) {
+        await supabase.storage.from("generated-images").remove(figs.map((f) => `${dir}/${f.name}`));
+      }
+    } catch { /* best-effort — the book is already gone */ }
+    return { ok: true };
+  }, [user]);
+
+  const removeBook = useCallback(async (id: string): Promise<RemoveBookResult> => {
+    if (!user) return { ok: false, error: "Not signed in" };
+    const existingBook = booksRef.current.find((book) => book.id === id);
+    // The manifest is read BEFORE anything is destroyed, and reported only
+    // on success (the tool built on this must never claim what it did not do).
+    const manifest = {
+      title: existingBook?.title ?? "",
+      chapters: existingBook?.chapters.length ?? 0,
+      shelves: (existingBook?.folderIds ?? []).map((fid) => shelvesRef.current.find((f) => f.id === fid)?.name ?? fid),
+    };
+
+    // SOFT by default: one UPDATE stamping deleted_at. Chapters, shelf
+    // memberships, figures, storage objects and card locators are all left
+    // ALONE, which is what makes a restore return the book exactly as it was
+    // — anchors included. Only when the migration is absent does this fall
+    // through to the permanent path, and the result says which happened.
+    if (trashAvailableRef.current !== false) {
+      const stamp = new Date().toISOString();
+      const { data: hit, error } = await supabase
+        .from("books")
+        .update({ deleted_at: stamp } as any)
+        .eq("id", id).eq("user_id", user.id)
+        .select("id");
+      if (error && ((error as any).code === "42703" || (error as any).code === "PGRST204")) {
+        // The migration is not applied after all — learn it and fall through.
+        setTrashAvailable(false);
+      } else if (error || !hit || hit.length === 0) {
+        console.error("Failed to trash book:", error);
+        toast.error("Could not delete book — it is still in your library");
+        return { ok: false, error: error?.message || "Book not found" };
+      } else {
+        setBooks((prev) => prev.filter((b) => b.id !== id));
+        if (existingBook) {
+          setTrashedBooks((prev) => [
+            {
+              id, title: existingBook.title, fileName: existingBook.fileName,
+              pageCount: existingBook.pageCount, deletedAt: Date.parse(stamp),
+              source: existingBook.source,
+            },
+            ...prev.filter((b) => b.id !== id),
+          ]);
+        }
+        // A trashed book leaves every focus layer it sat in (the reader, a
+        // hand-picked selection) — through the one writer, silently. A
+        // restore deliberately does NOT put it back: the user asked to see
+        // the book again, not to change what the conversation is about.
+        await loadFocus({ kind: "remove", bookId: id }, { toast: false, navigate: false });
+        return { ok: true, trashed: true, deleted: manifest };
+      }
     }
 
-    await supabase.from("books").delete().eq("id", id);
+    const hard = await hardDeleteBook(id, existingBook);
+    if (!hard.ok) {
+      toast.error("Could not delete book — it is still in your library");
+      return { ok: false, error: hard.error || "Book not found" };
+    }
     setBooks((prev) => prev.filter((b) => b.id !== id));
-    setActiveBookId((prev) => (prev === id ? null : prev));
-  }, [user, books]);
+    await loadFocus({ kind: "remove", bookId: id }, { toast: false, navigate: false });
+    return { ok: true, trashed: false, deleted: manifest };
+  }, [user, setBooks, setTrashedBooks, setTrashAvailable, loadFocus, hardDeleteBook]);
 
+  // ── The Trash ────────────────────────────────────────────────────────────
+  // Loaded on demand rather than at startup: it is a rarely-opened drawer,
+  // and the library must not wait on it.
+  const refreshTrash = useCallback(async () => {
+    if (!user || trashAvailableRef.current === false) return;
+    setTrashLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("books")
+        .select("id, title, file_name, page_count, deleted_at, source" as any)
+        .eq("user_id", user.id)
+        .not("deleted_at", "is", null)
+        .order("deleted_at", { ascending: false })
+        .limit(200);
+      if (error) {
+        if ((error as any).code === "42703") { setTrashAvailable(false); return; }
+        console.error("Failed to load the Trash:", error);
+        toast.error("Couldn't load the Trash");
+        return;
+      }
+      setTrashAvailable(true);
+      const rows = ((data as any[]) || []).map((b) => ({
+        id: b.id as string,
+        title: b.title as string,
+        fileName: b.file_name as string,
+        pageCount: (b.page_count as number) ?? 0,
+        deletedAt: Date.parse(b.deleted_at as string),
+        ...(b.source === "assistant" || b.source === "user" || b.source === "youtube" ? { source: b.source } : {}),
+      })) as TrashedBook[];
+      // Retention is enforced HERE, when the drawer is opened — not on a
+      // timer and not during startup. There is no cron in this project, and
+      // purging books inside a read the whole app waits on would be a
+      // surprise delete on a path nobody asked to run.
+      const cutoff = Date.now() - TRASH_RETENTION_DAYS * 86_400_000;
+      const expired = rows.filter((b) => Number.isFinite(b.deletedAt) && b.deletedAt < cutoff);
+      const live = rows.filter((b) => !expired.some((e) => e.id === b.id));
+      setTrashedBooks(live);
+      for (const b of expired) {
+        // Best-effort and sequential. A concurrent tab purging the same row
+        // simply finds it gone (0 rows), which is not an error worth showing.
+        await hardDeleteBook(b.id, b).catch(() => undefined);
+      }
+    } finally {
+      setTrashLoading(false);
+    }
+  }, [user, setTrashedBooks, setTrashAvailable, hardDeleteBook]);
+
+  const restoreBook = useCallback(async (id: string): Promise<{ ok: true; title: string } | { ok: false; error: string }> => {
+    if (!user) return { ok: false, error: "Not signed in" };
+    const entry = trashedBooksRef.current.find((b) => b.id === id);
+    const { data, error } = await supabase
+      .from("books")
+      .update({ deleted_at: null } as any)
+      .eq("id", id).eq("user_id", user.id)
+      .not("deleted_at", "is", null)
+      .select(`${BOOK_COLUMNS_FOR_RESTORE}` as any);
+    if (error) {
+      console.error("Failed to restore book:", error);
+      return { ok: false, error: error.message || "Restore failed" };
+    }
+    const row = ((data as any[]) || [])[0];
+    if (!row) return { ok: false, error: "That book is not in the Trash." };
+    // Its chapters were never touched — fetch the spine back so the restored
+    // book is immediately readable (and countable) rather than looking empty.
+    let chapters: Chapter[] = [];
+    try {
+      const { data: chRows } = await supabase
+        .from("chapters")
+        .select("id, name, start_page, end_page, gist" as any)
+        .eq("book_id", id)
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: true });
+      chapters = ((chRows as any[]) || []).map((c) => ({
+        id: c.id, name: c.name, startPage: c.start_page, endPage: c.end_page,
+        textContent: "", gist: c.gist ?? null,
+      }));
+    } catch { /* the spine loads on next reload; the book is back either way */ }
+    const restored: BookDocument = {
+      id: row.id, title: row.title, fileName: row.file_name, fileData: "",
+      pageCount: row.page_count ?? 0, coverImageUrl: row.cover_image_url || undefined,
+      chapters, addedAt: new Date(row.created_at).getTime(),
+      category: row.category || undefined, tags: Array.isArray(row.tags) ? row.tags : [],
+      summary: row.summary ?? null, summaryModel: row.summary_model ?? null,
+      summarizedAt: row.summarized_at ? new Date(row.summarized_at).getTime() : null,
+      ...(row.source === "assistant" || row.source === "user" ? { source: row.source } : {}),
+      sourceModel: row.source_model ?? null,
+      sourceContext: row.source_context ?? null,
+      folderIds: row.folder_id ? [row.folder_id] : [],
+    };
+    // Shelf membership is authoritative in the junction; re-read this book's
+    // rows so a restored book lands back on its shelves (the folder_id mirror
+    // above is the fallback for pre-migration sessions).
+    try {
+      const { data: mem } = await (supabase.from("book_shelf_members" as any) as any)
+        .select("folder_id").eq("book_id", id).eq("user_id", user.id);
+      const ids = ((mem as any[]) || []).map((r) => r.folder_id as string);
+      if (ids.length > 0) restored.folderIds = ids;
+    } catch { /* fallback mode — the mirror stands */ }
+    setBooks((prev) => (prev.some((b) => b.id === id) ? prev : [restored, ...prev]));
+    setTrashedBooks((prev) => prev.filter((b) => b.id !== id));
+    return { ok: true, title: entry?.title ?? restored.title };
+  }, [user, setBooks, setTrashedBooks]);
+
+  const purgeBook = useCallback(async (id: string) => {
+    const entry = trashedBooksRef.current.find((b) => b.id === id);
+    const out = await hardDeleteBook(id, entry);
+    if (out.ok) setTrashedBooks((prev) => prev.filter((b) => b.id !== id));
+    return out;
+  }, [hardDeleteBook, setTrashedBooks]);
+
+  const emptyTrash = useCallback(async () => {
+    let purged = 0;
+    let failed = 0;
+    for (const b of [...trashedBooksRef.current]) {
+      const out = await hardDeleteBook(b.id, b);
+      if (out.ok) { purged += 1; setTrashedBooks((prev) => prev.filter((x) => x.id !== b.id)); }
+      else failed += 1;
+    }
+    return { purged, failed };
+  }, [hardDeleteBook, setTrashedBooks]);
+
+  // Reader-only writers (no dialog, no replacement of the loaded books).
+  // They still bump the focus epoch: an Undo captured before them must not
+  // run over them.
   const setActiveBook = useCallback((id: string) => {
     setActiveBookId(id);
-    setActiveTab("viewer");
+    focusEpoch.bump();
+    navigateTab("viewer");
+  }, [navigateTab, setActiveBookId]);
+
+  const setActiveBookSilent = useCallback((id: string | null) => {
+    setActiveBookId(id);
+    focusEpoch.bump();
+  }, [setActiveBookId]);
+
+  // Loading from the Vault routes through the neuron-pick dialog — for a
+  // book, a shelf, or a hand-picked pile alike (docs/library-agent.md L2).
+  // The dialog pre-selects the active neuron and is fully skippable, so the
+  // load never blocks on the choice (see LoadNeuronDialog + the UX research
+  // behind the conditional/default pattern).
+  const requestBookLoad = useCallback((bookId: string) => {
+    setPendingLoad({ kind: "book", bookId });
+  }, []);
+  const requestShelfLoad = useCallback((shelfId: string) => {
+    setPendingLoad({ kind: "shelf", shelfId });
+  }, []);
+  const requestBooksLoad = useCallback((bookIds: string[], label: string) => {
+    setPendingLoad({ kind: "books", bookIds, label });
   }, []);
 
-  const setActiveBookSilent = useCallback((id: string) => {
-    setActiveBookId(id);
-  }, []);
+  const resolveLoad = useCallback(async (neurons: NeuronChoice, opts?: { alongside?: boolean }) => {
+    const pending = pendingLoad;
+    setPendingLoad(null);
+    if (!pending) return;
+    const action: LoadAction = pending.kind === "book"
+      ? { kind: "book", bookId: pending.bookId, neurons, alongside: opts?.alongside }
+      : pending.kind === "shelf"
+        ? { kind: "shelf", shelfId: pending.shelfId, neurons }
+        : { kind: "books", bookIds: pending.bookIds, neurons };
+    try {
+      await loadFocus(action);
+    } catch (err) {
+      console.error("Failed to load:", err);
+    }
+  }, [pendingLoad, loadFocus]);
 
   const addChapter = useCallback(async (bookId: string, chapter: Chapter) => {
     const userId = await getAuthenticatedUserId();
@@ -401,9 +1267,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   }, [getAuthenticatedUserId]);
 
+  /** Bulk chapter insert — one request per 100 rows, ONE state patch. Ids are
+   *  client uuids, so they are known before the round trip. On a mid-way
+   *  failure the rows already written are mirrored into state before the
+   *  error propagates (state never claims less than the database holds). */
+  const addChapters = useCallback(async (bookId: string, chapters: Chapter[]) => {
+    if (chapters.length === 0) return;
+    const userId = await getAuthenticatedUserId();
+    const rows = chapters.map((c) => ({
+      id: c.id, book_id: bookId, name: c.name, start_page: c.startPage, end_page: c.endPage,
+      text_content: c.textContent, user_id: userId,
+    }));
+    const written: Chapter[] = [];
+    let failure: unknown = null;
+    for (let i = 0; i < rows.length; i += 100) {
+      const { error } = await supabase.from("chapters").insert(rows.slice(i, i + 100));
+      if (error) { failure = error; break; }
+      written.push(...chapters.slice(i, i + 100));
+    }
+    if (written.length > 0) {
+      setBooks((prev) => prev.map((b) => (b.id === bookId ? { ...b, chapters: [...b.chapters, ...written] } : b)));
+    }
+    if (failure) throw failure;
+  }, [getAuthenticatedUserId, setBooks]);
+
   const updateChapter = useCallback(async (bookId: string, chapterId: string, name: string) => {
     if (!user) return;
-    await supabase.from("chapters").update({ name }).eq("id", chapterId).eq("user_id", user.id);
+    // Local state only follows a confirmed write — otherwise the UI would
+    // show a rename that silently never persisted.
+    const { error } = await supabase.from("chapters").update({ name }).eq("id", chapterId).eq("user_id", user.id);
+    if (error) {
+      console.error("Failed to rename chapter:", error);
+      toast.error("Could not rename chapter");
+      return;
+    }
     setBooks((prev) =>
       prev.map((b) =>
         b.id === bookId
@@ -415,7 +1312,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const removeChapter = useCallback(async (bookId: string, chapterId: string) => {
     if (!user) return;
-    await supabase.from("chapters").delete().eq("id", chapterId).eq("user_id", user.id);
+    const { error } = await supabase.from("chapters").delete().eq("id", chapterId).eq("user_id", user.id);
+    if (error) {
+      console.error("Failed to delete chapter:", error);
+      toast.error("Could not delete chapter");
+      return;
+    }
     setBooks((prev) =>
       prev.map((b) =>
         b.id === bookId
@@ -427,11 +1329,157 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateBookTitle = useCallback(async (bookId: string, newTitle: string) => {
     if (!user) return;
-    await supabase.from("books").update({ title: newTitle }).eq("id", bookId).eq("user_id", user.id);
+    const { error } = await supabase.from("books").update({ title: newTitle }).eq("id", bookId).eq("user_id", user.id);
+    if (error) {
+      console.error("Failed to rename book:", error);
+      toast.error("Could not rename book");
+      return;
+    }
     setBooks((prev) =>
       prev.map((b) => (b.id === bookId ? { ...b, title: newTitle } : b))
     );
   }, [user]);
+
+  const updateBookTags = useCallback(async (bookId: string, category: string | null, tags: string[]) => {
+    if (!user) return;
+    // Reserved provenance markers survive a whole-array replace (Auto-tag
+    // rewrites every targeted book's tags — bookProvenance.ts).
+    const merged = mergeReservedTags(booksRef.current.find((b) => b.id === bookId)?.tags, tags);
+    const { error } = await supabase
+      .from("books")
+      .update({ category, tags: merged })
+      .eq("id", bookId)
+      .eq("user_id", user.id);
+    if (error) {
+      console.error("Failed to save book tags:", error);
+      throw error;
+    }
+    setBooks((prev) =>
+      prev.map((b) => (b.id === bookId ? { ...b, category: category || undefined, tags: merged } : b))
+    );
+  }, [user]);
+
+  // Shelf membership changes go through here so books[].folderIds (the
+  // single client copy of membership) never goes stale — the Shelves view
+  // derives entirely from it. The delta is computed OUTSIDE React's updater,
+  // from the synchronous mirror: computing it inside `setBooks(fn)` only
+  // works when React runs the updater eagerly, which it does not once the
+  // provider has any pending update — a tool composing createShelf with a
+  // membership write in one microtask would then have written nothing and
+  // thrown nothing (review finding). The optimistic patch lands before the
+  // write; a second click issued before the first round trip resolves reads
+  // the first click's result from the mirror. Deltas commute at the database.
+  const setBookShelfMembership = useCallback(async (
+    bookId: string, shelfId: string, member: boolean,
+  ): Promise<{ changed: boolean; moved_from: string[] }> => {
+    if (!user) throw new Error("Not signed in");
+    const b = booksRef.current.find((x) => x.id === bookId);
+    if (!b) throw new Error("Book not found");
+    const isMember = b.folderIds.includes(shelfId);
+    if (member === isMember) return { changed: false, moved_from: [] };
+    // Purely additive now. The "checking replaces the set" branch existed
+    // only because books.folder_id could hold a single shelf; with the
+    // junction as the sole store, checking a second shelf adds a second
+    // membership.
+    const next = member
+      ? [...b.folderIds, shelfId]
+      : b.folderIds.filter((id) => id !== shelfId);
+    const d: ShelfDelta = {
+      adds: next.filter((id) => !b.folderIds.includes(id)),
+      removes: b.folderIds.filter((id) => !next.includes(id)),
+    };
+    setBooks((prev) => prev.map((x) => (x.id === bookId ? { ...x, folderIds: next } : x)));
+    try {
+      await applyShelfDelta(user.id, bookId, d);
+    } catch (error) {
+      // Roll back by INVERSE DELTA, not by snapshot — a snapshot restore
+      // would clobber any later optimistic toggle on the same book.
+      setBooks((prev) => prev.map((x) => {
+        if (x.id !== bookId) return x;
+        const rolled = x.folderIds.filter((id) => !d.adds.includes(id));
+        for (const id of d.removes) if (!rolled.includes(id)) rolled.push(id);
+        return { ...x, folderIds: rolled };
+      }));
+      console.error("Failed to update book shelves:", error);
+      throw error;
+    }
+    // Kept in the shape callers already read, but an add can no longer
+    // displace anything: `removes` is always empty when `member` is true.
+    return { changed: true, moved_from: member ? d.removes : [] };
+  }, [user, setBooks]);
+
+  const toggleBookShelf = useCallback(async (bookId: string, shelfId: string) => {
+    const b = booksRef.current.find((x) => x.id === bookId);
+    if (!b) return; // unknown book id
+    await setBookShelfMembership(bookId, shelfId, !b.folderIds.includes(shelfId));
+  }, [setBookShelfMembership]);
+
+  // Deleting a shelf cascades its junction rows server-side; this mirrors
+  // that into client state without per-book writes.
+  // Internal now — deleteShelf is the only caller, so no surface can drop a
+  // shelf from the books without also dropping it from the roster.
+  const clearShelfLocal = useCallback((folderId: string) => {
+    setBooks((prev) => prev.map((b) =>
+      b.folderIds.includes(folderId)
+        ? { ...b, folderIds: b.folderIds.filter((id) => id !== folderId) }
+        : b
+    ));
+  }, []);
+
+  // ── The shelf roster ────────────────────────────────────────────────────
+  // Loaded once per signed-in session and mutated in place. Every consumer
+  // reads this array; nobody else calls listFolders.
+  useEffect(() => {
+    if (!user) {
+      setShelves([]);
+      setShelvesLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setShelvesLoading(true);
+    listFolders()
+      .then((rows) => { if (!cancelled) setShelves(rows); })
+      .catch((e) => {
+        if (cancelled) return;
+        // A roster failure is not fatal — books still render, membership
+        // still resolves; only shelf NAMES are missing. Say so once.
+        console.error("Failed to load shelves:", e);
+        toast.error("Couldn't load your shelves");
+      })
+      .finally(() => { if (!cancelled) setShelvesLoading(false); });
+    return () => { cancelled = true; };
+  }, [user]);
+
+  const createShelf = useCallback(async (name: string): Promise<BookFolder> => {
+    const created = await createFolder(name);
+    // Insert in the order listFolders would return it (sort_index, then name),
+    // so the roster does not reshuffle on the next reload.
+    setShelves((prev) => [...prev, created].sort(
+      (a, b) => a.sort_index - b.sort_index || a.name.localeCompare(b.name),
+    ));
+    return created;
+  }, []);
+
+  const renameShelf = useCallback(async (id: string, name: string): Promise<void> => {
+    const trimmed = name.trim();
+    await renameFolder(id, trimmed);
+    setShelves((prev) => prev
+      .map((f) => (f.id === id ? { ...f, name: trimmed } : f))
+      .sort((a, b) => a.sort_index - b.sort_index || a.name.localeCompare(b.name)));
+  }, []);
+
+  const deleteShelf = useCallback(async (id: string): Promise<void> => {
+    await deleteFolder(id);
+    setShelves((prev) => prev.filter((f) => f.id !== id));
+    clearShelfLocal(id);
+    // A deleted shelf that was LOADED would leave the selection pointing at
+    // nothing; unload it through the one focus writer (silently — the shelf
+    // is already gone, there is nothing to undo into).
+    bookContextStore.init(user?.id ?? null);
+    if (bookContextStore.get().shelfId === id) {
+      await loadFocus({ kind: "none", neurons: { kind: "keep" } }, { toast: false, navigate: false });
+    }
+  }, [clearShelfLocal, loadFocus, user?.id]);
 
   const getActiveBook = useCallback(() => {
     return books.find((b) => b.id === activeBookId);
@@ -472,7 +1520,123 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [user, books]);
 
+  /** Chapter text on demand. Startup no longer carries it, so anything that
+   *  needs the actual words (the chat's get_chapter_text, auto-tagging) asks
+   *  for it here and the result is cached back into the library. */
+  const loadChapterText = useCallback(async (chapterId: string): Promise<string> => {
+    if (!user || !chapterId) return "";
+    const cached = books.flatMap((b) => b.chapters).find((c) => c.id === chapterId);
+    if (cached?.textContent) return cached.textContent;
+    const { data, error } = await supabase
+      .from("chapters")
+      .select("text_content")
+      .eq("id", chapterId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (error || !data) {
+      if (error) console.error("Failed to load chapter text:", error);
+      return "";
+    }
+    const text = (data as any).text_content || "";
+    if (text) {
+      setBooks((prev) =>
+        prev.map((b) => ({
+          ...b,
+          chapters: b.chapters.map((c) => (c.id === chapterId ? { ...c, textContent: text } : c)),
+        }))
+      );
+    }
+    return text;
+  }, [user, books]);
+
+  /** loadChapterText with a TYPED failure channel. The legacy loader returns
+   *  "" for BOTH "load failed" and "chapter truly empty", which makes any
+   *  consumer that must be honest about the difference lie on a network blip
+   *  (Stage 2 law: a locator write must reject as "couldn't verify — retry",
+   *  never as "quote not found"; read_span must say "couldn't read", never
+   *  emit a drift claim). Same cache-back behavior as the legacy loader. */
+  const loadChapterTextStrict = useCallback(async (chapterId: string): Promise<{ ok: true; text: string } | { ok: false; error: string }> => {
+    if (!user || !chapterId) return { ok: false, error: "not signed in or missing chapter id" };
+    const cached = books.flatMap((b) => b.chapters).find((c) => c.id === chapterId);
+    if (cached?.textContent) return { ok: true, text: cached.textContent };
+    const { data, error } = await supabase
+      .from("chapters")
+      .select("text_content")
+      .eq("id", chapterId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (error) return { ok: false, error: error.message || "failed to load chapter text" };
+    if (!data) return { ok: false, error: "chapter not found" };
+    const text = (data as any).text_content || "";
+    if (text) {
+      setBooks((prev) =>
+        prev.map((b) => ({
+          ...b,
+          chapters: b.chapters.map((c) => (c.id === chapterId ? { ...c, textContent: text } : c)),
+        }))
+      );
+    }
+    return { ok: true, text };
+  }, [user, books]);
+
+  /** Hydrate every chapter of one book with its text (auto-tagging needs
+   *  excerpts across the whole book). */
+  const loadBookChapterText = useCallback(async (bookId: string): Promise<void> => {
+    if (!user || !bookId) return;
+    const book = books.find((b) => b.id === bookId);
+    if (book && book.chapters.length > 0 && book.chapters.every((c) => c.textContent)) return;
+    const { data, error } = await supabase
+      .from("chapters")
+      .select("id, text_content")
+      .eq("book_id", bookId)
+      .eq("user_id", user.id);
+    if (error || !data) {
+      if (error) console.error("Failed to load book text:", error);
+      return;
+    }
+    const byId = new Map<string, string>(data.map((r: any) => [r.id, r.text_content || ""]));
+    setBooks((prev) =>
+      prev.map((b) =>
+        b.id === bookId
+          ? { ...b, chapters: b.chapters.map((c) => ({ ...c, textContent: byId.get(c.id) ?? c.textContent })) }
+          : b
+      )
+    );
+  }, [user, books]);
+
+
+  /** Mirror freshly written gists into state so the catalog updates without a
+   *  reload. Touches only the named chapter ids; everything else is untouched. */
+  const applyChapterGists = useCallback((gistById: Record<string, string>) => {
+    setBooks((prev) =>
+      prev.map((b) =>
+        b.chapters.some((c) => gistById[c.id] !== undefined)
+          ? { ...b, chapters: b.chapters.map((c) => (gistById[c.id] !== undefined ? { ...c, gist: gistById[c.id] } : c)) }
+          : b
+      )
+    );
+  }, []);
+
+  const applyBookSummary = useCallback((bookId: string, summary: string, model: string) => {
+    setBooks((prev) => prev.map((b) =>
+      b.id === bookId
+        ? { ...b, summary, summaryModel: model, summarizedAt: Date.now() }
+        : b
+    ));
+  }, []);
+
+  const applyShelfDigest = useCallback((shelfId: string, summary: string, model: string) => {
+    setShelves((prev) => prev.map((f) =>
+      f.id === shelfId
+        ? { ...f, summary, summary_model: model, summarized_at: new Date().toISOString() }
+        : f
+    ));
+  }, []);
+
   const activeWiki = wikis.find((w) => w.id === activeWikiId);
+  const activeWikis = activeWikiIds
+    .map((id) => wikis.find((w) => w.id === id))
+    .filter((w): w is Wiki => !!w);
 
   return (
     <AppContext.Provider
@@ -483,19 +1647,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         wikis,
         activeWikiId,
         activeWiki,
+        activeWikiIds,
+        activeWikis,
         addBook,
         removeBook,
         setActiveBook,
         setActiveBookSilent,
-        setActiveTab,
+        pendingLoad,
+        requestBookLoad,
+        requestShelfLoad,
+        requestBooksLoad,
+        resolveLoad,
+        loadFocus,
+        getBooks: () => booksRef.current,
+        getActiveBookId: () => activeBookIdRef.current,
+        getShelves: () => shelvesRef.current,
+        setActiveTab: navigateTab,
         addChapter,
+        addChapters,
         updateChapter,
+        applyChapterGists,
+        applyBookSummary,
         removeChapter,
         updateBookTitle,
+        updateBookTags,
+        toggleBookShelf,
+        setBookShelfMembership,
+        trashAvailable,
+        trashedBooks,
+        trashLoading,
+        refreshTrash,
+        restoreBook,
+        purgeBook,
+        emptyTrash,
+        membershipLoaded,
+        shelves,
+        shelvesLoading,
+        createShelf,
+        renameShelf,
+        deleteShelf,
+        applyShelfDigest,
+        multiShelf,
         getActiveBook,
         loadBookFile,
+        loadChapterText,
+        loadChapterTextStrict,
+        loadBookChapterText,
+
         refreshWikis,
         setActiveWiki,
+        setActiveNeurons,
+        toggleNeuronInSession,
         signOut,
       }}
     >

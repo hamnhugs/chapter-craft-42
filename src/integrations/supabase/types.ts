@@ -10,15 +10,328 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.1"
+    PostgrestVersion: "14.5"
   }
   public: {
     Tables: {
+      activity_events: {
+        Row: {
+          created_at: string
+          event_type: string
+          id: number
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          event_type?: string
+          id?: number
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          event_type?: string
+          id?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
+      admin_audit_log: {
+        Row: {
+          action: string
+          admin_id: string
+          created_at: string
+          detail: Json
+          id: number
+          target_id: string | null
+          target_user_id: string | null
+        }
+        Insert: {
+          action: string
+          admin_id: string
+          created_at?: string
+          detail?: Json
+          id?: number
+          target_id?: string | null
+          target_user_id?: string | null
+        }
+        Update: {
+          action?: string
+          admin_id?: string
+          created_at?: string
+          detail?: Json
+          id?: number
+          target_id?: string | null
+          target_user_id?: string | null
+        }
+        Relationships: []
+      }
+      agent_programs: {
+        Row: {
+          code: string
+          created_at: string
+          description: string
+          fail_count: number
+          id: string
+          io_spec: Json
+          language: string
+          last_run_at: string | null
+          manifest: Json
+          name: string
+          root_id: string | null
+          run_count: number
+          status: string
+          superseded_by: string | null
+          user_id: string
+          verified_at: string | null
+          verifier_fingerprint: string | null
+          verifier_report: Json | null
+          version: number
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          description: string
+          fail_count?: number
+          id?: string
+          io_spec?: Json
+          language: string
+          last_run_at?: string | null
+          manifest?: Json
+          name: string
+          root_id?: string | null
+          run_count?: number
+          status?: string
+          superseded_by?: string | null
+          user_id: string
+          verified_at?: string | null
+          verifier_fingerprint?: string | null
+          verifier_report?: Json | null
+          version?: number
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          description?: string
+          fail_count?: number
+          id?: string
+          io_spec?: Json
+          language?: string
+          last_run_at?: string | null
+          manifest?: Json
+          name?: string
+          root_id?: string | null
+          run_count?: number
+          status?: string
+          superseded_by?: string | null
+          user_id?: string
+          verified_at?: string | null
+          verifier_fingerprint?: string | null
+          verifier_report?: Json | null
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_programs_root_id_fkey"
+            columns: ["root_id"]
+            isOneToOne: false
+            referencedRelation: "agent_programs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_programs_superseded_by_fkey"
+            columns: ["superseded_by"]
+            isOneToOne: false
+            referencedRelation: "agent_programs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agent_tools: {
+        Row: {
+          code: string
+          created_at: string
+          description: string
+          disabled_by_user: boolean
+          entry_id: string | null
+          fail_count: number
+          id: string
+          last_run_at: string | null
+          manifest: Json
+          name: string
+          root_id: string | null
+          run_count: number
+          status: string
+          superseded_by: string | null
+          tests: Json
+          user_id: string
+          version: number
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          description?: string
+          disabled_by_user?: boolean
+          entry_id?: string | null
+          fail_count?: number
+          id?: string
+          last_run_at?: string | null
+          manifest?: Json
+          name: string
+          root_id?: string | null
+          run_count?: number
+          status?: string
+          superseded_by?: string | null
+          tests?: Json
+          user_id: string
+          version?: number
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          description?: string
+          disabled_by_user?: boolean
+          entry_id?: string | null
+          fail_count?: number
+          id?: string
+          last_run_at?: string | null
+          manifest?: Json
+          name?: string
+          root_id?: string | null
+          run_count?: number
+          status?: string
+          superseded_by?: string | null
+          tests?: Json
+          user_id?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_tools_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_tools_root_id_fkey"
+            columns: ["root_id"]
+            isOneToOne: false
+            referencedRelation: "agent_tools"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_tools_superseded_by_fkey"
+            columns: ["superseded_by"]
+            isOneToOne: false
+            referencedRelation: "agent_tools"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      announcement_receipts: {
+        Row: {
+          acknowledged_at: string | null
+          announcement_id: string
+          dismissed_at: string | null
+          policy_version: number
+          seen_at: string
+          user_id: string
+        }
+        Insert: {
+          acknowledged_at?: string | null
+          announcement_id: string
+          dismissed_at?: string | null
+          policy_version?: number
+          seen_at?: string
+          user_id: string
+        }
+        Update: {
+          acknowledged_at?: string | null
+          announcement_id?: string
+          dismissed_at?: string | null
+          policy_version?: number
+          seen_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "announcement_receipts_announcement_id_fkey"
+            columns: ["announcement_id"]
+            isOneToOne: false
+            referencedRelation: "announcements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      announcements: {
+        Row: {
+          body: string
+          created_at: string
+          created_by: string | null
+          ends_at: string | null
+          gif_alt: string
+          gif_clickable: boolean
+          gif_link_url: string | null
+          gif_new_tab: boolean
+          gif_url: string | null
+          id: string
+          is_active: boolean
+          kind: string
+          policy_version: number
+          priority: number
+          require_ack: boolean
+          starts_at: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          body?: string
+          created_at?: string
+          created_by?: string | null
+          ends_at?: string | null
+          gif_alt?: string
+          gif_clickable?: boolean
+          gif_link_url?: string | null
+          gif_new_tab?: boolean
+          gif_url?: string | null
+          id?: string
+          is_active?: boolean
+          kind?: string
+          policy_version?: number
+          priority?: number
+          require_ack?: boolean
+          starts_at?: string
+          title?: string
+          updated_at?: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          created_by?: string | null
+          ends_at?: string | null
+          gif_alt?: string
+          gif_clickable?: boolean
+          gif_link_url?: string | null
+          gif_new_tab?: boolean
+          gif_url?: string | null
+          id?: string
+          is_active?: boolean
+          kind?: string
+          policy_version?: number
+          priority?: number
+          require_ack?: boolean
+          starts_at?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       api_keys: {
         Row: {
           created_at: string
           id: string
-          key_value: string
+          key_hash: string | null
+          key_prefix: string | null
           label: string
           revoked_at: string | null
           user_id: string
@@ -26,7 +339,8 @@ export type Database = {
         Insert: {
           created_at?: string
           id?: string
-          key_value: string
+          key_hash?: string | null
+          key_prefix?: string | null
           label?: string
           revoked_at?: string | null
           user_id: string
@@ -34,38 +348,204 @@ export type Database = {
         Update: {
           created_at?: string
           id?: string
-          key_value?: string
+          key_hash?: string | null
+          key_prefix?: string | null
           label?: string
           revoked_at?: string | null
           user_id?: string
         }
         Relationships: []
       }
+      book_folders: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          sort_index: number
+          summarized_at: string | null
+          summary: string | null
+          summary_model: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          sort_index?: number
+          summarized_at?: string | null
+          summary?: string | null
+          summary_model?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          sort_index?: number
+          summarized_at?: string | null
+          summary?: string | null
+          summary_model?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      book_highlights: {
+        Row: {
+          book_id: string
+          chapter_id: string | null
+          char_end: number | null
+          char_start: number | null
+          created_at: string
+          id: string
+          note: string | null
+          page: number | null
+          pos_end: number
+          pos_start: number
+          prefix: string
+          quote: string
+          suffix: string
+          user_id: string
+        }
+        Insert: {
+          book_id: string
+          chapter_id?: string | null
+          char_end?: number | null
+          char_start?: number | null
+          created_at?: string
+          id?: string
+          note?: string | null
+          page?: number | null
+          pos_end: number
+          pos_start: number
+          prefix?: string
+          quote: string
+          suffix?: string
+          user_id?: string
+        }
+        Update: {
+          book_id?: string
+          chapter_id?: string | null
+          char_end?: number | null
+          char_start?: number | null
+          created_at?: string
+          id?: string
+          note?: string | null
+          page?: number | null
+          pos_end?: number
+          pos_start?: number
+          prefix?: string
+          quote?: string
+          suffix?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "book_highlights_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
+            referencedRelation: "books"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "book_highlights_chapter_id_fkey"
+            columns: ["chapter_id"]
+            isOneToOne: false
+            referencedRelation: "chapters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      book_shelf_members: {
+        Row: {
+          book_id: string
+          created_at: string
+          folder_id: string
+          user_id: string
+        }
+        Insert: {
+          book_id: string
+          created_at?: string
+          folder_id: string
+          user_id: string
+        }
+        Update: {
+          book_id?: string
+          created_at?: string
+          folder_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "book_shelf_members_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
+            referencedRelation: "books"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "book_shelf_members_folder_id_fkey"
+            columns: ["folder_id"]
+            isOneToOne: false
+            referencedRelation: "book_folders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       books: {
         Row: {
+          category: string | null
           cover_image_url: string | null
           created_at: string
+          deleted_at: string | null
           file_name: string
           id: string
           page_count: number
+          source: string
+          source_context: Json | null
+          source_model: string | null
+          summarized_at: string | null
+          summary: string | null
+          summary_model: string | null
+          tags: string[]
           title: string
           user_id: string | null
         }
         Insert: {
+          category?: string | null
           cover_image_url?: string | null
           created_at?: string
+          deleted_at?: string | null
           file_name: string
           id?: string
           page_count?: number
+          source?: string
+          source_context?: Json | null
+          source_model?: string | null
+          summarized_at?: string | null
+          summary?: string | null
+          summary_model?: string | null
+          tags?: string[]
           title: string
           user_id?: string | null
         }
         Update: {
+          category?: string | null
           cover_image_url?: string | null
           created_at?: string
+          deleted_at?: string | null
           file_name?: string
           id?: string
           page_count?: number
+          source?: string
+          source_context?: Json | null
+          source_model?: string | null
+          summarized_at?: string | null
+          summary?: string | null
+          summary_model?: string | null
+          tags?: string[]
           title?: string
           user_id?: string | null
         }
@@ -76,6 +556,7 @@ export type Database = {
           book_id: string
           created_at: string
           end_page: number
+          gist: string | null
           id: string
           name: string
           start_page: number
@@ -86,6 +567,7 @@ export type Database = {
           book_id: string
           created_at?: string
           end_page: number
+          gist?: string | null
           id?: string
           name: string
           start_page: number
@@ -96,6 +578,7 @@ export type Database = {
           book_id?: string
           created_at?: string
           end_page?: number
+          gist?: string | null
           id?: string
           name?: string
           start_page?: number
@@ -114,30 +597,99 @@ export type Database = {
       }
       chat_messages: {
         Row: {
+          artifacts: Json | null
           book_id: string | null
           content: string
           created_at: string
           id: string
+          images: Json | null
           role: string
+          splats: Json | null
+          tool_events: Json | null
           user_id: string
+          videos: Json | null
         }
         Insert: {
+          artifacts?: Json | null
           book_id?: string | null
           content?: string
           created_at?: string
           id?: string
+          images?: Json | null
           role: string
+          splats?: Json | null
+          tool_events?: Json | null
           user_id: string
+          videos?: Json | null
         }
         Update: {
+          artifacts?: Json | null
           book_id?: string | null
           content?: string
           created_at?: string
           id?: string
+          images?: Json | null
           role?: string
+          splats?: Json | null
+          tool_events?: Json | null
           user_id?: string
+          videos?: Json | null
         }
         Relationships: []
+      }
+      cleanup_flags: {
+        Row: {
+          confidence: number
+          created_at: string
+          dismissed_at: string | null
+          entry_id: string
+          flagged_by: string
+          id: string
+          note: string | null
+          reason: string
+          user_id: string
+          wiki_id: string | null
+        }
+        Insert: {
+          confidence?: number
+          created_at?: string
+          dismissed_at?: string | null
+          entry_id: string
+          flagged_by?: string
+          id?: string
+          note?: string | null
+          reason: string
+          user_id: string
+          wiki_id?: string | null
+        }
+        Update: {
+          confidence?: number
+          created_at?: string
+          dismissed_at?: string | null
+          entry_id?: string
+          flagged_by?: string
+          id?: string
+          note?: string | null
+          reason?: string
+          user_id?: string
+          wiki_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cleanup_flags_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cleanup_flags_wiki_id_fkey"
+            columns: ["wiki_id"]
+            isOneToOne: false
+            referencedRelation: "wikis"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       consolidation_queue: {
         Row: {
@@ -271,6 +823,227 @@ export type Database = {
         }
         Relationships: []
       }
+      generation_ledger: {
+        Row: {
+          cost_estimate: number | null
+          created_at: string
+          decided_at: string | null
+          id: string
+          kind: string
+          master_id: string | null
+          model: string
+          output_id: string | null
+          params: Json | null
+          prompt_excerpt: string
+          provider: string
+          rejection_reason: string | null
+          scene_id: string | null
+          shot_number: string | null
+          source_generation_id: string | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          cost_estimate?: number | null
+          created_at?: string
+          decided_at?: string | null
+          id?: string
+          kind: string
+          master_id?: string | null
+          model?: string
+          output_id?: string | null
+          params?: Json | null
+          prompt_excerpt?: string
+          provider?: string
+          rejection_reason?: string | null
+          scene_id?: string | null
+          shot_number?: string | null
+          source_generation_id?: string | null
+          status?: string
+          user_id: string
+        }
+        Update: {
+          cost_estimate?: number | null
+          created_at?: string
+          decided_at?: string | null
+          id?: string
+          kind?: string
+          master_id?: string | null
+          model?: string
+          output_id?: string | null
+          params?: Json | null
+          prompt_excerpt?: string
+          provider?: string
+          rejection_reason?: string | null
+          scene_id?: string | null
+          shot_number?: string | null
+          source_generation_id?: string | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "generation_ledger_source_generation_id_fkey"
+            columns: ["source_generation_id"]
+            isOneToOne: false
+            referencedRelation: "generation_ledger"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      image_attachments: {
+        Row: {
+          book_id: string | null
+          caption: string
+          created_at: string
+          entry_id: string | null
+          id: string
+          kind: string
+          mime: string
+          model: string
+          page: number | null
+          phash: string | null
+          prompt: string
+          recall_last_session: string | null
+          recall_last_shown_at: string | null
+          recall_requested_count: number
+          recall_shown_count: number
+          recall_suppressed: boolean
+          source_image_id: string | null
+          storage_path: string
+          user_id: string
+        }
+        Insert: {
+          book_id?: string | null
+          caption?: string
+          created_at?: string
+          entry_id?: string | null
+          id?: string
+          kind?: string
+          mime?: string
+          model?: string
+          page?: number | null
+          phash?: string | null
+          prompt?: string
+          recall_last_session?: string | null
+          recall_last_shown_at?: string | null
+          recall_requested_count?: number
+          recall_shown_count?: number
+          recall_suppressed?: boolean
+          source_image_id?: string | null
+          storage_path: string
+          user_id: string
+        }
+        Update: {
+          book_id?: string | null
+          caption?: string
+          created_at?: string
+          entry_id?: string | null
+          id?: string
+          kind?: string
+          mime?: string
+          model?: string
+          page?: number | null
+          phash?: string | null
+          prompt?: string
+          recall_last_session?: string | null
+          recall_last_shown_at?: string | null
+          recall_requested_count?: number
+          recall_shown_count?: number
+          recall_suppressed?: boolean
+          source_image_id?: string | null
+          storage_path?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "image_attachments_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
+            referencedRelation: "books"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "image_attachments_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "image_attachments_source_image_id_fkey"
+            columns: ["source_image_id"]
+            isOneToOne: false
+            referencedRelation: "image_attachments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      image_memories: {
+        Row: {
+          caption: string | null
+          created_at: string
+          embedding_v2: unknown
+          height: number | null
+          id: string
+          mime_type: string | null
+          ocr_text: string | null
+          source: string
+          source_message_id: string | null
+          storage_path: string
+          tags: string[] | null
+          tsv: unknown
+          updated_at: string
+          user_id: string
+          width: number | null
+          wiki_id: string | null
+        }
+        Insert: {
+          caption?: string | null
+          created_at?: string
+          embedding_v2?: unknown
+          height?: number | null
+          id?: string
+          mime_type?: string | null
+          ocr_text?: string | null
+          source?: string
+          source_message_id?: string | null
+          storage_path: string
+          tags?: string[] | null
+          tsv?: unknown
+          updated_at?: string
+          user_id: string
+          width?: number | null
+          wiki_id?: string | null
+        }
+        Update: {
+          caption?: string | null
+          created_at?: string
+          embedding_v2?: unknown
+          height?: number | null
+          id?: string
+          mime_type?: string | null
+          ocr_text?: string | null
+          source?: string
+          source_message_id?: string | null
+          storage_path?: string
+          tags?: string[] | null
+          tsv?: unknown
+          updated_at?: string
+          user_id?: string
+          width?: number | null
+          wiki_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "image_memories_wiki_id_fkey"
+            columns: ["wiki_id"]
+            isOneToOne: false
+            referencedRelation: "wikis"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       incubator_entries: {
         Row: {
           cluster_id: string | null
@@ -345,22 +1118,37 @@ export type Database = {
       }
       knowledge_entries: {
         Row: {
+          aliases: string[] | null
+          archived: boolean
           atomicity_warning: string | null
+          author: string | null
           confidence: number
           content: string
           created_at: string
           embedding: string | null
+          embedding_768_model: string | null
           embedding_model: string | null
           embedding_v2: unknown
+          encoding_strength: number | null
           entry_type: string
           folder: string
           id: string
+          importance: number | null
           is_index: boolean
+          last_retrieved_at: string | null
           linked_wiki_id: string | null
+          locators: Json | null
           maturity: string
+          next_review_at: string | null
           pending_changes: Json
+          retrieval_count: number
+          review_count: number
           source_book_id: string | null
+          storage_strength: number
           subject: string | null
+          supersede_reason: string | null
+          superseded_by: string | null
+          surprise: number | null
           tags: string[]
           title: string
           tsv: unknown
@@ -368,25 +1156,41 @@ export type Database = {
           user_id: string
           valid_from: string | null
           valid_to: string | null
+          vibrancy: number
           wiki_id: string | null
         }
         Insert: {
+          aliases?: string[] | null
+          archived?: boolean
           atomicity_warning?: string | null
+          author?: string | null
           confidence?: number
           content?: string
           created_at?: string
           embedding?: string | null
+          embedding_768_model?: string | null
           embedding_model?: string | null
           embedding_v2?: unknown
+          encoding_strength?: number | null
           entry_type?: string
           folder?: string
           id?: string
+          importance?: number | null
           is_index?: boolean
+          last_retrieved_at?: string | null
           linked_wiki_id?: string | null
+          locators?: Json | null
           maturity?: string
+          next_review_at?: string | null
           pending_changes?: Json
+          retrieval_count?: number
+          review_count?: number
           source_book_id?: string | null
+          storage_strength?: number
           subject?: string | null
+          supersede_reason?: string | null
+          superseded_by?: string | null
+          surprise?: number | null
           tags?: string[]
           title: string
           tsv?: unknown
@@ -394,25 +1198,41 @@ export type Database = {
           user_id: string
           valid_from?: string | null
           valid_to?: string | null
+          vibrancy?: number
           wiki_id?: string | null
         }
         Update: {
+          aliases?: string[] | null
+          archived?: boolean
           atomicity_warning?: string | null
+          author?: string | null
           confidence?: number
           content?: string
           created_at?: string
           embedding?: string | null
+          embedding_768_model?: string | null
           embedding_model?: string | null
           embedding_v2?: unknown
+          encoding_strength?: number | null
           entry_type?: string
           folder?: string
           id?: string
+          importance?: number | null
           is_index?: boolean
+          last_retrieved_at?: string | null
           linked_wiki_id?: string | null
+          locators?: Json | null
           maturity?: string
+          next_review_at?: string | null
           pending_changes?: Json
+          retrieval_count?: number
+          review_count?: number
           source_book_id?: string | null
+          storage_strength?: number
           subject?: string | null
+          supersede_reason?: string | null
+          superseded_by?: string | null
+          surprise?: number | null
           tags?: string[]
           title?: string
           tsv?: unknown
@@ -420,6 +1240,7 @@ export type Database = {
           user_id?: string
           valid_from?: string | null
           valid_to?: string | null
+          vibrancy?: number
           wiki_id?: string | null
         }
         Relationships: [
@@ -438,10 +1259,102 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "knowledge_entries_superseded_by_fkey"
+            columns: ["superseded_by"]
+            isOneToOne: false
+            referencedRelation: "knowledge_entries"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "knowledge_entries_wiki_id_fkey"
             columns: ["wiki_id"]
             isOneToOne: false
             referencedRelation: "wikis"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      master_assets: {
+        Row: {
+          assembly_tag: string
+          banned_traits: string[]
+          blueprint: Json | null
+          created_at: string
+          entry_id: string | null
+          front_azimuth_deg: number
+          hero_image_id: string | null
+          id: string
+          name: string
+          negative_constraints: string[]
+          palette: string[]
+          ref_embeddings: Json | null
+          splat_id: string | null
+          style_lock: string
+          tech_pack_text: string
+          updated_at: string
+          user_id: string
+          view_image_ids: string[]
+        }
+        Insert: {
+          assembly_tag?: string
+          banned_traits?: string[]
+          blueprint?: Json | null
+          created_at?: string
+          entry_id?: string | null
+          front_azimuth_deg?: number
+          hero_image_id?: string | null
+          id?: string
+          name: string
+          negative_constraints?: string[]
+          palette?: string[]
+          ref_embeddings?: Json | null
+          splat_id?: string | null
+          style_lock?: string
+          tech_pack_text?: string
+          updated_at?: string
+          user_id: string
+          view_image_ids?: string[]
+        }
+        Update: {
+          assembly_tag?: string
+          banned_traits?: string[]
+          blueprint?: Json | null
+          created_at?: string
+          entry_id?: string | null
+          front_azimuth_deg?: number
+          hero_image_id?: string | null
+          id?: string
+          name?: string
+          negative_constraints?: string[]
+          palette?: string[]
+          ref_embeddings?: Json | null
+          splat_id?: string | null
+          style_lock?: string
+          tech_pack_text?: string
+          updated_at?: string
+          user_id?: string
+          view_image_ids?: string[]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "master_assets_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "master_assets_hero_image_id_fkey"
+            columns: ["hero_image_id"]
+            isOneToOne: false
+            referencedRelation: "image_attachments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "master_assets_splat_id_fkey"
+            columns: ["splat_id"]
+            isOneToOne: false
+            referencedRelation: "splat_generations"
             referencedColumns: ["id"]
           },
         ]
@@ -535,38 +1448,496 @@ export type Database = {
           },
         ]
       }
-      prompt_presets: {
+      production_scenes: {
         Row: {
-          body: string
+          book_id: string | null
+          chapter_index: number | null
           created_at: string
+          entry_id: string | null
           id: string
-          is_active: boolean
+          locked_at: string | null
           name: string
-          scope: string
+          plan: Json
+          slug: string
           updated_at: string
           user_id: string
         }
         Insert: {
-          body?: string
+          book_id?: string | null
+          chapter_index?: number | null
           created_at?: string
+          entry_id?: string | null
           id?: string
-          is_active?: boolean
+          locked_at?: string | null
           name: string
-          scope?: string
+          plan: Json
+          slug?: string
           updated_at?: string
           user_id: string
         }
         Update: {
-          body?: string
+          book_id?: string | null
+          chapter_index?: number | null
           created_at?: string
+          entry_id?: string | null
           id?: string
-          is_active?: boolean
+          locked_at?: string | null
           name?: string
-          scope?: string
+          plan?: Json
+          slug?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "production_scenes_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_entries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      program_approvals: {
+        Row: {
+          approved_at: string
+          id: string
+          program_id: string
+          sha256: string
+          user_id: string
+        }
+        Insert: {
+          approved_at?: string
+          id?: string
+          program_id: string
+          sha256: string
+          user_id: string
+        }
+        Update: {
+          approved_at?: string
+          id?: string
+          program_id?: string
+          sha256?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "program_approvals_program_id_fkey"
+            columns: ["program_id"]
+            isOneToOne: false
+            referencedRelation: "agent_programs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      program_cron_health: {
+        Row: {
+          id: boolean
+          last_ok_at: string | null
+          last_tick_at: string | null
+          note: string | null
+        }
+        Insert: {
+          id?: boolean
+          last_ok_at?: string | null
+          last_tick_at?: string | null
+          note?: string | null
+        }
+        Update: {
+          id?: boolean
+          last_ok_at?: string | null
+          last_tick_at?: string | null
+          note?: string | null
+        }
+        Relationships: []
+      }
+      program_disables: {
+        Row: {
+          disabled_at: string
+          id: string
+          name: string
+          root_id: string | null
+          user_id: string
+        }
+        Insert: {
+          disabled_at?: string
+          id?: string
+          name: string
+          root_id?: string | null
+          user_id: string
+        }
+        Update: {
+          disabled_at?: string
+          id?: string
+          name?: string
+          root_id?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      program_runs: {
+        Row: {
+          created_at: string
+          error: string | null
+          exit_code: number | null
+          id: string
+          mode: string
+          ms: number | null
+          program_id: string | null
+          progress_at: string | null
+          progress_tail: string | null
+          sha256: string | null
+          status: string
+          stderr_bytes: number | null
+          stdout_bytes: number | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          error?: string | null
+          exit_code?: number | null
+          id?: string
+          mode?: string
+          ms?: number | null
+          program_id?: string | null
+          progress_at?: string | null
+          progress_tail?: string | null
+          sha256?: string | null
+          status?: string
+          stderr_bytes?: number | null
+          stdout_bytes?: number | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          error?: string | null
+          exit_code?: number | null
+          id?: string
+          mode?: string
+          ms?: number | null
+          program_id?: string | null
+          progress_at?: string | null
+          progress_tail?: string | null
+          sha256?: string | null
+          status?: string
+          stderr_bytes?: number | null
+          stdout_bytes?: number | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "program_runs_program_id_fkey"
+            columns: ["program_id"]
+            isOneToOne: false
+            referencedRelation: "agent_programs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      program_schedules: {
+        Row: {
+          active_run_deadline: string | null
+          active_run_id: string | null
+          active_run_started_at: string | null
+          created_at: string
+          daily_at_minute: number | null
+          enabled: boolean
+          every_seconds: number | null
+          fail_count: number
+          id: string
+          in_flight: boolean
+          last_run_at: string | null
+          last_tick_at: string | null
+          lease_token: string | null
+          lease_until: string | null
+          max_runtime_s: number | null
+          name: string
+          next_run_at: string
+          paused_reason: string | null
+          pinned_sha256: string
+          program_id: string
+          root_id: string | null
+          tz: string
+          user_id: string
+        }
+        Insert: {
+          active_run_deadline?: string | null
+          active_run_id?: string | null
+          active_run_started_at?: string | null
+          created_at?: string
+          daily_at_minute?: number | null
+          enabled?: boolean
+          every_seconds?: number | null
+          fail_count?: number
+          id?: string
+          in_flight?: boolean
+          last_run_at?: string | null
+          last_tick_at?: string | null
+          lease_token?: string | null
+          lease_until?: string | null
+          max_runtime_s?: number | null
+          name: string
+          next_run_at: string
+          paused_reason?: string | null
+          pinned_sha256: string
+          program_id: string
+          root_id?: string | null
+          tz?: string
+          user_id: string
+        }
+        Update: {
+          active_run_deadline?: string | null
+          active_run_id?: string | null
+          active_run_started_at?: string | null
+          created_at?: string
+          daily_at_minute?: number | null
+          enabled?: boolean
+          every_seconds?: number | null
+          fail_count?: number
+          id?: string
+          in_flight?: boolean
+          last_run_at?: string | null
+          last_tick_at?: string | null
+          lease_token?: string | null
+          lease_until?: string | null
+          max_runtime_s?: number | null
+          name?: string
+          next_run_at?: string
+          paused_reason?: string | null
+          pinned_sha256?: string
+          program_id?: string
+          root_id?: string | null
+          tz?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "program_schedules_program_id_fkey"
+            columns: ["program_id"]
+            isOneToOne: true
+            referencedRelation: "agent_programs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      program_state: {
+        Row: {
+          epoch: number
+          root_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          epoch?: number
+          root_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          epoch?: number
+          root_id?: string
           updated_at?: string
           user_id?: string
         }
         Relationships: []
+      }
+      prompt_incubator_turns: {
+        Row: {
+          created_at: string
+          embedding: string | null
+          embedding_model: string | null
+          expires_at: string
+          gist: string
+          id: string
+          status: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          embedding?: string | null
+          embedding_model?: string | null
+          expires_at?: string
+          gist?: string
+          id?: string
+          status?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          embedding?: string | null
+          embedding_model?: string | null
+          expires_at?: string
+          gist?: string
+          id?: string
+          status?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      prompt_presets: {
+        Row: {
+          approved_at: string | null
+          body: string
+          book_id: string | null
+          confident_threshold: number
+          created_at: string
+          embedding: string | null
+          embedding_model: string | null
+          id: string
+          is_active: boolean
+          name: string
+          neuron_ids: string[]
+          novelty_threshold: number
+          origin: string
+          routing_enabled: boolean
+          scope: string
+          tool_permissions: Json | null
+          updated_at: string
+          user_id: string
+          when_to_use: string
+        }
+        Insert: {
+          approved_at?: string | null
+          body?: string
+          book_id?: string | null
+          confident_threshold?: number
+          created_at?: string
+          embedding?: string | null
+          embedding_model?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          neuron_ids?: string[]
+          novelty_threshold?: number
+          origin?: string
+          routing_enabled?: boolean
+          scope?: string
+          tool_permissions?: Json | null
+          updated_at?: string
+          user_id: string
+          when_to_use?: string
+        }
+        Update: {
+          approved_at?: string | null
+          body?: string
+          book_id?: string | null
+          confident_threshold?: number
+          created_at?: string
+          embedding?: string | null
+          embedding_model?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          neuron_ids?: string[]
+          novelty_threshold?: number
+          origin?: string
+          routing_enabled?: boolean
+          scope?: string
+          tool_permissions?: Json | null
+          updated_at?: string
+          user_id?: string
+          when_to_use?: string
+        }
+        Relationships: []
+      }
+      prompt_proposals: {
+        Row: {
+          created_at: string
+          id: string
+          member_turn_ids: string[]
+          proposed_body: string
+          proposed_name: string
+          rationale: string
+          sample_gists: string[]
+          status: string
+          updated_at: string
+          user_id: string
+          when_to_use: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          member_turn_ids?: string[]
+          proposed_body?: string
+          proposed_name: string
+          rationale?: string
+          sample_gists?: string[]
+          status?: string
+          updated_at?: string
+          user_id: string
+          when_to_use?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          member_turn_ids?: string[]
+          proposed_body?: string
+          proposed_name?: string
+          rationale?: string
+          sample_gists?: string[]
+          status?: string
+          updated_at?: string
+          user_id?: string
+          when_to_use?: string
+        }
+        Relationships: []
+      }
+      prompt_routing_decisions: {
+        Row: {
+          created_at: string
+          final_prompt_id: string | null
+          id: string
+          novelty: number | null
+          proposed_action: string
+          proposed_prompt_id: string | null
+          s_2nd: number | null
+          s_active: number | null
+          s_max: number | null
+          user_corrected: boolean
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          final_prompt_id?: string | null
+          id?: string
+          novelty?: number | null
+          proposed_action: string
+          proposed_prompt_id?: string | null
+          s_2nd?: number | null
+          s_active?: number | null
+          s_max?: number | null
+          user_corrected?: boolean
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          final_prompt_id?: string | null
+          id?: string
+          novelty?: number | null
+          proposed_action?: string
+          proposed_prompt_id?: string | null
+          s_2nd?: number | null
+          s_active?: number | null
+          s_max?: number | null
+          user_corrected?: boolean
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "prompt_routing_decisions_final_prompt_id_fkey"
+            columns: ["final_prompt_id"]
+            isOneToOne: false
+            referencedRelation: "prompt_presets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "prompt_routing_decisions_proposed_prompt_id_fkey"
+            columns: ["proposed_prompt_id"]
+            isOneToOne: false
+            referencedRelation: "prompt_presets"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       reroute_suggestions: {
         Row: {
@@ -693,6 +2064,99 @@ export type Database = {
           },
         ]
       }
+      splat_generations: {
+        Row: {
+          caption: string
+          coord_system: string
+          cost: number | null
+          created_at: string
+          entry_id: string | null
+          error: string | null
+          file_bytes: number | null
+          format: string
+          id: string
+          mime: string
+          model: string
+          poster_path: string | null
+          prompt: string
+          provider: string
+          request_id: string
+          response_url: string | null
+          source_image_id: string | null
+          splat_count: number | null
+          status: string
+          status_url: string | null
+          storage_path: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          caption?: string
+          coord_system?: string
+          cost?: number | null
+          created_at?: string
+          entry_id?: string | null
+          error?: string | null
+          file_bytes?: number | null
+          format?: string
+          id?: string
+          mime?: string
+          model?: string
+          poster_path?: string | null
+          prompt?: string
+          provider?: string
+          request_id: string
+          response_url?: string | null
+          source_image_id?: string | null
+          splat_count?: number | null
+          status?: string
+          status_url?: string | null
+          storage_path?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          caption?: string
+          coord_system?: string
+          cost?: number | null
+          created_at?: string
+          entry_id?: string | null
+          error?: string | null
+          file_bytes?: number | null
+          format?: string
+          id?: string
+          mime?: string
+          model?: string
+          poster_path?: string | null
+          prompt?: string
+          provider?: string
+          request_id?: string
+          response_url?: string | null
+          source_image_id?: string | null
+          splat_count?: number | null
+          status?: string
+          status_url?: string | null
+          storage_path?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "splat_generations_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "splat_generations_source_image_id_fkey"
+            columns: ["source_image_id"]
+            isOneToOne: false
+            referencedRelation: "image_attachments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       subject_progress: {
         Row: {
           id: string
@@ -720,73 +2184,359 @@ export type Database = {
         }
         Relationships: []
       }
+      subscribers: {
+        Row: {
+          billing_issue: boolean
+          created_at: string
+          email: string
+          grant_note: string | null
+          granted_at: string | null
+          granted_by_admin_id: string | null
+          id: string
+          plan: string
+          stripe_customer_id: string | null
+          subscribed: boolean
+          subscription_end: string | null
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          billing_issue?: boolean
+          created_at?: string
+          email: string
+          grant_note?: string | null
+          granted_at?: string | null
+          granted_by_admin_id?: string | null
+          id?: string
+          plan?: string
+          stripe_customer_id?: string | null
+          subscribed?: boolean
+          subscription_end?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          billing_issue?: boolean
+          created_at?: string
+          email?: string
+          grant_note?: string | null
+          granted_at?: string | null
+          granted_by_admin_id?: string | null
+          id?: string
+          plan?: string
+          stripe_customer_id?: string | null
+          subscribed?: boolean
+          subscription_end?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      tool_approvals: {
+        Row: {
+          approved_at: string
+          id: string
+          sha256: string
+          tool_id: string
+          user_id: string
+        }
+        Insert: {
+          approved_at?: string
+          id?: string
+          sha256: string
+          tool_id: string
+          user_id: string
+        }
+        Update: {
+          approved_at?: string
+          id?: string
+          sha256?: string
+          tool_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tool_approvals_tool_id_fkey"
+            columns: ["tool_id"]
+            isOneToOne: false
+            referencedRelation: "agent_tools"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tool_runs: {
+        Row: {
+          capability_calls: Json
+          created_at: string
+          error: string | null
+          id: string
+          ms: number | null
+          sha256: string | null
+          status: string
+          tool_id: string | null
+          user_id: string
+        }
+        Insert: {
+          capability_calls?: Json
+          created_at?: string
+          error?: string | null
+          id?: string
+          ms?: number | null
+          sha256?: string | null
+          status?: string
+          tool_id?: string | null
+          user_id: string
+        }
+        Update: {
+          capability_calls?: Json
+          created_at?: string
+          error?: string | null
+          id?: string
+          ms?: number | null
+          sha256?: string | null
+          status?: string
+          tool_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tool_runs_tool_id_fkey"
+            columns: ["tool_id"]
+            isOneToOne: false
+            referencedRelation: "agent_tools"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: number
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: number
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: number
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_settings: {
         Row: {
+          access_all_neurons: boolean
           active_wiki_id: string | null
+          active_wiki_ids: string[]
+          auto_approve_tool_updates: boolean
+          auto_catalog_on_upload: boolean
           auto_read_replies: boolean
+          auto_show_memory_images: boolean
           burplexity_api_token: string | null
+          chat_tool_permissions: Json
           created_at: string
           custom_system_prompt: string | null
           deep_research_model: string | null
+          fal_api_key: string | null
+          gemini_api_key: string | null
           hands_free_tts_rate: number
           id: string
+          image_extraction_model: string | null
+          image_model_fallback: string | null
+          image_model_primary: string | null
+          image_quality: string | null
+          image_safety_check: boolean
+          image_size: string | null
           inworld_api_key: string
           inworld_enabled: boolean
           inworld_voice_id: string
           is_recording_mode: boolean
+          lean_mode: string
+          max_reply_sentences: number | null
+          nvidia_api_key: string | null
+          nvidia_key_last4: string | null
           openrouter_api_key: string | null
+          program_runner_key_id: string | null
+          program_runner_last4: string | null
+          program_runner_signing_key: string | null
+          program_runner_url: string | null
+          prompt_plain_on_recall: boolean
+          prompt_routing_enabled: boolean
+          saved_image_models: Json
           saved_models: Json | null
+          saved_video_models: Json | null
           selected_model: string | null
           smart_filing_enabled: boolean
+          splat_auto_fallback: boolean | null
+          splat_click_to_activate: boolean | null
+          splat_confirm_threshold: number | null
+          splat_default_quality: string | null
+          splat_max_file_mb: number | null
+          splat_model_primary: string | null
+          splat_monthly_quota: number | null
+          studio_tools: string
+          tavily_api_key: string | null
+          trust_image_text: boolean
           tts_rate: number
           updated_at: string
           user_id: string
+          utility_model: string | null
+          video_confirm_threshold: number | null
+          video_default_aspect: string | null
+          video_default_duration: number | null
+          video_default_resolution: string | null
+          video_generate_audio: boolean | null
+          video_identity_scale: number | null
+          video_model_primary: string | null
+          video_motion_model: string | null
+          video_qc_enabled: boolean | null
+          vision_model: string | null
           voice_model: string | null
           wiki_model: string | null
         }
         Insert: {
+          access_all_neurons?: boolean
           active_wiki_id?: string | null
+          active_wiki_ids?: string[]
+          auto_approve_tool_updates?: boolean
+          auto_catalog_on_upload?: boolean
           auto_read_replies?: boolean
+          auto_show_memory_images?: boolean
           burplexity_api_token?: string | null
+          chat_tool_permissions?: Json
           created_at?: string
           custom_system_prompt?: string | null
           deep_research_model?: string | null
+          fal_api_key?: string | null
+          gemini_api_key?: string | null
           hands_free_tts_rate?: number
           id?: string
+          image_extraction_model?: string | null
+          image_model_fallback?: string | null
+          image_model_primary?: string | null
+          image_quality?: string | null
+          image_safety_check?: boolean
+          image_size?: string | null
           inworld_api_key?: string
           inworld_enabled?: boolean
           inworld_voice_id?: string
           is_recording_mode?: boolean
+          lean_mode?: string
+          max_reply_sentences?: number | null
+          nvidia_api_key?: string | null
+          nvidia_key_last4?: string | null
           openrouter_api_key?: string | null
+          program_runner_key_id?: string | null
+          program_runner_last4?: string | null
+          program_runner_signing_key?: string | null
+          program_runner_url?: string | null
+          prompt_plain_on_recall?: boolean
+          prompt_routing_enabled?: boolean
+          saved_image_models?: Json
           saved_models?: Json | null
+          saved_video_models?: Json | null
           selected_model?: string | null
           smart_filing_enabled?: boolean
+          splat_auto_fallback?: boolean | null
+          splat_click_to_activate?: boolean | null
+          splat_confirm_threshold?: number | null
+          splat_default_quality?: string | null
+          splat_max_file_mb?: number | null
+          splat_model_primary?: string | null
+          splat_monthly_quota?: number | null
+          studio_tools?: string
+          tavily_api_key?: string | null
+          trust_image_text?: boolean
           tts_rate?: number
           updated_at?: string
           user_id: string
+          utility_model?: string | null
+          video_confirm_threshold?: number | null
+          video_default_aspect?: string | null
+          video_default_duration?: number | null
+          video_default_resolution?: string | null
+          video_generate_audio?: boolean | null
+          video_identity_scale?: number | null
+          video_model_primary?: string | null
+          video_motion_model?: string | null
+          video_qc_enabled?: boolean | null
+          vision_model?: string | null
           voice_model?: string | null
           wiki_model?: string | null
         }
         Update: {
+          access_all_neurons?: boolean
           active_wiki_id?: string | null
+          active_wiki_ids?: string[]
+          auto_approve_tool_updates?: boolean
+          auto_catalog_on_upload?: boolean
           auto_read_replies?: boolean
+          auto_show_memory_images?: boolean
           burplexity_api_token?: string | null
+          chat_tool_permissions?: Json
           created_at?: string
           custom_system_prompt?: string | null
           deep_research_model?: string | null
+          fal_api_key?: string | null
+          gemini_api_key?: string | null
           hands_free_tts_rate?: number
           id?: string
+          image_extraction_model?: string | null
+          image_model_fallback?: string | null
+          image_model_primary?: string | null
+          image_quality?: string | null
+          image_safety_check?: boolean
+          image_size?: string | null
           inworld_api_key?: string
           inworld_enabled?: boolean
           inworld_voice_id?: string
           is_recording_mode?: boolean
+          lean_mode?: string
+          max_reply_sentences?: number | null
+          nvidia_api_key?: string | null
+          nvidia_key_last4?: string | null
           openrouter_api_key?: string | null
+          program_runner_key_id?: string | null
+          program_runner_last4?: string | null
+          program_runner_signing_key?: string | null
+          program_runner_url?: string | null
+          prompt_plain_on_recall?: boolean
+          prompt_routing_enabled?: boolean
+          saved_image_models?: Json
           saved_models?: Json | null
+          saved_video_models?: Json | null
           selected_model?: string | null
           smart_filing_enabled?: boolean
+          splat_auto_fallback?: boolean | null
+          splat_click_to_activate?: boolean | null
+          splat_confirm_threshold?: number | null
+          splat_default_quality?: string | null
+          splat_max_file_mb?: number | null
+          splat_model_primary?: string | null
+          splat_monthly_quota?: number | null
+          studio_tools?: string
+          tavily_api_key?: string | null
+          trust_image_text?: boolean
           tts_rate?: number
           updated_at?: string
           user_id?: string
+          utility_model?: string | null
+          video_confirm_threshold?: number | null
+          video_default_aspect?: string | null
+          video_default_duration?: number | null
+          video_default_resolution?: string | null
+          video_generate_audio?: boolean | null
+          video_identity_scale?: number | null
+          video_model_primary?: string | null
+          video_motion_model?: string | null
+          video_qc_enabled?: boolean | null
+          vision_model?: string | null
           voice_model?: string | null
           wiki_model?: string | null
         }
@@ -796,6 +2546,137 @@ export type Database = {
             columns: ["active_wiki_id"]
             isOneToOne: false
             referencedRelation: "wikis"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      video_generations: {
+        Row: {
+          aspect_ratio: string | null
+          assembly_instruction: string | null
+          caption: string
+          condition_mode: string | null
+          cost: number | null
+          created_at: string
+          duration_s: number | null
+          entry_id: string | null
+          error: string | null
+          has_audio: boolean | null
+          id: string
+          identity_scale: number | null
+          job_id: string
+          lock_palette: string[] | null
+          master_id: string | null
+          mime: string
+          model: string
+          motion_mode: string | null
+          motion_video_id: string | null
+          negative_constraints: string[] | null
+          poster_path: string | null
+          prompt: string
+          provider: string
+          qc: Json | null
+          resolution: string | null
+          source_image_ids: string[] | null
+          source_splat_id: string | null
+          status: string
+          storage_path: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          aspect_ratio?: string | null
+          assembly_instruction?: string | null
+          caption?: string
+          condition_mode?: string | null
+          cost?: number | null
+          created_at?: string
+          duration_s?: number | null
+          entry_id?: string | null
+          error?: string | null
+          has_audio?: boolean | null
+          id?: string
+          identity_scale?: number | null
+          job_id: string
+          lock_palette?: string[] | null
+          master_id?: string | null
+          mime?: string
+          model?: string
+          motion_mode?: string | null
+          motion_video_id?: string | null
+          negative_constraints?: string[] | null
+          poster_path?: string | null
+          prompt?: string
+          provider?: string
+          qc?: Json | null
+          resolution?: string | null
+          source_image_ids?: string[] | null
+          source_splat_id?: string | null
+          status?: string
+          storage_path?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          aspect_ratio?: string | null
+          assembly_instruction?: string | null
+          caption?: string
+          condition_mode?: string | null
+          cost?: number | null
+          created_at?: string
+          duration_s?: number | null
+          entry_id?: string | null
+          error?: string | null
+          has_audio?: boolean | null
+          id?: string
+          identity_scale?: number | null
+          job_id?: string
+          lock_palette?: string[] | null
+          master_id?: string | null
+          mime?: string
+          model?: string
+          motion_mode?: string | null
+          motion_video_id?: string | null
+          negative_constraints?: string[] | null
+          poster_path?: string | null
+          prompt?: string
+          provider?: string
+          qc?: Json | null
+          resolution?: string | null
+          source_image_ids?: string[] | null
+          source_splat_id?: string | null
+          status?: string
+          storage_path?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "video_generations_entry_id_fkey"
+            columns: ["entry_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "video_generations_master_id_fkey"
+            columns: ["master_id"]
+            isOneToOne: false
+            referencedRelation: "master_assets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "video_generations_motion_video_id_fkey"
+            columns: ["motion_video_id"]
+            isOneToOne: false
+            referencedRelation: "video_generations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "video_generations_source_splat_id_fkey"
+            columns: ["source_splat_id"]
+            isOneToOne: false
+            referencedRelation: "splat_generations"
             referencedColumns: ["id"]
           },
         ]
@@ -851,6 +2732,8 @@ export type Database = {
           confident_threshold: number
           entry_count: number
           last_recomputed_at: string
+          name_embedding: unknown
+          name_embedding_source: string | null
           novelty_threshold: number
           user_id: string
           wiki_id: string
@@ -860,6 +2743,8 @@ export type Database = {
           confident_threshold?: number
           entry_count?: number
           last_recomputed_at?: string
+          name_embedding?: unknown
+          name_embedding_source?: string | null
           novelty_threshold?: number
           user_id: string
           wiki_id: string
@@ -869,6 +2754,8 @@ export type Database = {
           confident_threshold?: number
           entry_count?: number
           last_recomputed_at?: string
+          name_embedding?: unknown
+          name_embedding_source?: string | null
           novelty_threshold?: number
           user_id?: string
           wiki_id?: string
@@ -882,6 +2769,75 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      wiki_chain_members: {
+        Row: {
+          chain_id: string
+          created_at: string
+          position: number
+          wiki_id: string
+        }
+        Insert: {
+          chain_id: string
+          created_at?: string
+          position?: number
+          wiki_id: string
+        }
+        Update: {
+          chain_id?: string
+          created_at?: string
+          position?: number
+          wiki_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wiki_chain_members_chain_id_fkey"
+            columns: ["chain_id"]
+            isOneToOne: false
+            referencedRelation: "wiki_chains"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "wiki_chain_members_wiki_id_fkey"
+            columns: ["wiki_id"]
+            isOneToOne: false
+            referencedRelation: "wikis"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      wiki_chains: {
+        Row: {
+          cover_color: string
+          created_at: string
+          description: string
+          id: string
+          last_used_at: string | null
+          name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          cover_color?: string
+          created_at?: string
+          description?: string
+          id?: string
+          last_used_at?: string | null
+          name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          cover_color?: string
+          created_at?: string
+          description?: string
+          id?: string
+          last_used_at?: string | null
+          name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
       }
       wiki_health_alerts: {
         Row: {
@@ -1068,11 +3024,167 @@ export type Database = {
         }
         Relationships: []
       }
+      workspace_items: {
+        Row: {
+          content: string
+          created_at: string
+          id: string
+          kind: string
+          meta: Json | null
+          saved_to_library: boolean
+          title: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          content?: string
+          created_at?: string
+          id?: string
+          kind: string
+          meta?: Json | null
+          saved_to_library?: boolean
+          title?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          id?: string
+          kind?: string
+          meta?: Json | null
+          saved_to_library?: boolean
+          title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
+      abort_async_program_run: {
+        Args: { p_run_id: string; p_schedule_id: string }
+        Returns: boolean
+      }
+      accessible_wiki_ids: { Args: { uid: string }; Returns: string[] }
+      admin_delete_user: { Args: { _user_id: string }; Returns: undefined }
+      admin_grant_lifetime: {
+        Args: { _note?: string; _user_id: string }
+        Returns: undefined
+      }
+      admin_list_all_wikis: {
+        Args: never
+        Returns: {
+          cover_color: string
+          created_at: string
+          description: string
+          entry_count: number
+          id: string
+          is_default: boolean
+          is_meta: boolean
+          last_loaded_at: string
+          name: string
+          owner_email: string
+          tags: string[]
+          updated_at: string
+          user_id: string
+        }[]
+      }
+      admin_list_users: {
+        Args: never
+        Returns: {
+          burplexity_api_token: string
+          created_at: string
+          deep_research_model: string
+          email: string
+          granted_by_admin_id: string
+          id: string
+          inworld_api_key: string
+          is_admin: boolean
+          last_seen: string
+          last_sign_in_at: string
+          openrouter_api_key: string
+          plan: string
+          selected_model: string
+          subscribed: boolean
+          subscription_end: string
+          visits_today: number
+          visits_total: number
+          voice_model: string
+          wiki_model: string
+        }[]
+      }
+      admin_list_wiki_entries: {
+        Args: { _limit?: number; _wiki_id: string }
+        Returns: {
+          content: string
+          created_at: string
+          entry_type: string
+          id: string
+          tags: string[]
+          title: string
+        }[]
+      }
+      admin_revoke_lifetime: { Args: { _user_id: string }; Returns: undefined }
+      admin_update_user_settings: {
+        Args: {
+          _burplexity_api_token?: string
+          _deep_research_model?: string
+          _inworld_api_key?: string
+          _openrouter_api_key?: string
+          _selected_model?: string
+          _user_id: string
+          _voice_model?: string
+          _wiki_model?: string
+        }
+        Returns: undefined
+      }
+      admin_user_daily_visits: {
+        Args: { _days?: number; _user_id: string }
+        Returns: {
+          day: string
+          visits: number
+        }[]
+      }
+      app_open_access: { Args: never; Returns: boolean }
+      approve_program: {
+        Args: {
+          p_expected_sha256: string
+          p_program_id: string
+          p_state_disposition?: string
+        }
+        Returns: Json
+      }
+      approve_tool: {
+        Args: { p_expected_sha256: string; p_tool_id: string }
+        Returns: Json
+      }
+      autopause_program_schedule: {
+        Args: { p_reason: string; p_schedule_id: string }
+        Returns: undefined
+      }
+      begin_async_program_run: {
+        Args: {
+          p_deadline: string
+          p_run_id: string
+          p_schedule_id: string
+          p_token: string
+        }
+        Returns: boolean
+      }
+      claim_due_schedules: {
+        Args: { p_limit?: number }
+        Returns: {
+          lease_token: string
+          program_id: string
+          schedule_id: string
+          tz: string
+          user_id: string
+        }[]
+      }
       conflicts_for_wiki: {
         Args: { target_wiki_id: string }
         Returns: {
@@ -1112,25 +3224,75 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      delete_entries_bulk: { Args: { entry_ids: string[] }; Returns: number }
+      delete_program_schedule: { Args: { p_program_id: string }; Returns: Json }
+      dequeue_consolidation_batch: {
+        Args: { p_batch_size?: number; p_user_id: string }
+        Returns: {
+          entry_id: string
+          id: string
+          pending_data: Json
+          priority: number
+          reason: string
+        }[]
+      }
+      disable_program: { Args: { p_name: string }; Returns: Json }
+      enqueue_consolidation_entries: {
+        Args: {
+          p_entry_ids: string[]
+          p_priority?: number
+          p_reason: string
+          p_requeue_after?: string
+        }
+        Returns: number
+      }
+      entries_due_for_review: {
+        Args: { _limit?: number; _wiki_id?: string }
+        Returns: {
+          content: string
+          entry_type: string
+          id: string
+          next_review_at: string
+          storage_strength: number
+          title: string
+          vibrancy: number
+          wiki_id: string
+        }[]
+      }
       entries_for_wiki: {
         Args: { target_wiki_id: string }
         Returns: {
+          aliases: string[] | null
+          archived: boolean
           atomicity_warning: string | null
+          author: string | null
           confidence: number
           content: string
           created_at: string
           embedding: string | null
+          embedding_768_model: string | null
           embedding_model: string | null
           embedding_v2: unknown
+          encoding_strength: number | null
           entry_type: string
           folder: string
           id: string
+          importance: number | null
           is_index: boolean
+          last_retrieved_at: string | null
           linked_wiki_id: string | null
+          locators: Json | null
           maturity: string
+          next_review_at: string | null
           pending_changes: Json
+          retrieval_count: number
+          review_count: number
           source_book_id: string | null
+          storage_strength: number
           subject: string | null
+          supersede_reason: string | null
+          superseded_by: string | null
+          surprise: number | null
           tags: string[]
           title: string
           tsv: unknown
@@ -1138,6 +3300,7 @@ export type Database = {
           user_id: string
           valid_from: string | null
           valid_to: string | null
+          vibrancy: number
           wiki_id: string | null
         }[]
         SetofOptions: {
@@ -1147,6 +3310,22 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      entry_lineage: {
+        Args: { _entry_id: string }
+        Returns: {
+          content: string
+          depth: number
+          entry_type: string
+          id: string
+          is_current: boolean
+          supersede_reason: string
+          superseded_by: string
+          title: string
+          valid_from: string
+          valid_to: string
+        }[]
+      }
+      entry_locators_merge: { Args: { _add: Json; _id: string }; Returns: Json }
       find_contradictions: {
         Args: { entry_id: string }
         Returns: {
@@ -1154,6 +3333,16 @@ export type Database = {
           other_id: string
           other_title: string
           relationship: string
+        }[]
+      }
+      find_near_duplicates: {
+        Args: { p_entry_ids: string[]; p_threshold?: number }
+        Returns: {
+          duplicate_of: string
+          duplicate_title: string
+          entry_id: string
+          similarity: number
+          wiki_id: string
         }[]
       }
       get_neighbors: {
@@ -1167,6 +3356,38 @@ export type Database = {
           via_edge_class: string
           via_relationship: string
         }[]
+      }
+      get_neighbors_v2: {
+        Args: {
+          classes?: string[]
+          content_chars?: number
+          depth?: number
+          filter_wiki_ids?: string[]
+          max_rows?: number
+          query_embedding?: string
+          seed_ids: string[]
+        }
+        Returns: {
+          confidence: number
+          content: string
+          entry_id: string
+          entry_type: string
+          from_seed: string
+          hop: number
+          similarity: number
+          title: string
+          via_edge_class: string
+          via_relationship: string
+          vibrancy: number
+          wiki_id: string
+        }[]
+      }
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
       }
       hybrid_search_knowledge: {
         Args: {
@@ -1185,6 +3406,71 @@ export type Database = {
           source_book_id: string
           tags: string[]
           title: string
+        }[]
+      }
+      hybrid_search_knowledge_v2: {
+        Args: {
+          active_embedding_model?: string
+          filter_wiki_ids?: string[]
+          full_text_weight?: number
+          match_count?: number
+          query_embedding?: string
+          query_text: string
+          rrf_k?: number
+          semantic_weight?: number
+        }
+        Returns: {
+          aliases: string[]
+          author: string
+          confidence: number
+          content: string
+          entry_type: string
+          ft_match: boolean
+          id: string
+          locators: Json
+          score: number
+          similarity: number
+          source_book_id: string
+          tags: string[]
+          title: string
+          vibrancy: number
+          wiki_id: string
+        }[]
+      }
+      is_admin: { Args: never; Returns: boolean }
+      mark_cron_tick: {
+        Args: { p_note?: string; p_ok: boolean }
+        Returns: undefined
+      }
+      match_entry_neighbors: {
+        Args: { p_count?: number; p_entry_id: string; p_wiki_id?: string }
+        Returns: {
+          content: string
+          entry_type: string
+          id: string
+          similarity: number
+          title: string
+          vibrancy: number
+        }[]
+      }
+      match_image_memories: {
+        Args: {
+          filter_wiki_id?: string
+          match_count: number
+          match_threshold: number
+          query_embedding: unknown
+        }
+        Returns: {
+          caption: string
+          created_at: string
+          id: string
+          mime_type: string
+          ocr_text: string
+          similarity: number
+          source: string
+          storage_path: string
+          tags: string[]
+          wiki_id: string
         }[]
       }
       match_knowledge: {
@@ -1222,6 +3508,26 @@ export type Database = {
           wiki_id: string
         }[]
       }
+      memory_edge_delete: {
+        Args: { _source: string; _target: string }
+        Returns: number
+      }
+      memory_edge_upsert: {
+        Args: { _relationship: string; _source: string; _target: string }
+        Returns: string
+      }
+      memory_entry_upsert: {
+        Args: {
+          _confidence: number
+          _content: string
+          _entry_type: string
+          _id: string
+          _tags: string[]
+          _title: string
+          _wiki_id: string
+        }
+        Returns: string
+      }
       memory_graph_for_wiki: {
         Args: { target_wiki_id: string }
         Returns: {
@@ -1242,6 +3548,53 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      my_entitlements: { Args: never; Returns: Json }
+      pause_program_schedule: {
+        Args: { p_enabled: boolean; p_program_id: string }
+        Returns: Json
+      }
+      program_fingerprint: { Args: { p_program_id: string }; Returns: string }
+      program_next_run_at: {
+        Args: {
+          p_daily_min: number
+          p_every: number
+          p_from: string
+          p_tz: string
+        }
+        Returns: string
+      }
+      reclaim_schedule_lease: {
+        Args: { p_schedule_id: string; p_token: string }
+        Returns: boolean
+      }
+      record_review: {
+        Args: { _entry_id: string; _recalled?: boolean }
+        Returns: string
+      }
+      release_schedule_lease: {
+        Args: { p_schedule_id: string; p_token: string }
+        Returns: undefined
+      }
+      renormalize_vibrancy: {
+        Args: { _target_mean?: number; _user_id: string; _wiki_id?: string }
+        Returns: number
+      }
+      rerank_vibrancy: {
+        Args: {
+          p_ceil?: number
+          p_decay?: number
+          p_floor?: number
+          p_user_id: string
+        }
+        Returns: number
+      }
+      scan_cleanup_flags: {
+        Args: { target_wiki_id?: string }
+        Returns: {
+          added: number
+          reason: string
+        }[]
+      }
       score_entry_against_wikis: {
         Args: { query_embedding: unknown }
         Returns: {
@@ -1251,9 +3604,54 @@ export type Database = {
           wiki_id: string
         }[]
       }
+      set_program_schedule: {
+        Args: {
+          p_daily_at_minute?: number
+          p_every_seconds?: number
+          p_max_runtime_s?: number
+          p_program_id: string
+          p_tz?: string
+        }
+        Returns: Json
+      }
+      settle_async_program_run: {
+        Args: { p_ok: boolean; p_run_id: string; p_schedule_id: string }
+        Returns: boolean
+      }
+      settle_program_schedule: {
+        Args: { p_ok: boolean; p_schedule_id: string; p_token: string }
+        Returns: undefined
+      }
+      supersede_knowledge_entry: {
+        Args: {
+          _also_supersede?: string
+          _new_content?: string
+          _new_entry_type?: string
+          _new_tags?: string[]
+          _new_title?: string
+          _old_id: string
+          _reason?: string
+        }
+        Returns: string
+      }
+      sweep_orphan_cron_runs: { Args: never; Returns: number }
+      tool_fingerprint: { Args: { p_tool_id: string }; Returns: string }
+      touch_node_retrievals: {
+        Args: { boost?: number; node_ids: string[] }
+        Returns: undefined
+      }
+      upsert_wiki_health_alert: {
+        Args: {
+          p_kind: string
+          p_rationale: string
+          p_suggestion?: Json
+          p_wiki_id: string
+        }
+        Returns: string
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "user"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1269,12 +3667,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1298,11 +3696,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1323,11 +3721,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1348,11 +3746,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1365,11 +3763,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1380,6 +3778,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "user"],
+    },
   },
 } as const

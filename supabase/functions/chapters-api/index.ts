@@ -26,10 +26,21 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Keys are stored as SHA-256 digests only (migration 20260802150000),
+    // so the incoming plaintext is hashed before lookup and never touches
+    // the database.
+    const keyDigest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(apiKey)
+    );
+    const keyHash = Array.from(new Uint8Array(keyDigest))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+
     const { data: keyRow, error: keyError } = await supabase
       .from("api_keys")
       .select("id, user_id")
-      .eq("key_value", apiKey)
+      .eq("key_hash", keyHash)
       .is("revoked_at", null)
       .maybeSingle();
 
@@ -274,10 +285,16 @@ Deno.serve(async (req) => {
         });
       }
 
+      // Scoped to the key owner: this function runs on the service-role
+      // client, so every book/chapter query must carry the ownership filter
+      // itself — RLS is not there to catch a miss. The notes endpoints always
+      // did this; these four historically did not, which meant any valid key
+      // could read or edit any user's library.
       const { data, error } = await supabase
         .from("books")
         .update(updates)
         .eq("id", bookId)
+        .eq("user_id", keyOwnerId)
         .select()
         .single();
 
@@ -287,21 +304,36 @@ Deno.serve(async (req) => {
       });
     }
 
-    // GET endpoints
+    // GET endpoints — chapters carry no user_id of their own, so ownership is
+    // established through the parent book before any chapter row is returned.
     if (chapterId) {
       const { data, error } = await supabase
         .from("chapters")
-        .select("*, books(title, file_name)")
+        .select("*, books!inner(title, file_name, user_id)")
         .eq("id", chapterId)
+        .eq("books.user_id", keyOwnerId)
         .single();
 
       if (error) throw error;
-      return new Response(JSON.stringify(data), {
+      const { books: bookMeta, ...chapter } = data as Record<string, unknown> & { books: { title: string; file_name: string } };
+      return new Response(JSON.stringify({ ...chapter, books: { title: (bookMeta as any).title, file_name: (bookMeta as any).file_name } }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     if (bookId) {
+      const { data: ownedBook } = await supabase
+        .from("books")
+        .select("id")
+        .eq("id", bookId)
+        .eq("user_id", keyOwnerId)
+        .maybeSingle();
+      if (!ownedBook) {
+        return new Response(JSON.stringify({ error: "Book not found" }), {
+          status: 404,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
       const { data, error } = await supabase
         .from("chapters")
         .select("id, name, start_page, end_page, text_content, created_at")
@@ -314,10 +346,11 @@ Deno.serve(async (req) => {
       });
     }
 
-    // List all books with chapter count
+    // List the key owner's books with chapter count
     const { data: books, error } = await supabase
       .from("books")
       .select("id, title, file_name, page_count, cover_image_url, created_at, chapters(id)")
+      .eq("user_id", keyOwnerId)
       .order("created_at", { ascending: false });
 
     if (error) throw error;
