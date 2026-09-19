@@ -32,6 +32,11 @@ export interface CounselToolsSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 
+  /** Attach — the `+` on the bar is this sheet, so the image picker the old
+   *  paperclip opened has to be reachable from inside it. First row, because
+   *  it is the most frequent reason to open the sheet at all. */
+  onAttachImage: () => void;
+
   /** Context */
   readingLabel: string;
   onOpenResearchSettings: () => void;
@@ -49,9 +54,6 @@ export interface CounselToolsSheetProps {
   onToggleDeepResearch: () => void;
   autoReadReplies: boolean;
   onToggleReadAloud: () => void;
-  handsFreeSupported: boolean;
-  handsFreeActive: boolean;
-  onToggleHandsFree: () => void;
   webSearchAvailable: boolean;
   webSearchBusy: boolean;
   webSearchDisabled: boolean;
@@ -138,6 +140,15 @@ const CounselToolsSheet: React.FC<CounselToolsSheetProps> = (p) => {
           </SheetDescription>
         </div>
 
+        <Group title="Attach">
+          <Row
+            icon={sym("image")}
+            label="Image"
+            detail="Photo or screenshot to send with your message"
+            onClick={andClose(p.onAttachImage)}
+          />
+        </Group>
+
         <Group title="Context">
           <Row
             icon={sym("neurology")}
@@ -186,16 +197,10 @@ const CounselToolsSheet: React.FC<CounselToolsSheetProps> = (p) => {
             active={p.autoReadReplies}
             onClick={p.onToggleReadAloud}
           />
-          {p.handsFreeSupported && (
-            <Row
-              icon={sym(p.handsFreeActive ? "graphic_eq" : "record_voice_over", p.handsFreeActive)}
-              label="Hands-free"
-              detail="Just talk — no tapping"
-              state={p.handsFreeActive ? "ON" : "OFF"}
-              active={p.handsFreeActive}
-              onClick={p.onToggleHandsFree}
-            />
-          )}
+          {/* Hands-free is deliberately NOT here. Starting a spoken
+              conversation is a reach-without-looking action, so it lives on
+              the composer bar as its own lit button — two taps behind a sheet
+              is the wrong price for it. */}
           {p.webSearchAvailable && (
             <Row
               icon={p.webSearchBusy ? <Loader2 className="w-5 h-5 animate-spin" /> : sym("travel_explore")}

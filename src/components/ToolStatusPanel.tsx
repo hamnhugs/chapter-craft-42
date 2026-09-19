@@ -132,7 +132,19 @@ const ToolStatusPanel: React.FC<{
    *  did. A count is the only thing that turns "one tool is off" into "your
    *  whole library is idle", so without one we do not make that claim. */
   approvedToolCount?: number;
-}> = ({ gates, onOpenSettings, lastTurn, approvedToolCount }) => {
+  /**
+   * Render nothing unless something is actually WRONG.
+   *
+   * The healthy chip ("60 tools · 20 off") was a permanent line of arithmetic
+   * in Counsel's composer that changed only when the user changed settings —
+   * it reported a number nobody was waiting for, and it cost a slot on a bar
+   * that has no slots to spare. `stranded` is different: it means the
+   * assistant cannot run the user's tools at all, which is worth interrupting
+   * for. In alert-only mode this renders exactly that case and is otherwise
+   * invisible; the full panel still reachable from Tools → Settings.
+   */
+  alertOnly?: boolean;
+}> = ({ gates, onOpenSettings, lastTurn, approvedToolCount, alertOnly }) => {
   const [open, setOpen] = useState(false);
   const { leanMode, setLeanMode, chatToolPermissions, setChatToolPermission } = useChatSettings();
 
@@ -184,6 +196,10 @@ const ToolStatusPanel: React.FC<{
   const foundrySwitchRows = (tools: string[]) =>
     tools.filter((t) => t in FOUNDRY_SWITCH_LABEL)
       .sort((a, b) => (stranded ? (a === RUN_TOOL ? -1 : b === RUN_TOOL ? 1 : 0) : 0));
+
+  // After every hook, never before: `stranded` flips at runtime, and an early
+  // return above the hooks would change the hook count between renders.
+  if (alertOnly && !stranded) return null;
 
   return (
     <>

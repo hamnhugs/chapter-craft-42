@@ -33,16 +33,84 @@ const SHEET = stripComments(read("src/components/CounselToolsSheet.tsx"));
 const INDEX = stripComments(read("src/pages/Index.tsx"));
 const count = (h: string, n: string) => h.split(n).length - 1;
 
-describe("the tool scroller is gone", () => {
-  it("the composer has no horizontally scrolling chip row", () => {
-    // The exact combination the old row used. `hide-scrollbar` alone is fine —
-    // the transcript legitimately uses it on a VERTICAL scroller.
-    expect(CHAT_PANEL).not.toContain("overflow-x-auto");
+describe("nothing stacks under the composer", () => {
+  it("has no snapping tool-chip scroller", () => {
+    // `overflow-x-auto` on its own is now legitimate — the pinned-files and
+    // loaded-books strips use it to stay ONE line instead of wrapping. What
+    // must not come back is the snapping row of tool controls.
     expect(CHAT_PANEL).not.toContain("snap-x");
+    expect(CHAT_PANEL).not.toContain("snap-start");
   });
 
-  it("the status strip wraps instead", () => {
-    expect(CHAT_PANEL).toContain("flex items-center gap-2 px-2 flex-wrap");
+  it("wraps nothing: no flex-wrap survives anywhere in the composer", () => {
+    // `flex-wrap` was the literal bug. On a 360px phone the well offers ~304px
+    // of row and the old state chips measured ~480px together, so the strip
+    // could only ever be two lines, three once a label grew.
+    const composer = CHAT_PANEL.slice(CHAT_PANEL.indexOf("{/* Input Area */}"));
+    expect(composer).not.toContain("flex-wrap");
+  });
+
+  it("keeps the context strips to a single scrolling line", () => {
+    expect(count(CHAT_PANEL, "flex flex-nowrap overflow-x-auto hide-scrollbar items-center")).toBe(2);
+  });
+
+  it("defaults loaded books to collapsed, so the bar does not grow with context", () => {
+    expect(CHAT_PANEL).toContain('localStorage.getItem("counsel_context_books_collapsed") !== "0"');
+  });
+});
+
+describe("state disclosure — three signals, never a bare count", () => {
+  // Count-only disclosure tests badly: people open the panel purely to find
+  // out what the number meant. So the number never travels alone.
+  it("counts on the + badge", () => {
+    expect(CHAT_PANEL).toContain("activeModeCount > 0 && (");
+  });
+
+  it("names the modes in the empty field", () => {
+    expect(CHAT_PANEL).toContain('activeModes.join(" · ")');
+    expect(CHAT_PANEL).toContain("placeholder={composerPlaceholder}");
+  });
+
+  it("rings the well, which is the signal that survives typing", () => {
+    expect(CHAT_PANEL).toContain("ring-1 ring-primary-container/30");
+  });
+
+  it("excludes hands-free from the count — it has its own lit button", () => {
+    const block = CHAT_PANEL.slice(CHAT_PANEL.indexOf("const activeModes"), CHAT_PANEL.indexOf("const activeModeCount"));
+    expect(block).not.toContain("handsFree");
+  });
+});
+
+describe("the + is attach and tools together", () => {
+  it("has no separate paperclip button", () => {
+    // 44x50 outside the field: the most non-idiomatic thing in the old bar,
+    // and 56px of a 320px row spent on one action.
+    expect(CHAT_PANEL).not.toContain("attach_file");
+  });
+
+  it("still reaches the image picker, from inside the sheet", () => {
+    expect(CHAT_PANEL).toContain("onAttachImage={() => fileInputRef.current?.click()}");
+    expect(SHEET).toContain('label="Image"');
+  });
+});
+
+describe("hands-free is quick-draw", () => {
+  it("sits on the bar, not in the sheet", () => {
+    expect(CHAT_PANEL).toContain("onClick={handsFree.toggle}");
+    expect(SHEET).not.toContain("handsFree");
+    expect(SHEET).not.toContain("Hands-free");
+  });
+
+  it("is visually distinct from the dictation mic", () => {
+    // One is a ghost, the other fills and accents. Conflating them is a named
+    // defect in Grok's composer.
+    expect(CHAT_PANEL).toContain("record_voice_over");
+    expect(CHAT_PANEL).toContain("graphic_eq");
+  });
+
+  it("is its own status display, so the status row above the field could go", () => {
+    expect(CHAT_PANEL).not.toContain("Listening — just talk");
+    expect(CHAT_PANEL).toContain("handsFreeStateLabel");
   });
 });
 
@@ -81,12 +149,21 @@ describe("send", () => {
     expect(CHAT_PANEL).toMatch(/const canSend = !!input\.trim\(\) \|\| pendingImages\.length > 0/);
   });
 
-  it("and mic share one row, so their 44px hit regions cannot overlap", () => {
+  it("shares one row with mic and hands-free, hit regions never overlapping", () => {
     // The old `right-11` / `right-2` offsets left 6px between two ~30px
     // buttons; growing both to 44px targets would have made them intersect.
     expect(CHAT_PANEL).not.toContain("right-11");
-    expect(CHAT_PANEL).toContain("absolute right-2 bottom-2 flex items-center gap-2");
-    expect(count(CHAT_PANEL, "after:absolute after:-inset-[4px]")).toBe(3); // mic, stop, send
+    expect(CHAT_PANEL).toContain("absolute right-2 bottom-2 flex items-center gap-1.5");
+    // 36px visual + 4px pad = a 44px target on every icon button: the +, the
+    // mic, hands-free, stop and send.
+    expect(count(CHAT_PANEL, "after:absolute after:-inset-[4px]")).toBe(5);
+  });
+
+  it("reserves room for up to three trailing buttons, in literal classes", () => {
+    // Tailwind reads source text, so an interpolated class never compiles.
+    for (const cls of ["pr-[136px]", "pr-[94px]", "pr-[52px]"]) {
+      expect(CHAT_PANEL).toContain(cls);
+    }
   });
 
   it("reserves textarea room that matches the buttons actually rendered", () => {

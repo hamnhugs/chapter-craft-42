@@ -257,11 +257,16 @@ const ChatPanel: React.FC = () => {
   const [booksPickerOpen, setBooksPickerOpen] = useState(false);
   // Collapsing only hides the chip row — the books still ride with every
   // message, and the collapsed summary keeps the count visible.
+  // Collapsed by DEFAULT: the expanded row is one chip per book, which on a
+  // phone is the composer growing in proportion to how much the user loaded.
+  // The count is the part that carries information; the titles are a detail
+  // you ask for. An explicit "0" — the user having opened it themselves — is
+  // still honoured, so this changes the default and nobody's choice.
   const [contextBooksCollapsed, setContextBooksCollapsed] = useState(() => {
     try {
-      return localStorage.getItem("counsel_context_books_collapsed") === "1";
+      return localStorage.getItem("counsel_context_books_collapsed") !== "0";
     } catch {
-      return false;
+      return true;
     }
   });
   useEffect(() => {
@@ -736,15 +741,66 @@ const ChatPanel: React.FC = () => {
   /** Something to send: typed text, or an image waiting to go with it. */
   const canSend = !!input.trim() || pendingImages.length > 0;
 
-  /** The textarea reserves exactly the room the corner buttons actually take,
-   *  rather than a constant `pr-20` that assumed both were always there. Each
-   *  button is 36px with an 8px gap, inside a row inset 8px from the edge. */
+  /**
+   * What is currently shaping the next reply, named rather than counted.
+   *
+   * This is the composer's whole state display now that the wrapping chip
+   * strip is gone. It rides in the placeholder while the field is empty, and
+   * its length is the count on the `+` badge — a number alone tests badly
+   * (people open the panel just to find out what it meant), so the number
+   * never travels without the names.
+   *
+   * Hands-free is absent on purpose: it has its own lit button on the bar.
+   */
+  const activeModes = useMemo(() => {
+    const m: string[] = [];
+    if (chatDeepResearch && isPaid) m.push("Deep Research");
+    if (autoReadReplies) m.push("Read Aloud");
+    if (contextBooks.length) m.push(`${contextBooks.length} book${contextBooks.length === 1 ? "" : "s"}`);
+    if (focusedItems.length) m.push(`${focusedItems.length} pinned`);
+    if (workspaceOpen) m.push("Files");
+    return m;
+  }, [chatDeepResearch, isPaid, autoReadReplies, contextBooks.length, focusedItems.length, workspaceOpen]);
+  const activeModeCount = activeModes.length;
+
+  const handsFreeStateLabel =
+    handsFree.state === "listening" ? "listening"
+      : handsFree.state === "thinking" ? "thinking"
+        : handsFree.state === "speaking" ? "speaking"
+          : "on";
+
+  /**
+   * The empty field is the composer's last piece of screen that costs nothing,
+   * so it carries whatever is most worth saying right now: what hands-free is
+   * hearing, then what dictation is doing, then which modes are on, then the
+   * ordinary hint. It is only ever visible while the field is empty, which is
+   * exactly when there is room for it.
+   */
+  const composerPlaceholder =
+    handsFree.active
+      ? (handsFree.interim ? `“${handsFree.interim}”` : `Hands-free — ${handsFreeStateLabel}`)
+      : dictation.isListening
+        ? "Listening… speak now"
+        : !(apiKey || nvidiaKeyLast4 || geminiApiKey)
+          ? "Add an API key in Settings to start chatting"
+          : activeModes.length
+            ? `${activeModes.join(" · ")} — ask anything…`
+            : "Ask about your books, or drop an image…";
+
+  /**
+   * The textarea reserves exactly the room the trailing buttons actually take.
+   * A constant `pr-20` assumed a fixed pair; the bar now carries between zero
+   * and three. Each face is 36px with a 6px gap, in a row inset 8px from the
+   * edge, plus 8px of breathing room. Literal classes, because Tailwind reads
+   * source text and never sees an interpolated one.
+   */
+  const trailingButtons =
+    (dictation.supported ? 1 : 0) + (handsFree.supported ? 1 : 0) + (isLoading || canSend ? 1 : 0);
   const composerPadRight =
-    (dictation.supported ? 1 : 0) + (isLoading || canSend ? 1 : 0) === 2
-      ? "pr-24"
-      : (dictation.supported || isLoading || canSend)
-        ? "pr-14"
-        : "pr-4";
+    trailingButtons >= 3 ? "pr-[136px]"
+      : trailingButtons === 2 ? "pr-[94px]"
+        : trailingButtons === 1 ? "pr-[52px]"
+          : "pr-4";
 
   const handleSend = async () => {
     if (isLoading || sendingRef.current) return; // a reply is streaming — use Stop first
@@ -1374,21 +1430,31 @@ const ChatPanel: React.FC = () => {
 
       {/* Input Area */}
       <div className="px-4 pb-4 pt-2">
-        <div className="bg-surface-container-low/90 backdrop-blur-xl p-3 rounded-2xl shadow-2xl border border-outline-variant/10 flex flex-col gap-3 max-w-4xl mx-auto">
-          {handsFree.active && (
-            <div className="flex items-center gap-2 px-2 text-xs text-on-surface-variant">
-              <span className={`material-symbols-outlined text-base ${handsFree.state === "listening" ? "text-destructive animate-pulse" : "text-primary-container"}`}>
-                {handsFree.state === "listening" ? "mic" : handsFree.state === "thinking" ? "more_horiz" : handsFree.state === "speaking" ? "graphic_eq" : "record_voice_over"}
-              </span>
-              <span className="font-medium">
-                {handsFree.state === "listening" ? "Listening — just talk" : handsFree.state === "thinking" ? "Thinking…" : handsFree.state === "speaking" ? "Speaking…" : "Hands-free on"}
-              </span>
-              {handsFree.interim && <span className="italic truncate">“{handsFree.interim}”</span>}
-              <button onClick={handsFree.stop} className="ml-auto text-[10px] font-bold uppercase tracking-widest text-on-surface-variant hover:text-destructive">Stop</button>
-            </div>
-          )}
+        {/* The ring is the state signal that survives typing. The `+` badge and
+            the named summary in the placeholder are both gone or unread once
+            the user starts a message; this stays, and it is why a bare count
+            was never allowed to be the whole disclosure. */}
+        <div
+          className={`bg-surface-container-low/90 backdrop-blur-xl p-3 rounded-2xl shadow-2xl border flex flex-col gap-2 max-w-4xl mx-auto transition-shadow ${
+            handsFree.active
+              ? "border-primary/40 ring-1 ring-primary/40"
+              : activeModeCount > 0
+                ? "border-primary-container/40 ring-1 ring-primary-container/30"
+                : "border-outline-variant/10"
+          }`}
+        >
+          {/* Hands-free used to own a whole row here, reading "Listening — just
+              talk" beside a Stop button. Both moved onto the bar: the hands-free
+              button IS the state (filled, accent, pulsing while it listens) and
+              tapping it is the stop. Only the interim transcript still needs
+              words, and it goes where the words go — the placeholder. */}
+          {/* One line, never two. `flex-wrap` here was the other half of the
+              stacking: pinned files and loaded books each grew their own
+              second and third row as the user added to them. A nowrap strip
+              that scrolls is bounded — the composer's height stops being a
+              function of how much context you have loaded. */}
           {focusedItems.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5 px-1 pb-1 text-xs font-body text-on-surface-variant">
+            <div className="flex flex-nowrap overflow-x-auto hide-scrollbar items-center gap-1.5 px-1 pb-1 text-xs font-body text-on-surface-variant [&>*]:shrink-0">
               <span
                 className="material-symbols-outlined text-[14px] text-primary-container"
                 style={{ fontVariationSettings: "'FILL' 1" }}
@@ -1440,7 +1506,7 @@ const ChatPanel: React.FC = () => {
             </div>
           )}
           {contextBooks.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5 px-1 pb-1 text-xs font-body text-on-surface-variant">
+            <div className="flex flex-nowrap overflow-x-auto hide-scrollbar items-center gap-1.5 px-1 pb-1 text-xs font-body text-on-surface-variant [&>*]:shrink-0">
               <button
                 type="button"
                 onClick={() => setContextBooksCollapsed((c) => !c)}
@@ -1516,7 +1582,7 @@ const ChatPanel: React.FC = () => {
             </div>
           )}
           <div
-            className={`flex items-end gap-3 ${dragOver ? "ring-2 ring-primary/60 rounded-xl" : ""}`}
+            className={`flex items-end gap-2 ${dragOver ? "ring-2 ring-primary/60 rounded-xl" : ""}`}
             onDragOver={(e) => { if (Array.from(e.dataTransfer.types).includes("Files")) { e.preventDefault(); setDragOver(true); } }}
             onDragLeave={() => setDragOver(false)}
             onDrop={(e) => {
@@ -1535,14 +1601,36 @@ const ChatPanel: React.FC = () => {
               className="hidden"
               onChange={(e) => { addImagesFromFiles(e.target.files); if (fileInputRef.current) fileInputRef.current.value = ""; }}
             />
+            {/* ONE leading affordance: attach AND tools, the way every major
+                assistant now does it. The paperclip it replaced was a 44x50
+                block OUTSIDE the field — the single most non-idiomatic thing
+                in the old bar, and 56px of a 320px phone row spent on one
+                action. Merged, that space goes back to the text.
+
+                The badge is a supplement, never the whole story: Baymard's
+                testing found count-only disclosure performs poorly because
+                people open the panel just to confirm what the number meant.
+                So the count rides alongside the named summary in the empty
+                field and the accent ring on the well — three signals, one of
+                which survives in every state. */}
             <button
               type="button"
-              onClick={() => fileInputRef.current?.click()}
-              title="Attach image"
-              aria-label="Attach image"
-              className="h-[50px] w-[44px] shrink-0 flex items-center justify-center rounded-xl bg-surface-container-high text-on-surface-variant hover:text-primary hover:bg-surface-container-highest transition-colors"
+              onClick={() => setToolsOpen(true)}
+              aria-haspopup="dialog"
+              aria-expanded={toolsOpen}
+              title="Attach an image, or change what Counsel can read and how it answers"
+              aria-label={activeModeCount > 0 ? `Attach and tools — ${activeModeCount} active` : "Attach and tools"}
+              className="relative h-9 w-9 shrink-0 self-end mb-0.5 flex items-center justify-center rounded-xl bg-surface-container-high text-on-surface-variant hover:text-primary hover:bg-surface-container-highest transition-colors after:content-[''] after:absolute after:-inset-[4px]"
             >
-              <span className="material-symbols-outlined text-xl">attach_file</span>
+              <span className="material-symbols-outlined text-xl">add</span>
+              {activeModeCount > 0 && (
+                <span
+                  className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-primary text-on-primary text-[10px] font-bold leading-4 text-center pointer-events-none"
+                  aria-hidden
+                >
+                  {activeModeCount}
+                </span>
+              )}
             </button>
             <div className="flex-grow relative">
               {/* @mention popup — anchored above the composer. Options use
@@ -1579,7 +1667,7 @@ const ChatPanel: React.FC = () => {
                 onKeyUp={syncMention} onClick={syncMention} onBlur={() => setMention(null)}
                 inputMode={handsFree.active ? "none" : undefined}
                 aria-label="Message The Librarian"
-                placeholder={dictation.isListening ? "Listening… speak now" : (apiKey || nvidiaKeyLast4 || geminiApiKey) ? "Ask about your books, or drop an image…" : "Add an API key in Settings to start chatting"}
+                placeholder={composerPlaceholder}
                 rows={1} className={`bg-surface-container-high border-none rounded-xl text-foreground py-3 pl-4 ${composerPadRight} focus:ring-1 focus:ring-primary/40 resize-none min-h-[50px] max-h-[220px] overflow-y-auto`}
               />
 
@@ -1593,7 +1681,12 @@ const ChatPanel: React.FC = () => {
                   WCAG 2.2 SC 2.5.5 / Apple's 44pt, without a chunkier button.
                   `touch-action: manipulation` drops the legacy 300ms
                   double-tap-zoom delay while leaving pinch-zoom alone. */}
-              <div className="absolute right-2 bottom-2 flex items-center gap-2" style={{ touchAction: "manipulation" }}>
+              <div className="absolute right-2 bottom-2 flex items-center gap-1.5" style={{ touchAction: "manipulation" }}>
+                {/* DICTATION — speech into the field. Deliberately the quiet,
+                    outline one. Grok's composer was picked apart for making
+                    its dictation mic and its live-voice button look alike
+                    until you tapped one; the two do completely different
+                    things, so here one is a ghost and the other is filled. */}
                 {dictation.supported && (
                   <button
                     type="button"
@@ -1604,6 +1697,36 @@ const ChatPanel: React.FC = () => {
                   >
                     <span className="material-symbols-outlined text-lg" style={dictation.isListening ? { fontVariationSettings: "'FILL' 1" } : undefined}>
                       {dictation.isListening ? "mic_off" : "mic"}
+                    </span>
+                  </button>
+                )}
+                {/* HANDS-FREE — quick draw. It lives on the bar, never behind
+                    the sheet: starting a spoken conversation is the one thing
+                    you reach for without looking, and every assistant that
+                    ships a live-voice mode keeps it on the bar for exactly
+                    that reason. It is also its own status display — filled and
+                    accented when on, pulsing while it listens — which is what
+                    let the "Listening — just talk" row above the composer go. */}
+                {handsFree.supported && (
+                  <button
+                    type="button"
+                    onClick={handsFree.toggle}
+                    aria-pressed={handsFree.active}
+                    title={handsFree.active ? `Hands-free — ${handsFreeStateLabel}. Tap to stop.` : "Hands-free — just talk"}
+                    aria-label={handsFree.active ? `Stop hands-free (${handsFreeStateLabel})` : "Start hands-free conversation"}
+                    className={`relative h-9 w-9 flex items-center justify-center rounded-lg transition-all active:scale-90 after:content-[''] after:absolute after:-inset-[4px] ${
+                      handsFree.active
+                        ? `bg-primary text-on-primary${handsFree.state === "listening" ? " animate-pulse" : ""}`
+                        : "bg-surface-container-highest text-on-surface-variant hover:text-primary"
+                    }`}
+                  >
+                    <span
+                      className="material-symbols-outlined text-lg"
+                      style={handsFree.active ? { fontVariationSettings: "'FILL' 1" } : undefined}
+                    >
+                      {handsFree.active
+                        ? (handsFree.state === "thinking" ? "more_horiz" : "graphic_eq")
+                        : "record_voice_over"}
                     </span>
                   </button>
                 )}
@@ -1652,99 +1775,42 @@ const ChatPanel: React.FC = () => {
               because it changes the answer; "Settings" is not, because it does
               not. `touch-action: manipulation` drops the legacy 300ms
               double-tap-zoom delay without disabling pinch-zoom. */}
-          <div className="flex items-center gap-2 px-2 flex-wrap" style={{ touchAction: "manipulation" }}>
-            <button
-              type="button"
-              onClick={() => setToolsOpen(true)}
-              aria-haspopup="dialog"
-              aria-expanded={toolsOpen}
-              aria-label="Tools — context, modes and session"
-              title="Tools — context, modes and session"
-              className="min-h-[44px] px-3 -ml-1 rounded-xl text-[10px] font-bold uppercase tracking-widest flex items-center gap-1.5 text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors"
-            >
-              <span className="material-symbols-outlined text-base" aria-hidden>tune</span> Tools
-            </button>
+          {/* NOTHING STACKS HERE ANY MORE.
 
-            {/* The tool-reach claim. Four separate gates could empty the
-                assistant's hands and only one of them ever said so, so this
-                stays in the composer rather than moving into the sheet. Held
-                back until settings have loaded — until then every permission
-                reads at its default and the chip would spend the first moment
-                of the session describing a configuration that isn't the
-                user's. */}
-            {loaded && (
-              <ToolStatusPanel
-                gates={toolGates}
-                onOpenSettings={openSettings}
-                lastTurn={lastTurnToolAccess}
-                // Undefined until the count actually lands (and whenever the
-                // Foundry's one-time setup hasn't run), which the panel reads
-                // as "say nothing" — the loading moment must not assert that
-                // the user has no library.
-                approvedToolCount={approvedToolCount}
-              />
-            )}
+              This was a wrapping strip of state chips, and the wrap was not a
+              styling accident — it was arithmetic. On a 360px phone the well
+              gives about 304px of usable row; "Deep Research", "Read Aloud",
+              "Books (3)", "Files" and the tools-status chip measure roughly
+              480px together. It could only ever have been two rows, three once
+              a label grew.
 
-            {/* Which saved prompt is steering this conversation — shown only
-                when one actually applies to the next reply. When nothing is
-                steering, the chip said "Auto" forever and taught nobody
-                anything; the switcher itself still lives in the sheet. */}
-            <PromptSwitcher onManage={() => openSettings("prompts")} onlyWhenApplied />
+              So the state moved onto the bar instead, three ways at once:
+              the `+` badge counts it, the empty field names it, and the well
+              wears an accent ring while any of it is on. The ring is the one
+              that survives typing, when the other two are gone or unread.
 
-            {chatDeepResearch && isPaid && (
-              <button
-                onClick={() => setChatDeepResearch(false)}
-                title="Deep Research is on — tap to turn it off"
-                className="min-h-[44px] text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 text-primary-container hover:text-primary transition-colors"
-              >
-                <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>science</span> Deep Research
-              </button>
-            )}
-            {autoReadReplies && (
-              <button
-                onClick={() => { stopSpeaking(); setAutoReadReplies(false); }}
-                title="Replies are read aloud — tap to stop"
-                className="min-h-[44px] text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 text-primary-container hover:text-primary transition-colors"
-              >
-                <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>volume_up</span> Read Aloud
-              </button>
-            )}
-            {handsFree.supported && handsFree.active && (
-              <button
-                onClick={handsFree.toggle}
-                aria-pressed
-                title="Hands-free is on — tap to turn it off"
-                className="min-h-[44px] text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 text-primary-container hover:text-primary transition-colors"
-              >
-                <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>graphic_eq</span> Hands-free
-              </button>
-            )}
-            {contextBooks.length > 0 && (
-              <button
-                onClick={() => setBooksPickerOpen(true)}
-                aria-pressed
-                title="Books loaded as chat context — tap to change"
-                className="min-h-[44px] text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 text-primary-container hover:text-primary transition-colors"
-              >
-                <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>auto_stories</span> Books ({contextBooks.length})
-              </button>
-            )}
-            {workspaceOpen && (
-              <button
-                onClick={() => setWorkspaceOpen(false)}
-                aria-pressed
-                title="Workspace is open — tap to close"
-                className="min-h-[44px] text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 text-primary-container hover:text-primary transition-colors"
-              >
-                <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>folder_open</span> Files{workspaceCount > 0 ? ` (${workspaceCount})` : ""}
-              </button>
-            )}
-            {pendingSearchCount > 0 && (
-              <span className="min-h-[44px] text-[10px] font-bold uppercase tracking-widest text-primary-container flex items-center gap-1">
-                <Loader2 className="w-3 h-3 animate-spin" /> Searching ({pendingSearchCount})
-              </span>
-            )}
-          </div>
+              The only thing that still earns a line of its own here is a live
+              search, because it is the one piece of state the user did not
+              switch on and cannot predict the end of. */}
+          {pendingSearchCount > 0 && (
+            <div className="flex items-center gap-1.5 px-2 text-[10px] font-bold uppercase tracking-widest text-primary-container">
+              <Loader2 className="w-3 h-3 animate-spin" /> Searching ({pendingSearchCount})
+            </div>
+          )}
+
+          {/* The alarm, and only the alarm. The healthy readout that used to
+              live here ("60 tools · 20 off") was arithmetic nobody was waiting
+              on; `alertOnly` keeps the one case that means the assistant
+              cannot run the user's tools at all. */}
+          {loaded && (
+            <ToolStatusPanel
+              alertOnly
+              gates={toolGates}
+              onOpenSettings={openSettings}
+              lastTurn={lastTurnToolAccess}
+              approvedToolCount={approvedToolCount}
+            />
+          )}
         </div>
       </div>
       </div>
@@ -1780,6 +1846,7 @@ const ChatPanel: React.FC = () => {
               ? `Reading: ${activeWikis.length} neurons`
               : `Reading: ${activeWiki?.name || "no neuron"}`
         }
+        onAttachImage={() => fileInputRef.current?.click()}
         onOpenResearchSettings={() => openSettings("research")}
         contextBookCount={contextBooks.length}
         onOpenBooks={() => setBooksPickerOpen(true)}
@@ -1796,9 +1863,6 @@ const ChatPanel: React.FC = () => {
         }}
         autoReadReplies={autoReadReplies}
         onToggleReadAloud={() => { if (autoReadReplies) stopSpeaking(); setAutoReadReplies(!autoReadReplies); }}
-        handsFreeSupported={handsFree.supported}
-        handsFreeActive={handsFree.active}
-        onToggleHandsFree={handsFree.toggle}
         webSearchAvailable={!!burplexityApiToken}
         webSearchBusy={deepSearching}
         webSearchDisabled={deepSearching || !input.trim() || isLoading}
