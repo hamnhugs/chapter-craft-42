@@ -71,6 +71,59 @@ describe("select all / none", () => {
   });
 });
 
+describe("the setup block collapses, so the list gets the sheet", () => {
+  it("starts collapsed, and remembers the choice", () => {
+    // Header 70 + mode toggle 88 + catalog strip 44 + shelf 84 + search 44 +
+    // footer 40 = ~370px of chrome in a sheet capped at 85vh. On a 360x780
+    // phone that left the book list about five rows tall.
+    expect(SRC).toContain('const SETUP_KEY = "counsel_books_setup_open"');
+    expect(SRC).toContain("localStorage.getItem(SETUP_KEY) === \"1\"");
+    expect(SRC).toContain("localStorage.setItem(SETUP_KEY, next ? \"1\" : \"0\")");
+  });
+
+  it("survives storage being unavailable", () => {
+    // Private mode throws on both read and write.
+    expect(SRC).toMatch(/localStorage\.getItem\(SETUP_KEY\)[^}]*\}\s*catch\s*\{/);
+  });
+
+  it("hides the block without unmounting it, so aria-controls resolves", () => {
+    expect(SRC).toContain('aria-controls="book-context-setup"');
+    expect(SRC).toContain('id="book-context-setup"');
+    expect(SRC).toContain('setupOpen ? "flex flex-col gap-3 px-4 pt-3 shrink-0" : "hidden"');
+  });
+
+  it("collapses only what sits ABOVE the shelf picker", () => {
+    const setup = SRC.slice(SRC.indexOf('id="book-context-setup"'), SRC.indexOf('>Shelf<'));
+    expect(setup).toContain("How books ride");
+    expect(setup).toContain("Generate summaries");
+    // The shelf picker, the search field and the list are steering, not
+    // setup — they never collapse.
+    expect(setup).not.toContain("Search ");
+  });
+
+  it("makes the whole header row the target, not a lone chevron", () => {
+    expect(SRC).toContain('className="w-full min-h-[48px] flex items-center gap-3 px-4 py-2.5 text-left');
+    expect(SRC).toContain("aria-expanded={setupOpen}");
+  });
+
+  it("renders title and description as spans inside that button", () => {
+    // Radix renders <h2>/<p>, neither of which is phrasing content, so
+    // nesting them in a <button> would be invalid HTML.
+    expect(SRC).toContain("<SheetTitle asChild>");
+    expect(SRC).toContain("<SheetDescription asChild>");
+  });
+
+  it("says where you stand while shut — never a bare chevron", () => {
+    // Collapsed state that hides the state is just a worse layout.
+    expect(SRC).toContain("const setupSummary =");
+    expect(SRC).toContain("{setupSummary}");
+    // A running summary job outranks the mode label.
+    expect(SRC).toMatch(/const setupSummary =\s*gistProgress \?\?/);
+    // And the "some books have no catalog" warning survives collapsing.
+    expect(SRC).toContain("without one ride as full text");
+  });
+});
+
 describe("one scroll region", () => {
   it("has exactly one scroller — the list", () => {
     // A `max-h-72` scroller nested inside a scrolling dialog is the trap where

@@ -175,6 +175,51 @@ const BookContextPicker: React.FC<{
     }
   };
 
+  /**
+   * "How books ride" is setup, not steering.
+   *
+   * Everything above the shelf picker — the blurb, the full-vs-catalog toggle,
+   * the summary-coverage strip — answers a question you settle once and then
+   * stop asking. It was costing ~200px at the top of a sheet capped at 85vh,
+   * which on a 360x780 phone left the book list about five rows tall: the one
+   * part of this sheet you came here to work in was the smallest thing in it.
+   *
+   * So it collapses, and starts collapsed. Progressive disclosure only pays if
+   * the collapsed state still tells you where you stand, so the header carries
+   * the resolved mode, the number of books riding as full text against your
+   * wishes, and any summary run in progress — no bare chevron with the state
+   * hidden behind it.
+   */
+  const SETUP_KEY = "counsel_books_setup_open";
+  const [setupOpen, setSetupOpen] = useState(() => {
+    try {
+      return localStorage.getItem(SETUP_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleSetup = () =>
+    setSetupOpen((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem(SETUP_KEY, next ? "1" : "0");
+      } catch {
+        // Private mode, or storage disabled — the toggle still works for
+        // this session, it just won't be remembered.
+      }
+      return next;
+    });
+
+  /** What the header says while the setup block is shut. A running summary
+   *  job outranks everything: collapsing must never hide work in flight. */
+  const setupSummary =
+    gistProgress ??
+    (effectiveMode === "full"
+      ? "Full text — everything, every message"
+      : uncatalogued.length > 0
+        ? `Catalog — ${uncatalogued.length} without one ride as full text`
+        : "Catalog — summaries + fetch on demand");
+
   // In shelf mode the set holds EXCLUSIONS, so membership inverts.
   const isChecked = (id: string) => (selection.shelfId ? !checkedSet.has(id) : checkedSet.has(id));
 
@@ -245,18 +290,54 @@ const BookContextPicker: React.FC<{
         onOpenAutoFocus={(e) => e.preventDefault()}
         className="max-h-[85vh] p-0 flex flex-col rounded-t-2xl bg-surface-container-low border-outline-variant/20 sm:max-w-lg sm:mx-auto pb-[calc(env(safe-area-inset-bottom)+0.5rem)]"
       >
-        {/* HEADER — fixed. The long explanation of full-vs-catalog that used to
-            live here said in three lines what the mode buttons below already
-            say in two words each, and it cost that space on every open. */}
-        <div className="px-4 pt-4 pb-3 border-b border-outline-variant/10 shrink-0">
-          <SheetTitle className="font-headline text-xl text-primary">Books in context</SheetTitle>
-          <SheetDescription className="text-xs mt-0.5 text-on-surface-variant">
-            What rides with every message. Load a shelf to keep it in sync.
-          </SheetDescription>
+        {/* HEADER — fixed, and the disclosure control for everything above the
+            shelf picker. The whole row is the target (48px tall, full width)
+            rather than a lone chevron in the corner, which on a phone is a
+            24px tap surrounded by dead space.
+
+            `asChild` on the title and description matters: Radix renders them
+            as <h2> and <p>, and neither is phrasing content, so nesting them
+            inside a <button> would be invalid HTML. Rendered as spans they
+            still carry the aria-labelledby / aria-describedby wiring the
+            dialog needs. */}
+        <div className="border-b border-outline-variant/10 shrink-0">
+          <button
+            type="button"
+            onClick={toggleSetup}
+            aria-expanded={setupOpen}
+            aria-controls="book-context-setup"
+            className="w-full min-h-[48px] flex items-center gap-3 px-4 py-2.5 text-left hover:bg-surface-container-high transition-colors"
+            style={{ touchAction: "manipulation" }}
+          >
+            <span className="flex-1 min-w-0">
+              <SheetTitle asChild>
+                <span className="block font-headline text-base text-primary truncate">Books in context</span>
+              </SheetTitle>
+              <SheetDescription asChild>
+                <span className={setupOpen ? "block text-xs mt-0.5 text-on-surface-variant" : "sr-only"}>
+                  What rides with every message. Load a shelf to keep it in sync.
+                </span>
+              </SheetDescription>
+              {!setupOpen && (
+                <span className="block text-[11px] text-on-surface-variant truncate">{setupSummary}</span>
+              )}
+            </span>
+            <span
+              className="material-symbols-outlined shrink-0 text-on-surface-variant transition-transform"
+              style={setupOpen ? { transform: "rotate(180deg)" } : undefined}
+              aria-hidden
+            >
+              expand_more
+            </span>
+          </button>
         </div>
 
-        {/* CONTROLS — fixed. Everything that is not the list. */}
-        <div className="flex flex-col gap-3 px-4 pt-3 shrink-0">
+        {/* SETUP — collapsible. Stays mounted when shut so `aria-controls`
+            always resolves, and so the mode buttons keep their identity. */}
+        <div
+          id="book-context-setup"
+          className={setupOpen ? "flex flex-col gap-3 px-4 pt-3 shrink-0" : "hidden"}
+        >
           <div className="flex flex-col gap-1.5">
             <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant">How books ride</label>
             <div className="grid grid-cols-2 gap-1 rounded-lg bg-surface-container-high p-1">
@@ -305,7 +386,11 @@ const BookContextPicker: React.FC<{
               </button>
             </div>
           )}
+        </div>
 
+        {/* STEERING — always visible. Which shelf, and which books in it, is
+            what you change from message to message. */}
+        <div className="flex flex-col gap-3 px-4 pt-3 shrink-0">
           <div className="flex flex-col gap-1.5">
             <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant">Shelf</label>
             <select
