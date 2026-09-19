@@ -50,7 +50,7 @@ export interface CaptionSignals {
 /** Generous: the viewport and a scroll box do the real limiting now. This only
  *  stops a pasted wall of text from sitting in the DOM of a screen that is
  *  supposed to be off. */
-export const CAPTION_MAX = 4000;
+export const CAPTION_MAX = 8000;
 
 /**
  * Markdown to something readable.

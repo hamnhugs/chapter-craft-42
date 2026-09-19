@@ -115,12 +115,22 @@ inert:
   hit testing and every touch reaches the overlay's own handler. That gesture is
   the only way out of the guard; a worm that swallowed it would strand the user
   on a black screen.
-- **It is dimmed, not merely shrunk.** `DIM_WORM` overrides the creature's CSS
-  variables down to the status glyph's register, with the **contour brighter
-  than the fill** — the inverse of the daylight scheme, because on black it is
+- **It is dimmed, not merely shrunk — and opaque.** `DIM_WORM` overrides the
+  creature's CSS variables down to the status glyph's register, with the
+  **contour brighter than the fill** — the inverse of the daylight scheme, because on black it is
   the edge that describes the shape, not the mass. Nearly every pixel stays off
   on an OLED, which is what this overlay is protecting. The contact shadow is
   set transparent: it is not standing on anything out there.
+
+  Those values are flat hex, not `rgba()`. They started as rgba at 0.15 alpha,
+  which made the head a piece of tinted glass — the body tube ran visibly
+  straight through the face, because the head is a separate ellipse drawn over
+  it and a see-through fill occludes nothing. **The offline render harness never
+  showed it**, because that harness composites colours over black to build its
+  SVG: the thing being looked at was opaque while the thing shipping was not.
+  Flattening them against this screen's black is exact (the overlay is `#000`)
+  and costs an OLED nothing — a dark opaque pixel and a dark translucent one
+  over black draw the same power.
 - **It stops.** The motion budget runs out 4.8 s after the last event, so a
   phone in a pocket with nothing happening shows a still image with no frame
   loop running.
@@ -147,9 +157,13 @@ pure and tested) is now:
 
 Details that matter:
 
-- **It is not clamped.** `line-clamp-4` was cutting answers off mid-thought. The
-  bubble is now a scroll box up to `52vh`, at 14 px with relaxed leading, with
-  paragraph breaks preserved.
+- **It is not clamped, and it owns the screen.** With a reply up the layout
+  switches: the worm shrinks from 132 px to an 84 px avatar at the top, the way
+  a name sits above a message, and the bubble becomes a full-height scroll box
+  at 16 px with relaxed leading. Centring the reading layout on a big worm spent
+  half a phone on decoration while the text scrolled in a letterbox.
+- **A chevron appears when there is more below.** Drag-scrolling is invisible by
+  default, so the screen has to say so; it goes away at the end.
 - **Markdown is rendered readable** by `plainText()`, deliberately *not*
   `stripMarkdownForTts` — that one flattens every newline to `". "`, which is
   right for a speech engine and destructive for something being read.

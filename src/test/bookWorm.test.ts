@@ -746,9 +746,28 @@ describe("it shows up on the pocket screen too", () => {
     // THE important one. That gesture is the only way out of this overlay, and
     // a worm that ate it would strand the user on a black screen. No `onPet`
     // means no shape opts into hit testing at all.
-    const mount = POCKET.slice(POCKET.indexOf("<BookWorm"), POCKET.indexOf("/>", POCKET.indexOf("<BookWorm")));
+    // Anchored on the style prop, not on "<BookWorm" — that substring also
+    // occurs inside `useRef<BookWormHandle>` further up the file, which is how
+    // the first version of this assertion silently measured the wrong slice.
+    const at = POCKET.indexOf("style={DIM_WORM}");
+    expect(at).toBeGreaterThan(-1);
+    const wrapper = POCKET.slice(POCKET.lastIndexOf("<div", at), at);
+    expect(wrapper).toContain("pointer-events-none");
+    const mount = POCKET.slice(at, POCKET.indexOf("/>", at));
     expect(mount).not.toContain("onPet");
-    expect(POCKET).toContain('<div className="pointer-events-none"');
+  });
+
+  it("uses OPAQUE ink, so the body cannot show through the head", () => {
+    // These were rgba() at 0.15 alpha, which made the head tinted glass: the
+    // body tube ran visibly straight through the face, because the head is a
+    // separate ellipse drawn over it and a see-through fill occludes nothing.
+    // The offline render harness never showed it — that harness composites
+    // colours over black to build its SVG, so the thing being looked at was
+    // opaque while the thing shipping was not.
+    const block = POCKET.slice(POCKET.indexOf("const DIM_WORM"), POCKET.indexOf("const MOOD_FOR"));
+    expect(block).not.toContain("rgba(");
+    expect(block).toMatch(/"--worm-body" as string\]: "#[0-9A-Fa-f]{6}"/);
+    expect(block).toContain('"transparent"'); // the shadow, which stays off
   });
 
   it("dims the creature rather than just shrinking it", () => {
@@ -760,16 +779,25 @@ describe("it shows up on the pocket screen too", () => {
     }
   });
 
+  it("keeps the dimmed values dark, whatever form they are written in", () => {
+    // Opaque does not mean bright. Every channel of the body fill stays well
+    // under mid-grey, or the overlay stops being an off screen.
+    const m = POCKET.match(/"--worm-body" as string\]: "#([0-9A-Fa-f]{6})"/);
+    const hex = m![1];
+    for (let i = 0; i < 6; i += 2) expect(parseInt(hex.slice(i, i + 2), 16)).toBeLessThan(80);
+  });
+
   it("lights the contour brighter than the fill, which is backwards on purpose", () => {
     // On black it is the edge that describes the shape, not the mass — the
     // inverse of the daylight scheme, where the outline is the darkest ink.
-    const alpha = (token: string) => {
-      const m = POCKET.match(new RegExp(`"${token}" as string\\]: "rgba\\([^)]*?,\\s*([0-9.]+)\\)"`));
+    const lum = (token: string) => {
+      const m = POCKET.match(new RegExp(`"${token}" as string\\]: "#([0-9A-Fa-f]{6})"`));
       if (!m) throw new Error("no " + token);
-      return Number(m[1]);
+      const h = m[1];
+      return parseInt(h.slice(0, 2), 16) + parseInt(h.slice(2, 4), 16) + parseInt(h.slice(4, 6), 16);
     };
-    expect(alpha("--worm-dark")).toBeGreaterThan(alpha("--worm-body"));
-    expect(alpha("--worm-spec")).toBeGreaterThan(alpha("--worm-eye"));
+    expect(lum("--worm-dark")).toBeGreaterThan(lum("--worm-body"));
+    expect(lum("--worm-spec")).toBeGreaterThan(lum("--worm-eye"));
   });
 
   it("drops the contact shadow — it is not standing on anything out there", () => {
@@ -906,13 +934,39 @@ describe("the caption under the worm", () => {
     expect(long!.text.endsWith("…")).toBe(true);
   });
 
-  it("is not clamped to a few lines any more", () => {
-    // line-clamp-4 was cutting answers off mid-thought — reported, and the
-    // reason the bubble is a scroll box now.
+  it("is not clamped, and takes the whole middle of the screen", () => {
+    // line-clamp-4 was cutting answers off mid-thought — reported twice, and
+    // the reason the bubble is a full-height scroll box now rather than a
+    // fixed-height one centred around a 132px worm.
     expect(POCKET).not.toContain("line-clamp");
-    expect(POCKET).toContain("max-h-[52vh]");
-    expect(POCKET).toContain("overflow-y-auto");
+    expect(POCKET).not.toContain("max-h-[52vh]");
+    expect(POCKET).toContain("flex-1 min-h-0 overflow-y-auto");
     expect(POCKET).toContain("whitespace-pre-wrap");
+  });
+
+  it("is set big enough to actually read at arm's length", () => {
+    expect(POCKET).toContain("text-[16px] leading-relaxed");
+    expect(POCKET).toContain("max-w-[46ch]");
+  });
+
+  it("says when there is more below, because drag-scrolling is invisible", () => {
+    expect(POCKET).toContain("{reading && more && (");
+    expect(POCKET).toContain("keyboard_double_arrow_down");
+    expect(POCKET).toContain("el.scrollHeight - el.scrollTop - el.clientHeight > STICK_SLOP");
+  });
+
+  it("switches to a reading layout, shrinking the worm to an avatar", () => {
+    // Keeping the reading layout centred on a 132px worm spent half a phone on
+    // decoration while the text scrolled in a letterbox.
+    expect(POCKET).toContain("const reading = !!caption;");
+    expect(POCKET).toContain("size={reading ? 84 : 132}");
+    expect(POCKET).toMatch(/reading \? "justify-start" : "justify-center"/);
+  });
+
+  it("clears the notch and the home indicator", () => {
+    // The overlay covers them, so its content has to clear them itself.
+    expect(POCKET).toContain("env(safe-area-inset-top, 0px)");
+    expect(POCKET).toContain("env(safe-area-inset-bottom, 0px)");
   });
 
   it("can be dragged to read a long answer", () => {
