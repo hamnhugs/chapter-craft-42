@@ -9,6 +9,7 @@ import ReactMarkdown from "react-markdown";
 import { safeUrlTransform, safeMarkdownComponents } from "@/lib/markdownSafety";
 import { focusComposer, isTouchPrimary } from "@/lib/focusPolicy";
 import PocketScreen from "@/components/PocketScreen";
+import { resolvePocketCaption } from "@/lib/sprite/pocketCaption";
 import { LensImageFrame, MemoryChips } from "@/components/MemoryLensStrip";
 import ToolApprovalCard from "@/components/ToolApprovalCard";
 import ProgramApprovalCard from "@/components/ProgramApprovalCard";
@@ -316,6 +317,25 @@ const ChatPanel: React.FC = () => {
   // transcript's worm would be animating where nobody can see it. The pocket
   // screen owns the visible one for as long as it is armed.
   const [pocketArmed, setPocketArmed] = useState(false);
+
+  // What the pocket screen shows under the worm. The ordering lives in
+  // lib/sprite/pocketCaption.ts; this only gathers the signals.
+  const pocketCaption = useMemo(() => {
+    let lastUserText: string | null = null;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "user" && messages[i].content?.trim()) {
+        lastUserText = messages[i].content;
+        break;
+      }
+    }
+    return resolvePocketCaption({
+      handsFreeActive: handsFree.active,
+      state: handsFree.state,
+      interim: handsFree.interim,
+      spokenText: speakProgress?.text ?? null,
+      lastUserText,
+    });
+  }, [handsFree.active, handsFree.state, handsFree.interim, speakProgress?.text, messages]);
   const lastMsg = messages[messages.length - 1];
   const worm = useBookWorm({
     isLoading,
@@ -1460,6 +1480,7 @@ const ChatPanel: React.FC = () => {
       <PocketScreen
           active={handsFree.active && pocketScreenEnabled}
           state={handsFree.state}
+          caption={pocketCaption}
           wormEnabled={worm.enabled}
           voiceSource={worm.voiceSource}
           speakChunk={speakProgress?.index ?? null}

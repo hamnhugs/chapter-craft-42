@@ -12,6 +12,7 @@ import {
 import { WormAnimator, type Mood } from "@/lib/sprite/wormAnimator";
 import { noteWordBoundary, syntheticVoice, hasWordBoundaries } from "@/lib/sprite/voiceTap";
 import { resolveWormMood, CHEER_MS, OOPS_MS, SLEEP_MS, WATCH_MS, type MoodSignals } from "@/lib/sprite/wormMood";
+import { resolvePocketCaption, CAPTION_MAX, type CaptionSignals } from "@/lib/sprite/pocketCaption";
 
 /**
  * The BookWorm — the companion sprite in Counsel.
@@ -828,6 +829,84 @@ describe("it shows up on the pocket screen too", () => {
     expect(COMPONENT).toContain("var(--worm-brow, var(--worm-pupil");
     expect(COMPONENT).toContain("var(--worm-frame, var(--worm-pupil");
     expect(COMPONENT).toContain("var(--worm-shadow, var(--worm-dark");
+  });
+});
+
+
+describe("the caption under the worm", () => {
+  const base: CaptionSignals = {
+    handsFreeActive: true,
+    state: "idle",
+    interim: "",
+    spokenText: null,
+    lastUserText: "how many chapters are left",
+  };
+  const c = (o: Partial<CaptionSignals>) => resolvePocketCaption({ ...base, ...o });
+
+  it("shows nothing when hands-free is off", () => {
+    expect(c({ handsFreeActive: false, spokenText: "hello" })).toBeNull();
+  });
+
+  it("prefers the sentence being spoken over everything else", () => {
+    // It is the chunk, not the whole reply, so the caption advances sentence by
+    // sentence in step with the voice.
+    expect(c({ state: "listening", interim: "wait", spokenText: "Twelve chapters remain." })).toEqual({
+      text: "Twelve chapters remain.",
+      from: "assistant",
+    });
+  });
+
+  it("shows the live transcript while the mic is open", () => {
+    // The most reassuring thing you can put on a screen that is holding a
+    // microphone open.
+    expect(c({ state: "listening", interim: "how many chap" })).toEqual({
+      text: "how many chap",
+      from: "user",
+    });
+  });
+
+  it("shows the waiting question while the model works", () => {
+    // The alternative is a blank screen during the longest pause in the cycle.
+    expect(c({ state: "thinking" })).toEqual({ text: "how many chapters are left", from: "user" });
+  });
+
+  it("shows nothing rather than a stale line between turns", () => {
+    expect(c({ state: "idle" })).toBeNull();
+    expect(c({ state: "listening", interim: "   " })).toBeNull();
+    expect(c({ state: "thinking", lastUserText: null })).toBeNull();
+  });
+
+  it("caps the length, so a pasted essay cannot sit behind a four-line clamp", () => {
+    const long = c({ spokenText: "x".repeat(CAPTION_MAX + 500) });
+    expect(long!.text.length).toBe(CAPTION_MAX + 1);
+    expect(long!.text.endsWith("…")).toBe(true);
+  });
+
+  it("renders in a bubble that cannot steal the tap or be announced twice", () => {
+    // The transcript is already in ChatPanel's live region behind this overlay.
+    const bubble = POCKET.slice(POCKET.indexOf("{caption && ("), POCKET.indexOf("material-symbols-outlined"));
+    expect(bubble).toContain('aria-hidden="true"');
+    expect(bubble).toContain("pointer-events-none");
+  });
+
+  it("does not use the themed bubble classes, which carry a bright accent", () => {
+    // dexters-lab paints a 3px fully-saturated cyan/magenta edge on those — the
+    // one thing this screen exists not to have.
+    expect(POCKET).not.toContain("message-bubble-ai");
+    expect(POCKET).not.toContain("message-bubble-user");
+    // ...but keeps the asymmetric corner, so it still reads as a chat bubble.
+    expect(POCKET).toContain('borderRadius: "1.5rem 1.5rem 1.5rem 0.25rem"');
+    expect(POCKET).toContain('borderRadius: "1.5rem 1.5rem 0.25rem 1.5rem"');
+  });
+
+  it("fades on change only for people who have not asked for less motion", () => {
+    expect(POCKET).toContain("motion-safe:animate-fade-in");
+    expect(POCKET).toContain("key={caption.text}");
+  });
+
+  it("clamps to four lines instead of running off the screen", () => {
+    expect(POCKET).toContain("line-clamp-4");
+    expect(POCKET).toContain("max-w-[min(34ch,84vw)]");
   });
 });
 

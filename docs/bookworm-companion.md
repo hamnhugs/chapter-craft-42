@@ -19,6 +19,7 @@ framer-motion, and no image asset.
 | `src/lib/sprite/voiceTap.ts` | `AnalyserNode` on the TTS audio element. |
 | `src/components/BookWorm.tsx` | Mounts the SVG once, then paints attributes. |
 | `src/components/PocketScreen.tsx` | The hands-free guard; hosts a dimmed second worm. |
+| `src/lib/sprite/pocketCaption.ts` | Pure: which line the pocket screen shows. |
 | `src/hooks/useBookWorm.ts` | Wires it to ChatPanel; owns all edge detection. |
 | `scripts/worm{Sheet,Film,Moods}.ts` | Offline render harnesses — the drawing loop. |
 
@@ -126,6 +127,21 @@ inert:
 - **The glyph stays.** The worm is decorative and `aria-hidden`; the
   mic/thinking glyph is the only explicit "is it listening to me" signal on that
   screen, and that is not a question to answer in mime.
+
+Under the worm sits a **caption bubble** showing what is happening right now,
+which during hands-free is a different thing in each state: the sentence being
+spoken (chunk by chunk, so it advances in step with the voice), the live interim
+transcript while the mic is open, or the question waiting on an answer while the
+model works. Nothing between turns — a stale line is worse than an empty screen.
+
+The ordering lives in `pocketCaption.ts` so it can be tested, and the bubble
+deliberately avoids the app's `.message-bubble-*` classes: those carry per-theme
+overrides that paint a 3 px fully-saturated cyan or magenta edge, which is the
+one thing this screen exists not to have. It copies the asymmetric corner and
+sets every colour itself, at roughly 5.7:1 on black — legible without lighting
+up a screen meant to be off. It is `aria-hidden` (ChatPanel's live region behind
+the overlay already announces the transcript) and `pointer-events: none`, so it
+cannot swallow the double tap either.
 
 The guard itself is now a setting — **Settings → Voice & Speech → Pocket
 screen** (`hands_free_pocket_screen`), defaulting **on**, because it shipped

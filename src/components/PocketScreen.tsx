@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { isTouchPrimary } from "@/lib/focusPolicy";
 import BookWorm, { type BookWormHandle } from "@/components/BookWorm";
 import type { Mood } from "@/lib/sprite/wormAnimator";
+import type { PocketCaption } from "@/lib/sprite/pocketCaption";
 
 /**
  * Pocket screen — hands-free touch guard for phones.
@@ -61,9 +62,33 @@ const MOOD_FOR: Record<string, Mood> = {
   speaking: "speak",
 };
 
+/**
+ * What is being said right now, in a bubble under the worm.
+ *
+ * The bubble deliberately does NOT use the app's `.message-bubble-*` classes.
+ * They carry per-theme overrides — dexters-lab paints a 3px fully-saturated
+ * cyan or magenta edge on them — and a bright accent stripe is exactly what
+ * this screen exists not to have. The asymmetric corner is copied so it still
+ * reads as a chat bubble; every colour is set here, dimmed, instead.
+ *
+ * Which line to show is decided in lib/sprite/pocketCaption.ts.
+ */
+const BUBBLE: Record<PocketCaption["from"], React.CSSProperties> = {
+  assistant: {
+    borderRadius: "1.5rem 1.5rem 1.5rem 0.25rem",
+    borderLeft: "2px solid rgba(126,190,156,0.30)",
+  },
+  user: {
+    borderRadius: "1.5rem 1.5rem 0.25rem 1.5rem",
+    borderRight: "2px solid rgba(150,162,190,0.28)",
+  },
+};
+
 interface Props {
   active: boolean; // hands-free on
   state: string;   // hands-free FSM state, for the dim status glyph
+  /** The line being spoken, heard or asked — shown under the worm. */
+  caption?: PocketCaption | null;
   /** The companion's user setting — off means off everywhere. */
   wormEnabled?: boolean;
   /** Live voice, so the worm's mouth moves with what is being spoken. */
@@ -75,7 +100,7 @@ interface Props {
   onArmedChange?: (armed: boolean) => void;
 }
 
-const PocketScreen: React.FC<Props> = ({ active, state, wormEnabled = true, voiceSource, speakChunk = null, onArmedChange }) => {
+const PocketScreen: React.FC<Props> = ({ active, state, caption = null, wormEnabled = true, voiceSource, speakChunk = null, onArmedChange }) => {
   const [armed, setArmed] = useState(false);
   const idleTimerRef = useRef<number | null>(null);
   const lastTapRef = useRef(0);
@@ -156,7 +181,7 @@ const PocketScreen: React.FC<Props> = ({ active, state, wormEnabled = true, voic
       aria-label="Pocket screen — double-tap to use the screen"
       onPointerDown={onOverlayPointerDown}
       onContextMenu={(e) => e.preventDefault()}
-      className="fixed inset-0 z-[200] bg-black flex flex-col items-center justify-center gap-3 select-none touch-none"
+      className="fixed inset-0 z-[200] bg-black flex flex-col items-center justify-center gap-3 px-6 select-none touch-none"
       style={{ opacity: 0.985 }}
     >
       {wormEnabled && (
@@ -170,6 +195,27 @@ const PocketScreen: React.FC<Props> = ({ active, state, wormEnabled = true, voic
             voiceSource={voiceSource}
             size={132}
           />
+        </div>
+      )}
+      {caption && (
+        // Keyed on the text so each new line replays the fade — the cheapest
+        // possible "this changed" cue, and opacity is the one kind of motion
+        // that is never a vestibular trigger. `motion-safe:` keeps it an
+        // instant swap for anyone who has asked for less movement.
+        <div
+          key={caption.text}
+          aria-hidden="true"
+          className="pointer-events-none max-w-[min(34ch,84vw)] px-3.5 py-2.5 text-[13px] leading-snug text-left line-clamp-4 motion-safe:animate-fade-in"
+          style={{
+            ...BUBBLE[caption.from],
+            // Brighter than the status line below it, because this is content
+            // and that is chrome — and still ~5.7:1 on black, which is legible
+            // without lighting up a screen that is meant to be off.
+            color: "rgba(214,219,228,0.60)",
+            background: "rgba(148,148,160,0.055)",
+          }}
+        >
+          {caption.text}
         </div>
       )}
       <span className="material-symbols-outlined text-3xl" style={{ color: "rgba(148,148,160,0.28)" }}>{glyph}</span>
