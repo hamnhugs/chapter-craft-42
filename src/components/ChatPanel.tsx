@@ -319,23 +319,37 @@ const ChatPanel: React.FC = () => {
   const [pocketArmed, setPocketArmed] = useState(false);
 
   // What the pocket screen shows under the worm. The ordering lives in
-  // lib/sprite/pocketCaption.ts; this only gathers the signals.
+  // lib/sprite/pocketCaption.ts; this only gathers the signals. Note it is the
+  // whole assistant message, not `speakProgress.text` — the point of that
+  // screen is reading the answer AFTER the voice has finished, so a fragment
+  // that disappears with the audio was the wrong thing to show.
   const pocketCaption = useMemo(() => {
     let lastUserText: string | null = null;
+    let lastUserId: string | null = null;
+    let assistantText: string | null = null;
+    let assistantId: string | null = null;
     for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === "user" && messages[i].content?.trim()) {
-        lastUserText = messages[i].content;
-        break;
+      const m = messages[i];
+      if (!assistantText && m.role === "assistant" && m.content?.trim()) {
+        assistantText = m.content;
+        assistantId = m.id ?? `a${i}`;
       }
+      if (!lastUserText && m.role === "user" && m.content?.trim()) {
+        lastUserText = m.content;
+        lastUserId = m.id ?? `u${i}`;
+      }
+      if (assistantText && lastUserText) break;
     }
     return resolvePocketCaption({
       handsFreeActive: handsFree.active,
       state: handsFree.state,
       interim: handsFree.interim,
-      spokenText: speakProgress?.text ?? null,
+      assistantText,
+      assistantId,
       lastUserText,
+      lastUserId,
     });
-  }, [handsFree.active, handsFree.state, handsFree.interim, speakProgress?.text, messages]);
+  }, [handsFree.active, handsFree.state, handsFree.interim, messages]);
   const lastMsg = messages[messages.length - 1];
   const worm = useBookWorm({
     isLoading,

@@ -38,6 +38,10 @@ import type { PocketCaption } from "@/lib/sprite/pocketCaption";
 const IDLE_ARM_MS = 12000;
 const DOUBLE_TAP_MS = 350;
 const MIN_TAP_GAP_MS = 60; // below this, two "taps" are simultaneous fingers
+/** Past this much movement a press is a scroll, not a tap. */
+const DRAG_SLOP = 8;
+/** Within this of the bottom, a growing reply keeps following. */
+const STICK_SLOP = 28;
 
 /** The creature at pocket brightness. Contour over fill, eyes brightest, and
  *  no contact shadow — it is not standing on anything out here. */
@@ -143,6 +147,8 @@ const PocketScreen: React.FC<Props> = ({ active, state, caption = null, wormEnab
   // blink is most of what makes the worm look like it is following along.
   const wormRef = useRef<BookWormHandle>(null);
   const prevChunk = useRef<number | null>(null);
+  const box = useRef<HTMLDivElement | null>(null);
+  const drag = useRef<{ y: number; top: number; moved: number; id: number } | null>(null);
   useEffect(() => {
     if (speakChunk == null) {
       prevChunk.current = null;
@@ -153,16 +159,35 @@ const PocketScreen: React.FC<Props> = ({ active, state, caption = null, wormEnab
     wormRef.current?.clause();
   }, [speakChunk]);
 
+  // A new line starts at the top; you should read an answer from its beginning.
+  useEffect(() => {
+    if (box.current) box.current.scrollTop = 0;
+  }, [caption?.id]);
+
+  // Stick to the bottom while a reply streams in, but only if the view is
+  // already there. Drag up to read back and the following stops on its own,
+  // because the view is no longer near the bottom — and resumes if you drag
+  // back down. No "did the user take control" flag to get out of sync.
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < STICK_SLOP) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [caption?.text]);
+
   if (!guarding) return null;
 
-  const onOverlayPointerDown = (e: React.PointerEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+  // Shared by the overlay and the caption bubble, so a tap on the text still
+  // counts toward the double tap that dismisses the guard. The bubble scrolls,
+  // so it has to own its own pointer stream — but it must never become a dead
+  // zone where the way out stops working.
+  const registerTap = (isPrimary: boolean) => {
     // Ignore secondary contacts: a pocket press or a hand closing over the
     // phone lands 2+ pointers within milliseconds, which would otherwise read
     // as a double tap and disarm the guard on exactly the input it exists to
     // swallow. A real double tap is one primary pointer, twice, with a gap.
-    if (!e.isPrimary) return;
+    if (!isPrimary) return;
     const now = Date.now();
     const gap = now - lastTapRef.current;
     if (gap > MIN_TAP_GAP_MS && gap <= DOUBLE_TAP_MS) {
@@ -171,6 +196,42 @@ const PocketScreen: React.FC<Props> = ({ active, state, caption = null, wormEnab
     } else {
       lastTapRef.current = now;
     }
+  };
+
+  const onOverlayPointerDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    registerTap(e.isPrimary);
+  };
+
+  /**
+   * Drag to scroll a long answer, by hand.
+   *
+   * The overlay is `touch-none` so the guard swallows gestures, and
+   * `touch-action` on an ancestor cannot be re-enabled by a descendant — so
+   * native scrolling is simply not available in here. Moving scrollTop from
+   * pointermove gives the same result without weakening the guard, and lets a
+   * short press still register as a tap.
+   */
+  const onBubbleDown = (e: React.PointerEvent) => {
+    e.stopPropagation();
+    drag.current = { y: e.clientY, top: box.current?.scrollTop ?? 0, moved: 0, id: e.pointerId };
+    try { box.current?.setPointerCapture(e.pointerId); } catch { /* not captureable */ }
+  };
+  const onBubbleMove = (e: React.PointerEvent) => {
+    const d = drag.current;
+    const el = box.current;
+    if (!d || !el || e.pointerId !== d.id) return;
+    const dy = e.clientY - d.y;
+    d.moved = Math.max(d.moved, Math.abs(dy));
+    if (d.moved > DRAG_SLOP) el.scrollTop = d.top - dy;
+  };
+  const onBubbleUp = (e: React.PointerEvent) => {
+    const d = drag.current;
+    drag.current = null;
+    try { box.current?.releasePointerCapture(e.pointerId); } catch { /* never captured */ }
+    if (!d || d.moved > DRAG_SLOP) return; // that was a scroll, not a tap
+    registerTap(e.isPrimary);
   };
 
   const glyph = state === "listening" ? "mic" : state === "thinking" ? "more_horiz" : state === "speaking" ? "graphic_eq" : "record_voice_over";
@@ -203,9 +264,16 @@ const PocketScreen: React.FC<Props> = ({ active, state, caption = null, wormEnab
         // that is never a vestibular trigger. `motion-safe:` keeps it an
         // instant swap for anyone who has asked for less movement.
         <div
-          key={caption.text}
+          ref={box}
+          // Keyed on the message, NOT the text: keying on the text replayed the
+          // fade on every streamed token, which strobed the whole bubble.
+          key={caption.id}
           aria-hidden="true"
-          className="pointer-events-none max-w-[min(34ch,84vw)] px-3.5 py-2.5 text-[13px] leading-snug text-left line-clamp-4 motion-safe:animate-fade-in"
+          onPointerDown={onBubbleDown}
+          onPointerMove={onBubbleMove}
+          onPointerUp={onBubbleUp}
+          onPointerCancel={() => { drag.current = null; }}
+          className="max-w-[min(42ch,88vw)] max-h-[52vh] overflow-y-auto overscroll-contain hide-scrollbar px-4 py-3 text-[14px] leading-relaxed text-left whitespace-pre-wrap motion-safe:animate-fade-in"
           style={{
             ...BUBBLE[caption.from],
             // Brighter than the status line below it, because this is content

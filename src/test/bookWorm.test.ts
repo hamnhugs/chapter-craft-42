@@ -12,7 +12,7 @@ import {
 import { WormAnimator, type Mood } from "@/lib/sprite/wormAnimator";
 import { noteWordBoundary, syntheticVoice, hasWordBoundaries } from "@/lib/sprite/voiceTap";
 import { resolveWormMood, CHEER_MS, OOPS_MS, SLEEP_MS, WATCH_MS, type MoodSignals } from "@/lib/sprite/wormMood";
-import { resolvePocketCaption, CAPTION_MAX, type CaptionSignals } from "@/lib/sprite/pocketCaption";
+import { resolvePocketCaption, plainText, CAPTION_MAX, type CaptionSignals } from "@/lib/sprite/pocketCaption";
 
 /**
  * The BookWorm — the companion sprite in Counsel.
@@ -838,55 +838,110 @@ describe("the caption under the worm", () => {
     handsFreeActive: true,
     state: "idle",
     interim: "",
-    spokenText: null,
+    assistantText: null,
+    assistantId: null,
     lastUserText: "how many chapters are left",
+    lastUserId: "u1",
   };
   const c = (o: Partial<CaptionSignals>) => resolvePocketCaption({ ...base, ...o });
 
   it("shows nothing when hands-free is off", () => {
-    expect(c({ handsFreeActive: false, spokenText: "hello" })).toBeNull();
+    expect(c({ handsFreeActive: false, assistantText: "hello" })).toBeNull();
   });
 
-  it("prefers the sentence being spoken over everything else", () => {
-    // It is the chunk, not the whole reply, so the caption advances sentence by
-    // sentence in step with the voice.
-    expect(c({ state: "listening", interim: "wait", spokenText: "Twelve chapters remain." })).toEqual({
-      text: "Twelve chapters remain.",
-      from: "assistant",
-    });
+  it("KEEPS the reply up after the voice stops", () => {
+    // The regression this file exists for. The first version showed only the
+    // sentence being spoken, so the answer vanished the instant the audio
+    // ended — useless for the actual job, which is hearing something and then
+    // reading it back without unlocking the phone.
+    const spoken = c({ state: "speaking", assistantText: "Twelve chapters remain.", assistantId: "a1" });
+    const after = c({ state: "idle", assistantText: "Twelve chapters remain.", assistantId: "a1" });
+    expect(spoken).toEqual(after);
+    expect(after).toMatchObject({ text: "Twelve chapters remain.", from: "assistant" });
   });
 
-  it("shows the live transcript while the mic is open", () => {
-    // The most reassuring thing you can put on a screen that is holding a
-    // microphone open.
-    expect(c({ state: "listening", interim: "how many chap" })).toEqual({
-      text: "how many chap",
-      from: "user",
-    });
+  it("shows the whole reply, not the fragment being spoken", () => {
+    const long = "First sentence. Second sentence. Third sentence.";
+    expect(c({ state: "speaking", assistantText: long, assistantId: "a1" })!.text).toBe(long);
+  });
+
+  it("keeps one stable id while the reply streams, so the fade does not strobe", () => {
+    // The bubble keys its entrance animation on this. Keying on the text
+    // replayed the fade on every streamed token.
+    const a = c({ assistantText: "Twelve", assistantId: "a1" });
+    const b = c({ assistantText: "Twelve chapters remain.", assistantId: "a1" });
+    expect(a!.id).toBe(b!.id);
+    expect(a!.text).not.toBe(b!.text);
+  });
+
+  it("yields to the live transcript the moment the user speaks", () => {
+    expect(c({ state: "listening", interim: "how many chap", assistantText: "old answer", assistantId: "a1" }))
+      .toMatchObject({ text: "how many chap", from: "user" });
   });
 
   it("shows the waiting question while the model works", () => {
-    // The alternative is a blank screen during the longest pause in the cycle.
-    expect(c({ state: "thinking" })).toEqual({ text: "how many chapters are left", from: "user" });
+    // Otherwise the screen is blank through the longest pause in the cycle.
+    expect(c({ state: "thinking", assistantText: "old answer", assistantId: "a1" }))
+      .toMatchObject({ text: "how many chapters are left", from: "user" });
   });
 
-  it("shows nothing rather than a stale line between turns", () => {
-    expect(c({ state: "idle" })).toBeNull();
-    expect(c({ state: "listening", interim: "   " })).toBeNull();
-    expect(c({ state: "thinking", lastUserText: null })).toBeNull();
+  it("falls back to the user's own line before any reply exists", () => {
+    expect(c({ assistantText: null })).toMatchObject({ from: "user" });
+    expect(c({ assistantText: null, lastUserText: null })).toBeNull();
   });
 
-  it("caps the length, so a pasted essay cannot sit behind a four-line clamp", () => {
-    const long = c({ spokenText: "x".repeat(CAPTION_MAX + 500) });
+  it("renders markdown as something readable, keeping the paragraph breaks", () => {
+    // Not stripMarkdownForTts, which flattens every newline to ". " — right for
+    // a speech engine, destructive for something being read.
+    expect(plainText("## Title\n\n**bold** and `code` and [link](http://x)")).toBe(
+      "Title\n\nbold and code and link",
+    );
+    expect(plainText("- one\n- two")).toBe("• one\n• two");
+    expect(plainText("a\n\nb")).toContain("\n\n");
+  });
+
+  it("caps the length so a pasted wall of text is not sitting in the DOM", () => {
+    const long = c({ assistantText: "x".repeat(CAPTION_MAX + 500), assistantId: "a1" });
     expect(long!.text.length).toBe(CAPTION_MAX + 1);
     expect(long!.text.endsWith("…")).toBe(true);
   });
 
-  it("renders in a bubble that cannot steal the tap or be announced twice", () => {
-    // The transcript is already in ChatPanel's live region behind this overlay.
+  it("is not clamped to a few lines any more", () => {
+    // line-clamp-4 was cutting answers off mid-thought — reported, and the
+    // reason the bubble is a scroll box now.
+    expect(POCKET).not.toContain("line-clamp");
+    expect(POCKET).toContain("max-h-[52vh]");
+    expect(POCKET).toContain("overflow-y-auto");
+    expect(POCKET).toContain("whitespace-pre-wrap");
+  });
+
+  it("can be dragged to read a long answer", () => {
+    // The overlay is touch-none and touch-action cannot be re-enabled by a
+    // descendant, so native scrolling is unavailable in here; scrollTop is
+    // moved by hand from pointermove instead.
+    expect(POCKET).toContain("onPointerMove={onBubbleMove}");
+    expect(POCKET).toContain("el.scrollTop = d.top - dy");
+  });
+
+  it("still lets a tap on the text count toward the double tap", () => {
+    // A scrollable bubble must not become a dead zone where the only way out
+    // of the guard stops working.
+    expect(POCKET).toContain("const registerTap");
+    expect(POCKET).toMatch(/onBubbleUp[\s\S]*?registerTap\(e\.isPrimary\)/);
+    expect(POCKET).toContain("if (!d || d.moved > DRAG_SLOP) return;");
+  });
+
+  it("follows a streaming reply only while the view is already at the bottom", () => {
+    expect(POCKET).toContain("el.scrollHeight - el.scrollTop - el.clientHeight < STICK_SLOP");
+  });
+
+  it("starts a new line at the top", () => {
+    expect(POCKET).toMatch(/box\.current\.scrollTop = 0;[\s\S]*?\}, \[caption\?\.id\]\);/);
+  });
+
+  it("is aria-hidden, because the live region behind it already announces this", () => {
     const bubble = POCKET.slice(POCKET.indexOf("{caption && ("), POCKET.indexOf("material-symbols-outlined"));
     expect(bubble).toContain('aria-hidden="true"');
-    expect(bubble).toContain("pointer-events-none");
   });
 
   it("does not use the themed bubble classes, which carry a bright accent", () => {
@@ -901,12 +956,7 @@ describe("the caption under the worm", () => {
 
   it("fades on change only for people who have not asked for less motion", () => {
     expect(POCKET).toContain("motion-safe:animate-fade-in");
-    expect(POCKET).toContain("key={caption.text}");
-  });
-
-  it("clamps to four lines instead of running off the screen", () => {
-    expect(POCKET).toContain("line-clamp-4");
-    expect(POCKET).toContain("max-w-[min(34ch,84vw)]");
+    expect(POCKET).toContain("key={caption.id}");
   });
 });
 

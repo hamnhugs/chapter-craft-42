@@ -128,20 +128,48 @@ inert:
   mic/thinking glyph is the only explicit "is it listening to me" signal on that
   screen, and that is not a question to answer in mime.
 
-Under the worm sits a **caption bubble** showing what is happening right now,
-which during hands-free is a different thing in each state: the sentence being
-spoken (chunk by chunk, so it advances in step with the voice), the live interim
-transcript while the mic is open, or the question waiting on an answer while the
-model works. Nothing between turns — a stale line is worse than an empty screen.
+Under the worm sits a **caption bubble**, and its job is reading — you hear an
+answer and then read it back without unlocking the phone and returning to the
+app. So the reply **persists**: it stays up until the next turn genuinely
+replaces it, and it is the whole message.
 
-The ordering lives in `pocketCaption.ts` so it can be tested, and the bubble
-deliberately avoids the app's `.message-bubble-*` classes: those carry per-theme
-overrides that paint a 3 px fully-saturated cyan or magenta edge, which is the
-one thing this screen exists not to have. It copies the asymmetric corner and
-sets every colour itself, at roughly 5.7:1 on black — legible without lighting
-up a screen meant to be off. It is `aria-hidden` (ChatPanel's live region behind
-the overlay already announces the transcript) and `pointer-events: none`, so it
-cannot swallow the double tap either.
+The first version showed only the sentence currently being spoken. It advanced
+prettily with the voice and was wrong — it vanished the instant the audio ended,
+which is the exact moment you want to read it. The ladder (in `pocketCaption.ts`,
+pure and tested) is now:
+
+| State | Bubble |
+|---|---|
+| listening | the live interim transcript |
+| thinking | the question waiting on an answer |
+| otherwise | the newest assistant message, **in full** — covers speaking *and* every quiet moment after |
+| no reply yet | the user's own last line |
+
+Details that matter:
+
+- **It is not clamped.** `line-clamp-4` was cutting answers off mid-thought. The
+  bubble is now a scroll box up to `52vh`, at 14 px with relaxed leading, with
+  paragraph breaks preserved.
+- **Markdown is rendered readable** by `plainText()`, deliberately *not*
+  `stripMarkdownForTts` — that one flattens every newline to `". "`, which is
+  right for a speech engine and destructive for something being read.
+- **Drag to scroll, by hand.** The overlay is `touch-none` and `touch-action`
+  cannot be re-enabled by a descendant, so native scrolling is unavailable in
+  there; `scrollTop` is moved from `pointermove` instead. A press that travels
+  less than 8 px still counts as a tap, so the bubble never becomes a dead zone
+  where the double-tap escape stops working.
+- **It follows a streaming reply only while already at the bottom**, so dragging
+  up to re-read stops the following, and dragging back down resumes it — no
+  "user took control" flag to fall out of sync.
+- **Keyed on the message id, not the text.** Keying on the text replayed the
+  entrance fade on every streamed token, which strobed the whole bubble.
+
+It deliberately avoids the app's `.message-bubble-*` classes: those carry
+per-theme overrides that paint a 3 px fully-saturated cyan or magenta edge,
+which is the one thing this screen exists not to have. It copies the asymmetric
+corner and sets every colour itself, at roughly 5.7:1 on black — legible without
+lighting up a screen meant to be off. It is `aria-hidden` (ChatPanel's live
+region behind the overlay already announces the transcript).
 
 The guard itself is now a setting — **Settings → Voice & Speech → Pocket
 screen** (`hands_free_pocket_screen`), defaulting **on**, because it shipped
