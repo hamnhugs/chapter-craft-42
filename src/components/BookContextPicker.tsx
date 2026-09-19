@@ -7,7 +7,7 @@ import {
   BOOK_CONTEXT_MAX_BOOKS, type BookContextMode,
 } from "@/lib/chatBooks";
 import { acquireGistRun, generateBookGists, releaseGistRun } from "@/lib/chapterGists";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { toast } from "sonner";
 
 // Book-context picker: load a shelf (membership resolves fresh every turn —
@@ -52,8 +52,47 @@ const BookContextPicker: React.FC<{
     }
     return map;
   }, [books]);
-  // Hand-pick mode lists the whole (search-independent) library.
+  // Hand-pick mode lists the whole library; shelf mode lists its members.
   const listed = selection.shelfId ? shelfMembers : books;
+
+  /**
+   * Title search over the listed set.
+   *
+   * The list used to be the whole library with no way to narrow it — fine at
+   * ten books, unusable at two hundred, which is where this library actually
+   * is. The field only appears once the list is long enough to be worth
+   * searching, so a small library keeps the vertical space instead.
+   *
+   * It never autofocuses: this opens as a sheet on a phone, and programmatic
+   * focus there pops the soft keyboard over the very list you came to read.
+   */
+  const [query, setQuery] = useState("");
+  const SEARCHABLE_FROM = 7;
+  const searchable = listed.length >= SEARCHABLE_FROM;
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return listed;
+    return listed.filter((b) => (b.title || "").toLowerCase().includes(q));
+  }, [listed, query]);
+
+  // Reset the query whenever the pool changes under it — a search left over
+  // from the previous shelf silently hides books the user just switched to.
+  useEffect(() => { setQuery(""); }, [selection.shelfId]);
+  useEffect(() => { if (!open) setQuery(""); }, [open]);
+
+  /**
+   * O(1) membership instead of an `Array.includes` per row.
+   *
+   * `isChecked` ran a linear scan of `bookIds`/`excludedIds` for every book
+   * rendered, so drawing the list was O(books x selection) — and the store
+   * emits on every single toggle, so that quadratic redraw ran again on each
+   * tap. At this library's size that is the difference between the checkbox
+   * responding and the sheet feeling stuck.
+   */
+  const checkedSet = useMemo(
+    () => new Set(selection.shelfId ? selection.excludedIds : selection.bookIds),
+    [selection.shelfId, selection.excludedIds, selection.bookIds],
+  );
   const effective = useMemo(
     () => selectContextBooks(books, selection, activeBookId ?? null),
     [books, selection, activeBookId],
@@ -128,25 +167,49 @@ const BookContextPicker: React.FC<{
       } else {
         toast.error(failed ? "The model returned no usable summaries — try again or switch models" : "Nothing to summarize");
       }
-    } catch (e: any) {
-      toast.error(e?.message || "Couldn't generate summaries");
+    } catch (e: unknown) {
+      toast.error(e instanceof Error && e.message ? e.message : "Couldn't generate summaries");
     } finally {
       releaseGistRun();
       setGistProgress(null);
     }
   };
 
-  const isChecked = (id: string) =>
-    selection.shelfId ? !selection.excludedIds.includes(id) : selection.bookIds.includes(id);
+  // In shelf mode the set holds EXCLUSIONS, so membership inverts.
+  const isChecked = (id: string) => (selection.shelfId ? !checkedSet.has(id) : checkedSet.has(id));
 
+  /** Check or clear everything currently VISIBLE — which, mid-search, means
+   *  only the matches. Acting on hidden rows would be a surprise. */
+  const setAllVisible = (checked: boolean) => {
+    const ids = visible.map((b) => b.id);
+    if (selection.shelfId) {
+      const excluded = new Set(selection.excludedIds);
+      for (const id of ids) {
+        if (checked) excluded.delete(id);
+        else excluded.add(id);
+      }
+      bookContextStore.set({ ...selection, excludedIds: [...excluded] });
+    } else {
+      const picked = new Set(selection.bookIds);
+      for (const id of ids) {
+        if (checked) picked.add(id);
+        else picked.delete(id);
+      }
+      bookContextStore.set({ ...selection, bookIds: [...picked] });
+    }
+  };
+  const visibleAllChecked = visible.length > 0 && visible.every((b) => isChecked(b.id));
+
+  // Membership comes from the same Set the rows render from, so "is it in
+  // there" is asked exactly one way in this file.
   const toggleBook = (id: string) => {
     if (selection.shelfId) {
-      const excluded = selection.excludedIds.includes(id)
+      const excluded = checkedSet.has(id)
         ? selection.excludedIds.filter((x) => x !== id)
         : [...selection.excludedIds, id];
       bookContextStore.set({ ...selection, excludedIds: excluded });
     } else {
-      const bookIds = selection.bookIds.includes(id)
+      const bookIds = checkedSet.has(id)
         ? selection.bookIds.filter((x) => x !== id)
         : [...selection.bookIds, id];
       bookContextStore.set({ ...selection, bookIds });
@@ -168,19 +231,32 @@ const BookContextPicker: React.FC<{
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="font-headline text-2xl text-primary">Books in context</DialogTitle>
-          <DialogDescription>
-            {effectiveMode === "catalog"
-              ? "Each message carries the checked books' chapter catalogs (titles + one-line summaries); the AI reads a chapter's text only when it needs it. Cheap and fast."
-              : "The checked books' text rides with every message, up to the context budget — very large books degrade to honest excerpts, and the reply's receipt shows exactly what was sent."}
-            {" "}Load a shelf to keep it in sync — books you add to the shelf join the conversation automatically.
-          </DialogDescription>
-        </DialogHeader>
+    /* A bottom sheet, not a centred dialog. This is opened FROM the composer's
+       tool sheet, so a modal that flies to the middle of the screen was a
+       change of idiom mid-task; and on a phone the controls now sit under the
+       thumb instead of above the reach arc. Same primitive underneath —
+       shadcn's Sheet is Radix Dialog — so focus trapping and Escape are
+       unchanged. */
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="bottom"
+        // Android rule, as everywhere else: nothing takes focus on open, or
+        // the soft keyboard covers the sheet the moment it appears.
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        className="max-h-[85vh] p-0 flex flex-col rounded-t-2xl bg-surface-container-low border-outline-variant/20 sm:max-w-lg sm:mx-auto pb-[calc(env(safe-area-inset-bottom)+0.5rem)]"
+      >
+        {/* HEADER — fixed. The long explanation of full-vs-catalog that used to
+            live here said in three lines what the mode buttons below already
+            say in two words each, and it cost that space on every open. */}
+        <div className="px-4 pt-4 pb-3 border-b border-outline-variant/10 shrink-0">
+          <SheetTitle className="font-headline text-xl text-primary">Books in context</SheetTitle>
+          <SheetDescription className="text-xs mt-0.5 text-on-surface-variant">
+            What rides with every message. Load a shelf to keep it in sync.
+          </SheetDescription>
+        </div>
 
-        <div className="flex flex-col gap-4">
+        {/* CONTROLS — fixed. Everything that is not the list. */}
+        <div className="flex flex-col gap-3 px-4 pt-3 shrink-0">
           <div className="flex flex-col gap-1.5">
             <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant">How books ride</label>
             <div className="grid grid-cols-2 gap-1 rounded-lg bg-surface-container-high p-1">
@@ -194,7 +270,8 @@ const BookContextPicker: React.FC<{
                   key={value}
                   type="button"
                   onClick={() => bookContextStore.set({ ...selection, mode: value })}
-                  className={`rounded-md px-2 py-1.5 text-left transition-colors ${
+                  aria-pressed={effectiveMode === value}
+                  className={`min-h-[44px] rounded-md px-2 py-1.5 text-left transition-colors ${
                     effectiveMode === value ? "bg-primary-container/60 text-foreground" : "text-on-surface-variant hover:bg-surface-container-highest"
                   }`}
                 >
@@ -222,7 +299,7 @@ const BookContextPicker: React.FC<{
                 type="button"
                 onClick={runGists}
                 disabled={!!gistProgress || effective.length === 0}
-                className="shrink-0 text-[11px] font-bold uppercase tracking-widest text-primary disabled:opacity-50"
+                className="shrink-0 min-h-[44px] px-2 -mr-2 text-[11px] font-bold uppercase tracking-widest text-primary disabled:opacity-50"
               >
                 {gistProgress ? "Working…" : "Generate summaries"}
               </button>
@@ -234,65 +311,121 @@ const BookContextPicker: React.FC<{
             <select
               value={selection.shelfId || ""}
               onChange={(e) => pickShelf(e.target.value)}
-              className="w-full bg-surface-container-high border-none rounded-lg text-sm py-2 px-3"
+              className="w-full min-h-[44px] bg-surface-container-high border-none rounded-lg text-sm py-2 px-3"
             >
-              <option value="">Hand-picked books (fixed set — books added to a shelf later won't join)</option>
+              {/* Was a 70-character sentence that truncated to nonsense in a
+                  native picker on a phone. The caveat it carried now sits
+                  under the control, where it has room. */}
+              <option value="">Hand-picked books</option>
               {shelves.map((f) => {
                 const n = countByShelf.get(f.id) || 0;
                 return <option key={f.id} value={f.id}>{f.name} ({n} book{n === 1 ? "" : "s"})</option>;
               })}
             </select>
+            <p className="text-[10px] text-on-surface-variant">
+              {selection.shelfId
+                ? "Books added to this shelf later join automatically."
+                : "A fixed set — books added to a shelf later won't join."}
+            </p>
           </div>
 
-          {listed.length === 0 ? (
-            <p className="text-sm text-on-surface-variant py-4 text-center">
-              {selection.shelfId ? "This shelf has no books yet." : "Your library is empty."}
-            </p>
-          ) : (
-            <div className="flex flex-col gap-1 max-h-72 overflow-y-auto pr-1">
-              {listed.map((b) => (
-                <label key={b.id} className="flex items-start gap-2 text-sm px-2 py-1.5 rounded-lg hover:bg-surface-container-high cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={isChecked(b.id)}
-                    onChange={() => toggleBook(b.id)}
-                    className="mt-0.5"
-                  />
-                  <span className="min-w-0">
-                    <span className="block truncate font-medium text-foreground">
-                      {b.title}
-                      {b.id === activeBookId ? <span className="ml-1.5 text-[10px] font-bold uppercase tracking-widest text-primary">reading</span> : null}
-                    </span>
-                    <span className="block text-[11px] text-on-surface-variant">
-                      {b.chapters.length > 0
-                        ? `${b.chapters.length} chapter${b.chapters.length === 1 ? "" : "s"}`
-                        : "no chapters isolated — its text can't be sent yet"}
-                    </span>
-                  </span>
-                </label>
-              ))}
+          {searchable && (
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1 min-w-0">
+                <span className="material-symbols-outlined text-base absolute left-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none" aria-hidden>search</span>
+                <input
+                  type="text"
+                  inputMode="search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={`Search ${listed.length} books…`}
+                  aria-label="Search books by title"
+                  className="w-full min-h-[44px] bg-surface-container-high border-none rounded-lg text-sm py-2 pl-9 pr-9"
+                />
+                {query && (
+                  <button
+                    type="button"
+                    onClick={() => setQuery("")}
+                    aria-label="Clear search"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 h-9 w-9 flex items-center justify-center rounded-lg text-on-surface-variant hover:text-primary"
+                  >
+                    <span className="material-symbols-outlined text-base">close</span>
+                  </button>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setAllVisible(!visibleAllChecked)}
+                disabled={visible.length === 0}
+                className="shrink-0 min-h-[44px] px-2 text-[10px] font-bold uppercase tracking-widest text-primary disabled:opacity-40"
+              >
+                {visibleAllChecked ? "None" : "All"}
+              </button>
             </div>
           )}
-
-          <div className="flex items-center justify-between gap-3 text-[11px] text-on-surface-variant">
-            <span>
-              {effective.length === 0
-                ? "Nothing loaded."
-                : `${effective.length} book${effective.length === 1 ? "" : "s"} will ride with each message.`}
-              {effective.length >= BOOK_CONTEXT_MAX_BOOKS ? ` (max ${BOOK_CONTEXT_MAX_BOOKS})` : ""}
-            </span>
-            {!isEmptySelection(selection) && (
-              <button
-                onClick={() => bookContextStore.clear()}
-                className="font-bold uppercase tracking-widest hover:text-destructive"
-              >
-                Clear all
-              </button>
-            )}
-          </div>
         </div>
-      </DialogContent>
-    </Dialog>
+
+        {/* THE LIST — the ONLY scroller in the sheet. It used to be a
+            `max-h-72` scroller nested inside a scrolling dialog, which on a
+            phone is the trap where a flick moves whichever container the
+            browser guesses. One scroll region, and it is this one. */}
+        {visible.length === 0 ? (
+          <p className="text-sm text-on-surface-variant py-8 px-4 text-center flex-1">
+            {listed.length === 0
+              ? (selection.shelfId ? "This shelf has no books yet." : "Your library is empty.")
+              : `No book matches “${query}”.`}
+          </p>
+        ) : (
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 py-2 flex flex-col gap-0.5">
+            {visible.map((b) => (
+              <label
+                key={b.id}
+                className="flex items-center gap-3 min-h-[48px] text-sm px-2 py-1.5 rounded-lg hover:bg-surface-container-high cursor-pointer"
+                style={{ touchAction: "manipulation" }}
+              >
+                <input
+                  type="checkbox"
+                  checked={isChecked(b.id)}
+                  onChange={() => toggleBook(b.id)}
+                  className="h-5 w-5 shrink-0 accent-primary"
+                />
+                <span className="min-w-0">
+                  <span className="block truncate font-medium text-foreground">
+                    {b.title}
+                    {b.id === activeBookId ? <span className="ml-1.5 text-[10px] font-bold uppercase tracking-widest text-primary">reading</span> : null}
+                  </span>
+                  <span className="block text-[11px] text-on-surface-variant">
+                    {b.chapters.length > 0
+                      ? `${b.chapters.length} chapter${b.chapters.length === 1 ? "" : "s"}`
+                      : "no chapters isolated — its text can't be sent yet"}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
+        )}
+
+        {/* FOOTER — fixed. The running total was previously below the list and
+            below the fold; it is the one line that answers "what did I just
+            do", so it stays on screen. */}
+        <div className="flex items-center justify-between gap-3 px-4 py-2 border-t border-outline-variant/10 text-[11px] text-on-surface-variant shrink-0">
+          <span className="min-w-0">
+            {effective.length === 0
+              ? "Nothing loaded."
+              : `${effective.length} book${effective.length === 1 ? "" : "s"} will ride with each message.`}
+            {effective.length >= BOOK_CONTEXT_MAX_BOOKS ? ` (max ${BOOK_CONTEXT_MAX_BOOKS})` : ""}
+          </span>
+          {!isEmptySelection(selection) && (
+            <button
+              onClick={() => bookContextStore.clear()}
+              className="shrink-0 min-h-[44px] px-2 -mr-2 font-bold uppercase tracking-widest hover:text-destructive"
+            >
+              Clear all
+            </button>
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 };
 
