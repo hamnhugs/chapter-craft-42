@@ -26,6 +26,7 @@ import { bookHaystack, chapterMatch, matchesAll, normalizeText, tokenize } from 
 import { seekLibrary, SEEK_FETCH_CAP, type SeekOutcome } from "@/lib/librarySeek";
 
 import LibraryList from "@/components/LibraryList";
+import LibraryShowcase from "@/components/LibraryShowcase";
 
 // The 3D mind map pulls in three.js (~300KB gzip); lazy-load so that chunk is
 // only fetched when the user actually toggles the graph view on.
@@ -100,7 +101,7 @@ const MAX_CONCURRENT_UPLOADS = 3;
 /** Cards past this index all share the last delay (see BookCard). */
 const STAGGER_MAX_STEPS = 12;
 
-type ViewMode = "shelves" | "list" | "graph";
+type ViewMode = "shelves" | "list" | "showcase" | "graph";
 const VIEW_KEY = "vault_view_mode";
 /** Dismissal for the resurfaced line, stamped with the day it was dismissed. */
 const RESURFACE_DISMISS_KEY = "vault_resurface_dismissed_day";
@@ -111,6 +112,7 @@ const RESURFACE_MIN_BOOKS = 6;
 const VIEW_OPTIONS: { id: ViewMode; icon: string; label: string }[] = [
   { id: "shelves", icon: "shelves", label: "Shelves" },
   { id: "list", icon: "view_list", label: "List" },
+  { id: "showcase", icon: "play_circle", label: "Showcase" },
   { id: "graph", icon: "hub", label: "Mind map" },
 ];
 
@@ -142,7 +144,7 @@ const Library: React.FC = () => {
   // Shelves, which absorbed all three.
   const [view, setView] = useState<ViewMode>(() => {
     const v = localStorage.getItem(VIEW_KEY);
-    return v === "list" || v === "graph" ? v : "shelves";
+    return v === "list" || v === "graph" || v === "showcase" ? v : "shelves";
   });
   const [tagProgress, setTagProgress] = useState<{ done: number; total: number } | null>(null);
   // "Where did I read that?" — the exact-text seek across every book.
@@ -1172,6 +1174,13 @@ const Library: React.FC = () => {
               <LibraryGraph books={filteredBooks} onOpenBook={(id) => requestBookLoad(id)} />
             </Suspense>
           </LazyErrorBoundary>
+        ) : view === "showcase" ? (
+          <LibraryShowcase
+            books={filteredBooks}
+            shelves={shelves}
+            onOpenBook={(id) => requestBookLoad(id)}
+            highlight={(text) => <Highlight text={text} query={query} />}
+          />
         ) : view === "list" ? (
 
           <LibraryList

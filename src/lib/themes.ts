@@ -15,6 +15,18 @@ export interface ThemeDef {
     label?: string; // optional label/mono font; falls back to body
     googleFontsHref?: string; // <link href=...> to load
   };
+  /**
+   * How much seasonal drift this theme will tolerate, 0..1.
+   *
+   * The season never introduces a colour of its own — it rotates the theme's
+   * own emphasis tokens a bounded distance toward warm or cool (see
+   * src/lib/seasonTheme.ts). This number scales that distance, because the
+   * themes do not have equal appetite for it. A theme whose identity is a
+   * rainbow can swing; a theme whose identity is one signal hue in a grey
+   * facility cannot, and lying about that would cost it the thing that makes
+   * it itself. Omitted or 0 means the theme opts out entirely.
+   */
+  seasonalAmplitude?: number;
   // HSL strings (e.g. "38 100% 83%") for CSS variables
   tokens: Record<string, string>;
 }
@@ -24,6 +36,9 @@ export const THEMES: ThemeDef[] = [
     id: "dexters-lab",
     name: "Dexter's Laboratory",
     description: "Prismatic Lab — deep violet glass-brutalism with holo-gradient accents.",
+    // Neon on violet: the magenta can lean coral or plum without stopping
+    // being the lab's magenta.
+    seasonalAmplitude: 0.7,
     swatch: ["#1a0b2e", "#bd00ff", "#00eefc"],
     fonts: {
       headline: "'Space Grotesk', system-ui, sans-serif",
@@ -86,6 +101,9 @@ export const THEMES: ThemeDef[] = [
     id: "fruit-stripe",
     name: "Fruit Stripe",
     description: "Paper white & ink black with mid-century rainbow accents.",
+    // A mid-century rainbow already contains every season; it takes the full
+    // swing without anyone noticing a rule was applied.
+    seasonalAmplitude: 1,
     swatch: ["#FBFAF6", "#E63946", "#F4C95D"],
     fonts: {
       headline: "'Inter Tight', 'Inter', system-ui, sans-serif",
@@ -140,6 +158,9 @@ export const THEMES: ThemeDef[] = [
     id: "aurora",
     name: "Aurora",
     description: "Liquid-glass slate with a hue-cycling chromatic accent. Apple-Vision-OS frosted glass.",
+    // Its accent is already on a 24s hue cycle, so a slow annual lean on top
+    // of that reads as intent rather than interference.
+    seasonalAmplitude: 0.85,
     swatch: ["#0e1426", "#9bb4ff", "#f3a7c4"],
     fonts: {
       headline: "'Instrument Serif', 'Newsreader', Georgia, serif",
@@ -190,6 +211,9 @@ export const THEMES: ThemeDef[] = [
     id: "desolate-lab",
     name: "Desolate Lab",
     description: "Isolated terminal — light-absorbing blacks, technical grays, one signal red.",
+    // One hue in the whole facility is the entire premise. It may breathe by a
+    // few degrees across the year; it may not become a second colour.
+    seasonalAmplitude: 0.18,
     swatch: ["#131313", "#e5e2e1", "#b0564a"],
     fonts: {
       headline: "'Space Grotesk', system-ui, sans-serif",

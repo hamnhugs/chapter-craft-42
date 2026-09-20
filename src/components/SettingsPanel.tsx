@@ -204,7 +204,7 @@ const ProviderBadge: React.FC<{ id: string }> = ({ id }) => {
 const SettingsPanel: React.FC = () => {
   const { user } = useAuth();
   const { isPaid, plan } = usePlan();
-  const { themeId, setThemeId, themes } = useTheme();
+  const { themeId, setThemeId, themes, season, seasonal, setSeasonal, hemispherePref, setHemispherePref } = useTheme();
   const {
     utilityModel, setUtilityModel, studioTools, setStudioTools,
     apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, savedModels, selectedModel, deepResearchModel, voiceModel, visionModel, ttsRate,
@@ -1320,6 +1320,50 @@ const SettingsPanel: React.FC = () => {
                     </button>
                   );
                 })}
+              </div>
+
+              {/* Seasonal drift. Deliberately sits under the theme picker and
+                  not beside it: it is a modifier on whichever theme is chosen,
+                  never a theme of its own. */}
+              <div className="mt-3 space-y-2">
+                <ToggleRow
+                  text="Drift with the season"
+                  ariaLabel="Let the theme drift with the season"
+                  checked={seasonal}
+                  onChange={setSeasonal}
+                />
+                <p className="text-xs text-on-surface-variant leading-snug px-1">
+                  Nudges the current theme's accent a few degrees warmer or cooler as the
+                  year turns, and sets the drift of the Showcase view. Lightness is never
+                  changed, so contrast stays exactly where the theme put it.
+                  {seasonal && (
+                    <> Right now: <span className="capitalize text-foreground">{season.season}</span>,{" "}
+                      {Math.round(season.nextTurn.days)} days until {season.nextTurn.name}.</>
+                  )}
+                </p>
+                {seasonal && (
+                  <div role="radiogroup" aria-label="Hemisphere" className="flex items-center gap-2 px-1">
+                    <span className="text-xs text-on-surface-variant">Hemisphere</span>
+                    {([["auto", "Auto"], ["north", "North"], ["south", "South"]] as const).map(([id, label]) => (
+                      <button
+                        key={id}
+                        role="radio"
+                        aria-checked={hemispherePref === id}
+                        onClick={() => setHemispherePref(id)}
+                        className={`px-2.5 py-1 rounded-lg text-xs transition-colors ${
+                          hemispherePref === id
+                            ? "bg-primary/15 text-primary font-semibold"
+                            : "text-on-surface-variant hover:bg-surface-container-high"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                    <span className="text-[11px] text-on-surface-variant/70">
+                      {hemispherePref === "auto" ? `detected ${season.hemisphere}` : ""}
+                    </span>
+                  </div>
+                )}
               </div>
             </Section>
 
