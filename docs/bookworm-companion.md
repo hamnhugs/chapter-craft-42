@@ -5,6 +5,12 @@ has never had one. This is it: a small procedurally-animated caterpillar docked
 at the bottom-right of the Counsel transcript that reacts to the conversation,
 including to the actual waveform of the text-to-speech voice.
 
+> **Redrawn flat.** The first worm was an outlined mint cartoon: dark contour,
+> eye-whites, pupils, catchlights, a specular blob, segmentation rings, glasses
+> worn permanently. It was cute and it looked like clip-art. The engine
+> underneath — springs, lip-sync, blink timing — was untouched; the drawing was
+> replaced. See [The flat redraw](#the-flat-redraw).
+
 No new dependencies. **6.2 KB gzipped** for the whole sprite system (geometry +
 animator + mood ladder + voice tap); there is no Lottie, no Rive, no
 framer-motion, and no image asset.
@@ -21,11 +27,71 @@ framer-motion, and no image asset.
 | `src/components/PocketScreen.tsx` | The hands-free guard; hosts a dimmed second worm. |
 | `src/lib/sprite/pocketCaption.ts` | Pure: which line the pocket screen shows. |
 | `src/hooks/useBookWorm.ts` | Wires it to ChatPanel; owns all edge detection. |
-| `scripts/worm{Sheet,Film,Moods}.ts` | Offline render harnesses — the drawing loop. |
+| `scripts/worm{Sheet,Film,Moods,Sizes,Reel}.ts` | Offline render harnesses — the drawing loop. |
 
 Touched elsewhere, minimally: one `attachVoiceTap(audio)` in `useReadAloud.ts`
 where the audio element is created, one `relative` + one element in
 `ChatPanel.tsx`, and a `Companion` row in `CounselToolsSheet.tsx`.
+
+## The flat redraw
+
+One clay colour in two tones, one dark ink, nothing else. No outline, no
+gradient, no highlight, no eye-whites.
+
+- **No contour.** The old outline existed so a mint body would survive both a
+  near-black and a paper theme. A mid-luminance terracotta sits about as far
+  from one as from the other, so the silhouette survives with nothing drawn
+  round it — and losing the outline is most of the distance from clip-art to
+  something that looks designed.
+- **The eye is one dark pill** — a round-capped stroke, two points and a width.
+  The old eye was a 5 px white disc, a 3 px pupil and a 1 px catchlight: three
+  shapes fighting over nine pixels. The pill loses no acting. Gaze moves the
+  whole eye, surprise makes it taller *and* a touch wider, a squint shortens it,
+  a blink collapses it into a curved lash line that bends with the smile.
+- **The head is a squircle** (superellipse, n = 2.7), slightly landscape, so the
+  eyes can sit far apart. A circle is a ball on a stick.
+- **The segments moved into the silhouette.** Six overlapping beads in
+  alternating tones, like cut paper, replace rings inked over a tube. A
+  0.74-radius core tube underneath stops daylight opening between beads on the
+  outside of a hard curl.
+- **The glasses are a gesture.** They come out for `read` and `watch` and are
+  pushed down from the forehead on the file's one deliberately *underdamped*
+  spring (ζ = 0.62), so they overshoot and seat. The lens tint is drawn *under*
+  the eyes and the frames over them, so the eyes stay the darkest ink.
+- **A brow bug surfaced.** The brow's sign was backwards from its own doc
+  comment, so `listen` — brows *raised* — had been rendering as a furious V
+  since it shipped. Thin strokes on a busy face hid it. A frown now tilts, a
+  raise *lifts*, and a small raise is not drawn at all.
+
+### The body is a delay line
+
+The one thing here nobody could hand-animate. The smoothed voice envelope that
+drives the jaw is also written into a 120 Hz ring buffer, and each bead reads it
+back later than the one in front — 45 ms at the neck, 320 ms at the tail, fading
+as it goes. A spoken syllable leaves the mouth and then visibly *travels down
+the body*: the worm is a slow oscilloscope of its own voice, and the shape it
+makes is different for every sentence it will ever say.
+
+- Fixed-rate writes, so the wave's speed does not depend on refresh rate
+  (tested at 120 / 60 / 30 fps).
+- A hard floor returns **exactly** zero below 0.004, or the tail of the
+  exponential release would stop a settled worm ever being byte-identical frame
+  to frame and the rAF loop would never stop.
+- `think` sends slow pulses the *other* way, tail to head — a thought arriving
+  rather than one leaving. They are multiplied by the motion budget directly;
+  easing them out through a spring overran SC 2.2.2's five seconds by 700 ms,
+  and the settle test caught it.
+- Zero under reduced motion; clamped where consumed, so a clipped sample cannot
+  inflate a bead.
+
+### On the pocket screen, the face costs no light
+
+With no contour to brighten, the dim palette inverted: the body is a dim ember
+(`#3B2117`) and the eyes and mouth are pure `#000` cut out of it — on an OLED,
+literally unlit pixels. Every other feature on that screen spends brightness to
+be seen; the face spends none and is the most legible thing on it. Frames go
+*lighter* than the body, because they overhang the head and a black frame on a
+black screen is no frame.
 
 ## The three decisions that shaped it
 
@@ -116,11 +182,9 @@ inert:
   the only way out of the guard; a worm that swallowed it would strand the user
   on a black screen.
 - **It is dimmed, not merely shrunk — and opaque.** `DIM_WORM` overrides the
-  creature's CSS variables down to the status glyph's register, with the
-  **contour brighter than the fill** — the inverse of the daylight scheme, because on black it is
-  the edge that describes the shape, not the mass. Nearly every pixel stays off
-  on an OLED, which is what this overlay is protecting. The contact shadow is
-  set transparent: it is not standing on anything out there.
+  creature's CSS variables down to a dim ember with the **face cut out in pure
+  black** (see above). The contact shadow is set transparent: it is not
+  standing on anything out there.
 
   Those values are flat hex, not `rgba()`. They started as rgba at 0.15 alpha,
   which made the head a piece of tinted glass — the body tube ran visibly
@@ -195,9 +259,9 @@ worm while the guard is up — otherwise two animators run, one of them behind a
 opaque overlay.
 
 Four colour variables (`--worm-spec`, `--worm-brow`, `--worm-frame`,
-`--worm-shadow`) exist for exactly this: on black the defaults collapse, since
-the catchlight shares a value with the eye it sits on and the glasses and brows
-share one with the pupil.
+`--worm-shadow`) exist for exactly this: on black the defaults collapse, since a
+near-black frame vanishes wherever it overhangs the head and a paper-coloured
+lens flash is the brightest thing on a screen meant to be off.
 
 ### Tap to pet
 
@@ -271,6 +335,12 @@ filmstrips straight from the shipped `poseWorm`, to SVG, rasterised with
 thrown away: with one continuous silhouette there is no neck, so there is no
 head, so there is no character, only a vegetable with eyes. The head is now a
 separate, deliberately oversized ball.
+
+`wormSizes.ts` renders every mood at the four sizes that actually ship (52, 64,
+84, 132 px) on the darkest and lightest grounds — a drawing that only works
+zoomed in does not work. `wormReel.ts` steps the real animator through a whole
+scripted turn in both the daylight and pocket palettes, for the things that
+only exist over seconds: the travelling syllable, the glasses going on.
 
 `wormMoods.ts silhouette` renders the moods as flat black shapes. At 64 px the
 face is 20 px and nobody reads an expression — they read a shape, and that test

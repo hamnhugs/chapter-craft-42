@@ -34,36 +34,41 @@ import { WormAnimator, type Mood } from "@/lib/sprite/wormAnimator";
 /** The creature's own colours, deliberately NOT theme tokens.
  *
  *  A mascot needs a stable identity across the four themes this app ships
- *  (one of which, fruit-stripe, is a light paper theme), which is also why the
- *  body carries a dark contour: the silhouette has to survive both a near-black
- *  and a near-white background.
+ *  (one of which, fruit-stripe, is a light paper theme). The first worm solved
+ *  that with a dark contour round a mint body. This one solves it with the
+ *  choice of colour alone: a warm clay at mid luminance sits about as far from
+ *  paper as it does from near-black, so the silhouette survives both with
+ *  nothing drawn round it — and losing the outline is most of what moved it
+ *  from clip-art to something that looks designed.
  *
- *  They are muted on purpose. Zhang (2000) found that irrelevant animation
- *  degrades information-seeking performance, that *brightly coloured* animation
- *  degrades it more than dull, and that the penalty is worst on easy tasks —
- *  which is most chat reading. An earlier pass used a saturated mint; this is
- *  the same hue pulled down to something that reads as present rather than as
- *  a notification. Exposed as custom properties so a theme can override them.
+ *  FLAT, AND ONLY TWO TONES OF ONE HUE. No gradient, no rim light, no specular,
+ *  no eye-whites. The second tone exists to separate the beads the way
+ *  overlapping cut paper would; everything else on the face is a single ink.
+ *
+ *  Zhang (2000) found that irrelevant animation degrades information-seeking
+ *  performance and that *brightly coloured* animation degrades it more than
+ *  dull — so this is a terracotta, not an orange. Exposed as custom properties
+ *  so a theme can override them.
  */
 const INK: Record<Ink, string> = {
-  body: "var(--worm-body, #7CBF9C)",
-  bodyDark: "var(--worm-dark, #33604B)",
-  bodyLight: "var(--worm-light, #B4DCC4)",
-  ring: "var(--worm-dark, #33604B)",
-  eyeWhite: "var(--worm-eye, #FBFDFB)",
-  pupil: "var(--worm-pupil, #1A241E)",
-  mouth: "var(--worm-mouth, #2B1A22)",
-  tongue: "var(--worm-tongue, #D98099)",
-  glass: "var(--worm-eye, #FBFDFB)",
+  body: "var(--worm-body, #DD7C58)",
+  bodyAlt: "var(--worm-dark, #C9683F)",
+  pupil: "var(--worm-pupil, #2B1B15)",
+  mouth: "var(--worm-mouth, #2B1B15)",
+  tongue: "var(--worm-tongue, #F4A58C)",
+  glass: "var(--worm-eye, #FFF6EE)",
   // These four share a value by default but get their own escape hatch,
-  // because on a black ground the defaults collapse: the catchlight vanishes
-  // into the eye it sits on, the glasses and brows vanish into the pupil they
-  // are drawn with, and a contact shadow is a smudge under a creature that is
-  // not standing on anything. The pocket screen overrides exactly these.
-  spec: "var(--worm-spec, var(--worm-eye, #FBFDFB))",
-  brow: "var(--worm-brow, var(--worm-pupil, #1A241E))",
-  frame: "var(--worm-frame, var(--worm-pupil, #1A241E))",
-  shadow: "var(--worm-shadow, var(--worm-dark, #33604B))",
+  // because on a black ground the defaults collapse: a near-black frame
+  // vanishes wherever it overhangs the head, a lens flash the colour of paper
+  // is the brightest thing on a screen meant to be off, and a contact shadow is
+  // a smudge under a creature that is not standing on anything. The pocket
+  // screen overrides exactly these.
+  spec: "var(--worm-spec, var(--worm-eye, #FFF6EE))",
+  brow: "var(--worm-brow, var(--worm-pupil, #2B1B15))",
+  frame: "var(--worm-frame, var(--worm-pupil, #2B1B15))",
+  // Neutral, not a tone of the body: a tinted shadow under a flat shape reads as
+  // a glow. At 0.2 it is a soft ground on paper and simply absent on black.
+  shadow: "var(--worm-shadow, #000000)",
 };
 
 export interface BookWormHandle {
@@ -321,8 +326,8 @@ const BookWorm = React.forwardRef<BookWormHandle, BookWormProps>(function BookWo
   /**
    * Only the worm's own ink is tappable.
    *
-   * The <svg> and its wrapper are `pointer-events: none`, and these two fills
-   * opt back in — a descendant may re-enable hit testing under a `none`
+   * The <svg> and its wrapper are `pointer-events: none`, and the fills that
+   * make up its silhouette — body, beads, head — opt back in — a descendant may re-enable hit testing under a `none`
    * ancestor. So the target is the creature's actual silhouette, not its
    * bounding box: a tap one pixel outside the body goes straight through to the
    * message bubble behind it, and so does a tap on the eyes or glasses, which
@@ -375,7 +380,7 @@ const BookWorm = React.forwardRef<BookWormHandle, BookWormProps>(function BookWo
           ...(s.sw != null ? { strokeWidth: s.sw } : {}),
           ...(s.op != null ? { opacity: s.op } : {}),
           ...(s.cap ? { strokeLinecap: "round" as const, strokeLinejoin: "round" as const } : {}),
-          ...(hit && (s.key === "body" || s.key === "head") ? hit : {}),
+          ...(hit && (s.key === "body" || s.key === "head" || s.key.startsWith("bead")) ? hit : {}),
         };
         if (s.k === "path") return <path {...common} d={s.d} />;
         if (s.k === "circle") return <circle {...common} cx={s.cx} cy={s.cy} r={s.r} />;

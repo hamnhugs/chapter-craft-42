@@ -13,19 +13,8 @@ import { poseWorm, VIEW_W, VIEW_H, type Shape, type WormParams, type Ink } from 
 import { REST_PARAMS } from "../src/lib/sprite/wormGeometry";
 
 const HEX: Record<Ink, string> = {
-  body: "#7ED9A7",
-  bodyDark: "#3E8F68",
-  bodyLight: "#C6F2DA",
-  ring: "#3E8F68",
-  eyeWhite: "#FFFFFF",
-  pupil: "#1B2620",
-  spec: "#FFFFFF",
-  mouth: "#2A1520",
-  tongue: "#E9738F",
-  brow: "#16211B",
-  glass: "#FFFFFF",
-  frame: "#16211B",
-  shadow: "#000000",
+  body: "#DD7C58", bodyAlt: "#C9683F", pupil: "#2B1B15", spec: "#FFF6EE", mouth: "#2B1B15",
+  tongue: "#F4A58C", brow: "#2B1B15", glass: "#FFF6EE", frame: "#2B1B15", shadow: "#000000",
 };
 
 function attrs(s: Shape): string {
@@ -95,9 +84,9 @@ const cells: { label: string; p: Partial<WormParams> }[] = [
   { label: "look L", p: { lookX: -1 } },
   { label: "look up", p: { lookY: 1, headTilt: -0.3 } },
   { label: "tilt", p: { headTilt: 0.6, antennaLag: 0.5 } },
-  { label: "no glasses", p: { glasses: 0 } },
+  { label: "glasses", p: { glasses: 1 } },
   { label: "antenna lag", p: { antennaLag: 1.1, curl: 1.4 } },
-  { label: "glint", p: { glint: 1, lidL: 0.3, lidR: 0.3 } },
+  { label: "glint", p: { glasses: 1, glint: 1, lidL: 0.3, lidR: 0.3 } },
   { label: "asleep", p: { curl: 3.1, lidL: 1, lidR: 1, mouthSmile: 0.15, stretch: 0.88, baseAngle: -P / 2 + 0.45 } },
 ];
 

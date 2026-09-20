@@ -58,20 +58,27 @@ const STICK_SLOP = 28;
  * exact here (the overlay is #000) and costs an OLED nothing: a dark opaque
  * pixel and a dark translucent one over black draw the same power.
  *
- * Contour over fill, eyes brightest, no contact shadow — it is not standing on
- * anything out here.
+ * THE EYES ARE UNLIT PIXELS. The worm is flat now — no contour to brighten,
+ * which is what this palette used to lean on — so the body is a dim ember and
+ * the eyes and mouth are pure #000 cut out of it: on an OLED they are literally
+ * holes in the light. That inverts the usual problem out here. Every other
+ * feature on this screen has to spend brightness to be seen; the face costs
+ * none, and it is the most legible thing about the creature.
+ *
+ * The frames and the lens flash go the other way, LIGHTER than the body,
+ * because the glasses overhang the head and a black frame over a black screen
+ * is no frame. No contact shadow — it is not standing on anything out here.
  */
 const DIM_WORM: React.CSSProperties = {
-  ["--worm-body" as string]: "#131C17",
-  ["--worm-dark" as string]: "#324C3E",
-  ["--worm-light" as string]: "#262E2A",
-  ["--worm-eye" as string]: "#686E6B",
-  ["--worm-spec" as string]: "#B4BDB8",
-  ["--worm-pupil" as string]: "#060907",
-  ["--worm-brow" as string]: "#3C5248",
-  ["--worm-frame" as string]: "#394E44",
-  ["--worm-mouth" as string]: "#060806",
-  ["--worm-tongue" as string]: "#39242A",
+  ["--worm-body" as string]: "#3B2117",
+  ["--worm-dark" as string]: "#2C1810",
+  ["--worm-eye" as string]: "#6B4536",
+  ["--worm-spec" as string]: "#B08A7A",
+  ["--worm-pupil" as string]: "#000000",
+  ["--worm-brow" as string]: "#000000",
+  ["--worm-frame" as string]: "#7C5243",
+  ["--worm-mouth" as string]: "#000000",
+  ["--worm-tongue" as string]: "#5A3328",
   ["--worm-shadow" as string]: "transparent",
 };
 
@@ -96,7 +103,7 @@ const MOOD_FOR: Record<string, Mood> = {
 const BUBBLE: Record<PocketCaption["from"], React.CSSProperties> = {
   assistant: {
     borderRadius: "1.5rem 1.5rem 1.5rem 0.25rem",
-    borderLeft: "2px solid rgba(126,190,156,0.30)",
+    borderLeft: "2px solid rgba(221,124,88,0.30)",
   },
   user: {
     borderRadius: "1.5rem 1.5rem 0.25rem 1.5rem",

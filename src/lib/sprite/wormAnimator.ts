@@ -177,7 +177,7 @@ const MOODS: Record<Mood, MoodDef> = {
   speak:  { baseAngle: A + 0.20, curl:  0.80, wave: 0.24, waveHz: 1.05, waveLen: 1.2, stretch: 1.05, headTilt:  0.05, lid:  0.00, brow: -0.08, smile:  0.50, breathAmp: 0.030, breathSec: 3.2345, blinkRate: 26, gaze: "front" },
   /** Arched BACKWARD. A forward curl at full stretch reads as lunging; the
    *  backward arch is the shape of every celebration ever drawn. */
-  cheer:  { baseAngle: A - 0.12, curl: -0.62, wave: 0.30, waveHz: 1.60, waveLen: 1.4, stretch: 1.30, headTilt: -0.50, lid:  0.58, brow: -0.32, smile:  1.00, breathAmp: 0.070, breathSec: 2.4345, blinkRate: 20, gaze: "front" },
+  cheer:  { baseAngle: A - 0.12, curl: -0.62, wave: 0.30, waveHz: 1.60, waveLen: 1.4, stretch: 1.30, headTilt: -0.50, lid:  0.96, brow: -0.32, smile:  1.00, breathAmp: 0.070, breathSec: 2.4345, blinkRate: 20, gaze: "front" },
   /** Folded forward so the head hangs below the shoulder of the curve — a
    *  droop has to actually drop the head, not merely frown. Rate normal,
    *  amplitude low: that is what sadness does to breathing. */
@@ -231,6 +231,25 @@ const K_FACE = 150;
 const K_GAZE = 2600;
 const K_JAW = 900;
 const K_WIDE = 320;
+/** Underdamped on purpose — the one spring in the file that is. Glasses pushed
+ *  onto a face overshoot and settle; critically damped they just fade in, and
+ *  a fade is not a gesture. */
+const K_GLASSES = 210;
+
+/** The glasses come out for reading: a reply streaming in, or the user's own
+ *  typing. Everywhere else the eyes are bare, because on a face this simple the
+ *  eyes ARE the face and frames worn permanently were furniture in front of it. */
+const GLASSES_ON: Partial<Record<Mood, boolean>> = { read: true, watch: true };
+
+/** How long after the mouth each bead hears the voice, neck first. */
+const BEAD_DELAY = [0.32, 0.265, 0.21, 0.155, 0.1, 0.045];
+/** And how much of it is left by then. A wave that arrived at the tail at full
+ *  strength would read as the whole body pulsing, not as something travelling. */
+const BEAD_GAIN = [0.34, 0.44, 0.56, 0.7, 0.85, 1];
+/** Below this a swell is nothing — and must be EXACTLY nothing, or the tail of
+ *  an exponential release keeps a settled worm from ever being byte-identical
+ *  frame to frame and the host's loop never stops. */
+const SWELL_FLOOR = 0.004;
 
 /** Lid phases, in seconds. Kwon et al. put the opening phase at 2-3x the
  *  closing phase; a symmetric blink reads as a dropped frame. */
@@ -337,6 +356,30 @@ export class WormAnimator {
   private sLookX: Spring;
   private sLookY: Spring;
   private sBreathAmp: Spring;
+  private sGlasses: Spring;
+  private sThink: Spring;
+
+  /**
+   * THE BODY IS A DELAY LINE.
+   *
+   * The voice envelope that drives the jaw is also written into this ring at a
+   * fixed 120 Hz, and each bead of the body reads it back a little later than
+   * the bead in front — 45ms at the neck, 320ms at the tail. So a spoken
+   * syllable leaves the mouth and then visibly TRAVELS down the body as a
+   * swelling, fading as it goes: the worm is a slow oscilloscope of its own
+   * voice, and the shape it makes is different for every sentence it will ever
+   * say. Nobody could draw that, which is the point of generating the creature
+   * instead of drawing it.
+   *
+   * Fixed-rate writes, not one per frame, so the wave's speed does not depend
+   * on the display's refresh rate. Allocated once.
+   */
+  private static readonly TAP_HZ = 120;
+  private static readonly TAP_LEN = 64;
+  private tap = new Float32Array(WormAnimator.TAP_LEN);
+  private tapAt = 0;
+  private tapAcc = 0;
+  private phThink = 0;
 
   /**
    * Four oscillator phases with DELIBERATELY INCOMMENSURATE periods, lifted
@@ -411,6 +454,8 @@ export class WormAnimator {
     this.sLookX = new Spring(0, K_GAZE);
     this.sLookY = new Spring(0, K_GAZE);
     this.sBreathAmp = new Spring(this.reduced ? 0 : m.breathAmp, K_BODY);
+    this.sGlasses = new Spring(GLASSES_ON[this.mood] ? 1 : 0, K_GLASSES, 0.62);
+    this.sThink = new Spring(0, K_BODY);
     this.scheduleBlink();
   }
 
@@ -459,6 +504,9 @@ export class WormAnimator {
       this.impulses.lid.length = 0;
       this.queued.length = 0;
       this.blinkT = -1;
+      this.tap.fill(0);
+      this.sThink.x = 0;
+      this.sThink.v = 0;
     }
     this.bump();
   }
@@ -667,6 +715,17 @@ export class WormAnimator {
 
     const speakingNow = this.mood === "speak" && !this.reduced;
 
+    // --- the delay line ---------------------------------------------------
+    // Written at a fixed rate from the SMOOTHED envelope, so what travels down
+    // the body is the same shape the jaw just made, not raw level.
+    this.tapAcc += dt;
+    const tapStep = 1 / WormAnimator.TAP_HZ;
+    while (this.tapAcc >= tapStep) {
+      this.tapAcc -= tapStep;
+      this.tapAt = (this.tapAt + 1) % WormAnimator.TAP_LEN;
+      this.tap[this.tapAt] = speakingNow ? this.voice : 0;
+    }
+
     // --- posture ----------------------------------------------------------
     this.sBase.to(m.baseAngle, dt);
     this.sCurl.to(m.curl, dt);
@@ -676,6 +735,14 @@ export class WormAnimator {
     this.sWaveLen.to(m.waveLen, dt);
     this.sStretch.to(m.stretch, dt);
     this.sBreathAmp.to(m.breathAmp * this.alive, dt);
+    this.sGlasses.to(GLASSES_ON[this.mood] ? 1 : 0, dt);
+    // Thinking sends slow pulses UP the body, tail to head — the opposite way
+    // to speech, because that is a thought arriving and this is one leaving.
+    // The spring only cross-fades the MOOD; the motion budget multiplies the
+    // result directly. Chasing `alive` through the spring let the pulses trail
+    // on for 700ms after the budget hit zero, which is past SC 2.2.2's five
+    // seconds — the settle test caught it.
+    this.sThink.to(this.mood === "think" ? 1 : 0, dt);
 
     // Integrated, never sampled — rule 2 at the top of the file. Frozen once
     // the budget is spent, so a settled worm returns byte-identical numbers
@@ -685,7 +752,9 @@ export class WormAnimator {
       this.phBreath += dt / m.breathSec;
       this.phSwayA += dt / WormAnimator.SWAY_A_SEC;
       this.phSwayB += dt / WormAnimator.SWAY_B_SEC;
+      this.phThink += dt * 0.85;
     }
+    this.phThink %= 1;
     this.phWave %= 1;
     this.phBreath %= 1;
     this.phSwayA %= 1;
@@ -789,8 +858,25 @@ export class WormAnimator {
     const squint = clamp(this.sLid.x + impLid, -0.4, 1);
     const lid = squint + (1 - squint) * blinkEnv;
 
+    // --- beads ------------------------------------------------------------
+    const swell = [0, 0, 0, 0, 0, 0];
+    if (!this.reduced) {
+      for (let j = 0; j < 6; j++) {
+        const back = Math.round(BEAD_DELAY[j] * WormAnimator.TAP_HZ);
+        const heard = this.tap[(this.tapAt - back + WormAnimator.TAP_LEN * 2) % WormAnimator.TAP_LEN];
+        // One narrow pulse per cycle rather than a sine: a sine swells half the
+        // body at once, which reads as breathing. Cubed, it is a bead-wide lump.
+        const pulse = Math.pow(Math.max(0, Math.sin((this.phThink - j / 6) * Math.PI * 2)), 3);
+        const v = heard * BEAD_GAIN[j] * 1.15 + pulse * 0.6 * clamp(this.sThink.x, 0, 1) * this.alive;
+        swell[j] = v < SWELL_FLOOR ? 0 : clamp(v - SWELL_FLOOR, 0, 1);
+      }
+    }
+    const beadsQuiet = swell.every((v) => v === 0);
+
     // --- settle detection -------------------------------------------------
     const quiet =
+      beadsQuiet &&
+      this.sGlasses.atRest(GLASSES_ON[this.mood] ? 1 : 0) &&
       this.alive <= 0.001 &&
       this.blinkT < 0 &&
       this.queued.length === 0 &&
@@ -831,8 +917,14 @@ export class WormAnimator {
       mouthSmile: clamp(this.sSmile.x + impSmile, -1, 1),
       mouthWide: this.sWide.x,
       antennaLag,
-      glasses: 1,
+      glasses: clamp(this.sGlasses.x, 0, 1.25),
       glint,
+      swell0: swell[0],
+      swell1: swell[1],
+      swell2: swell[2],
+      swell3: swell[3],
+      swell4: swell[4],
+      swell5: swell[5],
     };
   }
 }

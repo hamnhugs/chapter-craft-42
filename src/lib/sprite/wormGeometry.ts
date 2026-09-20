@@ -34,11 +34,12 @@
 
 /** High enough for a smooth curl, low enough to cost nothing. */
 export const SPINE_NODES = 16;
-/** Rings sit at a fixed set of nodes, so the shape list stays constant. */
-const RING_NODES = [2, 4, 6, 8, 10, 12];
-/** Exactly what poseWorm always returns: shadow + body*2 + rings + antennae*4
- *  + head*3 + eyes*10 + glasses*7 + mouth + tongue. Asserted in the tests. */
-export const SHAPE_COUNT = 1 + 2 + RING_NODES.length + 4 + 3 + 10 + 7 + 2;
+/** The body is a string of beads. Six is the most that still reads as separate
+ *  segments at 52px, and the fewest that still reads as a caterpillar. */
+export const BEADS = 6;
+/** Exactly what poseWorm always returns: shadow + body + beads + antennae*4
+ *  + head + eyes*6 + glasses*7 + mouth + tongue. Asserted in the tests. */
+export const SHAPE_COUNT = 1 + 1 + BEADS + 4 + 1 + 6 + 7 + 2;
 
 /** The drawing is authored in this box and scaled by the caller. The tail sits
  *  at (CX, BASE_Y) so the worm is rooted to a floor rather than floating.
@@ -52,13 +53,13 @@ export const BASE_Y = 122;
 /** Neck-to-tail length at rest, in view units. The head is not part of it. */
 const BODY_LEN = 60;
 /** Radius of the body tube at its fattest. */
-const GIRTH = 9.9;
+const GIRTH = 11;
 /** The head is a separate, deliberately oversized ball. Drawing it as the fat
  *  end of the tube — the first thing tried here — produced a pea pod: one
  *  continuous silhouette has no neck, so it has no head, so it has no
  *  character, only a vegetable with eyes. Cartoon construction is a big head on
  *  a small body, and it has to be a separate shape to read as one. */
-const HEAD_R = 15.4;
+const HEAD_R = 16.2;
 
 export type Vec = { x: number; y: number };
 
@@ -66,10 +67,7 @@ export type Vec = { x: number; y: number };
  *  properties; the harness resolves them to hex. Neither knows about the other. */
 export type Ink =
   | "body"
-  | "bodyDark"
-  | "bodyLight"
-  | "ring"
-  | "eyeWhite"
+  | "bodyAlt"
   | "pupil"
   | "spec"
   | "mouth"
@@ -144,6 +142,16 @@ export interface WormParams {
   /** 0..1 flash across the lenses — the oldest shorthand in animation for a
    *  thought landing, and it costs one stroke. */
   glint: number;
+  /** Per-bead swell, tail (0) to neck (5), each roughly -1..1. Six scalars
+   *  rather than an array so every param stays a plain interpolable number.
+   *  The animator feeds these from a DELAY LINE of the live voice, so a spoken
+   *  syllable visibly travels down the body after it leaves the mouth. */
+  swell0: number;
+  swell1: number;
+  swell2: number;
+  swell3: number;
+  swell4: number;
+  swell5: number;
 }
 
 export const REST_PARAMS: WormParams = {
@@ -165,8 +173,14 @@ export const REST_PARAMS: WormParams = {
   mouthSmile: 0.35,
   mouthWide: 0,
   antennaLag: 0,
-  glasses: 1,
+  glasses: 0,
   glint: 0,
+  swell0: 0,
+  swell1: 0,
+  swell2: 0,
+  swell3: 0,
+  swell4: 0,
+  swell5: 0,
 };
 
 export interface WormPose {
@@ -226,6 +240,40 @@ function polyline(pts: Vec[]): string {
   return d;
 }
 
+/** A closed Catmull-Rom loop. The head is drawn with this rather than an
+ *  <ellipse> because its outline is a superellipse, which no SVG primitive is. */
+function loop(pts: Vec[]): string {
+  const n = pts.length;
+  let d = `M${f(pts[0].x)},${f(pts[0].y)}`;
+  for (let i = 0; i < n; i++) {
+    d += crSegment(pts[(i - 1 + n) % n], pts[i], pts[(i + 1) % n], pts[(i + 2) % n]);
+  }
+  return d + "Z";
+}
+
+/** Position on the spine at a fractional s, 0 tail .. 1 neck. */
+function along(spine: Vec[], s: number): Vec {
+  const t = clamp(s, 0, 1) * (spine.length - 1);
+  const i = Math.min(spine.length - 2, Math.floor(t));
+  const u = t - i;
+  return { x: spine[i].x + (spine[i + 1].x - spine[i].x) * u, y: spine[i].y + (spine[i + 1].y - spine[i].y) * u };
+}
+
+/** Squareness of the head. 2 is an ellipse, infinity is a rectangle; 2.7 is
+ *  the "squircle" every modern icon grid settled on, and it is what stops the
+ *  head reading as a ball balanced on a stick. */
+const HEAD_POWER = 2.7;
+const HEAD_POINTS = 16;
+/** cos/sin of the superellipse, computed once: only the radii and the frame
+ *  change from frame to frame. */
+const HEAD_UNIT: Vec[] = Array.from({ length: HEAD_POINTS }, (_, i) => {
+  const a = (i / HEAD_POINTS) * Math.PI * 2;
+  const c = Math.cos(a);
+  const sn = Math.sin(a);
+  const e = 2 / HEAD_POWER;
+  return { x: Math.sign(c) * Math.pow(Math.abs(c), e), y: Math.sign(sn) * Math.pow(Math.abs(sn), e) };
+});
+
 export function poseWorm(p: WormParams): WormPose {
   const n = SPINE_NODES;
   const shapes: Shape[] = [];
@@ -261,18 +309,21 @@ export function poseWorm(p: WormParams): WormPose {
   // stretch reads as the whole creature scaling up, which is the commonest
   // tell of fake squash-and-stretch.
   const volume = 1 / Math.sqrt(stretch);
-  const radii = spine.map((_, i) => GIRTH * radiusAt(i / (n - 1)) * volume * p.girth);
+  // The tube is the connective tissue UNDER the beads, not the silhouette: it
+  // runs at CORE of their radius so it fills the valleys between them halfway.
+  // Without it a hard curl opens daylight between beads on the outside of the
+  // bend; at full radius it would erase the scallops that are the whole point.
+  const CORE = 0.74;
+  const radii = spine.map((_, i) => GIRTH * radiusAt(i / (n - 1)) * volume * p.girth * CORE);
 
   const sideA: Vec[] = [];
   const sideB: Vec[] = [];
-  const norms: Vec[] = [];
   for (let i = 0; i < n; i++) {
     const prev = spine[Math.max(0, i - 1)];
     const next = spine[Math.min(n - 1, i + 1)];
     const m = Math.hypot(next.x - prev.x, next.y - prev.y) || 1;
     const nx = -(next.y - prev.y) / m;
     const ny = (next.x - prev.x) / m;
-    norms.push({ x: nx, y: ny });
     sideA.push({ x: spine[i].x + nx * radii[i], y: spine[i].y + ny * radii[i] });
     sideB.push({ x: spine[i].x - nx * radii[i], y: spine[i].y - ny * radii[i] });
   }
@@ -294,39 +345,37 @@ export function poseWorm(p: WormParams): WormPose {
     k: "ellipse",
     key: "shadow",
     cx: CX,
-    cy: BASE_Y + 3,
-    rx: f(13.5 * volume),
-    ry: f(3.4 * volume),
+    cy: BASE_Y + 5.5,
+    rx: f(15 * volume),
+    ry: f(2.6 * volume),
     fill: "shadow",
-    op: f(0.26 * volume),
+    op: f(0.2 * volume),
   });
 
   // --- BODY --------------------------------------------------------------
-  // Filled, then outlined. The outline is not decoration: `fruit-stripe` is a
-  // light theme and the others are near-black, so a mascot carrying its own
-  // fixed colours needs a contour that survives both backgrounds. It also does
-  // the job a rim light was tried for and failed at — lighting one flank put
-  // the highlight on the inside of every curve, where it read as a crease.
+  // FLAT. No contour, no rim light, no specular: one colour, and the shape does
+  // all the work. The previous worm carried a dark outline so it would survive
+  // both a near-black and a near-white theme; a mid-luminance clay does the
+  // same job with nothing drawn, because it sits about as far from paper as it
+  // does from black. An outline is what made the old one read as clip-art.
   shapes.push({ k: "path", key: "body", d: body, fill: "body" });
-  shapes.push({ k: "path", key: "bodyOutline", d: body, stroke: "bodyDark", sw: 2, cap: true });
 
-  // Segmentation rings. Cheap, and they earn it three times over: they say
-  // "larva", they carry the undulation visibly down the body, and they give
-  // the silhouette an internal scale so it cannot read as a bare blob.
-  for (const i of RING_NODES) {
-    const s = i / (n - 1);
-    const rr = radii[i] * 0.93;
-    const nx = norms[i].x * rr;
-    const ny = norms[i].y * rr;
-    shapes.push({
-      k: "path",
-      key: `ring${i}`,
-      d: `M${f(spine[i].x + nx)},${f(spine[i].y + ny)}A${f(rr * 1.45)},${f(rr * 1.45)} 0 0 1 ${f(spine[i].x - nx)},${f(spine[i].y - ny)}`,
-      stroke: "ring",
-      sw: 1.5,
-      op: f(0.38 + 0.22 * s),
-      cap: true,
-    });
+  // The beads. They replace the segmentation rings, and they earn the same
+  // three things the rings did — they say "larva", they carry the undulation
+  // visibly down the body, they give the silhouette an internal scale — but
+  // they do it in the SILHOUETTE rather than with ink laid over it, which is
+  // the difference between a shape and a drawing of a shape.
+  //
+  // Drawn tail to neck, so each one overlaps the one behind it and the
+  // alternating tone reads as overlapping discs, the way cut paper would.
+  const swell = [p.swell0, p.swell1, p.swell2, p.swell3, p.swell4, p.swell5];
+  for (let j = 0; j < BEADS; j++) {
+    const s = 0.035 + (j / (BEADS - 1)) * 0.86;
+    const c = along(spine, s);
+    // Swell is clamped where it is consumed, because it arrives from live
+    // audio and one clipped sample must not be able to inflate a bead.
+    const r = GIRTH * radiusAt(s) * volume * p.girth * (1 + 0.2 * clamp(swell[j], -1, 1));
+    shapes.push({ k: "circle", key: `bead${j}`, cx: f(c.x), cy: f(c.y), r: f(r), fill: j % 2 ? "bodyAlt" : "body" });
   }
 
   // --- HEAD FRAME --------------------------------------------------------
@@ -337,11 +386,13 @@ export function poseWorm(p: WormParams): WormPose {
   const normal: Vec = { x: -forward.y, y: forward.x };
 
   const hsq = Math.sqrt(volume);
-  const headRx = HEAD_R * hsq * p.girth;
-  const headRy = (HEAD_R / hsq) * (0.5 + 0.5 * p.girth);
+  // Wider than tall. A round head is a ball; a slightly landscape squircle is
+  // a face, because it leaves room to set the eyes far apart.
+  const headRx = HEAD_R * 1.06 * hsq * p.girth;
+  const headRy = ((HEAD_R * 0.94) / hsq) * (0.5 + 0.5 * p.girth);
   // The head overlaps the neck rather than balancing on it. Even a one-pixel
   // seam between the two shapes reads as a severed head.
-  const hp: Vec = { x: neckP.x + forward.x * headRy * 0.6, y: neckP.y + forward.y * headRy * 0.6 };
+  const hp: Vec = { x: neckP.x + forward.x * headRy * 0.62, y: neckP.y + forward.y * headRy * 0.62 };
 
   /** Head-local placement in FRACTIONS of head radius, so every facial feature
    *  squashes and stretches with the head instead of sliding off it. */
@@ -353,116 +404,112 @@ export function poseWorm(p: WormParams): WormPose {
   // --- ANTENNAE ----------------------------------------------------------
   // Two strokes whose only job is follow-through. Driven by the head's own lag
   // so they whip late on every direction change: the cheapest possible read of
-  // "this thing has mass".
+  // "this thing has mass". Short, fat and in the body's own second tone — a
+  // thin dark feeler is an insect, a stubby one is a character.
   for (const side of [-1, 1] as const) {
     const id = side < 0 ? "L" : "R";
-    const root = at(0.58, side * 0.34);
-    const dir = headAngle + side * 0.6 + p.antennaLag;
-    const len = headRy * 0.95;
+    const root = at(0.62, side * 0.4);
+    const dir = headAngle + side * 0.5 + p.antennaLag;
+    const len = headRy * 0.78;
     const mid: Vec = {
-      x: root.x + Math.cos(dir - side * 0.34) * len * 0.58,
-      y: root.y + Math.sin(dir - side * 0.34) * len * 0.58,
+      x: root.x + Math.cos(dir - side * 0.3) * len * 0.58,
+      y: root.y + Math.sin(dir - side * 0.3) * len * 0.58,
     };
     const tip: Vec = { x: root.x + Math.cos(dir) * len, y: root.y + Math.sin(dir) * len };
     shapes.push({
       k: "path",
       key: `antenna${id}`,
       d: `M${f(root.x)},${f(root.y)}Q${f(mid.x)},${f(mid.y)} ${f(tip.x)},${f(tip.y)}`,
-      stroke: "bodyDark",
-      sw: 2,
+      stroke: "bodyAlt",
+      sw: 3,
       cap: true,
     });
-    shapes.push({ k: "circle", key: `antennaTip${id}`, cx: f(tip.x), cy: f(tip.y), r: f(headRx * 0.15), fill: "bodyDark" });
+    shapes.push({ k: "circle", key: `antennaTip${id}`, cx: f(tip.x), cy: f(tip.y), r: f(headRx * 0.17), fill: "bodyAlt" });
   }
 
   // --- HEAD --------------------------------------------------------------
-  const headRot = f((headAngle * 180) / Math.PI + 90);
-  shapes.push({ k: "ellipse", key: "head", cx: f(hp.x), cy: f(hp.y), rx: f(headRx), ry: f(headRy), rot: headRot, fill: "body" });
-  shapes.push({ k: "ellipse", key: "headOutline", cx: f(hp.x), cy: f(hp.y), rx: f(headRx), ry: f(headRy), rot: headRot, stroke: "bodyDark", sw: 2 });
-  // One fixed specular, up-and-left in head space. A single consistent light is
-  // the difference between a form and a sticker.
-  const sp = at(0.5, -0.5);
   shapes.push({
-    k: "ellipse",
-    key: "headSpec",
-    cx: f(sp.x),
-    cy: f(sp.y),
-    rx: f(headRx * 0.26),
-    ry: f(headRy * 0.17),
-    rot: f(headRot - 28),
-    fill: "bodyLight",
-    op: 0.45,
+    k: "path",
+    key: "head",
+    d: loop(HEAD_UNIT.map((u) => at(u.y, u.x))),
+    fill: "body",
   });
 
   // --- EYES --------------------------------------------------------------
   // Everything below is in fractions of the head, so the face is invariant to
   // squash, stretch, breathing and head size.
-  const EYE_R = 0.275;
-  const EYE_LAT = 0.395;
-  const EYE_FWD = 0.08;
+  //
+  // THE EYE IS ONE DARK PILL. No white, no iris, no catchlight. At the size
+  // this ships the old eye was a 5px white disc with a 3px pupil and a 1px
+  // highlight — three shapes fighting over nine pixels, and the first thing
+  // that dated it. A solid pill holds its shape down to nothing, and it turns
+  // out to lose no acting: gaze moves the whole pill, surprise makes it
+  // taller, a squint makes it shorter, and a blink is it collapsing to a line.
+  //
+  // It is drawn as a round-capped STROKE, not a filled shape, so "pill" costs
+  // two points and its width is one attribute.
+  const EYE_W = 0.115;
+  const EYE_H = 0.3;
+  const EYE_LAT = 0.43;
+  const EYE_FWD = 0.1;
+  const LOOK = 0.13;
+
+  // The lens tint goes down BEFORE the eyes and the frames go on after them. A
+  // pale lens laid over a dark pill greys it out, and the eyes are the one
+  // thing on this face that has to stay the darkest thing on it.
+  const gRad = 0.335 * headRx;
+  const worn = clamp(p.glasses, 0, 1);
+  const gOp = smoothstep(worn * 2.2);
+  const gFwd = EYE_FWD + (1 - p.glasses) * 0.62;
+  for (const side of [-1, 1] as const) {
+    const g = at(gFwd, side * EYE_LAT);
+    shapes.push({ k: "circle", key: `lens${side < 0 ? "L" : "R"}`, cx: f(g.x), cy: f(g.y), r: f(gRad), fill: "glass", op: f(gOp * 0.24) });
+  }
 
   for (const side of [-1, 1] as const) {
     const id = side < 0 ? "L" : "R";
-    const e = at(EYE_FWD, side * EYE_LAT);
     const openness = 1 - clamp(side < 0 ? p.lidL : p.lidR, -0.4, 1);
+    // Gaze moves the eye itself. There is no white for a pupil to travel
+    // across, and the whole-eye shift reads further away than a pupil ever did.
+    // Reined in behind glasses, or a hard look drives the pill into the frame.
+    const look = LOOK * (1 - 0.45 * worn);
+    const e = at(EYE_FWD + p.lookY * look, side * EYE_LAT + p.lookX * look);
 
     // Open eye and shut eye are BOTH always emitted and cross-faded on this
-    // one number, which keeps the shape list fixed-length and — unplanned, but
-    // better — replaced a hard swap mid-blink with a two-frame dissolve.
+    // one number, which keeps the shape list fixed-length and replaced a hard
+    // swap mid-blink with a two-frame dissolve.
     const eyeOp = smoothstep((openness - 0.06) / 0.12);
 
     // A closing eye keeps its width and loses its height, because that is what
-    // a lid does. Shrinking the whole circle instead reads as the eyeball
-    // retreating into the skull.
+    // a lid does. The stroke's round caps mean it bottoms out as a dot, never
+    // as a sliver.
+    const half = Math.max(0, EYE_H * clamp(openness, 0, 1.4) - EYE_W) * headRy;
     shapes.push({
-      k: "ellipse",
+      k: "path",
       key: `eye${id}`,
-      cx: f(e.x),
-      cy: f(e.y),
-      rx: f(EYE_R * headRx),
-      ry: f(EYE_R * headRy * clamp(openness, 0.04, 1.3)),
-      rot: headRot,
-      fill: "eyeWhite",
+      d: `M${f(e.x - forward.x * half)},${f(e.y - forward.y * half)}L${f(e.x + forward.x * half)},${f(e.y + forward.y * half)}`,
+      stroke: "pupil",
+      // A startled eye is also a touch wider; a pill that only grows taller
+      // reads as stretched rather than as surprised.
+      sw: f(EYE_W * 2 * headRx * (1 + 0.35 * Math.max(0, openness - 1))),
+      cap: true,
       op: f(eyeOp),
     });
 
-    // Pupil size runs OPPOSITE to lid opening. A startled eye is mostly white
-    // with a small pupil; a squint is mostly pupil. Scaling the pupil WITH the
-    // opening — the obvious first guess — makes a wide eye read merely as a
-    // bigger eye rather than a surprised one.
-    const off = EYE_R * 0.4;
-    const px = e.x + normal.x * p.lookX * off * headRx + forward.x * p.lookY * off * headRy;
-    const py = e.y + normal.y * p.lookX * off * headRx + forward.y * p.lookY * off * headRy;
-    const pr = EYE_R * 0.6 * headRx * clamp(1.9 - openness, 0.6, 1.2);
-    shapes.push({ k: "circle", key: `pupil${id}`, cx: f(px), cy: f(py), r: f(pr), fill: "pupil", op: f(eyeOp) });
-    // The catchlight. It does NOT travel with the pupil, because it is a
-    // reflection of the room and the room is not going anywhere. Two pixels of
-    // white, and most of what makes an eye read as wet.
-    shapes.push({
-      k: "circle",
-      key: `spec${id}`,
-      cx: f(px - normal.x * pr * 0.4 + forward.x * pr * 0.4),
-      cy: f(py - normal.y * pr * 0.4 + forward.y * pr * 0.4),
-      r: f(pr * 0.36),
-      fill: "spec",
-      op: f(0.95 * eyeOp),
-    });
-
-    // A shut eye is a LASH LINE, not a white sliver. Squashing the eyeball to
-    // zero height leaves a pale slit that reads as a dead fish; every cartoon
-    // blink ever drawn is one curved stroke. The curve carries mood for free —
-    // it arcs up into a happy ^^ squint when the mouth is smiling, and sags
-    // when it is not.
+    // A shut eye is one curved stroke. The curve carries mood for free — it
+    // arcs up into a happy ^^ squint when the mouth is smiling, and sags when
+    // it is not.
     const arc = clamp(p.mouthSmile, -1, 1);
-    const a1 = { x: e.x - normal.x * EYE_R * headRx, y: e.y - normal.y * EYE_R * headRx };
-    const a2 = { x: e.x + normal.x * EYE_R * headRx, y: e.y + normal.y * EYE_R * headRx };
-    const ac = { x: e.x + forward.x * EYE_R * headRy * arc * 0.9, y: e.y + forward.y * EYE_R * headRy * arc * 0.9 };
+    const lw = EYE_W * 1.75 * headRx;
+    const a1 = { x: e.x - normal.x * lw, y: e.y - normal.y * lw };
+    const a2 = { x: e.x + normal.x * lw, y: e.y + normal.y * lw };
+    const ac = { x: e.x + forward.x * EYE_H * headRy * arc * 0.95, y: e.y + forward.y * EYE_H * headRy * arc * 0.95 };
     shapes.push({
       k: "path",
       key: `lash${id}`,
       d: `M${f(a1.x)},${f(a1.y)}Q${f(ac.x)},${f(ac.y)} ${f(a2.x)},${f(a2.y)}`,
       stroke: "pupil",
-      sw: 2.4,
+      sw: 2.6,
       cap: true,
       op: f(1 - eyeOp),
     });
@@ -471,72 +518,87 @@ export function poseWorm(p: WormParams): WormPose {
     // carries more emotion than the rest of the face put together. Hidden at
     // neutral, because a permanent horizontal dash above each eye reads as a
     // scowl on a face this simple.
+    //
+    // A frown TILTS, a raise LIFTS. Tilting a raised brow — what this did
+    // first, and with the sign backwards at that — turns attention into fury:
+    // `listen` spent its whole life glaring. Raised brows now mostly travel up
+    // the forehead and keep only a little of the angle, which is the worried
+    // slant `oops` wants and nothing more.
     const brow = side < 0 ? p.browL : p.browR;
-    const bc = at(EYE_FWD + EYE_R * 1.5, side * EYE_LAT);
-    const ba = headAngle + Math.PI / 2 + brow * side;
-    const bl = EYE_R * 0.95 * headRx;
+    const bc = at(EYE_FWD + EYE_H * 1.7 + Math.max(0, -brow) * 0.32, side * EYE_LAT);
+    const ba = headAngle + Math.PI / 2 - (brow > 0 ? brow : brow * 0.55) * side;
+    const bl = EYE_W * 1.9 * headRx;
     shapes.push({
       k: "path",
       key: `brow${id}`,
       d: `M${f(bc.x - Math.cos(ba) * bl)},${f(bc.y - Math.sin(ba) * bl)}L${f(bc.x + Math.cos(ba) * bl)},${f(bc.y + Math.sin(ba) * bl)}`,
       stroke: "brow",
-      sw: 2.1,
+      sw: 2.2,
       cap: true,
-      op: f(clamp(Math.abs(brow) * 5, 0, 1)),
+      // Asymmetric threshold: a slight frown should show (it is `think`), a
+      // slight raise should not — on a face with no eye-whites a small raise is
+      // already carried by the eyes growing taller, and two extra dashes over
+      // them is clutter. Only a real raise, `oops`, draws them.
+      op: f(clamp((brow > 0 ? brow - 0.1 : -brow - 0.3) * 5, 0, 1)),
     });
   }
 
   // --- GLASSES -----------------------------------------------------------
-  // It is a bookworm; the joke is worth forty bytes of path. The first pass
-  // drew them in a mid-green that vanished against a green head — invisible
-  // jewellery. They need the darkest ink in the palette, a faint lens so there
-  // is something to be behind, and a glare streak.
-  const gRad = EYE_R * 1.32 * headRx;
+  // It is a bookworm; the joke is worth forty bytes of path. But they are now
+  // something it PUTS ON — the animator raises `glasses` for reading and drops
+  // it otherwise. Worn permanently they were furniture hiding the eyes; put on
+  // at the moment a reply starts arriving, they are a gesture.
+  //
+  // They arrive from the forehead and are pushed down onto the eyes — `glasses`
+  // may overshoot 1, and the overshoot is the frames bottoming out on the nose.
   for (const side of [-1, 1] as const) {
     const id = side < 0 ? "L" : "R";
-    const g = at(EYE_FWD, side * EYE_LAT);
-    shapes.push({ k: "circle", key: `lens${id}`, cx: f(g.x), cy: f(g.y), r: f(gRad), fill: "glass", op: f(p.glasses * 0.12) });
-    shapes.push({ k: "circle", key: `frame${id}`, cx: f(g.x), cy: f(g.y), r: f(gRad), stroke: "frame", sw: 2, op: f(p.glasses) });
+    const g = at(gFwd, side * EYE_LAT);
+    shapes.push({ k: "circle", key: `frame${id}`, cx: f(g.x), cy: f(g.y), r: f(gRad), stroke: "frame", sw: 1.9, op: f(gOp) });
     const ga = headAngle - 0.7;
-    const gLen = gRad * 0.62;
-    const gx = g.x + Math.cos(ga + Math.PI / 2) * gRad * 0.3;
-    const gy = g.y + Math.sin(ga + Math.PI / 2) * gRad * 0.3;
+    const gLen = gRad * 0.6;
+    const gx = g.x + Math.cos(ga + Math.PI / 2) * gRad * 0.34;
+    const gy = g.y + Math.sin(ga + Math.PI / 2) * gRad * 0.34;
     shapes.push({
       k: "path",
       key: `glint${id}`,
       d: `M${f(gx - Math.cos(ga) * gLen)},${f(gy - Math.sin(ga) * gLen)}L${f(gx + Math.cos(ga) * gLen)},${f(gy + Math.sin(ga) * gLen)}`,
       stroke: "spec",
-      sw: f(2.2 + 1.8 * p.glint),
-      op: f(p.glasses * (0.2 + 0.75 * p.glint)),
+      sw: f(1.6 + 2 * p.glint),
+      // Invisible at rest. A permanent glare streak is a highlight, and this
+      // drawing has none; the flash is an event.
+      op: f(gOp * 0.9 * p.glint),
       cap: true,
     });
   }
-  const bl0 = at(EYE_FWD, -EYE_LAT);
-  const br0 = at(EYE_FWD, EYE_LAT);
+  const bl0 = at(gFwd, -EYE_LAT);
+  const br0 = at(gFwd, EYE_LAT);
   shapes.push({
     k: "path",
     key: "bridge",
     d: `M${f(bl0.x + normal.x * gRad)},${f(bl0.y + normal.y * gRad)}L${f(br0.x - normal.x * gRad)},${f(br0.y - normal.y * gRad)}`,
     stroke: "frame",
-    sw: 2,
-    op: f(p.glasses),
+    sw: 1.9,
+    op: f(gOp),
     cap: true,
   });
 
   // --- MOUTH -------------------------------------------------------------
   // Two quadratic lips, so "shut and smiling" and "wide open mid-vowel" are
   // the same path with different numbers rather than two separate drawings.
-  const MOUTH_FWD = -0.42;
+  // Small, and set close under the eyes: on a flat face the distance between
+  // the features is the expression, and a mouth down on the chin is a muzzle.
+  const MOUTH_FWD = -0.4;
   const openJaw = clamp(p.mouthOpen, 0, 1);
   const smile = clamp(p.mouthSmile, -1, 1);
   const wide = clamp(p.mouthWide, -1, 1);
-  const mw = clamp(0.28 + 0.13 * openJaw + 0.09 * Math.max(0, smile) + 0.1 * wide, 0.14, 0.52);
+  const mw = clamp(0.16 + 0.1 * openJaw + 0.07 * Math.max(0, smile) + 0.07 * wide, 0.09, 0.38);
   // Rounding trades width for height at constant area, the way a real mouth
   // does — otherwise an "oo" just reads as a smaller "ah".
-  const lower = openJaw * 0.44 * (1 - wide * 0.22) + smile * 0.06;
+  const lower = openJaw * 0.5 * (1 - wide * 0.22) + smile * 0.3;
   const ml = at(MOUTH_FWD, -mw);
   const mr = at(MOUTH_FWD, mw);
-  const cu = at(MOUTH_FWD - smile * 0.1, 0);
+  const cu = at(MOUTH_FWD - smile * 0.24 * (1 - openJaw) + openJaw * 0.08, 0);
   const cd = at(MOUTH_FWD - lower, 0);
   shapes.push({
     k: "path",
@@ -544,23 +606,23 @@ export function poseWorm(p: WormParams): WormPose {
     d: `M${f(ml.x)},${f(ml.y)}Q${f(cu.x)},${f(cu.y)} ${f(mr.x)},${f(mr.y)}Q${f(cd.x)},${f(cd.y)} ${f(ml.x)},${f(ml.y)}Z`,
     fill: "mouth",
     stroke: "mouth",
-    sw: 1.6,
+    sw: 2,
     cap: true,
   });
 
   // The lip is a quadratic, so the cavity only reaches half the control offset.
-  // The tongue sits at 0.3 of it — at 0.6, the first guess, it hangs out the chin.
-  const tc = at(MOUTH_FWD - lower * 0.3, 0);
+  // The tongue sits low in it — any higher and it hangs out the chin.
+  const tc = at(MOUTH_FWD - lower * 0.36, 0);
   shapes.push({
     k: "ellipse",
     key: "tongue",
     cx: f(tc.x),
     cy: f(tc.y),
-    rx: f(mw * 0.6 * headRx),
-    ry: f(Math.max(0.01, lower * 0.2 * headRy)),
-    rot: headRot,
+    rx: f(mw * 0.55 * headRx),
+    ry: f(Math.max(0.01, lower * 0.17 * headRy)),
+    rot: f((headAngle * 180) / Math.PI + 90),
     fill: "tongue",
-    op: f(smoothstep((openJaw - 0.25) * 3)),
+    op: f(smoothstep((openJaw - 0.3) * 3)),
   });
 
   return { shapes, head: { p: hp, forward, normal, r: headRx, angle: headAngle }, spine };

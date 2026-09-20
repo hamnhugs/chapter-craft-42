@@ -176,16 +176,202 @@ describe("the body is a body", () => {
     expect(at(open, "lashL").op).toBeLessThan(0.05);
     expect(at(shut, "lashL").op).toBeGreaterThan(0.95);
     expect(at(shut, "eyeL").op).toBeLessThan(0.05);
-    expect(at(shut, "pupilL").op).toBeLessThan(0.05);
   });
 
-  it("shrinks the pupil as the eye widens, not the reverse", () => {
-    // A startled eye is mostly white. Scaling the pupil WITH the opening makes
-    // a wide eye read merely as a bigger eye.
-    const wide = poseWorm({ ...REST_PARAMS, lidL: -0.4 }).shapes.find((s) => s.key === "pupilL")!;
-    const squint = poseWorm({ ...REST_PARAMS, lidL: 0.6 }).shapes.find((s) => s.key === "pupilL")!;
-    if (wide.k !== "circle" || squint.k !== "circle") throw new Error("pupil must stay a circle");
-    expect(wide.r).toBeLessThan(squint.r);
+  it("draws the eye as ONE dark pill: taller when startled, shorter in a squint", () => {
+    // The flat redraw. No white, no pupil, no catchlight — three shapes were
+    // fighting over nine pixels. The pill is a round-capped stroke, so its
+    // height is the length of the segment and its width is the stroke.
+    const eye = (lid: number) => {
+      const s = poseWorm({ ...REST_PARAMS, curl: 0, lidL: lid }).shapes.find((x) => x.key === "eyeL")!;
+      if (s.k !== "path") throw new Error("the eye must stay a stroke");
+      const [x1, y1, x2, y2] = s.d.match(/-?[\d.]+/g)!.map(Number);
+      return { len: Math.hypot(x2 - x1, y2 - y1), sw: s.sw!, stroke: s.stroke, fill: s.fill };
+    };
+    expect(eye(0).stroke).toBe("pupil");
+    expect(eye(0).fill).toBeUndefined();
+    expect(eye(-0.4).len).toBeGreaterThan(eye(0).len);
+    expect(eye(0.5).len).toBeLessThan(eye(0).len);
+    // A startled eye is also a touch wider, or it reads as merely stretched.
+    expect(eye(-0.4).sw).toBeGreaterThan(eye(0).sw);
+  });
+
+  it("has no eye-whites, catchlights, outlines or speculars left to draw", () => {
+    const keys = poseWorm(REST_PARAMS).shapes.map((s) => s.key);
+    for (const gone of ["pupilL", "specL", "headSpec", "headOutline", "bodyOutline", "ring2"]) {
+      expect(keys).not.toContain(gone);
+    }
+    // And nothing that is filled is also outlined in a different ink.
+    for (const s of poseWorm(REST_PARAMS).shapes) {
+      if (s.fill && s.stroke) expect(s.stroke).toBe(s.fill);
+    }
+  });
+
+  it("moves the whole eye to look, since there is no white to look across", () => {
+    const x = (lookX: number) => {
+      const s = poseWorm({ ...REST_PARAMS, curl: 0, lookX }).shapes.find((k) => k.key === "eyeL")!;
+      return Number((s as { d: string }).d.match(/-?[\d.]+/)![0]);
+    };
+    expect(x(1)).toBeGreaterThan(x(0) + 1);
+    expect(x(-1)).toBeLessThan(x(0) - 1);
+  });
+
+  it("lifts a raised brow instead of tilting it into a glare", () => {
+    // Regression. The brow's sign was backwards from its own doc comment, so
+    // `listen` — brows RAISED — rendered as a furious V. Thin strokes on a busy
+    // face hid it; the flat face did not.
+    const brow = (b: number) => {
+      const s = poseWorm({ ...REST_PARAMS, curl: 0, browL: b, browR: b }).shapes.find((k) => k.key === "browL")!;
+      const [x1, y1, x2, y2] = (s as { d: string }).d.match(/-?[\d.]+/g)!.map(Number);
+      // browL is on the viewer's left with the head upright: x2 is the INNER end.
+      return { innerMinusOuter: y2 - y1, midY: (y1 + y2) / 2, op: s.op! };
+    };
+    // A frown drops the inner end (y grows downward).
+    expect(brow(0.5).innerMinusOuter).toBeGreaterThan(0.5);
+    // A raise travels up the forehead...
+    expect(brow(-0.5).midY).toBeLessThan(brow(0).midY - 1);
+    // ...and a small one is not drawn at all.
+    expect(brow(-0.22).op).toBe(0);
+    expect(brow(0.2).op).toBeGreaterThan(0);
+  });
+});
+
+describe("the body is a delay line for the voice", () => {
+  const swells = (p: WormParams) => [p.swell0, p.swell1, p.swell2, p.swell3, p.swell4, p.swell5];
+
+  it("a syllable reaches the neck first and the tail last, fading as it goes", () => {
+    const a = new WormAnimator({ rng: seeded(21), mood: "speak" });
+    run(a, 0.5);
+    // One 80ms burst of voice, then silence.
+    const peakAt = [0, 0, 0, 0, 0, 0];
+    const peak = [0, 0, 0, 0, 0, 0];
+    for (let i = 0; i < 60; i++) {
+      a.setVoice(i < 5 ? 0.9 : 0);
+      swells(a.step(16.67)).forEach((v, j) => {
+        if (v > peak[j]) {
+          peak[j] = v;
+          peakAt[j] = i;
+        }
+      });
+    }
+    for (let j = 0; j < 5; j++) {
+      expect(peakAt[j]).toBeGreaterThan(peakAt[j + 1]);
+      expect(peak[j]).toBeLessThan(peak[j + 1]);
+    }
+    expect(peak[5]).toBeGreaterThan(0.3);
+  });
+
+  it("travels at the same speed whatever the display's refresh rate", () => {
+    const tailPeakMs = (dt: number) => {
+      const a = new WormAnimator({ rng: seeded(21), mood: "speak" });
+      let t = 0;
+      let best = 0;
+      let bestT = 0;
+      while (t < 900) {
+        a.setVoice(t < 80 ? 0.9 : 0);
+        const v = a.step(dt).swell0;
+        t += dt;
+        if (v > best) {
+          best = v;
+          bestT = t;
+        }
+      }
+      return bestT;
+    };
+    expect(Math.abs(tailPeakMs(16.67) - tailPeakMs(8.33))).toBeLessThan(30);
+    expect(Math.abs(tailPeakMs(16.67) - tailPeakMs(33.3))).toBeLessThan(45);
+  });
+
+  it("is silent outside speech, and drains to EXACTLY zero", () => {
+    const idle = new WormAnimator({ rng: seeded(2), mood: "idle" });
+    idle.setVoice(0.9);
+    run(idle, 1, (p) => swells(p).forEach((v) => expect(v).toBe(0)));
+
+    const a = new WormAnimator({ rng: seeded(2), mood: "speak" });
+    run(a, 0.5, () => a.setVoice(0.8));
+    a.setVoice(0);
+    run(a, 1.2);
+    swells(a.step(16.67)).forEach((v) => expect(v).toBe(0));
+  });
+
+  it("sends thinking pulses the other way — tail to head", () => {
+    const a = new WormAnimator({ rng: seeded(4), mood: "think" });
+    run(a, 1);
+    const peakAt = [0, 0, 0, 0, 0, 0];
+    const peak = [0, 0, 0, 0, 0, 0];
+    // One full cycle is ~1.18s; watch from wherever bead 0 next peaks.
+    const seen: number[][] = [];
+    run(a, 1.5, (p) => seen.push(swells(p)));
+    const start = seen.findIndex((f, i) => i > 0 && f[0] < seen[i - 1][0] && seen[i - 1][0] > 0.2);
+    expect(start).toBeGreaterThan(-1);
+    for (let i = start - 1; i < Math.min(seen.length, start + 55); i++) {
+      seen[i].forEach((v, j) => {
+        if (v > peak[j]) {
+          peak[j] = v;
+          peakAt[j] = i;
+        }
+      });
+    }
+    for (let j = 0; j < 5; j++) expect(peakAt[j + 1]).toBeGreaterThan(peakAt[j]);
+  });
+
+  it("gives a reduced-motion user none of it", () => {
+    const a = new WormAnimator({ rng: seeded(4), mood: "speak", reduced: true });
+    run(a, 1, (p) => {
+      a.setVoice(0.9);
+      swells(p).forEach((v) => expect(v).toBe(0));
+    });
+  });
+
+  it("cannot be inflated by a clipped sample", () => {
+    const r = (v: number) => {
+      const s = poseWorm({ ...REST_PARAMS, swell3: v }).shapes.find((k) => k.key === "bead3")!;
+      return (s as { r: number }).r;
+    };
+    expect(r(50)).toBe(r(1));
+    expect(r(1)).toBeGreaterThan(r(0));
+  });
+});
+
+describe("the glasses are a gesture, not furniture", () => {
+  const worn = (mood: Mood) => {
+    const a = new WormAnimator({ rng: seeded(6), mood });
+    run(a, 3);
+    return a.step(16.67).glasses;
+  };
+
+  it("wears them to read, and not otherwise", () => {
+    expect(worn("read")).toBeCloseTo(1, 1);
+    expect(worn("watch")).toBeCloseTo(1, 1);
+    for (const m of ["idle", "listen", "think", "speak", "cheer", "oops", "sleep"] as Mood[]) {
+      expect(worn(m)).toBeLessThan(0.05);
+    }
+  });
+
+  it("pushes them on with an overshoot rather than fading them in", () => {
+    const a = new WormAnimator({ rng: seeded(6), mood: "idle" });
+    run(a, 1);
+    a.setMood("read");
+    let max = 0;
+    run(a, 1.5, (p) => (max = Math.max(max, p.glasses)));
+    expect(max).toBeGreaterThan(1.02);
+    expect(max).toBeLessThan(1.25);
+  });
+
+  it("slides them down from the forehead", () => {
+    const y = (g: number) => {
+      const s = poseWorm({ ...REST_PARAMS, curl: 0, glasses: g }).shapes.find((k) => k.key === "frameL")!;
+      return { cy: (s as { cy: number }).cy, op: s.op! };
+    };
+    expect(y(0.3).cy).toBeLessThan(y(1).cy - 3);
+    expect(y(0).op).toBe(0);
+    expect(y(1).op).toBe(1);
+  });
+
+  it("tints the lens UNDER the eye and frames it over, so the eyes stay the darkest ink", () => {
+    const keys = poseWorm(REST_PARAMS).shapes.map((s) => s.key);
+    expect(keys.indexOf("lensL")).toBeLessThan(keys.indexOf("eyeL"));
+    expect(keys.indexOf("frameL")).toBeGreaterThan(keys.indexOf("eyeL"));
   });
 });
 
@@ -689,7 +875,7 @@ describe("tap to pet", () => {
     // a tap beside the worm — or on its eyes — falls through to the transcript.
     expect(COMPONENT).toContain('pointerEvents: "none"');
     expect(COMPONENT).toContain('pointerEvents: "auto" as const');
-    expect(COMPONENT).toMatch(/s\.key === "body" \|\| s\.key === "head"/);
+    expect(COMPONENT).toMatch(/s\.key === "body" \|\| s\.key === "head" \|\| s\.key\.startsWith\("bead"\)/);
   });
 });
 
@@ -787,17 +973,22 @@ describe("it shows up on the pocket screen too", () => {
     for (let i = 0; i < 6; i += 2) expect(parseInt(hex.slice(i, i + 2), 16)).toBeLessThan(80);
   });
 
-  it("lights the contour brighter than the fill, which is backwards on purpose", () => {
-    // On black it is the edge that describes the shape, not the mass — the
-    // inverse of the daylight scheme, where the outline is the darkest ink.
+  it("cuts the face out of the body as unlit pixels, and lights the frames instead", () => {
+    // The flat worm has no contour to brighten. The eyes and mouth are pure
+    // black — on an OLED, holes in the light, legible for no power at all —
+    // while the glasses go LIGHTER than the body, because they overhang the
+    // head and a black frame over a black screen is no frame.
     const lum = (token: string) => {
       const m = POCKET.match(new RegExp(`"${token}" as string\\]: "#([0-9A-Fa-f]{6})"`));
       if (!m) throw new Error("no " + token);
       const h = m[1];
       return parseInt(h.slice(0, 2), 16) + parseInt(h.slice(2, 4), 16) + parseInt(h.slice(4, 6), 16);
     };
-    expect(lum("--worm-dark")).toBeGreaterThan(lum("--worm-body"));
-    expect(lum("--worm-spec")).toBeGreaterThan(lum("--worm-eye"));
+    expect(lum("--worm-pupil")).toBe(0);
+    expect(lum("--worm-mouth")).toBe(0);
+    expect(lum("--worm-dark")).toBeLessThan(lum("--worm-body"));
+    expect(lum("--worm-frame")).toBeGreaterThan(lum("--worm-body"));
+    expect(lum("--worm-spec")).toBeGreaterThan(lum("--worm-frame"));
   });
 
   it("drops the contact shadow — it is not standing on anything out there", () => {
@@ -856,7 +1047,7 @@ describe("it shows up on the pocket screen too", () => {
     expect(COMPONENT).toContain("var(--worm-spec, var(--worm-eye");
     expect(COMPONENT).toContain("var(--worm-brow, var(--worm-pupil");
     expect(COMPONENT).toContain("var(--worm-frame, var(--worm-pupil");
-    expect(COMPONENT).toContain("var(--worm-shadow, var(--worm-dark");
+    expect(COMPONENT).toContain("var(--worm-shadow, #000000)");
   });
 });
 

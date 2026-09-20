@@ -5,9 +5,8 @@ import { poseWorm, VIEW_W, VIEW_H, type Ink, type Shape } from "../src/lib/sprit
 import { WormAnimator, type Mood } from "../src/lib/sprite/wormAnimator";
 
 const HEX: Record<Ink, string> = {
-  body: "#7ED9A7", bodyDark: "#3E8F68", bodyLight: "#C6F2DA", ring: "#3E8F68",
-  eyeWhite: "#FFFFFF", pupil: "#1B2620", spec: "#FFFFFF", mouth: "#2A1520",
-  tongue: "#E9738F", brow: "#16211B", glass: "#FFFFFF", frame: "#16211B", shadow: "#2C6B4E",
+  body: "#DD7C58", bodyAlt: "#C9683F", pupil: "#2B1B15", spec: "#FFF6EE", mouth: "#2B1B15",
+  tongue: "#F4A58C", brow: "#2B1B15", glass: "#FFF6EE", frame: "#2B1B15", shadow: "#000000",
 };
 const svg = (s: Shape): string => {
   const a: string[] = [s.fill ? `fill="${HEX[s.fill]}"` : 'fill="none"'];
@@ -34,9 +33,9 @@ const cells = MOODS.map((mood) => {
     p = a.step(16.67);
   }
   // A blink would ruin the comparison; force lids open for this sheet only.
-  const pose = poseWorm({ ...p, lidL: Math.min(p.lidL, MOODS.indexOf(mood) === 0 ? 1 : 0.6), lidR: Math.min(p.lidR, mood === "sleep" ? 1 : 0.6) });
+  const pose = poseWorm({ ...p, lidL: Math.min(p.lidL, mood === "sleep" || mood === "cheer" ? 1 : 0.6), lidR: Math.min(p.lidR, mood === "sleep" || mood === "cheer" ? 1 : 0.6) });
   const shapes = silhouette
-    ? pose.shapes.filter((s) => s.key === "body" || s.key === "head" || s.key.startsWith("antenna")).map((s) => ({ ...s, fill: s.fill ? ("pupil" as Ink) : undefined, stroke: s.stroke ? ("pupil" as Ink) : undefined }))
+    ? pose.shapes.filter((s) => s.key === "body" || s.key === "head" || s.key.startsWith("bead") || s.key.startsWith("antenna")).map((s) => ({ ...s, fill: s.fill ? ("pupil" as Ink) : undefined, stroke: s.stroke ? ("pupil" as Ink) : undefined }))
     : pose.shapes;
   return (
     `<rect width="${VIEW_W}" height="${VIEW_H}" fill="${silhouette ? "#EDEAE6" : "#14110F"}"/>` +
