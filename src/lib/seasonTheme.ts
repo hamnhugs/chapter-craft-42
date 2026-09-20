@@ -101,6 +101,21 @@ export interface SeasonalTheme {
   mote: Oklch;
   /** Screen-space drift: positive falls, negative rises. */
   drift: number;
+  /**
+   * The same scalars the CSS variables carry, as numbers.
+   *
+   * The ambience canvas used to read these back off the document with
+   * getComputedStyle. That was a bad mistake: getComputedStyle forces the
+   * browser to flush style for the whole document, and eight of them per
+   * animation frame on a Vault holding hundreds of rows is several hundred
+   * forced style recalculations a second. It is the single reason the
+   * Showcase locked the tab up. Nothing reads the DOM for these any more.
+   */
+  elevation: number;  // degrees above the horizon
+  aurora: number;     // 0..1, the dark end of the year
+  bloom: number;      // 0..1, the bright end
+  tempo: number;
+  onDark: boolean;    // true when the canvas is darker than the ink
 }
 
 /**
@@ -167,7 +182,14 @@ export function seasonalTheme(theme: ThemeDef, season: SeasonState): SeasonalThe
   // ones. Speed tracks |growth| — how fast the year itself is moving.
   vars["--season-tempo"] = (0.7 + Math.abs(season.growth) * 0.6).toFixed(3);
 
-  return { vars, glow, mote, drift };
+  return {
+    vars, glow, mote, drift,
+    elevation: 45 + 23.44 * season.light,
+    aurora: Math.max(0, -season.light),
+    bloom: Math.max(0, season.light),
+    tempo: 0.7 + Math.abs(season.growth) * 0.6,
+    onDark: background.l <= 0.5,
+  };
 }
 
 /**

@@ -11,37 +11,35 @@ import { getTheme } from "@/lib/themes";
 import SeasonAmbience from "@/components/SeasonAmbience";
 
 /**
- * The Showcase: every book in the library as a full profile, played as a reel.
+ * The Showcase: every book in the library as a full profile, with the whole
+ * library on a rail beside it.
  *
  * The other three views answer "which book?" — shelves for browsing, list for
  * scanning, mind map for structure. None of them answers "what *is* this
  * book?", because the app had no such surface: the summary, its model
  * attribution, the chapter gists, provenance, shelves and the locally
  * remembered reading position were spread across four components and shown a
- * few at a time. This view puts a whole profile on screen at once and moves
- * through the library on its own, so a library you stopped knowing the shape
- * of can be re-met by leaving it running.
+ * few at a time.
  *
- * The season is not painted on top of it. Everything seasonal here is a CSS
- * variable the theme layer publishes (src/lib/seasonTheme.ts), so the reel is
- * the current theme in the current week of the year, and there is no branch in
- * this file on which season it is.
+ * This shipped first as a self-advancing reel with an animated backdrop, and
+ * both had to go. The motion was unwanted, and worse, it was what made the
+ * Vault unusable: a 20Hz timer re-rendered the entire rail while the backdrop
+ * read its inputs back off the document with getComputedStyle sixty times a
+ * second. It is now entirely user-driven — nothing moves unless something is
+ * clicked — which removed the timer, the animation frames, and with them the
+ * reason the tab locked up.
  *
- * Auto-advance carries obligations and they are met explicitly: an always-
- * visible pause control, pause on hover and on keyboard focus, arrow-key and
- * space bindings, no advancing at all under prefers-reduced-motion, and a live
- * region that stays quiet while the reel is driving itself and speaks when the
- * reader is (WCAG 2.2.2).
+ * The season is still not painted on top of it. Everything seasonal is a
+ * derived value the theme layer computes (src/lib/seasonTheme.ts), so the view
+ * is the current theme in the current week of the year, and nothing in this
+ * file branches on which season it is.
  */
 
-/** Long enough to read a summary, short enough that the reel feels alive. */
-const ADVANCE_MS = 7000;
-const REDUCE_QUERY = "(prefers-reduced-motion: reduce)";
-
-function readReduced(): boolean {
-  if (typeof window === "undefined" || !window.matchMedia) return false;
-  try { return window.matchMedia(REDUCE_QUERY).matches; } catch { return false; }
-}
+/** Rail rows rendered at once. Matches LibraryShelves' GRID_PAGE_SIZE idea:
+ *  a library can hold thousands of books and the DOM should not. */
+const RAIL_PAGE = 50;
+/** Which book the reader was last looking at, so switching views comes back. */
+const SELECTED_KEY = "vault_showcase_book";
 
 const SOURCE_CHIP: Record<string, { icon: string; label: string }> = {
   user: { icon: "person", label: "Yours" },
@@ -50,9 +48,9 @@ const SOURCE_CHIP: Record<string, { icon: string; label: string }> = {
 };
 
 /**
- * Where the year is, drawn. The reel's colours and drift come from a single
- * angle, and this is that angle made visible — so the view can be asked why it
- * looks the way it does and answer, rather than just looking moody.
+ * Where the year is, drawn. The view's colours come from a single angle, and
+ * this is that angle made visible — so it can be asked why it looks the way it
+ * does and answer, rather than just looking moody.
  */
 const YearRing: React.FC<{ angle: number; season: string }> = ({ angle, season }) => {
   const R = 12, C = 16;
@@ -105,7 +103,7 @@ const Cover: React.FC<{
     style={profile.coverImageUrl ? undefined : { backgroundImage: `linear-gradient(145deg, ${stops[0]}, ${stops[1]})` }}
   >
     {profile.coverImageUrl ? (
-      <img src={profile.coverImageUrl} alt="" className="w-full h-full object-cover" />
+      <img src={profile.coverImageUrl} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" />
     ) : titled ? (
       <div className="absolute inset-0 flex flex-col justify-between p-3">
         <span className="material-symbols-outlined text-[1.1rem] text-foreground/35" aria-hidden>
@@ -137,14 +135,13 @@ const LibraryShowcase: React.FC<{
   highlight?: (text: string) => React.ReactNode;
 }> = ({ books, shelves, onOpenBook, highlight }) => {
   const { season, seasonal, themeId } = useTheme();
-  const [index, setIndex] = useState(0);
-  const [reduced, setReduced] = useState(readReduced);
-  // Auto-advance is the default, but never under reduced motion — there it
-  // waits to be driven.
-  const [playing, setPlaying] = useState(() => !readReduced());
-  const [hovered, setHovered] = useState(false);
+  // Restored from the last visit rather than reset to the top. Switching to
+  // the mind map and back used to lose the reader's place every time.
+  const [selectedId, setSelectedId] = useState<string | null>(() => {
+    try { return localStorage.getItem(SELECTED_KEY); } catch { return null; }
+  });
+  const [shown, setShown] = useState(RAIL_PAGE);
   const railRef = useRef<HTMLDivElement | null>(null);
-  const [elapsed, setElapsed] = useState(0);
 
   const shelfNames = useMemo(() => new Map(shelves.map((s) => [s.id, s.name])), [shelves]);
 
@@ -153,94 +150,75 @@ const LibraryShowcase: React.FC<{
     [books, shelfNames],
   );
 
-  // Cover gradients follow the theme's seasonal accent, so a cover-less book
-  // belongs to the palette it is sitting in rather than to the fixed brown the
-  // grid uses.
-  //
-  // Derived here rather than read back from --season-glow on the document:
-  // ThemeContext publishes that variable from an effect, which lands *after*
-  // this render, so a DOM read would take the unseasoned accent on first paint
-  // and — because nothing in the dependency list would then change — keep it
-  // for the rest of the session. Same input, computed directly.
-  const gradients = useMemo(() => {
+  /**
+   * Cover gradients, computed on demand and cached.
+   *
+   * Each one runs a gamut-mapping bisection per stop, so doing all of them up
+   * front is real work on a large library — and pointless, since the rail only
+   * ever renders a page at a time. Keyed by the book's id hash so re-sorting
+   * cannot restain a book, which is the bug the grid's index-based version has.
+   *
+   * Derived here rather than read back from --season-glow on the document:
+   * ThemeContext publishes that variable from an effect, which lands after
+   * this render, so a DOM read would take the unseasoned accent on first paint
+   * and keep it for the rest of the session.
+   */
+  const gradientOf = useMemo(() => {
     const theme = getTheme(themeId);
     const bg = hslTripletToOklch(theme.tokens["--background"] ?? "") ?? { l: 0.2, c: 0, h: 0 };
     const accent = hslTripletToOklch(theme.tokens["--accent"] ?? "") ?? { l: 0.7, c: 0.1, h: 0 };
     const glow = seasonal ? seasonalTheme(theme, season).glow : accent;
-    return profiles.map((p) => coverGradient(p.seed, glow, bg.l));
-  }, [profiles, themeId, seasonal, season]);
+    const cache = new Map<number, [string, string]>();
+    return (seed: number): [string, string] => {
+      let hit = cache.get(seed);
+      if (!hit) { hit = coverGradient(seed, glow, bg.l); cache.set(seed, hit); }
+      return hit;
+    };
+  }, [themeId, seasonal, season]);
 
   const count = profiles.length;
-  const safeIndex = count === 0 ? 0 : Math.min(index, count - 1);
-  const active = profiles[safeIndex];
+  const selectedIndex = useMemo(() => {
+    const i = profiles.findIndex((p) => p.id === selectedId);
+    return i >= 0 ? i : 0;
+  }, [profiles, selectedId]);
+  const active = profiles[selectedIndex];
 
-  // A single book is not a reel; do not animate a progress bar toward nothing.
-  const advancing = playing && !reduced && !hovered && count > 1;
+  const select = useCallback((next: number) => {
+    if (count === 0) return;
+    const i = ((next % count) + count) % count;
+    const id = profiles[i].id;
+    setSelectedId(id);
+    try { localStorage.setItem(SELECTED_KEY, id); } catch { /* private mode */ }
+    // Keep a selection made with the arrows inside the paged rail.
+    setShown((s) => (i + 1 > s ? Math.min(count, i + RAIL_PAGE) : s));
+  }, [count, profiles]);
 
-  const go = useCallback((next: number) => {
-    setIndex((i) => (count === 0 ? 0 : ((next % count) + count) % count));
-    setElapsed(0);
-  }, [count]);
-
-  useEffect(() => { if (index >= count && count > 0) setIndex(0); }, [count, index]);
-
-  // Drive the reel and its progress bar off one interval rather than a CSS
-  // animation, so pausing freezes the bar exactly where the timer is.
-  useEffect(() => {
-    if (!advancing) return;
-    const STEP = 50;
-    const id = window.setInterval(() => {
-      setElapsed((e) => {
-        const next = e + STEP;
-        if (next >= ADVANCE_MS) {
-          setIndex((i) => (i + 1) % count);
-          return 0;
-        }
-        return next;
-      });
-    }, STEP);
-    return () => window.clearInterval(id);
-  }, [advancing, count]);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.matchMedia) return;
-    let mq: MediaQueryList;
-    try { mq = window.matchMedia(REDUCE_QUERY); } catch { return; }
-    const onChange = () => { setReduced(mq.matches); if (mq.matches) setPlaying(false); };
-    mq.addEventListener?.("change", onChange);
-    return () => mq.removeEventListener?.("change", onChange);
-  }, []);
-
-  // Keep the rail's current row in view as the reel moves under it.
+  // Make sure the remembered book is on screen when the view opens, without
+  // yanking the page: `nearest` does nothing when it is already visible.
   useEffect(() => {
     const row = railRef.current?.querySelector<HTMLElement>('[data-active="true"]');
-    row?.scrollIntoView({ block: "nearest", behavior: reduced ? "auto" : "smooth" });
-  }, [safeIndex, reduced]);
+    row?.scrollIntoView({ block: "nearest" });
+  }, [selectedIndex]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "ArrowRight") { e.preventDefault(); go(safeIndex + 1); }
-    else if (e.key === "ArrowLeft") { e.preventDefault(); go(safeIndex - 1); }
-    else if (e.key === " " || e.key === "Spacebar") { e.preventDefault(); setPlaying((p) => !p); }
+    if (e.key === "ArrowDown" || e.key === "ArrowRight") { e.preventDefault(); select(selectedIndex + 1); }
+    else if (e.key === "ArrowUp" || e.key === "ArrowLeft") { e.preventDefault(); select(selectedIndex - 1); }
+    else if (e.key === "Home") { e.preventDefault(); select(0); }
+    else if (e.key === "End") { e.preventDefault(); select(count - 1); }
   };
 
   if (count === 0 || !active) return null;
 
-  const pct = advancing ? (elapsed / ADVANCE_MS) * 100 : 0;
+  const visible = profiles.slice(0, shown);
 
   return (
     <section
       role="region"
-      aria-roledescription="carousel"
       aria-label="Book profiles"
-      tabIndex={0}
       onKeyDown={onKeyDown}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      onFocus={() => setHovered(true)}
-      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setHovered(false); }}
-      className="relative overflow-hidden rounded-2xl border border-outline-variant/10 bg-surface-container-low outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+      className="relative overflow-hidden rounded-2xl border border-outline-variant/10 bg-surface-container-low"
     >
-      {seasonal && <SeasonAmbience running={advancing} />}
+      {seasonal && <SeasonAmbience />}
 
       {/* A wash of the season's own hue, behind everything and under the text. */}
       <div
@@ -256,29 +234,21 @@ const LibraryShowcase: React.FC<{
             {seasonal ? describeSeason(season) : "Showcase"}
           </p>
           <p className="text-[11px] text-on-surface-variant">
-            {count} {count === 1 ? "book" : "books"}
+            {selectedIndex + 1} of {count}
             {seasonal && season.hemisphere === "south" ? " · southern hemisphere" : ""}
           </p>
         </div>
 
         <div className="ml-auto flex items-center gap-1">
           <button
-            onClick={() => go(safeIndex - 1)}
+            onClick={() => select(selectedIndex - 1)}
             aria-label="Previous book"
             className="cc-tap-44 w-9 h-9 rounded-lg flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors"
           >
             <span className="material-symbols-outlined text-lg" aria-hidden>chevron_left</span>
           </button>
           <button
-            onClick={() => setPlaying((p) => !p)}
-            aria-label={playing ? "Pause the showcase" : "Play the showcase"}
-            aria-pressed={playing}
-            className="cc-tap-44 w-9 h-9 rounded-lg flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors"
-          >
-            <span className="material-symbols-outlined text-lg" aria-hidden>{playing ? "pause" : "play_arrow"}</span>
-          </button>
-          <button
-            onClick={() => go(safeIndex + 1)}
+            onClick={() => select(selectedIndex + 1)}
             aria-label="Next book"
             className="cc-tap-44 w-9 h-9 rounded-lg flex items-center justify-center text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors"
           >
@@ -289,16 +259,9 @@ const LibraryShowcase: React.FC<{
 
       <div className="relative grid lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
         {/* ---- Stage: one whole profile ---- */}
-        <div
-          className="p-4 sm:p-6 lg:border-r border-outline-variant/10"
-          aria-live={advancing ? "off" : "polite"}
-          aria-atomic="true"
-        >
-          <div
-            key={active.id}
-            className="flex flex-col sm:flex-row gap-5 motion-safe:animate-[cc-season-enter_520ms_cubic-bezier(0.22,1,0.36,1)]"
-          >
-            <Cover profile={active} stops={gradients[safeIndex]} titled className="w-28 sm:w-36 aspect-[3/4] shrink-0 shadow-lg" />
+        <div className="p-4 sm:p-6 lg:border-r border-outline-variant/10" aria-live="polite" aria-atomic="true">
+          <div className="flex flex-col sm:flex-row gap-5">
+            <Cover profile={active} stops={gradientOf(active.seed)} titled className="w-28 sm:w-36 aspect-[3/4] shrink-0 shadow-lg" />
 
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-1.5 mb-2">
@@ -329,7 +292,7 @@ const LibraryShowcase: React.FC<{
                 <p className="mt-2 text-sm text-on-surface-variant line-clamp-3">{active.summary}</p>
               ) : (
                 <p className="mt-2 text-sm text-on-surface-variant/70 italic">
-                  No summary yet — generate a catalog to give this book one.
+                  No summary yet — generating a catalog for this book would add one.
                 </p>
               )}
               {active.summary && active.summaryModel && (
@@ -382,23 +345,23 @@ const LibraryShowcase: React.FC<{
           </div>
         </div>
 
-        {/* ---- Rail: the whole library, always visible ---- */}
+        {/* ---- Rail: the library, a page at a time ---- */}
         <div ref={railRef} className="max-h-[22rem] lg:max-h-[30rem] overflow-y-auto">
           <ul className="divide-y divide-outline-variant/10">
-            {profiles.map((p, i) => {
-              const isActive = i === safeIndex;
+            {visible.map((p, i) => {
+              const isActive = i === selectedIndex;
               return (
                 <li key={p.id}>
                   <button
                     data-active={isActive}
                     aria-current={isActive ? "true" : undefined}
-                    onClick={() => go(i)}
+                    onClick={() => select(i)}
                     onDoubleClick={() => onOpenBook(p.id)}
-                    className={`relative w-full text-left flex items-center gap-3 px-4 py-2.5 transition-colors ${
+                    className={`w-full text-left flex items-center gap-3 px-4 py-2.5 transition-colors ${
                       isActive ? "bg-surface-container-high" : "hover:bg-surface-container-high/50"
                     }`}
                   >
-                    <Cover profile={p} stops={gradients[i]} className="w-7 h-10 shrink-0" />
+                    <Cover profile={p} stops={gradientOf(p.seed)} className="w-7 h-10 shrink-0" />
                     <span className="min-w-0 flex-1">
                       <span className={`block text-xs truncate ${isActive ? "text-primary font-bold" : "text-foreground"}`}>
                         {highlight ? highlight(p.title) : p.title}
@@ -408,14 +371,19 @@ const LibraryShowcase: React.FC<{
                         {p.progress ? `${p.progress.pct}% read` : p.stats[0]?.value ? `${p.stats[0].value} ${p.stats[0].label}` : "—"}
                       </span>
                     </span>
-                    {isActive && (
-                      <span aria-hidden className="absolute left-0 bottom-0 h-0.5 bg-primary/60 transition-[width] duration-75 ease-linear" style={{ width: `${pct}%` }} />
-                    )}
                   </button>
                 </li>
               );
             })}
           </ul>
+          {shown < count && (
+            <button
+              onClick={() => setShown((s) => Math.min(count, s + RAIL_PAGE))}
+              className="w-full px-4 py-3 text-xs font-semibold text-primary hover:bg-surface-container-high transition-colors"
+            >
+              Show {Math.min(RAIL_PAGE, count - shown)} more ({count - shown} left)
+            </button>
+          )}
         </div>
       </div>
     </section>

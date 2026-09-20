@@ -1239,21 +1239,3 @@ html.cc-media-overlay-open .message-bubble-user {
   }
 }
 
-/* ---------------------------------------------------------------------------
-   Seasonal showcase
-   The entry direction is not authored per season — it is read from
-   --season-drift, which the theme layer sets to the negated rate of change of
-   daylight. Profiles therefore rise into place while the days are lengthening
-   and settle down into it while they shorten, and hang almost still at the
-   solstices. See src/lib/season.ts.
-   --------------------------------------------------------------------------- */
-@keyframes cc-season-enter {
-  from {
-    opacity: 0;
-    transform: translateY(calc(var(--season-drift, 0) * -14px));
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}

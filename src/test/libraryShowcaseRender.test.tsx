@@ -11,9 +11,9 @@ import type { BookDocument } from "@/types/library";
  * puts it in a DOM: the profile on the stage, every book on the rail, and the
  * controls doing what their labels say.
  *
- * It also pins the two behaviours that are easy to get backwards and invisible
- * in review — that the reel does not start itself under prefers-reduced-motion,
- * and that it stops when a pointer is on it.
+ * It also pins the thing the user actually lost: the Showcase used to reset to
+ * the top of the library every time they switched away and back. The selected
+ * book is now remembered, and that is only checkable by mounting it twice.
  *
  * The canvas is stubbed below rather than left to jsdom, which has no 2D
  * context and reports one jsdomError per call. SeasonAmbience already handles
@@ -24,8 +24,6 @@ import type { BookDocument } from "@/types/library";
  * @testing-library/react, matching libraryShelves.test.tsx: RTL v16 is present
  * but its required peer @testing-library/dom is not declared.
  */
-
-const state = vi.hoisted(() => ({ reduced: false }));
 
 vi.mock("@/hooks/useReaderPrefs", () => ({
   loadLastPage: (id: string) => (id === "b2" ? 150 : 0),
@@ -56,7 +54,7 @@ let host: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
-  state.reduced = false;
+  localStorage.clear();
   // jsdom implements neither of these; the component uses both and would
   // otherwise fail for reasons that have nothing to do with the component.
   Element.prototype.scrollIntoView = vi.fn();
@@ -64,7 +62,7 @@ beforeEach(() => {
   // ambience handles the refusal fine; this just keeps the output readable.
   HTMLCanvasElement.prototype.getContext = vi.fn(() => null) as unknown as HTMLCanvasElement["getContext"];
   window.matchMedia = ((q: string) => ({
-    matches: q.includes("reduced-motion") ? state.reduced : false,
+    matches: false,
     media: q, onchange: null,
     addEventListener: vi.fn(), removeEventListener: vi.fn(),
     addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),
@@ -122,7 +120,7 @@ describe("LibraryShowcase, mounted", () => {
     expect(text()).toContain("25% read");
   });
 
-  it("advances and rewinds with the controls", async () => {
+  it("steps forward and back with the controls", async () => {
     await mount();
     await act(async () => { button("Next book")!.click(); });
     expect(host.querySelector('[data-active="true"]')?.textContent).toContain("Seeing Like a State");
@@ -151,26 +149,48 @@ describe("LibraryShowcase, mounted", () => {
     expect(onOpen).toHaveBeenCalledWith("b1");
   });
 
-  it("starts playing and can be paused", async () => {
+  it("offers nothing that plays, because nothing plays any more", async () => {
     await mount();
-    expect(button("Pause the showcase")).toBeTruthy();
-    await act(async () => { button("Pause the showcase")!.click(); });
-    expect(button("Play the showcase")).toBeTruthy();
     expect(button("Pause the showcase")).toBeNull();
+    expect(button("Play the showcase")).toBeNull();
   });
 
-  it("does not start itself under prefers-reduced-motion", async () => {
-    state.reduced = true;
+  it("does not move on its own", async () => {
+    vi.useFakeTimers();
+    try {
+      await mount();
+      const before = host.querySelector('[data-active="true"]')?.textContent;
+      await act(async () => { vi.advanceTimersByTime(60_000); });
+      expect(host.querySelector('[data-active="true"]')?.textContent).toBe(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("comes back to the book it was left on, not to the top", async () => {
+    // The reported bug: switching to another view and back reset the whole
+    // thing to the first book every time.
     await mount();
-    // The control reads "Play", i.e. nothing is moving and nothing will until
-    // someone asks (WCAG 2.2.2 / 2.3.3).
-    expect(button("Play the showcase")).toBeTruthy();
+    const rows = host.querySelectorAll<HTMLButtonElement>("[data-active]");
+    await act(async () => { rows[2].click(); });
+    expect(text()).toContain("The Order of Time");
+
+    await act(async () => { root.unmount(); });
+    root = createRoot(host);
+    await mount();
+    expect(host.querySelector('[data-active="true"]')?.textContent).toContain("The Order of Time");
   });
 
-  it("says where the year is", async () => {
+  it("falls back to the first book when the remembered one is gone", async () => {
+    localStorage.setItem("vault_showcase_book", "deleted-book-id");
+    await mount();
+    expect(host.querySelector('[data-active="true"]')?.textContent).toContain("The Master and His Emissary");
+  });
+
+  it("says where the year is and where you are in the library", async () => {
     await mount();
     expect(text()).toMatch(/winter|spring|summer|autumn/);
-    expect(text()).toMatch(/3 books/);
+    expect(text()).toMatch(/1 of 3/);
   });
 
   it("renders nothing at all for an empty library", async () => {
@@ -178,9 +198,9 @@ describe("LibraryShowcase, mounted", () => {
     expect(host.textContent).toBe("");
   });
 
-  it("does not offer a reel for a single book", async () => {
+  it("still works with a single book", async () => {
     await mount([BOOKS[0]]);
-    expect(text()).toContain("1 book");
+    expect(text()).toContain("1 of 1");
     // Still mounted and still controllable — just not self-advancing.
     expect(button("Next book")).toBeTruthy();
   });

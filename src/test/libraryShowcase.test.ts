@@ -23,8 +23,18 @@ import type { BookDocument } from "@/types/library";
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), "src", p), "utf8");
 
-const SHOWCASE = read("components/LibraryShowcase.tsx");
-const AMBIENCE = read("components/SeasonAmbience.tsx");
+/**
+ * Comments stripped. The assertions below forbid things like
+ * `requestAnimationFrame` and `getComputedStyle` appearing in these files, and
+ * both files explain at length why those were removed — so matching raw text
+ * would fail on the very prose that documents the fix. A claim about what the
+ * code does should be checked against the code.
+ */
+const stripComments = (src: string) =>
+  src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+const SHOWCASE = stripComments(read("components/LibraryShowcase.tsx"));
+const AMBIENCE = stripComments(read("components/SeasonAmbience.tsx"));
 const THEME_CTX = read("context/ThemeContext.tsx");
 const LIBRARY = read("components/Library.tsx");
 
@@ -122,56 +132,87 @@ describe("bookProfile", () => {
 
 describe("LibraryShowcase source", () => {
   it("was actually read", () => {
-    expect(SHOWCASE.length).toBeGreaterThan(4000);
+    expect(SHOWCASE.length).toBeGreaterThan(4000); // stripped of comments
   });
 
   it("never branches on which season it is", () => {
-    // The entire premise: season is a transform published as CSS variables,
-    // not four authored looks. Any equality test against a season name here
-    // means that premise has been abandoned.
+    // The premise: season is a transform published by the theme layer, not
+    // four authored looks. Any equality test against a season name here means
+    // that premise has been abandoned.
     expect(SHOWCASE).not.toMatch(/season\.season\s*===/);
     expect(SHOWCASE).not.toMatch(/case\s+"(winter|spring|summer|autumn)"/);
   });
 
-  it("carries a real pause control, not just prefers-reduced-motion", () => {
-    expect(SHOWCASE).toContain('aria-label={playing ? "Pause the showcase" : "Play the showcase"}');
-    expect(SHOWCASE).toContain("aria-pressed={playing}");
+  /**
+   * THE HANG. This view first shipped as a self-advancing reel: a 50ms
+   * interval re-rendered the whole rail twenty times a second while the
+   * backdrop ran an animation frame loop. That is what made the Vault take
+   * minutes to become usable. Nothing in this view may drive itself.
+   */
+  it("has no timer and no animation frame of any kind", () => {
+    expect(SHOWCASE).not.toMatch(/setInterval|setTimeout|requestAnimationFrame/);
+    expect(AMBIENCE).not.toMatch(/setInterval|requestAnimationFrame/);
   });
 
-  it("does not auto-advance under prefers-reduced-motion", () => {
-    expect(SHOWCASE).toContain("const [playing, setPlaying] = useState(() => !readReduced());");
-    expect(SHOWCASE).toContain("const advancing = playing && !reduced && !hovered && count > 1;");
+  it("never reads computed style, which is what actually locked the tab", () => {
+    // getComputedStyle forces the browser to flush style for the whole
+    // document. Eight per frame at 60fps, on a Vault holding hundreds of rows,
+    // is several hundred forced style recalculations a second. The scalars are
+    // handed over as numbers by seasonalTheme() instead.
+    expect(AMBIENCE).not.toContain("getComputedStyle");
+    expect(SHOWCASE).not.toContain("getComputedStyle");
   });
 
-  it("watches prefers-reduced-motion rather than reading it once at mount", () => {
-    expect(SHOWCASE).toContain('mq.addEventListener?.("change", onChange)');
-    expect(AMBIENCE).toContain('mq.addEventListener?.("change", onChange)');
+  it("remembers which book was open across a view switch", () => {
+    expect(SHOWCASE).toContain('const SELECTED_KEY = "vault_showcase_book"');
+    expect(SHOWCASE).toContain("localStorage.getItem(SELECTED_KEY)");
+    expect(SHOWCASE).toContain("localStorage.setItem(SELECTED_KEY, id)");
   });
 
-  it("pauses when a pointer or the keyboard is on it", () => {
-    expect(SHOWCASE).toContain("onMouseEnter={() => setHovered(true)}");
-    expect(SHOWCASE).toContain("onFocus={() => setHovered(true)}");
+  it("renders the rail a page at a time rather than the whole library", () => {
+    expect(SHOWCASE).toContain("const RAIL_PAGE = 50;");
+    expect(SHOWCASE).toContain("profiles.slice(0, shown)");
   });
 
-  it("stays quiet while driving itself and speaks when the reader drives", () => {
-    expect(SHOWCASE).toContain('aria-live={advancing ? "off" : "polite"}');
+  it("computes cover gradients on demand and caches them", () => {
+    // Each one runs a gamut-mapping bisection per stop; doing all of them up
+    // front is real work on a large library and pointless when the rail shows
+    // fifty rows.
+    expect(SHOWCASE).toContain("cache.get(seed)");
   });
 
-  it("binds the arrow keys and space", () => {
-    expect(SHOWCASE).toContain('e.key === "ArrowRight"');
-    expect(SHOWCASE).toContain('e.key === "ArrowLeft"');
-    expect(SHOWCASE).toContain('e.key === " "');
+  it("binds the arrow keys, Home and End", () => {
+    expect(SHOWCASE).toContain('e.key === "ArrowDown"');
+    expect(SHOWCASE).toContain('e.key === "ArrowUp"');
+    expect(SHOWCASE).toContain('e.key === "Home"');
+    expect(SHOWCASE).toContain('e.key === "End"');
+  });
+
+  it("scrolls the remembered row into view without yanking the page", () => {
+    expect(SHOWCASE).toContain('scrollIntoView({ block: "nearest" })');
+  });
+
+  it("lazily loads real cover images", () => {
+    expect(SHOWCASE).toContain('loading="lazy"');
+  });
+
+  it("makes no network call and generates nothing", () => {
+    // The user reasonably asked whether this view was spending model quota.
+    // It reads what is already in memory; there is nothing here to spend.
+    for (const forbidden of ["supabase", "fetch(", "enqueue", "generateBookSummary"]) {
+      expect(SHOWCASE).not.toContain(forbidden);
+    }
   });
 });
 
 describe("SeasonAmbience source", () => {
   it("was actually read", () => {
-    expect(AMBIENCE.length).toBeGreaterThan(3000);
+    expect(AMBIENCE.length).toBeGreaterThan(2000); // stripped of comments
   });
 
-  it("takes every colour and direction from the theme layer's variables", () => {
-    for (const v of ["--season-mote", "--season-glow", "--season-drift", "--season-light",
-                     "--season-tempo", "--season-elevation", "--season-aurora", "--season-polarity"]) {
+  it("takes every colour and every scalar from the theme layer, as numbers", () => {
+    expect(AMBIENCE).toContain("seasonalTheme(getTheme(themeId), season)");
+    for (const v of ["s.elevation", "s.aurora", "s.bloom", "s.onDark", "s.glow", "s.mote"]) {
       expect(AMBIENCE).toContain(v);
     }
     // No hex literals: a hard-coded colour would be one theme's colour.
@@ -179,31 +220,24 @@ describe("SeasonAmbience source", () => {
   });
 
   it("never branches on which season it is", () => {
-    // Same premise as the Showcase: the show is a function of the published
-    // variables, not four authored looks.
     expect(AMBIENCE).not.toMatch(/"(winter|spring|summer|autumn)"/);
   });
 
   it("composites the other way round on a light theme", () => {
     // Light added to paper white reads as nothing. If this ever collapses to a
-    // single composite mode, the show silently disappears on Fruit Stripe.
-    expect(AMBIENCE).toContain('ctx.globalCompositeOperation = onDark ? "lighter" : "source-over";');
-    expect(AMBIENCE).toContain('color: onDark ? glow : mote');
+    // single composite mode, the backdrop silently disappears on Fruit Stripe.
+    expect(AMBIENCE).toContain('ctx.globalCompositeOperation = s.onDark ? "lighter" : "source-over";');
+    expect(AMBIENCE).toContain("oklchToHex(s.onDark ? s.glow : s.mote)");
   });
 
   it("draws the gradient layers into a small buffer rather than at full size", () => {
     expect(AMBIENCE).toContain("FIELD_MAX_W");
-    expect(AMBIENCE).toContain("CURTAINS");
-    expect(AMBIENCE).toContain("bloom: Math.max(0, light)");
     expect(AMBIENCE).toContain("ctx.drawImage(off, 0, 0, w, h)");
   });
 
-  it("paints a still frame instead of running a loop when motion is off", () => {
-    expect(AMBIENCE).toContain("draw(0); // one still frame");
-  });
-
-  it("clamps the frame delta so a backgrounded tab does not jump on resume", () => {
-    expect(AMBIENCE).toContain("Math.min((t - lastRef.current) / 1000, 0.1)");
+  it("repaints only on the three things that change what it looks like", () => {
+    expect(AMBIENCE).toContain("}, [themeId, season, seasonal]);");
+    expect(AMBIENCE).toContain("new ResizeObserver(() => paint())");
   });
 });
 

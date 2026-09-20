@@ -247,3 +247,27 @@ describe("the light show's inputs", () => {
     expect(seasonalTheme(facility, YEAR[10]).vars["--season-polarity"]).toBe("1");
   });
 });
+
+describe("the canvas gets numbers, not a DOM read", () => {
+  it("hands the ambience every scalar it needs", () => {
+    const t = seasonalTheme(THEMES[0], YEAR[0]);
+    for (const k of ["elevation", "aurora", "bloom", "tempo"] as const) {
+      expect(Number.isFinite(t[k]), k).toBe(true);
+    }
+    expect(typeof t.onDark).toBe("boolean");
+  });
+
+  it("agrees exactly with the CSS variables it publishes alongside them", () => {
+    // Two sources for one number is how they drift apart. They are asserted
+    // equal here so a change to one that misses the other fails loudly.
+    for (const theme of THEMES) {
+      for (const s of [YEAR[10], YEAR[100], YEAR[200], YEAR[300]]) {
+        const t = seasonalTheme(theme, s);
+        expect(Number(t.vars["--season-elevation"])).toBeCloseTo(t.elevation, 2);
+        expect(Number(t.vars["--season-aurora"])).toBeCloseTo(t.aurora, 3);
+        expect(Number(t.vars["--season-tempo"])).toBeCloseTo(t.tempo, 3);
+        expect(t.vars["--season-polarity"]).toBe(t.onDark ? "1" : "0");
+      }
+    }
+  });
+});
