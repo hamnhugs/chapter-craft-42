@@ -25,7 +25,8 @@ import { isEmbeddingModel } from "@/lib/utils";
 import { describeModel } from "@/lib/providers/registry";
 import { useDictation } from "@/hooks/useDictation";
 import { requestSettingsSection } from "@/lib/settingsNav";
-import VoiceNotesPanel, { appendVoiceNote } from "@/components/VoiceNotesPanel";
+import VoiceNotesPanel, { appendVoiceNote, deleteVoiceNote } from "@/components/VoiceNotesPanel";
+import { classifyNotePress, NOTE_PRESS } from "@/lib/notePress";
 // Lazy: ResponseBlocks pulls recharts (~large) but only renders when a model emits chart blocks
 const ResponseBlocks = React.lazy(() => import("@/components/ResponseBlocks"));
 import GeneratedImage from "@/components/GeneratedImage";
@@ -602,22 +603,67 @@ const ChatPanel: React.FC = () => {
   }, []);
 
   // ----- Long-press a bubble to save it as a note (touch) -----
+  // Rules live in `classifyNotePress` (pure, unit-tested); this just gathers
+  // the sample. See src/lib/notePress.ts for why 500ms was the wrong number.
   const longPressTimer = useRef<number | null>(null);
   const longPressFiredRef = useRef(false);
-  const startLongPress = (text: string) => {
+  const pressRef = useRef({ x: 0, y: 0, movedPx: 0, maxPointers: 0, scrolled: false });
+
+  const hasSelection = () => !!window.getSelection()?.toString().trim();
+
+  const startLongPress = (text: string, e: React.TouchEvent) => {
     longPressFiredRef.current = false;
     if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
+    const t = e.touches[0];
+    pressRef.current = {
+      x: t?.clientX ?? 0,
+      y: t?.clientY ?? 0,
+      movedPx: 0,
+      maxPointers: e.touches.length,
+      scrolled: false,
+    };
     longPressTimer.current = window.setTimeout(async () => {
+      longPressTimer.current = null;
+      const p = pressRef.current;
+      // Re-checked at fire time, not at arm time: the finger has had the whole
+      // hold to drift, add a second touch, or start the transcript moving.
+      const verdict = classifyNotePress({
+        movedPx: p.movedPx,
+        maxPointers: p.maxPointers,
+        selecting: hasSelection(),
+        scrolled: p.scrolled,
+        heldMs: NOTE_PRESS.holdMs,
+      });
+      if (verdict !== "save") return;
       longPressFiredRef.current = true;
+      // Buzz on commit, so the hand knows it happened without looking.
+      try { (navigator as any).vibrate?.(30); } catch { /* no-op */ }
       const note = await appendVoiceNote(text);
-      if (note) {
-        try { (navigator as any).vibrate?.(30); } catch { /* no-op */ }
-        toast.success("Saved to notes");
-        setNotesPanelOpen(true);
-      }
-    }, 500);
+      if (!note) return;
+      // Deliberately does NOT open the notes panel any more. A save is a small
+      // thing; burying the transcript under a panel made every misfire cost a
+      // dismissal, and the toast already says where the note went.
+      toast.success("Saved to notes", {
+        duration: NOTE_PRESS.undoMs,
+        action: {
+          label: "Undo",
+          onClick: async () => {
+            const gone = await deleteVoiceNote(note.id);
+            toast[gone ? "success" : "error"](gone ? "Note removed" : "Could not remove that note");
+          },
+        },
+      });
+    }, NOTE_PRESS.holdMs);
+  };
+  const trackLongPress = (e: React.TouchEvent) => {
+    const p = pressRef.current;
+    p.maxPointers = Math.max(p.maxPointers, e.touches.length);
+    const t = e.touches[0];
+    if (t) p.movedPx = Math.max(p.movedPx, Math.hypot(t.clientX - p.x, t.clientY - p.y));
+    if (p.movedPx > NOTE_PRESS.slopPx || p.maxPointers > 1) cancelLongPress();
   };
   const cancelLongPress = () => {
+    pressRef.current.scrolled = true;
     if (longPressTimer.current) { window.clearTimeout(longPressTimer.current); longPressTimer.current = null; }
   };
   const saveBubbleToNotes = async (text: string) => {
@@ -1106,7 +1152,7 @@ const ChatPanel: React.FC = () => {
             <BookWorm ref={worm.ref} mood={worm.mood} voiceSource={worm.voiceSource} onPet={worm.onPet} size={64} className="w-[52px] sm:w-16 h-auto" />
           </div>
         )}
-        <div ref={messagesContainerRef} role="log" aria-label="Conversation with The Librarian" aria-live="off" onScroll={() => { if (Date.now() >= programmaticScrollUntilRef.current) lastTranscriptInteractionRef.current = Date.now(); }} onPointerDown={() => { lastTranscriptInteractionRef.current = Date.now(); }} onWheel={() => { lastTranscriptInteractionRef.current = Date.now(); }} onTouchMove={() => { lastTranscriptInteractionRef.current = Date.now(); }} className="h-full overflow-auto px-4 py-6 space-y-6 hide-scrollbar [overflow-anchor:none]">
+        <div ref={messagesContainerRef} role="log" aria-label="Conversation with The Librarian" aria-live="off" onScroll={() => { cancelLongPress(); if (Date.now() >= programmaticScrollUntilRef.current) lastTranscriptInteractionRef.current = Date.now(); }} onPointerDown={() => { lastTranscriptInteractionRef.current = Date.now(); }} onWheel={() => { lastTranscriptInteractionRef.current = Date.now(); }} onTouchMove={() => { lastTranscriptInteractionRef.current = Date.now(); }} className="h-full overflow-auto px-4 py-6 space-y-6 hide-scrollbar [overflow-anchor:none]">
 
         {messages.length > 0 && hasEarlier && (
           <div className="flex justify-center">
@@ -1255,13 +1301,13 @@ const ChatPanel: React.FC = () => {
             <div
               className={`relative group ${msg.role === "user" ? "message-bubble-user bg-primary-container text-on-primary-container" : "message-bubble-ai bg-surface-container-high text-foreground border-l-2 border-primary-container/20"} p-5 shadow-sm leading-relaxed select-text`}
               style={{ WebkitTouchCallout: "none" } as React.CSSProperties}
-              onTouchStart={() => startLongPress(msg.content)}
+              onTouchStart={(e) => startLongPress(msg.content, e)}
               // The fired flag must be CONSUMED here, not just read: media frames
               // stop touchstart propagation (so startLongPress never re-arms and
               // resets it), and a stale true would preventDefault — i.e. kill —
               // every later tap on their buttons.
               onTouchEnd={(e) => { if (longPressFiredRef.current) { e.preventDefault(); longPressFiredRef.current = false; } cancelLongPress(); }}
-              onTouchMove={cancelLongPress}
+              onTouchMove={trackLongPress}
               onTouchCancel={cancelLongPress}
               onContextMenu={(e) => { if (longPressFiredRef.current) e.preventDefault(); }}
             >
