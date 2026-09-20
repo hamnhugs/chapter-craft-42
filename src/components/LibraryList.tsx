@@ -19,6 +19,47 @@ const relativeDate = (ts: number): string => {
   return new Date(ts).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 };
 
+/**
+ * Column header.
+ *
+ * Declared at module scope, not inside `LibraryList`. A component defined in a
+ * render body is a brand-new type on every render, so React unmounted and
+ * remounted every header on each sort click — which threw away keyboard focus
+ * the moment you used one.
+ */
+const Header: React.FC<{
+  label: string;
+  sortKey?: "date" | "name";
+  sortBy: "date" | "name";
+  onSortBy: (s: "date" | "name") => void;
+  className?: string;
+}> = ({ label, sortKey, sortBy, onSortBy, className = "" }) => {
+  const active = !!sortKey && sortBy === sortKey;
+  return (
+    <div
+      className={`text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant ${className}`}
+      /* Name sorts A to Z and date sorts newest first, so "descending" was
+         simply wrong for one of the two columns. */
+      aria-sort={active ? (sortKey === "name" ? "ascending" : "descending") : undefined}
+    >
+      {sortKey ? (
+        <button
+          onClick={() => onSortBy(sortKey)}
+          aria-label={`Sort by ${label}`}
+          className={`flex items-center gap-0.5 hover:text-primary transition-colors ${active ? "text-primary" : ""}`}
+        >
+          {label}
+          {active && (
+            <span className="material-symbols-outlined text-sm" aria-hidden>arrow_drop_down</span>
+          )}
+        </button>
+      ) : (
+        label
+      )}
+    </div>
+  );
+};
+
 const LibraryList: React.FC<{
   books: BookDocument[];
   sortBy: "date" | "name";
@@ -31,35 +72,6 @@ const LibraryList: React.FC<{
   softDelete?: boolean;
   highlight: (text: string) => React.ReactNode;
 }> = ({ books, sortBy, onSortBy, onOpenBook, onRemove, softDelete = false, highlight }) => {
-  const Header: React.FC<{
-    label: string;
-    sortKey?: "date" | "name";
-    className?: string;
-  }> = ({ label, sortKey, className = "" }) => {
-    const active = sortKey && sortBy === sortKey;
-    return (
-      <div
-        className={`text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant ${className}`}
-        aria-sort={active ? "descending" : undefined}
-        role={sortKey ? "columnheader" : undefined}
-      >
-        {sortKey ? (
-          <button
-            onClick={() => onSortBy(sortKey)}
-            className={`flex items-center gap-0.5 hover:text-primary transition-colors ${active ? "text-primary" : ""}`}
-          >
-            {label}
-            {active && (
-              <span className="material-symbols-outlined text-sm" aria-hidden>arrow_drop_down</span>
-            )}
-          </button>
-        ) : (
-          label
-        )}
-      </div>
-    );
-  };
-
   return (
     <div className="rounded-2xl border border-outline-variant/10 bg-surface-container-low overflow-hidden">
       {/* Header row (hidden on mobile where rows become 2-line cards).
@@ -67,12 +79,12 @@ const LibraryList: React.FC<{
           (lg) and Chapters (md) cells, so columns always line up. */}
       <div className="hidden sm:grid grid-cols-[3rem_minmax(8rem,2fr)_minmax(5rem,1fr)_4rem_6rem_2.5rem] md:grid-cols-[3rem_minmax(8rem,2fr)_minmax(5rem,1fr)_4rem_4rem_6rem_2.5rem] lg:grid-cols-[3rem_minmax(8rem,2fr)_minmax(5rem,1fr)_minmax(6rem,1.4fr)_4rem_4rem_6rem_2.5rem] items-center gap-3 px-4 py-2.5 border-b border-outline-variant/10 bg-surface-container-high/50">
         <span aria-hidden />
-        <Header label="Title" sortKey="name" />
-        <Header label="Category" />
-        <Header label="Tags" className="hidden lg:block" />
-        <Header label="Pages" className="text-right" />
-        <Header label="Chapters" className="text-right hidden md:block" />
-        <Header label="Added" sortKey="date" className="text-right" />
+        <Header label="Title" sortKey="name" sortBy={sortBy} onSortBy={onSortBy} />
+        <Header label="Category" sortBy={sortBy} onSortBy={onSortBy} />
+        <Header label="Tags" sortBy={sortBy} onSortBy={onSortBy} className="hidden lg:block" />
+        <Header label="Pages" sortBy={sortBy} onSortBy={onSortBy} className="text-right" />
+        <Header label="Chapters" sortBy={sortBy} onSortBy={onSortBy} className="text-right hidden md:block" />
+        <Header label="Added" sortKey="date" sortBy={sortBy} onSortBy={onSortBy} className="text-right" />
         <span aria-hidden />
       </div>
 
@@ -82,16 +94,14 @@ const LibraryList: React.FC<{
           const isPdf = book.fileName.toLowerCase().endsWith(".pdf");
           return (
             <li key={book.id}>
+              {/* Not role="button" any more. The row contained the delete
+                  button, and interactive-inside-interactive is invalid ARIA:
+                  a screen reader announced the cover, title, summary,
+                  category, tags, counts and date as a single button name.
+                  The row stays clickable for the mouse, and the title below
+                  is the real, focusable control. */}
               <div
-                role="button"
-                tabIndex={0}
                 onClick={() => onOpenBook(book.id)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    onOpenBook(book.id);
-                  }
-                }}
                 className="grid grid-cols-[3rem_minmax(0,1fr)_2.5rem] sm:grid-cols-[3rem_minmax(8rem,2fr)_minmax(5rem,1fr)_4rem_6rem_2.5rem] md:grid-cols-[3rem_minmax(8rem,2fr)_minmax(5rem,1fr)_4rem_4rem_6rem_2.5rem] lg:grid-cols-[3rem_minmax(8rem,2fr)_minmax(5rem,1fr)_minmax(6rem,1.4fr)_4rem_4rem_6rem_2.5rem] items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-surface-container-high/60 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
               >
                 {/* Cover thumb */}
@@ -107,9 +117,12 @@ const LibraryList: React.FC<{
 
                 {/* Title (+ mobile meta line) */}
                 <div className="min-w-0">
-                  <p className="font-headline font-bold text-sm text-foreground truncate">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onOpenBook(book.id); }}
+                    className="block max-w-full text-left font-headline font-bold text-sm text-foreground truncate rounded outline-none focus-visible:ring-2 focus-visible:ring-primary/40 hover:text-primary transition-colors"
+                  >
                     {highlight(book.title)}
-                  </p>
+                  </button>
                   <YoutubeTranscriptBadge book={book} className="mt-0.5" />
                   {/* The summary, where one exists — the list view is where
                       a reader scans to choose, and a title alone is the least

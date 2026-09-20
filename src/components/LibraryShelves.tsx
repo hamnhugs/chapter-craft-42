@@ -40,12 +40,22 @@ import { toast } from "sonner";
  *  lied about how many there are. */
 const GRID_PAGE_SIZE = 60;
 
-/** A grid's visible slice plus its "show more" affordance. Resets whenever
- *  the underlying list changes identity — a new search or facet selection
- *  starts from the top, which is where the user is looking. */
-function usePagedBooks(items: BookDocument[]) {
+/**
+ * A grid's visible slice plus its "show more" affordance.
+ *
+ * Resets to the first page when the user narrows the list — a new search or
+ * facet selection starts from the top, which is where they are looking.
+ *
+ * It used to reset on `items` identity, which is a different thing and a bug:
+ * `items` is a fresh array whenever `books` changes, so a background catalog
+ * job finishing, a gist landing, or one chapter's text being cached threw the
+ * reader back to the first 60 books after they had pressed Show more five
+ * times. The reset now keys on the filter inputs, which is what it always
+ * meant.
+ */
+function usePagedBooks(items: BookDocument[], resetKey: string) {
   const [shown, setShown] = useState(GRID_PAGE_SIZE);
-  useEffect(() => { setShown(GRID_PAGE_SIZE); }, [items]);
+  useEffect(() => { setShown(GRID_PAGE_SIZE); }, [resetKey]);
   return {
     page: shown >= items.length ? items : items.slice(0, shown),
     remaining: Math.max(0, items.length - shown),
@@ -289,8 +299,13 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
 
   // Both grids are paged. Hooks run unconditionally, before the drill-in's
   // early return.
-  const allBooksPage = usePagedBooks(visibleBooks);
-  const shelfPage = usePagedBooks(booksOnShelf);
+  //
+  // The reset key is everything the user can change that should send them back
+  // to the top: the search (via `filtered`), the facets, and which shelf is
+  // open. Notably NOT the book list itself — see usePagedBooks.
+  const pageResetKey = `${filtered}|${activeCategory ?? ""}|${activeTags.join(",")}|${openShelfId ?? ""}`;
+  const allBooksPage = usePagedBooks(visibleBooks, pageResetKey);
+  const shelfPage = usePagedBooks(booksOnShelf, pageResetKey);
 
   const handleCreate = async () => {
     const name = newName.trim();
@@ -394,9 +409,11 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
     </div>
   );
 
-  if (shelvesLoading) {
-    return <div className="py-16 text-center text-on-surface-variant text-sm">Loading shelves…</div>;
-  }
+  // Deliberately NOT gated on shelvesLoading. The books have already loaded by
+  // the time this renders; blanking the entire view — including the All books
+  // section, which needs no shelves at all — until an unrelated roster fetch
+  // returns is most of why the Vault felt slow to open. The shelf strip below
+  // shows its own placeholder while the roster is still coming.
 
   // Open-shelf drill-in view.
   if (openShelfId) {
@@ -599,7 +616,12 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
                   deleting a shelf, and `hover` never fires there — so
                   `.cc-hover-reveal` un-hides them and `.cc-tap-32` gives each
                   one a real target. Desktop hover behaviour is unchanged. */}
-              <div className="cc-hover-reveal absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+              {/* focus-within matters as much as hover: these are tab-focusable
+                  buttons, so without it a keyboard user moves focus onto a
+                  control that is fully transparent and cannot see where they
+                  are (WCAG 2.4.7). The book card's shelf trigger already had
+                  this; the shelf card was missed. */}
+              <div className="cc-hover-reveal absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity z-20">
                 <button
                   onClick={(e) => { e.stopPropagation(); chatWithShelf(f); }}
                   title={`Chat with "${f.name}" — load its books as chat context`}

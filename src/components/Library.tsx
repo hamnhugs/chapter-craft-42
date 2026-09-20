@@ -1,4 +1,4 @@
-import React, { useRef, useState, useMemo, useEffect, lazy, Suspense } from "react";
+import React, { useRef, useState, useMemo, useEffect, useCallback, lazy, Suspense } from "react";
 import { useApp, TRASH_RETENTION_DAYS } from "@/context/AppContext";
 import { BookDocument } from "@/types/library";
 import { pdfjs } from "react-pdf";
@@ -27,6 +27,7 @@ import { seekLibrary, SEEK_FETCH_CAP, type SeekOutcome } from "@/lib/librarySeek
 
 import LibraryList from "@/components/LibraryList";
 import LibraryShowcase from "@/components/LibraryShowcase";
+import { seedOf } from "@/lib/bookProfile";
 
 // The 3D mind map pulls in three.js (~300KB gzip); lazy-load so that chunk is
 // only fetched when the user actually toggles the graph view on.
@@ -98,11 +99,25 @@ const SUPPORTED_UPLOAD_EXTENSIONS = ["pdf", "doc", "docx", "txt", "rtf", "odt", 
 const MAX_UPLOAD_ATTEMPTS = 3;
 const MAX_CONCURRENT_UPLOADS = 3;
 
-/** Cards past this index all share the last delay (see BookCard). */
-const STAGGER_MAX_STEPS = 12;
 
 type ViewMode = "shelves" | "list" | "showcase" | "graph";
 const VIEW_KEY = "vault_view_mode";
+/**
+ * Everything below is state the Vault used to throw away.
+ *
+ * `Index.tsx` unmounts `Library` on every tab switch, and opening a book is a
+ * tab switch — so searching, finding a book, reading it and coming back meant
+ * retyping the query, re-picking the sort, re-opening the shelf and scrolling
+ * four hundred books again. View mode was already persisted; the controls
+ * sitting next to it were not, which is the inconsistency users actually feel.
+ *
+ * The query goes in sessionStorage rather than localStorage: coming back to a
+ * filtered library minutes later is helpful, coming back to one next week is
+ * baffling.
+ */
+const SORT_KEY = "vault_sort_by";
+const QUERY_KEY = "vault_query";
+const SCROLL_KEY = "vault_scroll";
 /** Dismissal for the resurfaced line, stamped with the day it was dismissed. */
 const RESURFACE_DISMISS_KEY = "vault_resurface_dismissed_day";
 /** Below this, a "from your library" line is just showing you what you can
@@ -119,7 +134,7 @@ const VIEW_OPTIONS: { id: ViewMode; icon: string; label: string }[] = [
 
 const Library: React.FC = () => {
   const { books, addBook, removeBook, trashAvailable, trashedBooks, trashLoading, refreshTrash, restoreBook, purgeBook, emptyTrash, requestBookLoad, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile, applyChapterGists, applyBookSummary, loadChapterText,
-    shelves, toggleBookShelf } = useApp();
+    shelves, toggleBookShelf, booksLoading, booksError, retryLoadBooks } = useApp();
   const { apiKey, imageExtractionModel, selectedModel, geminiApiKey, nvidiaKeyLast4, autoCatalogOnUpload } = useChatSettings();
   const { user } = useAuth();
   const { isPaid, loaded: planLoaded } = usePlan();
@@ -133,12 +148,40 @@ const Library: React.FC = () => {
   const booksRef = useRef(books);
   useEffect(() => { booksRef.current = books; }, [books]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  /**
+   * Scroll restoration.
+   *
+   * Written on scroll (throttled by rAF so it costs nothing) and replayed once
+   * the first page of books is on screen. Without it, opening a book from four
+   * hundred rows down and pressing back returns you to the top of the library
+   * — the single most-repeated loss in the Vault, because it happens on every
+   * book you read.
+   */
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollTickRef = useRef(0);
+  const scrollRestoredRef = useRef(false);
+  const rememberScroll = useCallback(() => {
+    if (scrollTickRef.current) return;
+    scrollTickRef.current = requestAnimationFrame(() => {
+      scrollTickRef.current = 0;
+      const top = scrollRef.current?.scrollTop ?? 0;
+      try {
+        if (top > 0) sessionStorage.setItem(SCROLL_KEY, String(top));
+        else sessionStorage.removeItem(SCROLL_KEY);
+      } catch { /* private mode */ }
+    });
+  }, []);
+  useEffect(() => () => { if (scrollTickRef.current) cancelAnimationFrame(scrollTickRef.current); }, []);
   const searchRef = useRef<HTMLInputElement>(null);
-  const [sortBy, setSortBy] = useState<"date" | "name">("date");
+  const [sortBy, setSortBy] = useState<"date" | "name">(() => {
+    try { return localStorage.getItem(SORT_KEY) === "name" ? "name" : "date"; } catch { return "date"; }
+  });
   const [uploadStates, setUploadStates] = useState<UploadState[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [currentBatchIds, setCurrentBatchIds] = useState<string[]>([]);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(() => {
+    try { return sessionStorage.getItem(QUERY_KEY) ?? ""; } catch { return ""; }
+  });
   // Last-used view persists across sessions (Finder/Drive convention).
   // Values from retired views (grid/folders/collections) fall back to
   // Shelves, which absorbed all three.
@@ -146,6 +189,25 @@ const Library: React.FC = () => {
     const v = localStorage.getItem(VIEW_KEY);
     return v === "list" || v === "graph" || v === "showcase" ? v : "shelves";
   });
+  useEffect(() => {
+    try { localStorage.setItem(SORT_KEY, sortBy); } catch { /* private mode */ }
+  }, [sortBy]);
+  useEffect(() => {
+    try {
+      if (query) sessionStorage.setItem(QUERY_KEY, query); else sessionStorage.removeItem(QUERY_KEY);
+    } catch { /* private mode */ }
+  }, [query]);
+
+  useEffect(() => {
+    if (scrollRestoredRef.current || books.length === 0 || !scrollRef.current) return;
+    scrollRestoredRef.current = true;
+    let top = 0;
+    try { top = Number(sessionStorage.getItem(SCROLL_KEY)) || 0; } catch { /* private mode */ }
+    // Next frame: the grid has to have laid out before it can be scrolled.
+    if (top > 0) requestAnimationFrame(() => scrollRef.current?.scrollTo({ top }));
+  }, [books.length]);
+
+
   const [tagProgress, setTagProgress] = useState<{ done: number; total: number } | null>(null);
   // "Where did I read that?" — the exact-text seek across every book.
   const [seek, setSeek] = useState<SeekOutcome | null>(null);
@@ -332,6 +394,24 @@ const Library: React.FC = () => {
   }, [sortedBooks, query, haystacks]);
 
   const queryTokens = useMemo(() => tokenize(query), [query]);
+
+  /**
+   * Why a book matched, precomputed for the filtered set.
+   *
+   * This used to be called inline in the render prop — `chapterMatch(book,
+   * queryTokens)` once per card, on every render. `chapterMatch` normalizes
+   * (lowercase + NFD + a diacritic regex) every chapter of every book that did
+   * not match on its spine, so sixty cards of a thirty-chapter book was
+   * roughly eighteen hundred Unicode normalizations per keystroke, thrown away
+   * and redone on the next one. The haystack map above was memoized for
+   * exactly this reason; this was simply left out of it.
+   */
+  const matchByBook = useMemo(() => {
+    const map = new Map<string, { name: string; gist?: string | null } | null>();
+    if (queryTokens.length === 0) return map;
+    for (const b of filteredBooks) map.set(b.id, chapterMatch(b, queryTokens));
+    return map;
+  }, [filteredBooks, queryTokens]);
 
   /**
    * One line from something you already own.
@@ -738,6 +818,29 @@ const Library: React.FC = () => {
     });
   };
 
+  /**
+   * One set of card handlers, stable for the lifetime of the Vault.
+   *
+   * The card is memoized, and a memo is only worth anything if its props hold
+   * still. Passing `onDetect={() => runDetect(book)}` and four more like it
+   * built five new function identities per card per render, so every card
+   * re-rendered on every parent render regardless — a catalog job ticking, an
+   * upload progressing, a tag run counting up.
+   *
+   * The latest-ref indirection is what lets these be created once: the
+   * handlers below close over nothing, and read the current implementations
+   * at call time instead.
+   */
+  const latestHandlers = useRef({ runDetect, runExtractFigures, requestBookLoad, handleRemove, updateBookTitle });
+  latestHandlers.current = { runDetect, runExtractFigures, requestBookLoad, handleRemove, updateBookTitle };
+  const cardHandlers = useMemo(() => ({
+    onDetect: (b: BookDocument) => latestHandlers.current.runDetect(b),
+    onExtractFigures: (b: BookDocument) => latestHandlers.current.runExtractFigures(b),
+    onRead: (b: BookDocument) => latestHandlers.current.requestBookLoad(b.id),
+    onRemove: (b: BookDocument) => { void latestHandlers.current.handleRemove(b); },
+    onRename: (b: BookDocument, title: string) => latestHandlers.current.updateBookTitle(b.id, title),
+  }), []);
+
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const dt = e.dataTransfer;
@@ -759,7 +862,7 @@ const Library: React.FC = () => {
   };
 
   return (
-    <div className="h-full flex flex-col animate-fade-in overflow-auto">
+    <div ref={scrollRef} onScroll={rememberScroll} className="h-full flex flex-col overflow-auto">
       <main className="cc-vault-main max-w-7xl mx-auto px-6 py-12 flex flex-col gap-12 w-full">
         {/* Header Section */}
         <section className="flex flex-col md:flex-row md:items-end justify-between gap-6">
@@ -1143,7 +1246,37 @@ const Library: React.FC = () => {
         />
 
         {/* Shelves / list / 3D mind map (search filters all views the same way) */}
-        {books.length === 0 ? (
+        {booksError ? (
+          /* A failed read used to be indistinguishable from an empty library:
+             the only trace was a console.error, and the upsell stayed up
+             forever. Say what happened and offer the retry. */
+          <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant">
+            <span className="material-symbols-outlined text-6xl mb-4 opacity-25">cloud_off</span>
+            <p className="text-lg font-headline text-foreground">Couldn’t load your library</p>
+            <p className="text-sm mt-1 max-w-sm text-center">{booksError}</p>
+            <button
+              onClick={retryLoadBooks}
+              className="mt-4 px-5 py-2 bg-primary/10 text-primary font-bold rounded-lg hover:bg-primary hover:text-on-primary-container transition-all active:scale-95"
+            >
+              Try again
+            </button>
+          </div>
+        ) : booksLoading && books.length === 0 ? (
+          /* Skeletons, not a spinner and definitely not the empty state: the
+             shapes are the shapes the books will land in, so nothing moves
+             when they do. */
+          <div className="book-grid" aria-busy="true" aria-label="Loading your library">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="bg-surface-container-high rounded-2xl overflow-hidden">
+                <div className="aspect-[3/2] bg-surface-container-highest motion-safe:animate-pulse" />
+                <div className="p-6 space-y-2">
+                  <div className="h-5 w-3/4 rounded bg-surface-container-highest motion-safe:animate-pulse" />
+                  <div className="h-3 w-1/2 rounded bg-surface-container-highest motion-safe:animate-pulse" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : books.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant">
             <span className="material-symbols-outlined text-6xl mb-4 opacity-25">library_books</span>
             <p className="text-lg font-headline">Your library is empty</p>
@@ -1200,22 +1333,17 @@ const Library: React.FC = () => {
             books={filteredBooks}
             allBooks={sortedBooks}
             filtered={query.trim().length > 0}
-            renderBook={(book, i) => (
+            renderBook={(book) => (
               <BookCard
                 key={book.id}
                 book={book}
-                index={i}
                 query={query}
                 job={jobs[book.id]}
                 figJob={figJobs[book.id]}
                 catJob={catJobs[book.id]}
-                match={chapterMatch(book, queryTokens)}
-                onDetect={() => runDetect(book)}
-                onExtractFigures={() => runExtractFigures(book)}
-                onRead={() => requestBookLoad(book.id)}
+                match={matchByBook.get(book.id) ?? null}
                 softDelete={softDelete}
-                onRemove={() => void handleRemove(book)}
-                onRename={(newTitle) => updateBookTitle(book.id, newTitle)}
+                {...cardHandlers}
               />
             )}
           />
@@ -1337,23 +1465,26 @@ const Library: React.FC = () => {
   );
 };
 
-const BookCard: React.FC<{
+const BookCardImpl: React.FC<{
   book: BookDocument;
-  index: number;
   query?: string;
   job?: StructureJob;
   figJob?: FigureJob;
   catJob?: CatalogJob;
   /** The chapter that answered the search, when the title did not. */
   match?: { name: string; gist?: string | null } | null;
-  onDetect: () => void;
-  onExtractFigures: () => void;
-  onRead: () => void;
-  onRemove: () => void;
+  /* These take the book rather than closing over it. Closures would be new
+     on every render of Library, which silently defeats React.memo below —
+     the memo would compare five fresh function identities and re-render
+     every card anyway. */
+  onDetect: (book: BookDocument) => void;
+  onExtractFigures: (book: BookDocument) => void;
+  onRead: (book: BookDocument) => void;
+  onRemove: (book: BookDocument) => void;
   /** True while books go to the Trash rather than being destroyed. */
   softDelete?: boolean;
-  onRename: (newTitle: string) => void;
-}> = ({ book, index, query = "", job, figJob, catJob, match, onDetect, onExtractFigures, onRead, onRemove, onRename, softDelete = false }) => {
+  onRename: (book: BookDocument, newTitle: string) => void;
+}> = ({ book, query = "", job, figJob, catJob, match, onDetect, onExtractFigures, onRead, onRemove, onRename, softDelete = false }) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(book.title);
   const renameFromMenu = useRef(false);
@@ -1369,7 +1500,7 @@ const BookCard: React.FC<{
   const onTitleClick = (e: React.MouseEvent) => {
     const pointerType = (e.nativeEvent as Partial<PointerEvent>).pointerType;
     const touch = pointerType ? pointerType === "touch" || pointerType === "pen" : isTouchPrimary();
-    if (touch) onRead();
+    if (touch) onRead(book);
     else startRename();
   };
   const isPdf = book.fileName.toLowerCase().endsWith(".pdf");
@@ -1404,19 +1535,23 @@ const BookCard: React.FC<{
       : "Extract figures (signs, diagrams, charts) into your Images, tagged with their chapter — and paired with this book's neurons where they exist";
   const removeLabel = softDelete ? `Move “${book.title}” to the Trash` : `Delete “${book.title}”`;
 
-  // Warm gradient hues
+  // Warm gradient hues, chosen by the book's id rather than its position.
+  // Keying on the array index meant a book was olive in one sort order and
+  // amber in another, and every card restained when a search narrowed the
+  // list. A cover should be the book's face, not its seat number.
   const hues = [35, 25, 40, 15, 45, 20];
-  const hue = hues[index % hues.length];
+  const hue = hues[seedOf(book.id) % hues.length];
 
   return (
     <div
       data-book-card
-      className="group bg-surface-container-high rounded-2xl overflow-hidden flex flex-col transition-all hover:-translate-y-1 hover:shadow-2xl hover:shadow-black/40 animate-slide-up"
-      /* The stagger is a flourish for the first screenful, not a schedule for
-         the whole library: `index * 60` meant the 100th card appeared six
-         seconds after the first, and the 300th eighteen. Clamp it so the
-         effect survives and the wait does not. */
-      style={{ animationDelay: `${Math.min(index, STAGGER_MAX_STEPS) * 60}ms` }}
+      /* No entry animation. It was `animate-slide-up` with a per-card
+         animationDelay and no animation-fill-mode: backwards, so during the
+         delay each card sat fully visible, then snapped to opacity 0 and faded
+         back in — every card flashed, on every search keystroke. It was also
+         not covered by the reduced-motion block. Removing it fixes the flash,
+         the stagger cost, and a standing request for less motion at once. */
+      className="group bg-surface-container-high rounded-2xl overflow-hidden flex flex-col transition-all hover:-translate-y-1 hover:shadow-2xl hover:shadow-black/40"
     >
       {/* Cover */}
       <div
@@ -1448,11 +1583,11 @@ const BookCard: React.FC<{
             onChange={(e) => setDraft(e.target.value)}
             autoFocus
             onKeyDown={(e) => {
-              if (e.key === "Enter" && draft.trim()) { onRename(draft.trim()); setEditing(false); }
+              if (e.key === "Enter" && draft.trim()) { onRename(book, draft.trim()); setEditing(false); }
               if (e.key === "Escape") { setDraft(book.title); setEditing(false); }
             }}
             onBlur={() => {
-              if (draft.trim() && draft.trim() !== book.title) onRename(draft.trim());
+              if (draft.trim() && draft.trim() !== book.title) onRename(book, draft.trim());
               setEditing(false);
             }}
           />
@@ -1588,7 +1723,7 @@ const BookCard: React.FC<{
             drop the dropdown's open state mid-interaction. */}
         <div className="cc-book-actions flex items-center gap-3">
           <button
-            onClick={onRead}
+            onClick={() => onRead(book)}
             className="cc-book-open flex-1 min-w-0 py-3 bg-primary/10 text-primary font-bold rounded-lg hover:bg-primary hover:text-on-primary-container transition-all active:scale-95"
           >
             Open
@@ -1596,7 +1731,7 @@ const BookCard: React.FC<{
           {isPdf && (
             <button
               data-cc-wide
-              onClick={(e) => { e.stopPropagation(); onDetect(); }}
+              onClick={(e) => { e.stopPropagation(); onDetect(book); }}
               disabled={detecting}
               title={detectLabel}
               aria-label={detectLabel}
@@ -1610,7 +1745,7 @@ const BookCard: React.FC<{
           {isPdf && (
             <button
               data-cc-wide
-              onClick={(e) => { e.stopPropagation(); onExtractFigures(); }}
+              onClick={(e) => { e.stopPropagation(); onExtractFigures(book); }}
               disabled={extracting}
               title={extractLabel}
               aria-label={extractLabel}
@@ -1623,7 +1758,7 @@ const BookCard: React.FC<{
           )}
           <button
             data-cc-wide
-            onClick={(e) => { e.stopPropagation(); onRemove(); }}
+            onClick={(e) => { e.stopPropagation(); onRemove(book); }}
             title={removeLabel}
             aria-label={removeLabel}
             className="p-3 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-error-container/20 hover:text-destructive transition-all"
@@ -1666,7 +1801,7 @@ const BookCard: React.FC<{
                 <span className="truncate">Rename</span>
               </DropdownMenuItem>
               {isPdf && (
-                <DropdownMenuItem disabled={detecting} aria-label={detectLabel} onSelect={() => onDetect()}>
+                <DropdownMenuItem disabled={detecting} aria-label={detectLabel} onSelect={() => onDetect(book)}>
                   <span className={`material-symbols-outlined text-base mr-2 shrink-0 ${detecting ? "animate-spin" : ""}`} aria-hidden>
                     {detecting ? "progress_activity" : "auto_awesome"}
                   </span>
@@ -1674,7 +1809,7 @@ const BookCard: React.FC<{
                 </DropdownMenuItem>
               )}
               {isPdf && (
-                <DropdownMenuItem disabled={extracting} aria-label={extractLabel} onSelect={() => onExtractFigures()}>
+                <DropdownMenuItem disabled={extracting} aria-label={extractLabel} onSelect={() => onExtractFigures(book)}>
                   <span className={`material-symbols-outlined text-base mr-2 shrink-0 ${extracting ? "animate-spin" : ""}`} aria-hidden>
                     {extracting ? "progress_activity" : "image_search"}
                   </span>
@@ -1684,7 +1819,7 @@ const BookCard: React.FC<{
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
                 aria-label={removeLabel}
-                onSelect={() => onRemove()}
+                onSelect={() => onRemove(book)}
               >
                 <span className="material-symbols-outlined text-base mr-2 shrink-0" aria-hidden>delete</span>
                 <span className="truncate">{softDelete ? "Move to Trash" : "Delete"}</span>
@@ -1696,5 +1831,17 @@ const BookCard: React.FC<{
     </div>
   );
 };
+
+/**
+ * Memoized, because the Vault renders up to sixty of these at once and each
+ * one mounts two Radix dropdown roots. Every keystroke in the search box
+ * re-renders `Library`, and without this that re-rendered every card on
+ * screen — about a hundred and twenty menu roots — to change nothing.
+ *
+ * The props are all primitives, stable objects from context, or callbacks; the
+ * one that used to defeat this was `match`, which was a fresh object from
+ * `chapterMatch` on every render. It comes from a memoized map now.
+ */
+const BookCard = React.memo(BookCardImpl);
 
 export default Library;
