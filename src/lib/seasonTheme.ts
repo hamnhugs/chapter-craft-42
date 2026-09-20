@@ -214,3 +214,38 @@ export function coverGradient(seed: number, glow: Oklch, backgroundL: number): [
   const b = clampToSrgb({ l: clamp(backgroundL + toward * 0.02, 0.03, 0.92), c: c * 0.7, h: (h + 18) % 360 });
   return [oklchToHex(a), oklchToHex(b)];
 }
+
+/** The tones a generated cover (src/lib/coverArt.ts) is printed in. */
+export interface CoverTones {
+  ground: string;
+  figure: string;
+  accent: string;
+  /** For the title set on the ground. */
+  ink: string;
+}
+
+/**
+ * Four tones of one hue for a generated cover, from the same fan as
+ * coverGradient so a book keeps its colour whichever placeholder draws it.
+ *
+ * They are a LADDER away from the canvas: the ground sits just off it, the
+ * figure a step further, the accent further again and the ink furthest — on a
+ * dark theme that climbs toward white, on paper it descends toward black.
+ * Building them as offsets from the background rather than as fixed
+ * lightnesses is what lets one function serve Fruit Stripe and Desolate Lab:
+ * a cover is always a quiet object on its own page, never a lit rectangle.
+ */
+export function coverTones(seed: number, glow: Oklch, backgroundL: number): CoverTones {
+  const spread = (((seed * 0.6180339887) % 1) - 0.5) * 96;
+  const h = ((glow.h + spread) % 360 + 360) % 360;
+  const toward = backgroundL > 0.5 ? -1 : 1;
+  const c = Math.min(Math.max(glow.c, 0.05), 0.12);
+  const step = (dl: number, chroma: number, dh = 0) =>
+    oklchToHex(clampToSrgb({ l: clamp(backgroundL + toward * dl, 0.06, 0.96), c: chroma, h: (h + dh + 360) % 360 }));
+  return {
+    ground: step(0.11, c * 0.55),
+    figure: step(0.25, c * 0.85),
+    accent: step(0.5, c * 1.15, 24),
+    ink: step(0.74, c * 0.18),
+  };
+}

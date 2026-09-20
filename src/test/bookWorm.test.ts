@@ -1136,7 +1136,7 @@ describe("the caption under the worm", () => {
   });
 
   it("is set big enough to actually read at arm's length", () => {
-    expect(POCKET).toContain("text-[16px] leading-relaxed");
+    expect(POCKET).toContain("text-[17px] leading-relaxed");
     expect(POCKET).toContain("max-w-[46ch]");
   });
 
@@ -1185,7 +1185,7 @@ describe("the caption under the worm", () => {
   });
 
   it("is aria-hidden, because the live region behind it already announces this", () => {
-    const bubble = POCKET.slice(POCKET.indexOf("{caption && ("), POCKET.indexOf("material-symbols-outlined"));
+    const bubble = POCKET.slice(POCKET.indexOf("{caption && ("), POCKET.indexOf("{reading && more && ("));
     expect(bubble).toContain('aria-hidden="true"');
   });
 
@@ -1194,9 +1194,47 @@ describe("the caption under the worm", () => {
     // one thing this screen exists not to have.
     expect(POCKET).not.toContain("message-bubble-ai");
     expect(POCKET).not.toContain("message-bubble-user");
-    // ...but keeps the asymmetric corner, so it still reads as a chat bubble.
-    expect(POCKET).toContain('borderRadius: "1.5rem 1.5rem 1.5rem 0.25rem"');
-    expect(POCKET).toContain('borderRadius: "1.5rem 1.5rem 0.25rem 1.5rem"');
+  });
+
+  it("sets the text on the black itself, with no box round it", () => {
+    // The bubble was a second, slightly-less-black rectangle: a few hundred
+    // thousand lit pixels to draw a container round text that needed none, on
+    // a screen whose job is to be off. No background, no radius, no stripe.
+    const block = POCKET.slice(POCKET.indexOf("const VOICE"), POCKET.indexOf("const FADE"));
+    expect(block).not.toContain("background");
+    expect(block).not.toContain("borderRadius");
+    expect(block).not.toContain("rgba(");
+    // The edges are fades, which also say "this scrolls" before the chevron does.
+    expect(POCKET).toContain("maskImage: FADE, WebkitMaskImage: FADE");
+  });
+
+  it("tells the two voices apart the way a page does", () => {
+    expect(POCKET).toMatch(/assistant: \{[^}]*textAlign: "left"/);
+    expect(POCKET).toMatch(/user: \{[^}]*textAlign: "right"/);
+    // The hairline is on the text, not the flex-1 scroll box — there it ruled
+    // the full height of the screen beside a two-line question.
+    expect(POCKET).toContain('caption.from === "user" ? <div style={QUOTE}>');
+  });
+
+  it("keeps reply text readable and everything else quieter than it", () => {
+    const lum = (hex: string) => {
+      const c = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+      return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    };
+    const onBlack = (hex: string) => (lum(hex) + 0.05) / 0.05;
+    const grab = (re: RegExp) => POCKET.match(re)![1];
+    const reply = grab(/assistant: \{ color: "#([0-9A-Fa-f]{6})"/);
+    const state = grab(/const INK_STATE = "#([0-9A-Fa-f]{6})"/);
+    const hint = grab(/const INK_HINT = "#([0-9A-Fa-f]{6})"/);
+    expect(onBlack(reply)).toBeGreaterThan(4.5); // WCAG AA body text
+    expect(onBlack(reply)).toBeLessThan(8);      // and still an off screen
+    expect(onBlack(state)).toBeLessThan(onBlack(reply));
+    expect(onBlack(hint)).toBeLessThan(onBlack(state));
+  });
+
+  it("says the state in a word, not only in a glyph", () => {
+    for (const w of ["Listening", "Thinking", "Speaking"]) expect(POCKET).toContain(`"${w}"`);
+    expect(POCKET).toContain('STATE_WORD[state] ?? "Hands-free"');
   });
 
   it("fades on change only for people who have not asked for less motion", () => {

@@ -202,7 +202,18 @@ inert:
   mic/thinking glyph is the only explicit "is it listening to me" signal on that
   screen, and that is not a question to answer in mime.
 
-Under the worm sits a **caption bubble**, and its job is reading — you hear an
+> **The bubble is gone.** The caption was a grey rounded box with an accent
+> stripe, in a cold blue-grey unrelated to the clay worm above it. On a pure
+> black screen a box is a second, slightly-less-black rectangle: lit pixels
+> spent drawing a container round text that needed none. The text now sits on
+> the black itself in a warm ink from the worm's own hue (~6.4:1), its edges are
+> two fades, the state is said in a word beside the avatar ("Speaking") rather
+> than only as a glyph, and the way out is said once at the foot. The user's
+> own line is set right, dimmer, with one hairline on the text. Everything
+> below about *behaviour* — persistence, drag-scroll, the double tap — is
+> unchanged.
+
+Under the worm sits a **caption**, and its job is reading — you hear an
 answer and then read it back without unlocking the phone and returning to the
 app. So the reply **persists**: it stays up until the next turn genuinely
 replaces it, and it is the whole message.

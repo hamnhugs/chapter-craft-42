@@ -90,26 +90,51 @@ const MOOD_FOR: Record<string, Mood> = {
 };
 
 /**
- * What is being said right now, in a bubble under the worm.
+ * What is being said right now, as a column of text under the worm.
  *
- * The bubble deliberately does NOT use the app's `.message-bubble-*` classes.
- * They carry per-theme overrides — dexters-lab paints a 3px fully-saturated
- * cyan or magenta edge on them — and a bright accent stripe is exactly what
- * this screen exists not to have. The asymmetric corner is copied so it still
- * reads as a chat bubble; every colour is set here, dimmed, instead.
+ * It used to be a bubble: a grey rounded box with an accent stripe down one
+ * side, in a cold blue-grey that had nothing to do with the clay creature
+ * sitting on top of it. On a screen whose background is already pure black a
+ * box is a second, slightly-less-black rectangle — it lights a few hundred
+ * thousand pixels to draw a container around text that did not need one, and
+ * it is what made this look like a chat widget floating in a void rather than
+ * a page. The text now sits directly on the black, in a warm ink taken from
+ * the worm's own hue, and the only edges are the two fades where it scrolls.
+ *
+ * It still does not use the app's `.message-bubble-*` classes: they carry
+ * per-theme overrides — dexters-lab paints a 3px fully-saturated cyan or
+ * magenta edge — and a bright stripe is exactly what this screen exists not
+ * to have. Who is speaking is carried the way a page carries it: the reply is
+ * set left and brighter, the user's own words right, dimmer, with one hairline.
  *
  * Which line to show is decided in lib/sprite/pocketCaption.ts.
  */
-const BUBBLE: Record<PocketCaption["from"], React.CSSProperties> = {
-  assistant: {
-    borderRadius: "1.5rem 1.5rem 1.5rem 0.25rem",
-    borderLeft: "2px solid rgba(221,124,88,0.30)",
-  },
-  user: {
-    borderRadius: "1.5rem 1.5rem 0.25rem 1.5rem",
-    borderRight: "2px solid rgba(150,162,190,0.28)",
-  },
+const VOICE: Record<PocketCaption["from"], React.CSSProperties> = {
+  // ~6.4:1 on black. Content, so it is the brightest type here — and still a
+  // long way under white, because this is a screen that is meant to be off.
+  assistant: { color: "#9C8F88", textAlign: "left" },
+  user: { color: "#7A706B", textAlign: "right" },
 };
+/** The user's hairline goes on the TEXT, not on the scroll box: the box is
+ *  flex-1, so a border on it ruled the whole height of the screen beside a
+ *  two-line question. */
+const QUOTE: React.CSSProperties = { borderRight: "1px solid #3B2117", paddingRight: "1rem" };
+
+/** The text dissolves at both ends instead of being cut by a box edge, which
+ *  is also what says "this scrolls" before the chevron does. */
+const FADE = "linear-gradient(to bottom, transparent 0, #000 1.25rem, #000 calc(100% - 2.25rem), transparent 100%)";
+
+/** The state, in a word. The glyph alone made people decode an icon on a
+ *  screen they are glancing at from arm's length. */
+const STATE_WORD: Record<string, string> = {
+  listening: "Listening",
+  thinking: "Thinking",
+  speaking: "Speaking",
+};
+
+/** Chrome ink: the worm's clay, taken down to a whisper. */
+const INK_STATE = "#8A6A5C";
+const INK_HINT = "#4A3A33";
 
 interface Props {
   active: boolean; // hands-free on
@@ -299,42 +324,49 @@ const PocketScreen: React.FC<Props> = ({ active, state, caption = null, wormEnab
         paddingBottom: `calc(env(safe-area-inset-bottom, 0px) + 0.75rem)`,
       }}
     >
-      {wormEnabled && (
-        // No `onPet`: nothing here opts into hit testing, so every touch —
-        // including one that lands squarely on the worm — reaches the double-tap
-        // handler above. This screen's escape hatch outranks the easter egg.
-        <div className="pointer-events-none shrink-0" style={DIM_WORM} aria-hidden="true">
-          <BookWorm
-            ref={wormRef}
-            mood={MOOD_FOR[state] ?? "idle"}
-            voiceSource={voiceSource}
-            size={reading ? 84 : 132}
-          />
+      {/* Reading: the worm is an avatar at the head of the column, with the
+          state beside it, the way a name sits above a message. Waiting: it is
+          the whole screen, centred, with the state under it. */}
+      <div className={`flex shrink-0 items-center ${reading ? "w-full max-w-[46ch] flex-row gap-1" : "flex-col gap-2"}`}>
+        {wormEnabled && (
+          // No `onPet`: nothing here opts into hit testing, so every touch —
+          // including one that lands squarely on the worm — reaches the double-tap
+          // handler above. This screen's escape hatch outranks the easter egg.
+          <div className={`pointer-events-none shrink-0 ${reading ? "-ml-3" : ""}`} style={DIM_WORM} aria-hidden="true">
+            <BookWorm
+              ref={wormRef}
+              mood={MOOD_FOR[state] ?? "idle"}
+              voiceSource={voiceSource}
+              size={reading ? 84 : 132}
+            />
+          </div>
+        )}
+        <div className={`flex items-center gap-2 ${reading ? "" : "mt-1"}`}>
+          <span className="material-symbols-outlined" style={{ color: INK_STATE, fontSize: reading ? 18 : 20 }}>{glyph}</span>
+          <span
+            className={`font-medium tracking-wide ${reading ? "text-[15px]" : "text-[17px]"}`}
+            style={{ color: INK_STATE }}
+          >
+            {STATE_WORD[state] ?? "Hands-free"}
+          </span>
         </div>
-      )}
+      </div>
 
       {caption && (
         <div
           ref={box}
           // Keyed on the message, NOT the text: keying on the text replayed the
-          // fade on every streamed token, which strobed the whole bubble.
+          // fade on every streamed token, which strobed the whole column.
           key={caption.id}
           aria-hidden="true"
           onPointerDown={onBubbleDown}
           onPointerMove={onBubbleMove}
           onPointerUp={onBubbleUp}
           onPointerCancel={() => { drag.current = null; }}
-          className="w-full max-w-[46ch] flex-1 min-h-0 overflow-y-auto overscroll-contain hide-scrollbar px-4 py-3.5 text-[16px] leading-relaxed text-left whitespace-pre-wrap motion-safe:animate-fade-in"
-          style={{
-            ...BUBBLE[caption.from],
-            // Brighter than the status line below it, because this is content
-            // and that is chrome — and still ~5.7:1 on black, which is legible
-            // without lighting up a screen that is meant to be off.
-            color: "rgba(214,219,228,0.60)",
-            background: "rgba(148,148,160,0.055)",
-          }}
+          className="w-full max-w-[46ch] flex-1 min-h-0 overflow-y-auto overscroll-contain hide-scrollbar pt-5 pb-9 text-[17px] leading-relaxed whitespace-pre-wrap motion-safe:animate-fade-in"
+          style={{ ...VOICE[caption.from], maskImage: FADE, WebkitMaskImage: FADE }}
         >
-          {caption.text}
+          {caption.from === "user" ? <div style={QUOTE}>{caption.text}</div> : caption.text}
         </div>
       )}
 
@@ -343,19 +375,21 @@ const PocketScreen: React.FC<Props> = ({ active, state, caption = null, wormEnab
       {reading && more && (
         <span
           aria-hidden="true"
-          className="material-symbols-outlined shrink-0 -mt-1 text-lg motion-safe:animate-fade-in"
-          style={{ color: "rgba(148,148,160,0.30)" }}
+          className="material-symbols-outlined shrink-0 -mt-3 text-lg motion-safe:animate-fade-in"
+          style={{ color: INK_STATE }}
         >
           keyboard_double_arrow_down
         </span>
       )}
 
-      <div className="flex shrink-0 flex-col items-center gap-1">
-        <span className="material-symbols-outlined text-2xl" style={{ color: "rgba(148,148,160,0.28)" }}>{glyph}</span>
-        <span className="text-[11px] font-semibold uppercase tracking-widest" style={{ color: "rgba(148,148,160,0.22)" }}>
-          hands-free · double-tap to wake
-        </span>
-      </div>
+      {/* The way out, said once, at the foot — pinned there when the screen is
+          otherwise empty so it never crowds the worm. */}
+      <span
+        className={`shrink-0 text-[11px] font-medium tracking-[0.18em] uppercase ${reading ? "" : "absolute inset-x-0 text-center"}`}
+        style={{ color: INK_HINT, ...(reading ? {} : { bottom: "calc(env(safe-area-inset-bottom, 0px) + 1.5rem)" }) }}
+      >
+        Double-tap to wake
+      </span>
     </div>
   );
 };

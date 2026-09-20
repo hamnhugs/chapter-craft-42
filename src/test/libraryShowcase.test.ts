@@ -19,6 +19,8 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { bookProfile, relativeDay, seedOf } from "@/lib/bookProfile";
+import { coverArt, FAMILIES } from "@/lib/coverArt";
+import { coverTones } from "@/lib/seasonTheme";
 import type { BookDocument } from "@/types/library";
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), "src", p), "utf8");
@@ -174,7 +176,7 @@ describe("LibraryShowcase source", () => {
     expect(SHOWCASE).toContain("profiles.slice(0, shown)");
   });
 
-  it("computes cover gradients on demand and caches them", () => {
+  it("computes cover tones on demand and caches them", () => {
     // Each one runs a gamut-mapping bisection per stop; doing all of them up
     // front is real work on a large library and pointless when the rail shows
     // fifty rows.
@@ -207,7 +209,7 @@ describe("LibraryShowcase source", () => {
 
 describe("SeasonAmbience source", () => {
   it("was actually read", () => {
-    expect(AMBIENCE.length).toBeGreaterThan(2000); // stripped of comments
+    expect(AMBIENCE.length).toBeGreaterThan(900); // stripped of comments
   });
 
   it("takes every colour and every scalar from the theme layer, as numbers", () => {
@@ -223,21 +225,32 @@ describe("SeasonAmbience source", () => {
     expect(AMBIENCE).not.toMatch(/"(winter|spring|summer|autumn)"/);
   });
 
-  it("composites the other way round on a light theme", () => {
+  it("blends the other way round on a light theme", () => {
     // Light added to paper white reads as nothing. If this ever collapses to a
-    // single composite mode, the backdrop silently disappears on Fruit Stripe.
-    expect(AMBIENCE).toContain('ctx.globalCompositeOperation = s.onDark ? "lighter" : "source-over";');
+    // single blend mode, the glow silently disappears on Fruit Stripe.
+    expect(AMBIENCE).toContain('mixBlendMode: s.onDark ? "screen" : "multiply"');
     expect(AMBIENCE).toContain("oklchToHex(s.onDark ? s.glow : s.mote)");
   });
 
-  it("draws the gradient layers into a small buffer rather than at full size", () => {
-    expect(AMBIENCE).toContain("FIELD_MAX_W");
-    expect(AMBIENCE).toContain("ctx.drawImage(off, 0, 0, w, h)");
+  /**
+   * THE LOOK. The still canvas fixed the hang and kept the picture: three
+   * diagonal shafts and an aurora curtain, smeared straight through the title
+   * and summary. It is one glow now, and it is not a canvas at all.
+   */
+  it("is one gradient on a div — no canvas, no observer, no effect", () => {
+    for (const gone of ["<canvas", "getContext", "ResizeObserver", "useEffect", "drawImage"]) {
+      expect(AMBIENCE).not.toContain(gone);
+    }
+    expect(AMBIENCE.match(/radial-gradient\(/g)?.length).toBe(1);
   });
 
-  it("repaints only on the three things that change what it looks like", () => {
-    expect(AMBIENCE).toContain("}, [themeId, season, seasonal]);");
-    expect(AMBIENCE).toContain("new ResizeObserver(() => paint())");
+  it("stands on the year marker, and only in the header", () => {
+    expect(AMBIENCE).toContain("at ${x}% 100%");
+    expect(SHOWCASE).toContain("<SeasonAmbience at={yearFrac} />");
+    // Mounted inside <header>, so nothing is painted behind text to be read.
+    const header = SHOWCASE.slice(SHOWCASE.indexOf("<header"), SHOWCASE.indexOf("</header>"));
+    expect(header).toContain("<SeasonAmbience");
+    expect(SHOWCASE.replace(header, "")).not.toContain("<SeasonAmbience");
   });
 });
 
@@ -257,7 +270,85 @@ describe("ThemeContext source", () => {
   });
 });
 
+describe("generated covers", () => {
+  it("draws the same cover for the same book, every time", () => {
+    expect(coverArt(12345)).toEqual(coverArt(12345));
+  });
+
+  it("uses every family across a shelf, even for near-identical ids", () => {
+    // `seed % 6` on FNV hashes of "book-1".."book-40" clustered; the family
+    // comes off the generator instead.
+    const seen = new Set(Array.from({ length: 40 }, (_, i) => coverArt(seedOf(`book-${i}`)).family));
+    expect(seen.size).toBe(FAMILIES.length);
+  });
+
+  it("stays flat: three tones, nothing else", () => {
+    for (let i = 0; i < 200; i++) {
+      for (const sh of coverArt(seedOf(`b${i}`)).shapes) {
+        expect(["figure", "accent", "ground"]).toContain(sh.tone);
+      }
+    }
+  });
+
+  it("always has an accent, so no cover is a single flat colour", () => {
+    for (let i = 0; i < 200; i++) {
+      const tones = coverArt(seedOf(`b${i}`)).shapes.map((s) => s.tone);
+      expect(tones).toContain("accent");
+      expect(tones.length).toBeGreaterThan(1);
+    }
+  });
+
+  it("emits finite, rounded numbers", () => {
+    for (let i = 0; i < 100; i++) {
+      for (const sh of coverArt(seedOf(`n${i}`)).shapes) {
+        const nums = sh.k === "path" ? sh.d.match(/-?[\d.]+/g)!.map(Number) : Object.values(sh).filter((v) => typeof v === "number") as number[];
+        for (const n of nums) {
+          expect(Number.isFinite(n)).toBe(true);
+          expect(Math.abs(n * 100 - Math.round(n * 100))).toBeLessThan(1e-6);
+        }
+      }
+    }
+  });
+
+  it("prints them as a ladder away from the page, on dark and on paper", () => {
+    const glow = { l: 0.7, c: 0.12, h: 30 };
+    const L = (hex: string) => parseInt(hex.slice(1, 3), 16) + parseInt(hex.slice(3, 5), 16) + parseInt(hex.slice(5, 7), 16);
+    const dark = coverTones(7, glow, 0.15);
+    expect(L(dark.ground)).toBeLessThan(L(dark.figure));
+    expect(L(dark.figure)).toBeLessThan(L(dark.accent));
+    expect(L(dark.accent)).toBeLessThan(L(dark.ink));
+    const paper = coverTones(7, glow, 0.97);
+    expect(L(paper.ground)).toBeGreaterThan(L(paper.figure));
+    expect(L(paper.figure)).toBeGreaterThan(L(paper.accent));
+    expect(L(paper.accent)).toBeGreaterThan(L(paper.ink));
+  });
+
+  it("is what the Showcase draws when a book has no image", () => {
+    expect(SHOWCASE).toContain("coverArt(profile.seed)");
+    expect(SHOWCASE).not.toContain("linear-gradient(145deg");
+  });
+});
+
+describe("the year is the header's rule", () => {
+  it("replaces the corner dial with a full-width band", () => {
+    expect(SHOWCASE).not.toContain("YearRing");
+    expect(SHOWCASE).toContain("<YearBand frac={yearFrac}");
+    expect(SHOWCASE).toContain("season.angle / (Math.PI * 2)");
+  });
+
+  it("still describes itself to a screen reader", () => {
+    expect(SHOWCASE).toMatch(/role="img" aria-label=\{label\}/);
+  });
+});
+
 describe("Library wiring", () => {
+  it("keeps the upload dropzone out of the Showcase, but adding a book within reach", () => {
+    expect(LIBRARY).toContain('view !== "graph" && view !== "showcase" && (');
+    const compact = LIBRARY.slice(LIBRARY.indexOf('(view === "graph" || view === "showcase") && ('));
+    expect(compact.slice(0, 900)).toContain("fileInputRef.current?.click()");
+    expect(compact.slice(0, 1800)).toContain("From YouTube");
+  });
+
   it("offers the Showcase as a fourth view and remembers it", () => {
     expect(LIBRARY).toContain('type ViewMode = "shelves" | "list" | "showcase" | "graph";');
     expect(LIBRARY).toContain('{ id: "showcase", icon: "play_circle", label: "Showcase" },');

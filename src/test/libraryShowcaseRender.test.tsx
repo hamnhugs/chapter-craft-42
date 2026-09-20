@@ -144,9 +144,21 @@ describe("LibraryShowcase, mounted", () => {
 
   it("opens the book on the stage", async () => {
     const onOpen = await mount();
-    const open = Array.from(host.querySelectorAll("button")).find((b) => b.textContent === "Open");
+    const open = Array.from(host.querySelectorAll("button")).find((b) => b.textContent?.startsWith("Open"));
     await act(async () => { open!.click(); });
     expect(onOpen).toHaveBeenCalledWith("b1");
+  });
+
+  it("offers to continue, with the page, when the device remembers one", async () => {
+    // b2 is on page 150. "Open" on a book you are a quarter of the way through
+    // undersells what the button does.
+    const onOpen = await mount();
+    const row = Array.from(host.querySelectorAll<HTMLElement>("[data-active]")).find((r) => r.textContent?.includes("Seeing Like a State"));
+    await act(async () => { row!.click(); });
+    const go = Array.from(host.querySelectorAll("button")).find((b) => b.textContent?.startsWith("Continue"));
+    expect(go?.textContent).toContain("p. 150");
+    await act(async () => { go!.click(); });
+    expect(onOpen).toHaveBeenCalledWith("b2");
   });
 
   it("offers nothing that plays, because nothing plays any more", async () => {

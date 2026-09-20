@@ -1185,8 +1185,11 @@ const Library: React.FC = () => {
           </div>
         )}
 
-        {/* Upload Area (hidden in mind-map view to give the graph room) */}
-        {view !== "graph" && (
+        {/* Upload Area. Hidden in the mind map, to give the graph room, and in
+            the Showcase, which is for looking at the library and not for adding
+            to it: a foot-tall dashed dropzone above a book's profile made the
+            view read as an upload form with something underneath. */}
+        {view !== "graph" && view !== "showcase" && (
         <div
           onDragOver={(e) => e.preventDefault()}
           onDrop={handleDrop}
@@ -1222,19 +1225,29 @@ const Library: React.FC = () => {
           </div>
         </div>
         )}
-        {/* The dropzone (and its From YouTube button) is hidden in mind-map
-            view — keep a compact entry point so the importer stays reachable */}
-        {view === "graph" && (
+        {/* Where the dropzone is hidden, keep compact entry points so adding a
+            book never requires leaving the view first. */}
+        {(view === "graph" || view === "showcase") && (
+          <div className="self-start flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
+            className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all disabled:opacity-50"
+          >
+            <span className="material-symbols-outlined text-base" aria-hidden>add</span>
+            {isUploading ? "Uploading…" : "Add books"}
+          </button>
           <button
             onClick={() => openYoutube()}
             onMouseEnter={() => {
               void import("@/components/VideoTranscript");
             }}
-            className="self-start flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all"
+            className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all"
           >
             <span className="material-symbols-outlined text-base" aria-hidden>smart_display</span>
             From YouTube
           </button>
+          </div>
         )}
         <input
           ref={fileInputRef}
