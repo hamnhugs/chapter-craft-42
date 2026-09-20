@@ -147,6 +147,22 @@ export function seasonalTheme(theme: ThemeDef, season: SeasonState): SeasonalThe
   vars["--season-light"] = season.light.toFixed(3);
   vars["--season-warmth"] = season.warmth.toFixed(3);
   vars["--season-amplitude"] = amplitude.toFixed(2);
+
+  // Solar elevation, in degrees, for a mid-latitude noon: 45 degrees of
+  // co-latitude plus the declination. About 22 in midwinter and 68 at
+  // midsummer. This is what the light show rakes its beams along, and it is
+  // the reason a winter afternoon looks like a winter afternoon — the light
+  // comes in low and sideways rather than from overhead.
+  vars["--season-elevation"] = (45 + 23.44 * season.light).toFixed(2);
+
+  // 1 on a dark canvas, 0 on a light one. Light added to black reads as light;
+  // light added to paper reads as nothing, so the show has to composite the
+  // other way round on Fruit Stripe or it simply will not be there.
+  vars["--season-polarity"] = background.l > 0.5 ? "0" : "1";
+
+  // Aurorae are a dark-sky phenomenon, so the curtains rise as the daylight
+  // falls. Nothing seasonal is authored here either; it is just -light.
+  vars["--season-aurora"] = Math.max(0, -season.light).toFixed(3);
   // Winter is slow and summer is languid; spring and autumn are the brisk
   // ones. Speed tracks |growth| — how fast the year itself is moving.
   vars["--season-tempo"] = (0.7 + Math.abs(season.growth) * 0.6).toFixed(3);

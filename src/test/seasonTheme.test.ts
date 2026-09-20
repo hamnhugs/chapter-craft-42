@@ -163,10 +163,12 @@ describe("what the season actually says", () => {
   it("emits every variable the ambience and the stylesheet read", () => {
     const vars = seasonalTheme(THEMES[0], YEAR[100]).vars;
     for (const key of ["--season-glow", "--season-mote", "--season-haze", "--season-drift",
-                       "--season-light", "--season-warmth", "--season-tempo", "--season-amplitude"]) {
+                       "--season-light", "--season-warmth", "--season-tempo", "--season-amplitude",
+                       "--season-elevation", "--season-polarity", "--season-aurora"]) {
       expect(Object.keys(vars)).toContain(key);
     }
-    for (const key of ["--season-drift", "--season-light", "--season-warmth", "--season-tempo"]) {
+    for (const key of ["--season-drift", "--season-light", "--season-warmth", "--season-tempo",
+                       "--season-elevation", "--season-polarity", "--season-aurora"]) {
       expect(Number.isFinite(Number(vars[key])), key).toBe(true);
     }
   });
@@ -209,5 +211,39 @@ describe("placeholder covers", () => {
         expect(contrast, `${theme.id}`).toBeLessThan(3);
       }
     }
+  });
+});
+
+describe("the light show's inputs", () => {
+  it("rakes the light low in winter and puts it overhead in summer", () => {
+    const winter = Number(seasonalTheme(THEMES[0], seasonAt(new Date("2026-12-21T20:50:00Z"))).vars["--season-elevation"]);
+    const summer = Number(seasonalTheme(THEMES[0], seasonAt(new Date("2026-06-21T08:25:00Z"))).vars["--season-elevation"]);
+    expect(winter).toBeGreaterThan(15);
+    expect(winter).toBeLessThan(30);
+    expect(summer).toBeGreaterThan(60);
+    expect(summer).toBeLessThan(75);
+    // And it passes through the horizon-neutral midpoint at the equinoxes.
+    const equinox = Number(seasonalTheme(THEMES[0], seasonAt(new Date("2026-03-20T14:46:00Z"))).vars["--season-elevation"]);
+    expect(equinox).toBeCloseTo(45, 0);
+  });
+
+  it("raises the curtains as the daylight falls, and never below zero", () => {
+    for (let d = 0; d < 365; d++) {
+      const a = Number(seasonalTheme(THEMES[0], YEAR[d]).vars["--season-aurora"]);
+      expect(a).toBeGreaterThanOrEqual(0);
+      expect(a).toBeLessThanOrEqual(1);
+    }
+    const dec = Number(seasonalTheme(THEMES[0], seasonAt(new Date("2026-12-21T20:50:00Z"))).vars["--season-aurora"]);
+    const jun = Number(seasonalTheme(THEMES[0], seasonAt(new Date("2026-06-21T08:25:00Z"))).vars["--season-aurora"]);
+    expect(dec).toBeGreaterThan(0.95);
+    expect(jun).toBe(0);
+  });
+
+  it("tells the canvas which way to composite, per theme", () => {
+    const paper = THEMES.find((t) => t.id === "fruit-stripe")!;
+    const facility = THEMES.find((t) => t.id === "desolate-lab")!;
+    // Light added to paper reads as nothing; the show has to darken there.
+    expect(seasonalTheme(paper, YEAR[10]).vars["--season-polarity"]).toBe("0");
+    expect(seasonalTheme(facility, YEAR[10]).vars["--season-polarity"]).toBe("1");
   });
 });
