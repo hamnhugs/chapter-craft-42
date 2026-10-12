@@ -2,6 +2,29 @@ import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
+import { readFileSync } from "fs";
+
+// Local edition: the Supabase origin comes from the env (hosted project or
+// `supabase start` on 127.0.0.1:54321), and every local AI service from
+// local-services.json — the same file the clients and scripts/local-up.sh read.
+const LOCAL_SERVICES: Record<string, string> = JSON.parse(
+  readFileSync(path.resolve(__dirname, "local-services.json"), "utf8"),
+);
+const LOCAL_ORIGINS = Object.entries(LOCAL_SERVICES)
+  .filter(([k]) => !k.startsWith("$"))
+  .flatMap(([, v]) => {
+    const u = new URL(v);
+    return [u.origin, `${u.protocol}//localhost:${u.port}`, `ws://${u.host}`];
+  });
+const SUPABASE_ORIGIN = (() => {
+  try {
+    const env = readFileSync(path.resolve(__dirname, process.env.CC_ENV_FILE || ".env.local"), "utf8");
+    const m = /^VITE_SUPABASE_URL\s*=\s*"?([^"\n]+)"?/m.exec(env);
+    if (m) return new URL(m[1]).origin;
+  } catch { /* no local env file — hosted project below */ }
+  return "https://ktzaysdkdkocqhewwtnn.supabase.co";
+})();
+const SUPABASE_WS = SUPABASE_ORIGIN.replace(/^http/, "ws");
 
 // Production Content-Security-Policy. Every origin here is load-bearing —
 // audit before removing: Supabase project (API/storage/functions + realtime
@@ -24,8 +47,11 @@ const CONNECT_ORIGINS = [
   // while working fine in dev, where no CSP applies.
   "data:",
   "blob:",
+  SUPABASE_ORIGIN,
+  SUPABASE_WS,
   "https://ktzaysdkdkocqhewwtnn.supabase.co",
   "wss://ktzaysdkdkocqhewwtnn.supabase.co",
+  ...LOCAL_ORIGINS,
   "https://tmagmbmitnvcwubxcwoc.supabase.co", // Burplexity (web search)
   "https://api.tavily.com", // free web-search tier
   "https://openrouter.ai",
@@ -55,8 +81,8 @@ const PROD_CSP = [
   "default-src 'self'",
   "script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  "img-src 'self' data: blob: https://ktzaysdkdkocqhewwtnn.supabase.co https://media.giphy.com",
-  "media-src 'self' blob: data: https://ktzaysdkdkocqhewwtnn.supabase.co",
+  `img-src 'self' data: blob: ${SUPABASE_ORIGIN} https://ktzaysdkdkocqhewwtnn.supabase.co https://media.giphy.com ${LOCAL_SERVICES.images}`,
+  `media-src 'self' blob: data: ${SUPABASE_ORIGIN} https://ktzaysdkdkocqhewwtnn.supabase.co ${LOCAL_SERVICES.tts}`,
   "font-src 'self' data: https://fonts.gstatic.com",
   `connect-src ${CONNECT_ORIGINS.join(" ")}`,
   "worker-src 'self' blob:",
@@ -70,6 +96,7 @@ const PROD_CSP = [
  *  A provider added without its origin works perfectly in dev and dies in
  *  production — this turns that into a build failure instead. */
 const PROVIDER_ORIGINS = [
+  LOCAL_SERVICES.ollama,
   "https://openrouter.ai",
   "https://generativelanguage.googleapis.com",
   // NVIDIA is deliberately absent: it is CORS-blocked and reached only

@@ -1139,9 +1139,13 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // thinking at full effort first adds seconds of silence and bills the
       // thought. OpenRouter normalizes `reasoning.effort` across models and
       // ignores it for models that don't reason. Deep Research keeps full effort.
-      const turnExtraBody = turnProviderId === "openrouter" && isVoice && !deepResearch
-        ? { ...(nvInfo?.extraBody || {}), reasoning: { effort: "low" } }
-        : nvInfo?.extraBody;
+      // Local models think only when the user asked for depth: on a 4B model
+      // a thinking turn measured 20-50 s against ~10 s without.
+      const turnExtraBody = turnProviderId === "ollama"
+        ? (deepResearch ? { think: true } : undefined)
+        : turnProviderId === "openrouter" && isVoice && !deepResearch
+          ? { ...(nvInfo?.extraBody || {}), reasoning: { effort: "low" } }
+          : nvInfo?.extraBody;
       // Read off baseHistory rather than the assembled request, which does not
       // exist yet at this point. Same answer: pixels are only ever serialized
       // for the CURRENT user message (older images ride as text notes), and

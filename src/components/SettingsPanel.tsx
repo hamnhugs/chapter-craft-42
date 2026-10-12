@@ -23,6 +23,7 @@ import AiPermissionsSettings from "@/components/AiPermissionsSettings";
 import MemoryLensSettings from "@/components/MemoryLensSettings";
 import ToolFoundrySettings from "@/components/ToolFoundrySettings";
 import ProgramRunnerSettings from "@/components/ProgramRunnerSettings";
+import LocalModelsSettings from "@/components/LocalModelsSettings";
 import { getMemoryMode, setMemoryMode, MemoryMode } from "@/lib/knowledgeApi";
 import { consumeSettingsSection } from "@/lib/settingsNav";
 import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
@@ -152,6 +153,7 @@ const selectCls =
   "w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40";
 
 const PROVIDER_GROUP_LABEL: Record<ProviderId, string> = {
+  ollama: "Local — runs on this computer, free and private",
   nvidia: "NVIDIA — free, no balance needed",
   gemini: "Gemini — free tier, billed to Google beyond it",
   openrouter: "OpenRouter — billed to your OpenRouter balance",
@@ -553,6 +555,8 @@ const SettingsPanel: React.FC = () => {
                 </div>
               </div>
 
+              <LocalModelsSettings />
+
               <div>
                 <FieldLabel>OpenRouter API Key</FieldLabel>
                 <div className="mt-1.5">
@@ -721,7 +725,7 @@ const SettingsPanel: React.FC = () => {
                 <div className="flex gap-2 mt-1.5">
                   <select
                     value={newModelProvider}
-                    onChange={(e) => setNewModelProvider(e.target.value as "openrouter" | "nvidia")}
+                    onChange={(e) => setNewModelProvider(e.target.value as ProviderId)}
                     className="bg-surface-container-high border-none rounded-lg text-sm text-primary py-2 px-3 shrink-0"
                     aria-label="Provider for the model being added"
                   >

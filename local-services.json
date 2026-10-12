@@ -1,0 +1,9 @@
+{
+  "$comment": "Single source of truth for the local edition's service ports. Read by vite.config.ts (CSP), src/lib/localServices.ts (clients) and scripts/local-up.sh. Loopback only.",
+  "ollama": "http://127.0.0.1:11434",
+  "supabase": "http://127.0.0.1:54321",
+  "searxng": "http://127.0.0.1:8888",
+  "tts": "http://127.0.0.1:8770",
+  "stt": "http://127.0.0.1:8771",
+  "images": "http://127.0.0.1:8772"
+}

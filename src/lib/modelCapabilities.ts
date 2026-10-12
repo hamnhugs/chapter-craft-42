@@ -12,6 +12,7 @@
 // only decides which catalog to ask and what to do when none of them knows.
 
 import { GEMINI_FEATURED } from "@/lib/geminiCatalog";
+import { cachedOllamaToolSupport } from "@/lib/providers/ollamaAdapter";
 import { NVIDIA_FEATURED } from "@/lib/nvidiaCatalog";
 import { cachedOrToolSupport } from "@/lib/openrouterCatalog";
 import { localModelId, modelProvider } from "@/lib/providers/registry";
@@ -49,6 +50,11 @@ export function modelToolSupport(model: string): ToolSupport {
       break;
     case "gemini":
       declared = GEMINI_DECLARED_TOOLS.get(localId) ?? null;
+      break;
+    case "ollama":
+      // Ollama reports capabilities per model (/api/show); cached by the
+      // last model listing. Unknown until Settings or warm-up has listed.
+      declared = cachedOllamaToolSupport(localId);
       break;
     case "openrouter":
       // Reads the already-cached catalog; null until a catalog fetch has

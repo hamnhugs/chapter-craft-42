@@ -16,6 +16,7 @@ import { ChatProviderAdapter, ProviderId } from "./types";
 import { openrouterAdapter } from "./openrouterAdapter";
 import { nvidiaAdapter } from "./nvidiaAdapter";
 import { geminiAdapter } from "./geminiAdapter";
+import { ollamaAdapter } from "./ollamaAdapter";
 
 interface ProviderRecord {
   id: ProviderId;
@@ -30,6 +31,9 @@ interface ProviderRecord {
    *  table lookup rather than a branch someone forgets to extend — the exact
    *  omission that shipped Gemini chat authenticating with OpenRouter's key. */
   keyField: "apiKey" | "geminiApiKey" | null;
+  /** True when the provider needs no credential at all (a server on this
+   *  machine). Without this, keyField:null meant "NVIDIA's write-only key". */
+  keyless?: boolean;
   /** Where to get a key. Shown in Settings and in "no key" error copy. */
   keyUrl: string;
   /** True when the provider has a genuinely free tier for chat — used to
@@ -39,10 +43,21 @@ interface ProviderRecord {
 
 export const NVIDIA_PREFIX = "nvidia:";
 export const GEMINI_PREFIX = "gemini:";
+export const OLLAMA_PREFIX = "ollama:";
 
 /** Order matters for display only. OpenRouter is last because it is the
  *  bare-id fallback and must be matched by elimination, not by prefix. */
 const PROVIDERS: ProviderRecord[] = [
+  {
+    id: "ollama",
+    prefix: OLLAMA_PREFIX,
+    label: "Local",
+    adapter: ollamaAdapter,
+    keyField: null,
+    keyless: true,
+    keyUrl: "https://ollama.com/library",
+    freeChatTier: true,
+  },
   {
     id: "nvidia",
     prefix: NVIDIA_PREFIX,
@@ -90,6 +105,10 @@ export function isNvidiaModel(id: string): boolean {
   return modelProvider(id) === "nvidia";
 }
 
+export function isOllamaModel(id: string): boolean {
+  return modelProvider(id) === "ollama";
+}
+
 export function isGeminiModel(id: string): boolean {
   return modelProvider(id) === "gemini";
 }
@@ -117,7 +136,9 @@ export function providerConfigured(
   p: ProviderId,
   keys: { apiKey?: string; geminiApiKey?: string; nvidiaKeyLast4?: string },
 ): boolean {
-  const field = recordById(p).keyField;
+  const rec = recordById(p);
+  if (rec.keyless) return true;
+  const field = rec.keyField;
   if (field === null) return !!keys.nvidiaKeyLast4;
   return !!keys[field];
 }

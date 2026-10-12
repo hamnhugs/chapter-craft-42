@@ -3,7 +3,7 @@
 // pipeline in ChatContext owns the conversation (tool loop, sentence cap,
 // persistence) and only ever sees the normalized vocabulary below.
 
-export type ProviderId = "openrouter" | "nvidia" | "gemini";
+export type ProviderId = "openrouter" | "nvidia" | "gemini" | "ollama";
 
 export type FinishReason =
   | "stop"
