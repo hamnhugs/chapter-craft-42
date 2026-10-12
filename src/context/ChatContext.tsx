@@ -42,6 +42,7 @@ import { toast } from "sonner";
 import { isEmbeddingModel, isBatchOnlyModel } from "@/lib/utils";
 import { describeModel, freeChatProviders, localModelId, modelProvider, providerConfigured, providerKey, providerKeyUrl, providerLabel, resolveModel } from "@/lib/providers/registry";
 import type { CacheBreakpoint, ProviderId, TokenUsage } from "@/lib/providers/types";
+import { FIND_TOOLS_DEFINITION, FIND_TOOLS_NAME, findTools, planLocalRoster, resetRoster, slimToolDef } from "@/lib/localRoster";
 import { addUsage } from "@/lib/providers/sse";
 import { studioToolsActive } from "@/lib/studioTools";
 import { highlightsForTurn } from "@/lib/highlights";
@@ -968,6 +969,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setHasEarlier(false);
     cursorRef.current = null;
     summaryRef.current = { summary: "", covered: 0 };
+    // A new conversation starts from the core local roster again.
+    resetRoster(user?.id ?? null);
     if (user) {
       try { localStorage.removeItem(SUMMARY_STORE_KEY(user.id)); } catch { /* ignore */ }
       const { error } = await supabase.from("chat_messages").delete().eq("user_id", user.id);
@@ -1215,9 +1218,28 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // `tools` stays UNDEFINED — never an empty array — when a model-level
       // gate fires: some providers reject `tools: []` outright. The gate map
       // explains the omission; the wire format is unchanged.
-      const toolDefs = sendTools
+      // LOCAL MODELS get a smaller, append-only roster drawn from the same
+      // gated pool — see lib/localRoster.ts for the measurements behind it.
+      // `localToolPool` is everything the gates allow; `offeredNames` then
+      // narrows to the roster, so the prompt, the wire and text recovery
+      // still agree on one set. find_tools can grow it mid-turn (additions
+      // only, which no provider rejects); the gates still bound what it adds.
+      const localToolPool: any[] = sendTools && turnProviderId === "ollama"
         ? CHAT_TOOL_DEFINITIONS.filter((t: any) => offeredNames.has(t.function.name))
-        : undefined;
+        : [];
+      const localPlan = localToolPool.length
+        ? await planLocalRoster({ userId: userIdRef.current, query: trimmed, pool: localToolPool })
+        : null;
+      if (localPlan) {
+        offeredNames.clear();
+        for (const n of localPlan.names) offeredNames.add(n);
+      }
+      const localDefByName = new Map(localToolPool.map((t: any) => [t.function.name, t]));
+      const toolDefs = !sendTools
+        ? undefined
+        : localPlan
+          ? [...localPlan.names.map((n) => slimToolDef(localDefByName.get(n))), FIND_TOOLS_DEFINITION]
+          : CHAT_TOOL_DEFINITIONS.filter((t: any) => offeredNames.has(t.function.name));
 
       // A send the pre-flight gates below will refuse must not pay for the
       // prompt build (retrieval embedding + half a dozen queries) first.
@@ -2233,7 +2255,22 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               permissionsSnapshot: permissionsRef.current,
               programRunnerConfigured: programRunnerConfigured === true,
             };
-            const { result, event } = await executeChatTool(t.name!, t.args || "{}", toolDeps);
+            const { result, event } = t.name === FIND_TOOLS_NAME && localPlan && toolDefs
+              ? await (async () => {
+                  let need = "";
+                  try { need = String(JSON.parse(t.args || "{}")?.need || ""); } catch { /* bad args */ }
+                  const found = await findTools({ userId: userIdRef.current, need, pool: localToolPool, offered: offeredNames });
+                  for (const n of found.added) {
+                    if (offeredNames.has(n)) continue;
+                    offeredNames.add(n);
+                    toolDefs.splice(toolDefs.length - 1, 0, slimToolDef(localDefByName.get(n)));
+                  }
+                  return {
+                    result: found.result,
+                    event: { name: FIND_TOOLS_NAME, summary: found.added.length ? `Found ${found.added.join(", ")}` : "No more tools to add", ok: true },
+                  };
+                })()
+              : await executeChatTool(t.name!, t.args || "{}", toolDeps);
 
             assistantEvents.push(event);
             const r = result as any;

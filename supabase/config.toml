@@ -62,3 +62,40 @@ verify_jwt = false
 [functions.prompt-incubator-sweep]
 verify_jwt = false
 
+
+# ---------------------------------------------------------------------------
+# Local edition (`npx supabase start`). The hosted project ignores these
+# sections; they only shape the stack on this machine. Ports must match
+# local-services.json ("supabase").
+# ---------------------------------------------------------------------------
+[api]
+port = 54321
+max_rows = 1000
+
+[db]
+port = 54322
+major_version = 17
+
+[studio]
+port = 54323
+
+[local_smtp]
+port = 54324
+
+# Log shipping isn't needed on a laptop and costs ~1 GB of RAM.
+[analytics]
+enabled = false
+
+[auth]
+site_url = "http://127.0.0.1:8080"
+additional_redirect_urls = ["http://localhost:8080", "http://127.0.0.1:8080/auth"]
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+# One user on one machine: no mail server to confirm through.
+enable_confirmations = false
+
+[edge_runtime]
+enabled = true
+policy = "per_worker"

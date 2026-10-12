@@ -7,8 +7,17 @@ import { modelProvider, providerConfigured, providerLabel } from "@/lib/provider
 
 export type LeanMode = "full" | "lean" | "chat_only";
 
-const DEFAULT_MODEL = "google/gemini-2.5-flash";
-const DEFAULT_DEEP_RESEARCH_MODEL = "google/gemini-2.5-pro";
+// Local edition: a fresh profile runs on this computer with no keys. The
+// choices are measured, not guessed — docs/local-ai/results/:
+//   chat      qwen3:4b-instruct-2507 — pure attention, so Ollama reuses the
+//             conversation's cache across turns (2026-10-12-multiturn.txt);
+//             11/14 first-tool picks.
+//   vision    qwen3.5:4b — 13/14 and sees images, but its hybrid layers can't
+//             rewind the cache, so it re-reads the whole chat every turn.
+//   research  qwen3:8b — 14/14 at ~3x the latency, which Deep Research affords.
+const DEFAULT_MODEL = "ollama:qwen3:4b-instruct-2507-q4_K_M";
+const DEFAULT_VISION_MODEL = "ollama:qwen3.5:4b";
+const DEFAULT_DEEP_RESEARCH_MODEL = "ollama:qwen3:8b";
 const DEFAULT_TTS_RATE = 1.05;
 const DEFAULT_HANDS_FREE_TTS_RATE = 1.0;
 
@@ -124,7 +133,7 @@ const defaults: ChatSettings = {
   geminiApiKey: "",
   tavilyApiKey: "",
   leanMode: "full",
-  savedModels: [DEFAULT_MODEL],
+  savedModels: [DEFAULT_MODEL, DEFAULT_VISION_MODEL, DEFAULT_DEEP_RESEARCH_MODEL],
   selectedModel: DEFAULT_MODEL,
   deepResearchModel: DEFAULT_DEEP_RESEARCH_MODEL,
   voiceModel: "",
@@ -135,14 +144,15 @@ const defaults: ChatSettings = {
   customSystemPrompt: "",
   burplexityApiToken: "",
   inworldApiKey: "",
-  inworldEnabled: false,
-  inworldVoiceId: "",
+  // Local edition: read-aloud on by default with a Piper voice on this machine.
+  inworldEnabled: true,
+  inworldVoiceId: "piper:en_US-lessac-medium",
   accessAllNeurons: false,
   maxReplySentences: 0,
   autoShowMemoryImages: true,
   autoApproveToolUpdates: false,
   autoCatalogOnUpload: false,
-  visionModel: "",
+  visionModel: DEFAULT_VISION_MODEL,
   imageExtractionModel: "",
   utilityModel: "",
   studioTools: "auto",

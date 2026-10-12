@@ -16,6 +16,17 @@ const LOCAL_ORIGINS = Object.entries(LOCAL_SERVICES)
     const u = new URL(v);
     return [u.origin, `${u.protocol}//localhost:${u.port}`, `ws://${u.host}`];
   });
+/** Same-origin routes to the local services that send no CORS headers
+ *  (SearXNG, Piper, whisper.cpp, sd-server): the browser calls
+ *  /local/<service>/…, the dev/preview server forwards to loopback. Ollama is
+ *  CORS-open for localhost origins and is called directly. */
+const LOCAL_PROXY = Object.fromEntries(
+  (["searxng", "tts", "stt", "images"] as const).map((k) => [
+    `/local/${k}`,
+    { target: LOCAL_SERVICES[k], changeOrigin: true, rewrite: (p: string) => p.replace(new RegExp(`^/local/${k}`), "") },
+  ]),
+);
+
 const SUPABASE_ORIGIN = (() => {
   try {
     const env = readFileSync(path.resolve(__dirname, process.env.CC_ENV_FILE || ".env.local"), "utf8");
@@ -133,10 +144,14 @@ const cspPlugin = (): Plugin => ({
 export default defineConfig(({ mode }) => ({
   base: "./",
   server: {
-    host: "::",
+    // Loopback only: the local edition serves private data and talks to
+    // loopback-only services; nothing on the LAN should reach it.
+    host: "127.0.0.1",
     port: 8080,
     hmr: { overlay: false },
+    proxy: LOCAL_PROXY,
   },
+  preview: { host: "127.0.0.1", port: 8080, proxy: LOCAL_PROXY },
   plugins: [
     react(),
     cspPlugin(),

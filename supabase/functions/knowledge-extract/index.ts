@@ -18,6 +18,7 @@ import {
   enqueueConflictStaged,
   QUEUE_PRIORITY,
 } from "../_shared/memory-layers.ts";
+import { aiFetch } from "../_shared/ai-local.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -43,7 +44,7 @@ async function sameClaim(
   newContent: string,
 ): Promise<boolean> {
   try {
-    const r = await fetch(llm.url, {
+    const r = await aiFetch(llm.url, {
       method: "POST",
       headers: llm.headers,
       body: JSON.stringify({
@@ -156,7 +157,7 @@ Rules:
 - Note relationships between entries`;
 
     const llm = await resolveWikiLlm(supabase, user.id);
-    const aiResponse = await fetch(llm.url, {
+    const aiResponse = await aiFetch(llm.url, {
       method: "POST",
       headers: llm.headers,
       body: JSON.stringify({

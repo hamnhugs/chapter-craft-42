@@ -6,7 +6,7 @@ import { CHAT_TOOL_DEFINITIONS } from "@/lib/chatTools";
 
 const live = process.env.LIVE_OLLAMA === "1";
 const model = process.env.LIVE_OLLAMA_MODEL || "qwen3.5:4b";
-const pick = (names: string[]) => (CHAT_TOOL_DEFINITIONS as any[]).filter((t) => names.includes(t.function.name));
+const pick = (names: string[]) => (CHAT_TOOL_DEFINITIONS as unknown as any[]).filter((t) => names.includes(t.function.name));
 
 describe.skipIf(!live)("live Ollama", () => {
   it("streams a real app tool call through the adapter", async () => {

@@ -26,7 +26,7 @@ import {
   type SourceWord,
   type WordTimes,
 } from "@/lib/readAlong";
-import { synthesizeSpeechWithTimestamps } from "@/lib/inworldTts";
+import { audioMime, synthesizeSpeechWithTimestamps } from "@/lib/inworldTts";
 
 export type ReadAlongEngine = "inworld" | "browser";
 export type ReadAlongStatus = "idle" | "loading" | "playing" | "paused";
@@ -223,7 +223,7 @@ export class ReadAlongPlayer {
     if (!p) {
       const signal = this.abort?.signal;
       p = synthesizeSpeechWithTimestamps(chunk.text, this.voice.inworldVoiceId || "", undefined, { signal }).then(
-        ({ audio, words }) => ({ url: URL.createObjectURL(new Blob([audio], { type: "audio/mpeg" })), tokens: words }),
+        ({ audio, words }) => ({ url: URL.createObjectURL(new Blob([audio], { type: audioMime(audio) })), tokens: words }),
       );
       // Unhandled-rejection guard for prefetches nobody awaits yet.
       p.catch(() => {});

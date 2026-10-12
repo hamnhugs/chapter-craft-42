@@ -1,0 +1,34 @@
+# 2026-10-12T22:03:33.154Z model=qwen3.5:4b pipeline=planLocalRoster+buildChatSystemPrompt+slimToolDef+ollamaAdapter
+OK  59.7s in=4604 roster=14 first=list_books | What books do I have?
+OK  60.7s in=4597 roster=14 first=search_book_text | Find the line 'the river remembers' in my books
+OK  53.6s in=4145 roster=14 first=list_books | Rename chapter 3 of Dune to 'Arrakis'
+OK  60.4s in=4416 roster=14 first=create_memory_entry | Remember that my protagonist Mara is left-handed
+OK  49.8s in=3757 roster=14 first=web_search | Search the web for the latest news on the Booker Prize
+OK  73.0s in=5279 roster=14 first=generate_image | Make me an image of a lighthouse in a storm, watercolor
+OK  69.8s in=5359 roster=14 first=list_videos | Show me my generated videos
+BAD 48.4s in=3756 roster=14 first=get_active_wiki | Switch to my Worldbuilding wiki
+OK  59.8s in=4542 roster=14 first=manage_shelf | Put Dune and Foundation on a new shelf called Sci-Fi
+OK  51.6s in=3901 roster=14 first=list_books | Read me the text of chapter 2 of The Hobbit
+OK  54.9s in=4100 roster=14 first=list_conflicts | What contradictions are in my wiki?
+OK  59.8s in=4496 roster=14 first=save_file | Save this outline as a file in my workspace: 1. Intro 2. Body
+OK  73.9s in=4096 roster=14 first=forge_tool | Write a tiny tool that counts words in a string
+OK  57.6s in=4517 roster=14 first=list_books | Open Foundation in the reader
+qwen3.5:4b: 13/14
+
+# 2026-10-12T22:26:39.660Z model=qwen3:4b-instruct-2507-q4_K_M pipeline=planLocalRoster+buildChatSystemPrompt+slimToolDef+ollamaAdapter
+BAD 65.8s in=4463 roster=14 first=TEXT:I see that you currently have 0 books in your libr | What books do I have?
+OK  60.8s in=4453 roster=14 first=search_book_text | Find the line 'the river remembers' in my books
+OK  54.5s in=4005 roster=14 first=rename_chapter | Rename chapter 3 of Dune to 'Arrakis'
+BAD 66.6s in=4275 roster=14 first=TEXT:I'll remember that your protagonist Mara is left-h | Remember that my protagonist Mara is left-handed
+OK  47.7s in=3604 roster=14 first=web_search | Search the web for the latest news on the Booker Prize
+OK  75.4s in=5133 roster=14 first=generate_image | Make me an image of a lighthouse in a storm, watercolor
+OK  73.6s in=5209 roster=14 first=list_videos | Show me my generated videos
+BAD 46.2s in=3616 roster=14 first=get_active_wiki | Switch to my Worldbuilding wiki
+OK  60.2s in=4401 roster=14 first=manage_shelf | Put Dune and Foundation on a new shelf called Sci-Fi
+OK  49.7s in=3763 roster=14 first=list_books | Read me the text of chapter 2 of The Hobbit
+OK  54.7s in=3960 roster=14 first=list_conflicts | What contradictions are in my wiki?
+OK  61.6s in=4354 roster=14 first=save_file | Save this outline as a file in my workspace: 1. Intro 2. Body
+OK  37.6s in=3929 roster=14 first=forge_tool | Write a tiny tool that counts words in a string
+OK  60.8s in=4347 roster=14 first=set_active_book | Open Foundation in the reader
+qwen3:4b-instruct-2507-q4_K_M: 11/14
+

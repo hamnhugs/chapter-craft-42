@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { aiFetch } from "../_shared/ai-local.ts";
 
 // auto-structure: turns a numbered list of candidate heading lines (extracted
 // client-side from an uploaded book/paper PDF) into a clean chapter/section
@@ -191,7 +192,7 @@ serve(async (req) => {
     if (openrouterKey) {
       const model = requestedModel || OPENROUTER_DEFAULT_MODEL;
       const fallbacks = [model, ...OPENROUTER_FALLBACK_MODELS.filter((m) => m !== model)];
-      aiResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      aiResponse = await aiFetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${openrouterKey}`,
@@ -217,7 +218,7 @@ serve(async (req) => {
       if (!aiResponse.ok && aiResponse.status >= 400 && aiResponse.status < 500) {
         const errText = await aiResponse.text();
         if (/response_format|json_schema|schema/i.test(errText)) {
-          aiResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          aiResponse = await aiFetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
             headers: {
               Authorization: `Bearer ${openrouterKey}`,
@@ -245,7 +246,7 @@ serve(async (req) => {
         requestedModel && (requestedModel.startsWith("google/") || requestedModel.startsWith("openai/"))
           ? requestedModel
           : LOVABLE_DEFAULT_MODEL;
-      aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      aiResponse = await aiFetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${LOVABLE_API_KEY}`,

@@ -23,8 +23,67 @@ async function authHeaders(): Promise<Record<string, string>> {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Local voices (Piper on this machine, reached through the dev server's
+// same-origin /local/tts proxy — see vite.config.ts). A voice id of the form
+// "piper:<voice>" is synthesized locally; every other id goes to Inworld
+// exactly as before. Piper measured ~0.3 s for 5 s of speech on this
+// machine's CPU (docs/local-ai/results).
+// ---------------------------------------------------------------------------
+
+export const PIPER_PREFIX = "piper:";
+const LOCAL_TTS = "/local/tts";
+
+export function isPiperVoice(voiceId: string | undefined): boolean {
+  return String(voiceId || "").startsWith(PIPER_PREFIX);
+}
+
+/** MIME type from the bytes: Piper returns WAV, Inworld MP3. */
+export function audioMime(buf: ArrayBuffer): string {
+  const b = new Uint8Array(buf.slice(0, 4));
+  return b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 ? "audio/wav" : "audio/mpeg";
+}
+
+export async function fetchPiperVoices(): Promise<InworldVoice[]> {
+  try {
+    const r = await fetch(`${LOCAL_TTS}/voices`);
+    if (!r.ok) return [];
+    const data = await r.json();
+    return Object.entries(data || {}).map(([id, cfg]: [string, any]) => ({
+      voice_id: PIPER_PREFIX + id,
+      name: `Local · ${String(cfg?.dataset || id).replace(/^./, (c) => c.toUpperCase())} (${cfg?.language?.code || ""})`,
+      language_code: cfg?.language?.code,
+      tags: ["local", cfg?.audio?.quality].filter(Boolean),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function synthesizePiper(text: string, voiceId: string, signal?: AbortSignal): Promise<ArrayBuffer> {
+  const resp = await fetch(`${LOCAL_TTS}/synthesize`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, voice: voiceId.slice(PIPER_PREFIX.length) }),
+    signal,
+  });
+  if (!resp.ok) throw new Error(`Local voice ${resp.status}: ${await resp.text().catch(() => resp.statusText)}`);
+  return resp.arrayBuffer();
+}
+
 // `_apiKey` accepted for backwards compatibility with existing callers; ignored.
+// Local Piper voices come first; Inworld's list follows when it is reachable.
 export async function fetchInworldVoices(_apiKey?: string): Promise<InworldVoice[]> {
+  const local = await fetchPiperVoices();
+  try {
+    return [...local, ...(await fetchCloudVoices())];
+  } catch (e) {
+    if (local.length) return local;
+    throw e;
+  }
+}
+
+async function fetchCloudVoices(): Promise<InworldVoice[]> {
   const headers = await authHeaders();
   const resp = await fetch(`${FUNCTIONS_BASE}/voices`, { headers });
   if (!resp.ok) {
@@ -49,6 +108,7 @@ export async function synthesizeSpeech(
   model = "inworld-tts-2",
   opts?: { signal?: AbortSignal; sampleRate?: number },
 ): Promise<ArrayBuffer> {
+  if (isPiperVoice(voiceId)) return synthesizePiper(text, voiceId, opts?.signal);
   let cleanVoiceId = String(voiceId ?? "").trim();
   if (!cleanVoiceId || cleanVoiceId === "undefined") {
     cleanVoiceId = "Ashley"; // Inworld built-in default
@@ -90,6 +150,8 @@ export async function synthesizeSpeechWithTimestamps(
   model = "inworld-tts-2",
   opts?: { signal?: AbortSignal; sampleRate?: number },
 ): Promise<TimedSpeech> {
+  // Piper has no word timestamps; null makes the player estimate them.
+  if (isPiperVoice(voiceId)) return { audio: await synthesizePiper(text, voiceId, opts?.signal), words: null };
   let cleanVoiceId = String(voiceId ?? "").trim();
   if (!cleanVoiceId || cleanVoiceId === "undefined") cleanVoiceId = "Ashley";
   const headers = await authHeaders();

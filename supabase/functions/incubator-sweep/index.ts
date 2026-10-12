@@ -15,6 +15,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { aiFetch } from "../_shared/ai-local.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -218,7 +219,7 @@ async function proposeWikiName(
   const userMsg = `Notes in this cluster:\n${snippets}\n\nPropose the wiki name now.`;
 
   try {
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const res = await aiFetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${LOVABLE_API_KEY}`,
@@ -281,7 +282,7 @@ async function nameCollides(name: string, existingNames: string[]): Promise<bool
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) return false;
   try {
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/embeddings", {
+    const res = await aiFetch("https://ai.gateway.lovable.dev/v1/embeddings", {
       method: "POST",
       headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({

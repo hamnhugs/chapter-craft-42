@@ -9,6 +9,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { aiFetch } from "../_shared/ai-local.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -210,7 +211,7 @@ async function embed(text: string): Promise<number[] | null> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) return null;
   try {
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/embeddings", {
+    const res = await aiFetch("https://ai.gateway.lovable.dev/v1/embeddings", {
       method: "POST",
       headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -233,7 +234,7 @@ async function proposeTwoNames(currentName: string, titlesA: string[], titlesB: 
   const system = `You split a knowledge wiki named "${currentName}" into two halves. Propose two short (1-3 word, Title Case) names for the halves. Reply JSON {"a":"...","b":"..."}.`;
   const user = `Half A titles:\n${titlesA.map((t) => "- " + t).join("\n")}\n\nHalf B titles:\n${titlesB.map((t) => "- " + t).join("\n")}`;
   try {
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const res = await aiFetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -259,7 +260,7 @@ async function proposeRename(currentName: string, sampleTitles: string[]): Promi
   const system = `A wiki named "${currentName}" no longer matches its contents. Propose ONE replacement name (1-3 words, Title Case). Reply JSON {"name":"..."}.`;
   const user = `Recent entries in this wiki:\n${sampleTitles.map((t) => "- " + t).join("\n")}`;
   try {
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const res = await aiFetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({

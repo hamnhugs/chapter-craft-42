@@ -54,7 +54,7 @@ serve(async (req) => {
     }
 
     // Embed the query
-    const [queryVec] = await embedTexts(LOVABLE_API_KEY, [query]);
+    const [queryVec] = await embedTexts(LOVABLE_API_KEY, [query], "query");
 
     // Call the RPC. auth.uid() inside the function scopes to this user.
     const { data: matches, error: rpcError } = await supabase.rpc("match_knowledge_entries", {

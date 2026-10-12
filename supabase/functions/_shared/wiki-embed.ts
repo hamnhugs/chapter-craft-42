@@ -1,3 +1,4 @@
+import { aiFetch } from "./ai-local.ts";
 // Shared embedding helper used by knowledge-extract and embed-entries.
 // Writes to knowledge_entries.embedding_v2 (halfvec(1536)) so it lives side-by-side
 // with the existing 768-dim `embedding` column used by knowledge-retrieve.
@@ -11,7 +12,7 @@ interface EmbeddingResponse {
   data: { embedding: number[]; index: number }[];
 }
 
-export async function embedTexts(apiKey: string, texts: string[]): Promise<number[][]> {
+export async function embedTexts(apiKey: string, texts: string[], kind: "query" | "document" = "document"): Promise<number[][]> {
   // Lovable AI gateway does not expose /v1/embeddings for all workspaces.
   // Prefer OpenRouter (OPENROUTER_API_KEY) when present, fall back to gateway.
   const openrouterKey = Deno.env.get("OPENROUTER_API_KEY");
@@ -20,7 +21,7 @@ export async function embedTexts(apiKey: string, texts: string[]): Promise<numbe
     : "https://ai.gateway.lovable.dev/v1/embeddings";
   const auth = openrouterKey || apiKey;
 
-  const resp = await fetch(url, {
+  const resp = await aiFetch(url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${auth}`,
@@ -32,6 +33,9 @@ export async function embedTexts(apiKey: string, texts: string[]): Promise<numbe
     body: JSON.stringify({
       model: EMBED_MODEL,
       input: texts,
+      // Ignored by hosted routes; tells the local embedder which task prefix
+      // to apply (see _shared/ai-local.ts).
+      ...(kind === "query" ? { input_kind: "query" } : {}),
     }),
   });
 

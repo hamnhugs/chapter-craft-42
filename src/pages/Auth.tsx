@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable";
+import { isLocalBackend } from "@/lib/localServices";
 import { useToast } from "@/hooks/use-toast";
 
 const Auth: React.FC = () => {
@@ -77,16 +78,18 @@ const Auth: React.FC = () => {
         toast({ title: "Login failed", description: error.message, variant: "destructive" });
       }
     } else {
-      const { error } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: { emailRedirectTo: window.location.origin },
       });
       if (error) {
         toast({ title: "Sign up failed", description: error.message, variant: "destructive" });
-      } else {
+      } else if (!data.session) {
         toast({ title: "Check your email", description: "We sent you a confirmation link." });
       }
+      // With a session (the local backend skips confirmation) the auth
+      // listener signs straight in; no email is coming.
     }
 
     setLoading(false);
@@ -182,6 +185,9 @@ const Auth: React.FC = () => {
               {loading ? "Loading…" : isLogin ? "Sign In to Library" : "Create Account"}
             </button>
 
+            {/* Google sign-in goes through Lovable's cloud and can't work on
+                the local backend; email + password is the local account. */}
+            {!isLocalBackend() && (<>
             <div className="relative py-2">
               <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-outline-variant/20" /></div>
               <div className="relative flex justify-center text-xs uppercase tracking-[0.2em]">
@@ -206,6 +212,12 @@ const Auth: React.FC = () => {
               )}
               {googleLoading ? "Opening Google…" : "Continue with Google"}
             </button>
+            </>)}
+            {isLocalBackend() && (
+              <p className="text-xs text-center text-on-surface-variant">
+                Local library — your account and books stay on this computer.
+              </p>
+            )}
           </form>
         </section>
 

@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveWikiLlm } from "../_shared/wiki-llm.ts";
 import { selectLintSample } from "../_shared/lint-sample.ts";
 import { selectAllPages } from "../_shared/memory-layers.ts";
+import { aiFetch } from "../_shared/ai-local.ts";
 
 // Hard caps on what one lint call sends to the LLM.
 const LINT_SAMPLE_BUDGET = 150;
@@ -125,7 +126,7 @@ serve(async (req) => {
       : "";
 
     const llm = await resolveWikiLlm(supabase, user.id);
-    const aiResponse = await fetch(llm.url, {
+    const aiResponse = await aiFetch(llm.url, {
       method: "POST",
       headers: llm.headers,
       body: JSON.stringify({

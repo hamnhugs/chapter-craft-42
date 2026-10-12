@@ -1,0 +1,23 @@
+# Why local turns took 50-74 s for ~4.5K prompt tokens (Ollama 0.33.3, Vulkan, RX 5600M)
+# Same system prompt (~3K tok), num_ctx 16384, think:false.
+
+## 1. Prefix reuse: hybrid vs pure-attention models
+qwen3.5:4b 'hello':   prefill 3036tok in 38.5s
+qwen3.5:4b 'hello':   prefill 3036tok in  0.1s   <- identical prompt: cached
+qwen3.5:4b 'goodbye': prefill 3037tok in 13.3s   <- only the LAST message changed: FULL re-prefill
+qwen3:8b   'hello':   prefill 3040tok in 20.8s
+qwen3:8b   'hello':   prefill 3040tok in  0.1s
+qwen3:8b   'goodbye': prefill 3041tok in  2.0s   <- suffix change: only the new tokens
+=> qwen3.5 (hybrid Gated-DeltaNet/attention) cannot reuse a partial prefix in this
+   llama.cpp build: every chat turn re-reads the whole conversation. Pure-attention
+   models (qwen3) reuse it. The append-only roster design depends on reuse, so the
+   chat default must be a pure-attention model.
+
+## 2. GPU memory clock stuck low under load (power_dpm_force_performance_level=auto)
+t=5..35s  sclk 1390-1680 MHz, mclk level 1: 500 MHz, gpu_busy 99%
+t=40s     mclk level 3: 750 MHz (briefly)
+=> prefill is bandwidth-bound and the VRAM clock sits at a low DPM level. Same
+   prompt ran 79 tok/s cold vs 228-440 tok/s when clocks were up. Fix (root):
+   echo high > /sys/class/drm/card1/device/power_dpm_force_performance_level
+   (scripts/local-ai/setup-once.sh installs a udev rule for it). Not yet measured
+   after the fix — needs root.

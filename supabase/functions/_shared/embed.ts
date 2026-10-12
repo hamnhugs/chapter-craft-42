@@ -1,3 +1,4 @@
+import { AI_LOCAL, LOCAL_EMBED_MODEL, localEmbed } from "./ai-local.ts";
 // Shared embedding helper for knowledge_entries.embedding (vector(768)).
 //
 // ONE MODEL PER DEPLOYMENT. Every vector in the `embedding` column must come
@@ -45,24 +46,50 @@ const OPENROUTER_EMBED_MODEL = Deno.env.get("OPENROUTER_EMBED_MODEL") || "perple
 const GOOGLE_MODEL = "text-embedding-004";
 export const EMBEDDING_DIMS = 768;
 
-export type EmbedProvider = "openrouter" | "google";
+export type EmbedProvider = "openrouter" | "google" | "ollama";
 
-/** Pure provider choice — exported for tests / diagnostics. */
-export function chooseEmbedProvider(env: { override?: string | null; openrouterKey?: string | null }): EmbedProvider {
+/** Pure provider choice — exported for tests / diagnostics. The local
+ *  edition (AI_PROVIDER=ollama) embeds on this machine unless overridden. */
+export function chooseEmbedProvider(env: { override?: string | null; openrouterKey?: string | null; local?: boolean }): EmbedProvider {
   const o = (env.override || "").trim().toLowerCase();
-  if (o === "openrouter" || o === "google") return o;
+  if (o === "openrouter" || o === "google" || o === "ollama") return o;
+  if (env.local) return "ollama";
   return env.openrouterKey ? "openrouter" : "google";
 }
 
 export const EMBED_PROVIDER: EmbedProvider = chooseEmbedProvider({
   override: Deno.env.get("EMBED_PROVIDER"),
   openrouterKey: OPENROUTER_API_KEY,
+  local: AI_LOCAL,
 });
 
 /** The model that actually produced every vector this deployment writes. */
-export const EMBEDDING_MODEL_ID = EMBED_PROVIDER === "openrouter"
-  ? OPENROUTER_EMBED_MODEL
-  : `google/${GOOGLE_MODEL}`;
+export const EMBEDDING_MODEL_ID = EMBED_PROVIDER === "ollama"
+  ? `ollama/${LOCAL_EMBED_MODEL}`
+  : EMBED_PROVIDER === "openrouter"
+    ? OPENROUTER_EMBED_MODEL
+    : `google/${GOOGLE_MODEL}`;
+
+/** Retrieval models are trained with task prefixes; leaving them off costs
+ *  measurable recall. Queries and documents get DIFFERENT ones. */
+export function taskPrefix(model: string, kind: "query" | "document"): string {
+  const m = model.toLowerCase();
+  if (m.includes("nomic-embed")) return kind === "query" ? "search_query: " : "search_document: ";
+  if (m.includes("embeddinggemma")) return kind === "query" ? "task: search result | query: " : "title: none | text: ";
+  if (m.includes("qwen3-embedding")) return kind === "query" ? "Instruct: Given a search query, retrieve relevant passages\nQuery: " : "";
+  return "";
+}
+
+async function ollamaEmbed(inputs: string[], kind: "query" | "document"): Promise<(number[] | null)[] | null> {
+  const prefix = taskPrefix(LOCAL_EMBED_MODEL, kind);
+  const vecs = await localEmbed(inputs.map((t) => prefix + trim(t)), EMBEDDING_DIMS);
+  if (!vecs) {
+    console.error(`ollamaEmbed: ${LOCAL_EMBED_MODEL} unavailable`);
+    return null;
+  }
+  const out = inputs.map((_, i) => fit(vecs[i]));
+  return out.every((v) => v === null) ? null : out;
+}
 
 const GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/embeddings";
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/embeddings";
@@ -228,6 +255,7 @@ async function googleEmbedBatch(texts: string[]): Promise<(number[] | null)[]> {
 // ---------- Public API ----------
 
 export async function embedOne(text: string): Promise<number[] | null> {
+  if (EMBED_PROVIDER === "ollama") return (await ollamaEmbed([text], "document"))?.[0] ?? null;
   if (EMBED_PROVIDER === "openrouter") {
     const or = await openrouterEmbed([text]);
     return or?.[0] ?? null;
@@ -238,6 +266,7 @@ export async function embedOne(text: string): Promise<number[] | null> {
 }
 
 export async function embedQuery(text: string): Promise<number[] | null> {
+  if (EMBED_PROVIDER === "ollama") return (await ollamaEmbed([text], "query"))?.[0] ?? null;
   if (EMBED_PROVIDER === "openrouter") {
     const or = await openrouterEmbed([text]);
     return or?.[0] ?? null;
@@ -249,6 +278,7 @@ export async function embedQuery(text: string): Promise<number[] | null> {
 
 export async function embedBatch(texts: string[]): Promise<(number[] | null)[]> {
   if (texts.length === 0) return [];
+  if (EMBED_PROVIDER === "ollama") return (await ollamaEmbed(texts, "document")) ?? texts.map(() => null);
   if (EMBED_PROVIDER === "openrouter") {
     return (await openrouterEmbed(texts)) ?? texts.map(() => null);
   }

@@ -1,0 +1,20 @@
+# multi-turn: same ~4K-token system+tools prefix, growing history, think off, 14 tools
+qwen3.5:4b turn1: wall  18.6s  prompt 4826tok in  14.3s  gen 73tok in  4.3s
+qwen3.5:4b turn2: wall   7.2s  prompt 4914tok in   0.7s  gen 109tok in  6.4s
+qwen3.5:4b turn3: wall   8.0s  prompt 5039tok in   0.9s  gen 120tok in  7.1s
+qwen3.5:4b turn4: wall   2.7s  prompt 5178tok in   1.0s  gen 28tok in  1.6s
+qwen3:4b-instruct-2507-q4_K_M turn1: wall   1.0s  prompt 4702tok in   0.2s  gen 23tok in  0.7s
+qwen3:4b-instruct-2507-q4_K_M turn2: wall   0.9s  prompt 4719tok in   0.2s  gen 23tok in  0.7s
+qwen3:4b-instruct-2507-q4_K_M turn3: wall   2.9s  prompt 4736tok in   0.2s  gen 87tok in  2.6s
+qwen3:4b-instruct-2507-q4_K_M turn4: wall   1.2s  prompt 4841tok in   0.2s  gen 30tok in  0.9s
+
+# Reading: both models reuse the cache when the prompt only GROWS (turns 2-4).
+# qwen3.5's turn1 (14.3 s) is the warm-up message "hi" being REPLACED: a hybrid
+# (recurrent-state) model can extend its cache but cannot rewind it. The app
+# attaches per-turn context to the LATEST user message (ChatContext.tsx
+# attachTurnContext, ~line 1592) and drops it from that message on the next
+# turn, so every real turn edits history one message back: qwen3.5 then
+# re-reads the whole conversation; qwen3 (pure attention) rewinds to that
+# message and reads only the new tail.
+# Decision: chat default qwen3:4b-instruct-2507 (11/14 tool picks, cache-friendly);
+# vision qwen3.5:4b (13/14, has vision); Deep Research qwen3:8b (14/14).

@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { aiFetch } from "../_shared/ai-local.ts";
 
 // auto-tag: assigns one category (fixed taxonomy) and 3-6 free-form tags to a
 // batch of library books, for the library mind-map graph and search.
@@ -219,7 +220,7 @@ serve(async (req) => {
         "HTTP-Referer": "https://bookwormstudio.com",
         "X-Title": "Bookworm Auto-Tag",
       };
-      aiResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      aiResponse = await aiFetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: orHeaders,
         body: JSON.stringify({
@@ -240,7 +241,7 @@ serve(async (req) => {
       if (!aiResponse.ok && aiResponse.status >= 400 && aiResponse.status < 500) {
         const errText = await aiResponse.text();
         if (/response_format|json_schema|schema/i.test(errText)) {
-          aiResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          aiResponse = await aiFetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
             headers: orHeaders,
             body: JSON.stringify({
@@ -263,7 +264,7 @@ serve(async (req) => {
         requestedModel && (requestedModel.startsWith("google/") || requestedModel.startsWith("openai/"))
           ? requestedModel
           : LOVABLE_DEFAULT_MODEL;
-      aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      aiResponse = await aiFetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${LOVABLE_API_KEY}`,

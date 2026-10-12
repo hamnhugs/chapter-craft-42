@@ -24,6 +24,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { embedBatch, EMBEDDING_DIMS, EMBEDDING_MODEL_ID } from "../_shared/embed.ts";
+import { aiFetch } from "../_shared/ai-local.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -217,7 +218,7 @@ async function draftPrompt(gists: string[], existingNames: string[]): Promise<Dr
   const userMsg = `Requests that fitted none of their prompts:\n${gists.map((g) => `- ${g}`).join("\n")}\n\nDraft the prompt now.`;
 
   try {
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const res = await aiFetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({

@@ -7,6 +7,7 @@
 // Proxies to VPS-hosted VideoCaptionEngine at PORT 8000.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { resolveWikiLlm } from "../_shared/wiki-llm.ts";
+import { aiFetch } from "../_shared/ai-local.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -373,7 +374,7 @@ Output format:
 ## Next Chapter Title
 [formatted content]`;
 
-  const res = await fetch(llm.url, {
+  const res = await aiFetch(llm.url, {
     method: "POST",
     headers: llm.headers,
     body: JSON.stringify({

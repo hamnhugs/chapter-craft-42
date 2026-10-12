@@ -48,6 +48,7 @@ import {
 } from "../_shared/memory-layers.ts";
 import { embedOne, embedBatch, writeEntryEmbedding } from "../_shared/embed.ts";
 import { embedAndStore } from "../_shared/atomicity.ts";
+import { aiFetch } from "../_shared/ai-local.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -248,7 +249,7 @@ async function reconsolidate(
         .join("\n\n");
 
       // Ask the LLM for edges — zero is an acceptable answer.
-      const resp = await fetch(llm.url, {
+      const resp = await aiFetch(llm.url, {
         method: "POST",
         headers: llm.headers,
         body: JSON.stringify({
@@ -449,7 +450,7 @@ async function semanticize(
     }
     if (facts.length < 6) return { created: 0 };
 
-    const resp = await fetch(llm.url, {
+    const resp = await aiFetch(llm.url, {
       method: "POST",
       headers: llm.headers,
       body: JSON.stringify({

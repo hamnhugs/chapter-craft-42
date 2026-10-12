@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useChatSettings } from "@/hooks/useChatSettings";
-import { synthesizeSpeech } from "@/lib/inworldTts";
+import { audioMime, synthesizeSpeech } from "@/lib/inworldTts";
 import { computeBackTarget, computeForwardTarget, type SeekPos } from "@/lib/ttsSeek";
 import {
   addTtsChunkAt,
@@ -626,7 +626,7 @@ export function useReadAloud(): ReadAloudController {
 
       const playBuffer = (buf: ArrayBuffer, chunkIdx: number, startAt: number): Promise<"ok" | "blocked"> =>
         new Promise((resolve) => {
-          const url = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
+          const url = URL.createObjectURL(new Blob([buf], { type: audioMime(buf) }));
           let audio = audioRef.current;
           if (!audio) {
             audio = new Audio();

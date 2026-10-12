@@ -18,7 +18,7 @@ import { namespacedId } from "@/lib/providers/registry";
 /** Models known to work for chat on a 6 GiB card, in preference order.
  *  Evidence: docs/local-ai/results/. Shown as a pull hint when nothing usable
  *  is installed — the app never pulls on its own (multi-GB downloads). */
-const SUGGESTED = ["qwen3.5:4b", "qwen3:8b"];
+const SUGGESTED = ["qwen3:4b-instruct-2507-q4_K_M", "qwen3.5:4b", "qwen3:8b"];
 
 const gib = (b: number) => `${(b / 2 ** 30).toFixed(1)} GB`;
 

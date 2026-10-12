@@ -19,6 +19,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { aiFetch } from "../_shared/ai-local.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -90,7 +91,7 @@ async function callModel(
     temperature: 0.2,
     max_tokens: 4000,
   };
-  let resp = await fetch(endpoint, {
+  let resp = await aiFetch(endpoint, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
     body: JSON.stringify({ ...base, response_format: { type: "json_object" } }),
@@ -99,7 +100,7 @@ async function callModel(
   if (!resp.ok && resp.status >= 400 && resp.status < 500) {
     const errText = await resp.text();
     if (/response_format|json_object|json_schema|schema/i.test(errText)) {
-      resp = await fetch(endpoint, {
+      resp = await aiFetch(endpoint, {
         method: "POST",
         headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
         body: JSON.stringify(base),

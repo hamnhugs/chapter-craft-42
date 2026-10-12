@@ -3,6 +3,7 @@
 // inserts entries, embeds them, creates contradicts/refutes/supports edges,
 // and logs conflicts to public.knowledge_conflicts.
 import { embedOne, writeEntryEmbedding } from "./embed.ts";
+import { aiFetch } from "./ai-local.ts";
 
 const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
 const AI_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
@@ -32,7 +33,7 @@ export async function atomicitySplit(candidates: Candidate[]): Promise<{ candida
   const needsSplit = candidates.filter((c) => (c.content?.length || 0) > 1500);
   if (needsSplit.length === 0) return { candidates, splits: 0 };
 
-  const resp = await fetch(AI_URL, {
+  const resp = await aiFetch(AI_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -121,7 +122,7 @@ export async function probeAndLinkConflicts(
     const candidates = (neighbors || []).filter((n: any) => n.id !== entry.id);
     if (candidates.length === 0) continue;
 
-    const resp = await fetch(AI_URL, {
+    const resp = await aiFetch(AI_URL, {
       method: "POST",
       headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({
