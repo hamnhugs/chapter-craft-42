@@ -1,0 +1,15 @@
+  [top8] halluc=[] OK  in_set=True got=['list_books'] args_json=True 86.0s ptok=1670
+  [top8] halluc=[] OK  in_set=True got=['search_book_text'] args_json=True 93.6s ptok=2043
+  [top8] halluc=[] OK  in_set=True got=['rename_chapter'] args_json=True 84.2s ptok=1858
+  [top8] halluc=[] OK  in_set=True got=['create_memory_entry'] args_json=True 127.7s ptok=2595
+  [top8] halluc=[] OK  in_set=True got=['web_search'] args_json=True 63.0s ptok=1399
+  [top8] halluc=[] OK  in_set=True got=['generate_image'] args_json=True 251.4s ptok=5490
+  [top8] halluc=[] OK  in_set=True got=['list_videos'] args_json=True 120.6s ptok=2832
+  [top8] halluc=[] OK  in_set=True got=['switch_wiki'] args_json=True 59.1s ptok=1338
+  [top8] halluc=[] OK  in_set=True got=['manage_shelf', 'manage_shelf'] args_json=True 109.3s ptok=2289
+  [top8] halluc=[] OK  in_set=True got=['get_book'] args_json=True 36.5s ptok=1444
+  [top8] halluc=[] OK  in_set=True got=['list_conflicts'] args_json=True 54.7s ptok=1087
+  [top8] halluc=[] OK  in_set=True got=['save_file'] args_json=True 180.0s ptok=3929
+  [top8] halluc=[] OK  in_set=True got=['forge_tool'] args_json=True 107.3s ptok=1948
+  [top8] halluc=[] OK  in_set=True got=['set_active_book'] args_json=True 92.0s ptok=2056
+qwen3:8b top8: 14/14 correct, median 93.6s, first 86.0s

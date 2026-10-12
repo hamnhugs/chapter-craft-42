@@ -1,0 +1,10 @@
+# Ollama 0.33.3 (Vulkan), RX 5600M 6 GiB, Ryzen 7 4800H, 30 GiB RAM. flash attention off, f16 KV.
+# Cache-busted prompts; "warm" = GPU already awake. Raw runs from the session; first-call numbers are cold.
+qwen3.5:4b ctx=32768 prompt=3640tok  444 tok/s prefill  49 tok/s gen   (warm, 100% GPU, 3.8 GiB)
+qwen3.5:4b ctx=32768 prompt=12028tok 300 tok/s prefill  44 tok/s gen   (warm)
+qwen3.5:4b ctx=32768 prompt=24033tok 169 tok/s prefill  33 tok/s gen   (warm)
+qwen3.5:4b ctx=16384 prompt=3622tok   80 tok/s prefill  18 tok/s gen   (cold: dGPU runtime-suspended)
+qwen3:8b   ctx=8192  prompt=3246tok   36 tok/s prefill  17 tok/s gen   (31% CPU / 69% GPU split at 16K ctx)
+qwen3:8b   ctx=8192  same prompt again: prefix cache hit, prefill ~instant
+qwen3:8b   ctx=32768 prompt≈21K tok: did not finish in >10 min (killed)
+# Finding: /v1/chat/completions ignores options.num_ctx -> model ran at 4096 (seen in `ollama ps`). Use /api/chat or bake num_ctx into a Modelfile.

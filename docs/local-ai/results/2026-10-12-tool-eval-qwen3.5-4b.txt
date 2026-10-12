@@ -1,0 +1,30 @@
+  [top8] halluc=[] OK  in_set=True got=['list_books'] args_json=True 32.6s ptok=2024
+  [top8] halluc=[] OK  in_set=True got=['search_book_text'] args_json=True 28.7s ptok=2458
+  [top8] halluc=[] OK  in_set=True got=['list_books'] args_json=True 25.8s ptok=2311
+  [top8] halluc=[] OK  in_set=True got=['create_memory_entry'] args_json=True 40.7s ptok=3108
+  [top8] halluc=[] OK  in_set=True got=['web_search'] args_json=True 20.9s ptok=1753
+  [top8] halluc=[] OK  in_set=True got=['generate_image'] args_json=True 80.9s ptok=6624
+  [top8] halluc=[] OK  in_set=True got=['list_videos'] args_json=True 37.3s ptok=3286
+  [top8] halluc=[] OK  in_set=True got=['list_wikis'] args_json=True 19.1s ptok=1719
+  [top8] halluc=[] OK  in_set=True got=['manage_shelf'] args_json=True 31.9s ptok=2738
+  [top8] halluc=[] OK  in_set=True got=['get_chapter_text'] args_json=True 21.4s ptok=1831
+  [top8] halluc=[] OK  in_set=True got=['list_conflicts'] args_json=True 17.5s ptok=1422
+  [top8] halluc=[] BAD in_set=True got=['TEXT:'] args_json=True 107.3s ptok=4682
+  [top8] halluc=[] OK  in_set=True got=['forge_tool'] args_json=True 42.9s ptok=2389
+  [top8] halluc=[] OK  in_set=True got=['set_active_book'] args_json=True 28.0s ptok=2503
+qwen3.5:4b top8: 13/14 correct, median 31.9s, first 32.6s
+  [all] halluc=[] OK  in_set=True got=['list_books'] args_json=True 289.9s ptok=21972
+  [all] halluc=[] OK  in_set=True got=['search_book_text'] args_json=True 10.9s ptok=21977
+  [all] halluc=[] OK  in_set=True got=['list_books'] args_json=True 12.1s ptok=21978
+  [all] halluc=[] OK  in_set=True got=['create_memory_entry'] args_json=True 13.4s ptok=21974
+  [all] halluc=[] OK  in_set=True got=['web_search'] args_json=True 11.7s ptok=21977
+  [all] halluc=[] OK  in_set=True got=['generate_image'] args_json=True 15.0s ptok=21980
+  [all] halluc=[] OK  in_set=True got=['list_videos'] args_json=True 10.2s ptok=21971
+  [all] halluc=[] OK  in_set=True got=['list_wikis'] args_json=True 9.6s ptok=21972
+  [all] halluc=[] OK  in_set=True got=['manage_shelf'] args_json=True 11.3s ptok=21978
+  [all] halluc=[] OK  in_set=True got=['list_books'] args_json=True 9.5s ptok=21978
+  [all] halluc=[] OK  in_set=True got=['list_conflicts'] args_json=True 11.2s ptok=21973
+  [all] halluc=[] BAD in_set=True got=["TEXT:I'd be happy to help you save an outline to your w"] args_json=True 13.0s ptok=21975
+  [all] halluc=[] OK  in_set=True got=['forge_tool'] args_json=True 34.7s ptok=21976
+  [all] halluc=[] OK  in_set=True got=['set_active_book'] args_json=True 10.4s ptok=21971
+qwen3.5:4b all: 13/14 correct, median 11.7s, first 289.9s
