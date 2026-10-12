@@ -1,0 +1,13 @@
+# Local image generation — stable-diffusion.cpp sd-server (Vulkan), TwinFlow Z-Image-Turbo Q4_K,
+# Qwen3-4B-Instruct-2507 Q4_K_M text encoder, FLUX ae VAE, 4 steps, cfg 1.0.
+# Prompt: "a lighthouse in a storm at night, watercolor painting, crashing waves"
+
+RX 5600M (Vulkan1), 768x768, --diffusion-fa --offload-to-cpu : FAILED after 179 s — "device lost"
+RX 5600M (Vulkan1), 512x512, --offload-to-cpu                : FAILED after 114 s — "device lost"
+   kernel: "amdgpu 0000:03:00.0: ring comp_1.2.0 timeout ... ring reset succeeded"
+   => a single Z-Image compute dispatch outlives amdgpu's lockup timeout on Navi10/RADV.
+      Ollama recovered without a restart.
+Renoir iGPU (Vulkan0, UMA/system RAM), 512x512               : OK in 74 s
+   => result: 2026-10-12-zimage-igpu-512.png
+Decision: images run on the iGPU (GGML_VK_VISIBLE_DEVICES=0). Bonus: the chat model on
+the discrete card is never evicted. Sizes held near 512x512 pixel count (~75 s).

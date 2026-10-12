@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { SpeakEndReason } from "@/hooks/useReadAloud";
+import { WhisperRecognition, localSttAvailable } from "@/lib/whisperRecognition";
 
 // Hands-free voice conversation, modeled as an explicit finite-state machine.
 //
@@ -33,9 +34,12 @@ import type { SpeakEndReason } from "@/hooks/useReadAloud";
 // The VAD mic stream requests Chrome 141's echoCancellationMode "all" so the
 // assistant's own speaker output stops self-triggering it.
 
+// Local edition: whisper.cpp on this machine when the page is served by the
+// local dev/preview server (lib/whisperRecognition.ts); the browser's own
+// recognizer everywhere else.
 const SR: any =
   typeof window !== "undefined"
-    ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    ? (localSttAvailable() ? WhisperRecognition : (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
     : null;
 
 export type HandsFreeState = "idle" | "listening" | "thinking" | "speaking";

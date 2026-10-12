@@ -10,8 +10,13 @@ import { defaultUrlTransform, type Components } from "react-markdown";
 
 const SUPABASE_ORIGIN = "https://ktzaysdkdkocqhewwtnn.supabase.co";
 
+/** The Supabase this build talks to (the local edition's is on loopback). */
+const CONFIGURED_SUPABASE_ORIGIN = (() => {
+  try { return new URL(String(import.meta.env.VITE_SUPABASE_URL || SUPABASE_ORIGIN)).origin; } catch { return SUPABASE_ORIGIN; }
+})();
+
 /** Origins model markdown may load fetched-on-paint resources (images) from. */
-export const TRUSTED_MEDIA_ORIGINS: readonly string[] = [SUPABASE_ORIGIN];
+export const TRUSTED_MEDIA_ORIGINS: readonly string[] = [...new Set([SUPABASE_ORIGIN, CONFIGURED_SUPABASE_ORIGIN])];
 
 function parsed(url: string): URL | null {
   try {

@@ -1,5 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { tavilySearch } from "@/lib/tavilySearch";
+import { localSearchAvailable, searxngSearch } from "@/lib/searxngSearch";
+import { localImagesAvailable } from "@/lib/localImageGen";
 import { modelProvider, providerLabel } from "@/lib/providers/registry";
 import { blockedToolResult, isToolBlocked, type LeanMode } from "@/lib/leanMode";
 import { TOOL_PERMISSION, permissionRefusal } from "@/lib/toolPermissions";
@@ -3891,6 +3893,22 @@ export async function executeChatTool(
         if (!q) return { result: { error: "Empty query" }, event: { name, summary: "Empty query", ok: false } };
         const token = (deps.burplexityApiToken || "").trim();
         const tavilyKey = (deps.tavilyApiKey || "").trim();
+        // Local edition: SearXNG on this machine first — no key, no quota.
+        // Falls through to the keyed backends only if it isn't running.
+        if (localSearchAvailable()) {
+          try {
+            const r = await searxngSearch(q, { maxResults: 6 });
+            return {
+              result: { answer: r.answer, citations: r.citations, provider: "SearXNG (local)" },
+              event: { name, summary: `Searched the web (local): ${q.slice(0, 60)}`, ok: true },
+            };
+          } catch (e) {
+            if (!token && !tavilyKey) {
+              const msg = (e as Error)?.message || "Local search failed";
+              return { result: { error: msg }, event: { name, summary: msg.slice(0, 80), ok: false } };
+            }
+          }
+        }
         // Free backend first when Burplexity isn't configured — Tavily gives
         // 1,000 searches a month with no card, so "no token" stops being a
         // dead end for anyone who hasn't paid for search.
@@ -4553,7 +4571,7 @@ export async function executeChatTool(
         // capability their key supports.
         const apiKey = (deps.openRouterApiKey || "").trim();
         const gemKey = (deps.geminiApiKey || "").trim();
-        if (!apiKey && !gemKey) {
+        if (!apiKey && !gemKey && !localImagesAvailable()) {
           return {
             result: { error: "Image generation needs an OpenRouter or Gemini key (it bills that provider — NVIDIA cannot generate images here). Ask the user to add one in Settings → AI Models & Keys." },
             event: { name, summary: "No image-capable key", ok: false },
@@ -4682,7 +4700,7 @@ export async function executeChatTool(
         // Gemini path takes inputImageDataUrl exactly like the OpenRouter one.
         const apiKey = (deps.openRouterApiKey || "").trim();
         const gemEditKey = (deps.geminiApiKey || "").trim();
-        if (!apiKey && !gemEditKey) return { result: { error: "Image editing needs an OpenRouter or Gemini key (it bills that provider — NVIDIA cannot edit images here). Ask the user to add one in Settings." }, event: { name, summary: "No image-capable key", ok: false } };
+        if (!apiKey && !gemEditKey && !localImagesAvailable()) return { result: { error: "Image editing needs an OpenRouter or Gemini key (it bills that provider — NVIDIA cannot edit images here). Ask the user to add one in Settings." }, event: { name, summary: "No image-capable key", ok: false } };
         if (deps.isPaid === false) {
           return {
             result: { error: "Image editing is a Pro feature. Tell the user that upgrading to Pro or Lifetime unlocks it." },

@@ -31,3 +31,6 @@ dist-ssr
 # and the local env file. Never commit book content.
 e2-data/
 .env.e2.local
+
+# Local edition: per-machine state (SearXNG config with its secret, pids, logs).
+.local-state/

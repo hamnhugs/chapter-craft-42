@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { WhisperRecognition, localSttAvailable } from "@/lib/whisperRecognition";
 
 /**
  * Lightweight push-to-talk dictation hook for the Chat tab.
@@ -31,8 +32,11 @@ export interface UseDictationApi {
   toggle: () => void;
 }
 
+// Local edition: whisper.cpp when served locally (see useHandsFree.ts).
 const SpeechRecognitionImpl: any =
-  typeof window !== "undefined" ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) : null;
+  typeof window !== "undefined"
+    ? (localSttAvailable() ? WhisperRecognition : ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition))
+    : null;
 
 const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
 const isAndroid = /android/i.test(ua);

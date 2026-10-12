@@ -1,0 +1,13 @@
+# SearXNG for the local edition. Only what differs from upstream defaults.
+use_default_settings: true
+server:
+  # Template. scripts/local-up.sh copies this to .local-state/searxng/ with a
+  # per-machine key; the copy is what the container mounts.
+  secret_key: "REPLACED_ON_FIRST_RUN"
+  limiter: false
+  image_proxy: false
+search:
+  safe_search: 1
+  formats:
+    - html
+    - json

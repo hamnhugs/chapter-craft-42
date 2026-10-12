@@ -211,3 +211,36 @@ Run it in a real terminal; sudo can't prompt through `!`.
 - The eval is 14 prompts with first-tool scoring. It's good enough to choose a direction, but
   too small to tune on. Grow it from real transcripts (`20260802152000_transcript_persistence.sql`
   means they're stored).
+
+---
+
+## Status — 2026-10-12 (end of first build session)
+
+Quickstart: `docs/local-ai/README.md`. Commits on `local-ai` carry the detail.
+
+| Phase | State | Verified how |
+|---|---|---|
+| 1 Local chat provider | **Done** | 17 unit tests + live tests against Ollama (`LIVE_OLLAMA=1`) |
+| 2 Fit the context | **Done** | first turn 29K → 4.9K tokens (`localRoster.test.ts`); real-pipeline eval 13/14 & 11/14 (`results/2026-10-12-pipeline-eval.txt`) |
+| 3 Local backend | **Code done, not run** | aiFetch shim: 7 Deno tests; functions type-check. Docker isn't usable by the user yet → `supabase start` never ran here |
+| 4 Local embeddings | **Code done, not run** | ollama provider in embed.ts; dims fitting tested; re-embed path wired into import |
+| 5 Search + voice | Piper **working**, whisper **working**, SearXNG **code only** | Piper 0.3 s/5 s audio; whisper base.en 0.6 s, exact transcript; SearXNG needs Docker |
+| 6 Images | **Working** on iGPU | 512² in 74 s (`results/2026-10-12-images.txt`); dGPU path hangs the driver |
+| 7 Ops | **Scripts written** | `bash -n` only; setup-once needs sudo, local-up needs Docker |
+
+Changed from the plan, with evidence:
+- Chat default is `qwen3:4b-instruct-2507`, not `qwen3.5:4b`: hybrid models can't rewind the
+  prompt cache and the app edits the previous user message every turn (`results/2026-10-12-multiturn.txt`).
+- The "unexplained overhead" was two things: no partial-prefix reuse on qwen3.5, and the GPU's
+  memory clock stuck at 500 MHz under `auto` DPM (`results/2026-10-12-latency-profile.txt`).
+  The COMPUTE power profile fix is in setup-once.sh — **not yet measured** (needs root).
+- Images and speech run on the integrated GPU.
+- The 1536-d `embedding_v2` column is filled by zero-padding 768-d local vectors (exact for
+  cosine/IP/L2) rather than a schema migration.
+
+Still open:
+- Run setup-once.sh → local-up.sh end to end; fix whatever the first `supabase start` finds in
+  the 140 migrations.
+- Re-measure turn latency after the GPU profile.
+- import-hosted.mjs has never run (needs Docker + a hosted token).
+- Edge-function runtime reaching Ollama through `ollama-bridge` (172.17.0.1) is unverified.

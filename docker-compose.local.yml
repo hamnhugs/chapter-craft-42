@@ -1,0 +1,27 @@
+# Local edition services that run in containers. Started by scripts/local-up.sh.
+# Everything binds to loopback (or the docker bridge) — nothing faces the LAN.
+name: chapter-craft-local
+
+services:
+  # Metasearch for the web_search tool: no key, no quota. JSON API enabled in
+  # local/searxng/settings.yml. Port must match local-services.json "searxng".
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8888:8080"
+    volumes:
+      - ./.local-state/searxng:/etc/searxng:rw
+    environment:
+      - SEARXNG_BASE_URL=http://127.0.0.1:8888/
+
+  # Ollama listens on 127.0.0.1 only (the browser reaches it there). The edge
+  # functions run inside Supabase's containers, where 127.0.0.1 is the
+  # container itself; host.docker.internal resolves to the docker bridge
+  # gateway. This relays that one address:port to the host's loopback Ollama,
+  # so Ollama never has to listen on every interface.
+  ollama-bridge:
+    image: docker.io/alpine/socat:latest
+    restart: unless-stopped
+    network_mode: host
+    command: ["TCP-LISTEN:11434,bind=172.17.0.1,fork,reuseaddr", "TCP:127.0.0.1:11434"]

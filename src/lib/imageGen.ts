@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { reindexEmbeddings } from "@/lib/knowledgeApi";
 import { sanitizeIlike } from "@/lib/sanitize";
+import { generateViaLocal, isLocalImageModel, localImagesAvailable } from "@/lib/localImageGen";
 
 // Nano Banana image generation via OpenRouter (the user's existing key).
 // Primary: Nano Banana 2 (Gemini 3.1 Flash Image) — near-Pro quality at half
@@ -150,6 +151,12 @@ async function generateViaGemini(
  *  direct-to-Gemini with the Gemini key. Tries each candidate in order. */
 export async function generateImage({ apiKey, geminiApiKey, prompt, aspectRatio, inputImageDataUrl, referenceImageDataUrls, primaryModel, fallbackModel }: GenerateArgs): Promise<GenerateResult> {
   let lastError = "";
+  // Local edition: the generator on this machine when it's chosen, or when
+  // there is no cloud key at all. Reference images beyond the first can't be
+  // honoured by a single-image edit, so only the input image goes along.
+  if (isLocalImageModel(primaryModel) || (!apiKey && !geminiApiKey && localImagesAvailable())) {
+    return generateViaLocal({ prompt, aspectRatio, inputImageDataUrl: inputImageDataUrl || referenceImageDataUrls?.find((u) => u?.startsWith("data:")) });
+  }
   // No OpenRouter key: the Gemini path is the whole show.
   if (!apiKey && geminiApiKey) {
     const gemAttachments = [
