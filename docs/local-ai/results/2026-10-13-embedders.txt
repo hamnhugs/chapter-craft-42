@@ -1,0 +1,53 @@
+Embedding model comparison — 2026-10-13, Ollama on this machine, embedder on the CPU (num_gpu 0).
+Candidates: nomic-embed-text (v1.5, 768-d), embeddinggemma:300m (768-d), qwen3-embedding:0.6b (1024-d).
+Each with its own task prefixes (embedPrefix in src/lib/providers/ollamaConfig.ts).
+
+1. Finding the right app tool (what localRoster.ts does every turn)
+   50 everyday requests, each with one correct tool, ranked against every non-core tool card.
+
+   model                  recall@1  recall@4  MRR
+   nomic-embed-text         0.54      0.82    0.692
+   embeddinggemma:300m      0.80      0.90    0.859
+   qwen3-embedding:0.6b     0.68      0.88    0.770
+
+   Misses left for embeddinggemma (5/50; nomic had 9 with rank > 4):
+     "Draw a dragon curled around a tower"            generate_image rank 5
+     "Build a small program that makes flashcards"    forge_program rank 6
+     "Open my flashcard program"                      run_program rank 18
+     "How many generations have I made this week?"    get_production_stats rank 12
+     "Turn on the critic mode thinking style"         set_active_neurons rank 11
+   All five are still reachable through find_tools.
+
+2. Auto-add floor (AUTO_ADD_MIN_SCORE → rosterAutoAddFloor)
+   Cosine of the RIGHT tool vs the best WRONG tool, p10/25/50/75/90:
+     nomic   right [0.546 0.601 0.652 0.698 0.738]   best-wrong [0.580 0.605 0.642 0.672 0.703]
+     gemma   right [0.225 0.321 0.428 0.546 0.582]   best-wrong [0.270 0.313 0.381 0.448 0.491]
+   Share passing each floor (right / best-wrong):
+     nomic  0.50: 0.96/1.00   0.55: 0.88/0.94   0.60: 0.76/0.78   0.65: 0.52/0.44
+     gemma  0.40: 0.54/0.44   0.45: 0.44/0.24   0.50: 0.34/0.10   0.55: 0.24/0.06
+   nomic can't separate right from wrong at any floor; its old 0.55 passed 94% of wrong tools.
+   gemma at 0.45: right tool added unasked 44% of the time, a wrong one 24%. Chosen.
+
+3. Sentence similarity (STS-B test, 1379 pairs, human 0–5 scores)
+   Spearman: nomic 0.812, embeddinggemma 0.850.
+   Cosine percentiles p10/50/90:
+     nomic   same meaning [0.906 0.955 0.987]  same topic [0.775 0.864 0.933]  unrelated [0.571 0.675 0.775]
+     gemma   same meaning [0.882 0.944 0.983]  same topic [0.657 0.796 0.893]  unrelated [0.380 0.493 0.646]
+   Share of pairs at/above a cosine (same meaning ≥4.6 / paraphrase 4–4.6 / same topic 2.5–3.5 / unrelated ≤0.5):
+     nomic  0.85: 1.00/0.87/0.59/0.01   0.92: 0.85/0.46/0.13/0.00
+     gemma  0.85: 0.92/0.70/0.22/0.00   0.92: 0.72/0.30/0.03/0.00
+   Consequence for the fixed thresholds in the edge functions (kept as they are):
+   - knowledge-extract / knowledge-consolidate merge at ≥0.85 and skip at ≥0.92. Under gemma these
+     fire only on near-duplicates (same-topic pairs merged 22% vs nomic's 59%) — fewer wrong merges,
+     a few more duplicates. Wrong merges destroy a fact; duplicates are flagged and cheap.
+   - search-knowledge 0.30 / knowledge-retrieve 0.30 / WikiLibrary 0.25: below both models' unrelated
+     p10, i.e. ranking does the work, as before.
+
+4. SciFact (scientific claim → abstract retrieval, 5183 docs, 300 queries)
+   nomic-embed-text  nDCG@10 0.799  recall@10 0.890  3.3 docs/s on CPU, query 34 ms
+   The embeddinggemma and qwen3-embedding runs died from CPU contention with the parallel
+   benchmarks (HTTP 400/disconnects) and weren't repeated; tests 1–3 decided it.
+
+Live check after the switch: a note "Mara is right-handed…" found by "which hand does Mara use?"
+at cosine 0.548 through search-knowledge; knowledge-embed {stale_model} rebuilt both columns of a
+row stamped ollama/nomic-embed-text.

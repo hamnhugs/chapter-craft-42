@@ -24,6 +24,11 @@ CC_HOME="${CC_HOME:-$HOME/.local/share/chapter-craft-local}"
 STATE="$ROOT/.local-state"; LOGS="$STATE/logs"; PIDS="$STATE/pids"
 mkdir -p "$LOGS" "$PIDS" "$STATE/searxng"
 SB=(npx -y supabase@2.120.0)
+# The models this install runs. Override any of them in the environment; the
+# browser and the edge functions are both told, so they always agree.
+LOCAL_LLM_MODEL=${LOCAL_LLM_MODEL:-qwen3:4b-instruct-2507-q4_K_M}
+LOCAL_VISION_MODEL=${LOCAL_VISION_MODEL:-qwen3.5:4b}
+LOCAL_EMBED_MODEL=${LOCAL_EMBED_MODEL:-embeddinggemma:300m}
 APP=built
 case "${1:-}" in --no-app) APP=none ;; --dev) APP=dev ;; esac
 
@@ -55,7 +60,7 @@ if ! docker info >/dev/null 2>&1; then
   fail "Docker isn't usable by $USER. Run: bash scripts/local-ai/setup-once.sh (then log out/in)."
 fi
 up "$(svc ollama)/api/version" || fail "Ollama isn't running. Start it: sudo systemctl start ollama"
-for m in qwen3:4b-instruct-2507-q4_K_M nomic-embed-text; do
+for m in "$LOCAL_LLM_MODEL" "$LOCAL_EMBED_MODEL"; do
   ollama show "$m" >/dev/null 2>&1 || fail "Model $m missing. Run: scripts/local-ai/install-services.sh"
 done
 [ -x "$CC_HOME/src/whisper.cpp/build/bin/whisper-server" ] || fail "Services not installed. Run: scripts/local-ai/install-services.sh"
@@ -135,20 +140,26 @@ NEW_ENV="VITE_SUPABASE_URL=\"$API_URL\"
 VITE_SUPABASE_PUBLISHABLE_KEY=\"$ANON\"
 VITE_SUPABASE_PROJECT_ID=\"local\"
 VITE_LOCAL_AUTO_EMAIL=\"$OWNER_EMAIL\"
-VITE_LOCAL_AUTO_PASSWORD=\"$OWNER_PASSWORD\""
+VITE_LOCAL_AUTO_PASSWORD=\"$OWNER_PASSWORD\"
+VITE_LOCAL_EMBED_MODEL=\"$LOCAL_EMBED_MODEL\""
 [ "$(cat .env.local 2>/dev/null)" = "$NEW_ENV" ] || { printf '%s\n' "$NEW_ENV" >.env.local; say "wrote .env.local"; }
 
 # Edge-function env. LOVABLE_API_KEY=local satisfies the functions' existing
 # "is AI configured?" guards; aiFetch (_shared/ai-local.ts) intercepts the call.
-cat >supabase/functions/.env.local <<EOF
-AI_PROVIDER=ollama
+FN_ENV="AI_PROVIDER=ollama
 OLLAMA_URL=http://host.docker.internal:$(port ollama)
 LOVABLE_API_KEY=local
-LOCAL_LLM_MODEL=${LOCAL_LLM_MODEL:-qwen3:4b-instruct-2507-q4_K_M}
-LOCAL_VISION_MODEL=${LOCAL_VISION_MODEL:-qwen3.5:4b}
-LOCAL_EMBED_MODEL=${LOCAL_EMBED_MODEL:-nomic-embed-text}
-LOCAL_NUM_CTX=16384
-EOF
+LOCAL_LLM_MODEL=$LOCAL_LLM_MODEL
+LOCAL_VISION_MODEL=$LOCAL_VISION_MODEL
+LOCAL_EMBED_MODEL=$LOCAL_EMBED_MODEL
+LOCAL_NUM_CTX=16384"
+if [ "$(cat supabase/functions/.env.local 2>/dev/null)" != "$FN_ENV" ]; then
+  printf '%s\n' "$FN_ENV" >supabase/functions/.env.local
+  # The functions read it only at start: restart them if they're up.
+  if [ -f "$PIDS/functions.pid" ] && kill "$(cat "$PIDS/functions.pid")" 2>/dev/null; then
+    say "functions: settings changed, restarting"; rm -f "$PIDS/functions.pid"; sleep 2
+  fi
+fi
 umask 022
 start_bg functions "${SB[@]}" functions serve --env-file supabase/functions/.env.local
 
@@ -195,6 +206,52 @@ fi
 wait_for "$(svc tts)/voices" tts 60
 wait_for "$(svc stt)/" stt 60
 wait_for "$(svc searxng)/" searxng 90
+
+# --- memories follow the embedding model -----------------------------------------
+# Vectors from two models can't be compared, so after LOCAL_EMBED_MODEL changes
+# (or on the first run that records it — earlier installs used nomic-embed-text)
+# every stored vector is rebuilt once. The 768-d column carries its model id and
+# knowledge-embed {stale_model} migrates it. embedding_v2 (search, filing,
+# centroids) and the wiki-name cache carry no model id, so they're cleared
+# here; stale_model refills embedding_v2 for the rows it migrates.
+if [ "$(cat "$STATE/embed-model" 2>/dev/null)" != "$LOCAL_EMBED_MODEL" ]; then
+  say "memories: re-embedding with $LOCAL_EMBED_MODEL (once per model change)"
+  docker exec -i "supabase_db_$PROJECT_ID" psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres >/dev/null <<SQL || fail "couldn't clear old embeddings"
+-- Only rows not yet migrated, so a rerun after an interruption keeps finished work.
+UPDATE public.knowledge_entries SET embedding_v2 = NULL
+  WHERE embedding_v2 IS NOT NULL AND embedding_768_model IS DISTINCT FROM 'ollama/$LOCAL_EMBED_MODEL';
+UPDATE public.wiki_centroids SET name_embedding = NULL, name_embedding_source = NULL WHERE name_embedding IS NOT NULL;
+SQL
+  API_URL="$API_URL" ANON="$ANON" EMAIL="$OWNER_EMAIL" PW="$OWNER_PASSWORD" python3 - <<'PY' || fail "re-embedding failed (rerun scripts/local-up.sh to retry)"
+import json, os, sys, time, urllib.request, urllib.error
+api, anon = os.environ["API_URL"], os.environ["ANON"]
+def post(path, body, token=None):
+    req = urllib.request.Request(api + path, json.dumps(body).encode(),
+        {"apikey": anon, "Authorization": "Bearer " + (token or anon), "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=600) as r: return r.status, json.load(r)
+    except urllib.error.HTTPError as e: return e.code, json.loads(e.read() or b"{}")
+    except (urllib.error.URLError, ConnectionError): return 0, {}
+_, s = post("/auth/v1/token?grant_type=password", {"email": os.environ["EMAIL"], "password": os.environ["PW"]})
+token = s.get("access_token") or sys.exit("couldn't sign in as the local owner")
+def drain(fn, body, key):
+    total = 0
+    for _ in range(200):
+        for wait in range(30):  # the functions runtime may still be booting
+            code, r = post("/functions/v1/" + fn, body, token)
+            if code not in (0, 502, 503): break
+            time.sleep(2)
+        if code != 200: sys.exit(f"{fn}: HTTP {code} {json.dumps(r)[:200]}")
+        n = int(r.get(key) or 0)
+        if not n: return total
+        total += n; print(f"    {fn}: {total}", flush=True)
+    return total
+drain("knowledge-embed", {"stale_model": True}, "updated")
+post("/functions/v1/recompute-centroids", {}, token)
+PY
+  echo "$LOCAL_EMBED_MODEL" >"$STATE/embed-model"
+fi
+
 say "ready:"
 echo "    app        $APP_URL"
 echo "    supabase   $API_URL   (studio: http://127.0.0.1:54323)"

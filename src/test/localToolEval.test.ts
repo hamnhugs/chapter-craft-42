@@ -1,5 +1,5 @@
 // Live tool-selection eval through the REAL local pipeline: planLocalRoster
-// (live nomic embeddings), buildChatSystemPrompt, slimToolDef and the Ollama
+// (live embeddings, LOCAL_EMBED_MODEL), buildChatSystemPrompt, slimToolDef and the Ollama
 // adapter. Skipped unless LIVE_OLLAMA=1. Writes its log to
 // docs/local-ai/results/ when LIVE_EVAL_OUT is set.
 import { describe, it, expect, vi } from "vitest";

@@ -97,10 +97,12 @@ serve(async (req) => {
     // search-knowledge, smart filing and wiki centroids) along with the 768
     // vector, so refill it here for the same ids — otherwise an edited card
     // silently drops out of cross-wiki search until a manual backfill.
+    // A stale_model migration refills it too, for rows whose embedding_v2 was
+    // cleared because it came from the old model (scripts/local-up.sh).
     // Best-effort; deliberately NOT chained to smart-file (that would re-route
     // entries the user just placed).
     let v2_updated = 0;
-    if (Array.isArray(entry_ids) && entry_ids.length > 0) {
+    if ((Array.isArray(entry_ids) && entry_ids.length > 0) || stale_model) {
       try {
         const { data: v2Rows } = await supabase
           .from("knowledge_entries")

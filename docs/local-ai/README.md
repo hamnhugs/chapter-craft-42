@@ -41,7 +41,7 @@ scripts/local-down.sh      # stop everything (your data stays)
 | Image understanding | RX 5600M | `qwen3.5:4b` |
 | Deep Research | RX 5600M + CPU | `qwen3:8b` |
 | Background jobs (tagging, memory, figures) | Same as chat by default | `LOCAL_LLM_MODEL` overrides |
-| Embeddings | RX 5600M | `nomic-embed-text` (768-d) |
+| Embeddings | CPU (keeps the GPU for chat) | `embeddinggemma:300m` (768-d; `LOCAL_EMBED_MODEL` overrides, `results/2026-10-13-embedders.txt`) |
 | Speech-to-text | Integrated Radeon | whisper.cpp `base.en` |
 | Text-to-speech | CPU | Piper (`lessac`, `amy`, `alan`) |
 | Images | Integrated Radeon | sd.cpp Z-Image-Turbo (TwinFlow, Q4_K) |

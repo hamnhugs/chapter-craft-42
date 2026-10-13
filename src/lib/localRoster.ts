@@ -22,7 +22,7 @@
 // turn's gates already allowed (toolAvailability.ts) — permissions, Lean
 // Mode, Foundry opt-ins all still apply because the pool is their output.
 
-import { ollamaBaseUrl } from "@/lib/providers/ollamaConfig";
+import { LOCAL_EMBED_MODEL, embedPrefix, ollamaBaseUrl, rosterAutoAddFloor } from "@/lib/providers/ollamaConfig";
 
 /** Always offered (when the gates allow them). Chosen as the tools a reading
  *  conversation reaches for first; everything else is one find_tools away. */
@@ -42,11 +42,11 @@ export const LOCAL_CORE_TOOLS = [
 export const FIND_TOOLS_NAME = "find_tools";
 /** Matches added per turn from the user's message, at most. */
 const PER_TURN_ADDS = 4;
-/** Cosine floor for an automatic add. Below it the model can still ask. */
-const AUTO_ADD_MIN_SCORE = 0.55;
+/** Cosine floor for an automatic add — per embedding model, see
+ *  rosterAutoAddFloor. Below it the model can still ask. */
+const AUTO_ADD_MIN_SCORE = rosterAutoAddFloor(LOCAL_EMBED_MODEL);
 /** Past this the roster is rebuilt from core + the current request. */
 export const ROSTER_CAP = 24;
-const EMBED_MODEL = "nomic-embed-text";
 
 export const FIND_TOOLS_DEFINITION = {
   type: "function",
@@ -104,14 +104,14 @@ export function toolCard(def: ToolDef): string {
 
 const cardVectors = new Map<string, number[]>();
 
-async function embed(texts: string[], prefix: string, signal?: AbortSignal): Promise<number[][] | null> {
+async function embed(texts: string[], kind: "query" | "document", signal?: AbortSignal): Promise<number[][] | null> {
   try {
     const res = await fetch(`${ollamaBaseUrl()}/api/embed`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       // CPU, so the chat model keeps the whole GPU — same setting as the edge
       // functions (supabase/functions/_shared/ai-local.ts localEmbed).
-      body: JSON.stringify({ model: EMBED_MODEL, input: texts.map((t) => prefix + t), keep_alive: "30m", options: { num_gpu: 0 } }),
+      body: JSON.stringify({ model: LOCAL_EMBED_MODEL, input: texts.map((t) => embedPrefix(LOCAL_EMBED_MODEL, kind) + t), keep_alive: "30m", options: { num_gpu: 0 } }),
       signal,
     });
     if (!res.ok) return null;
@@ -150,10 +150,10 @@ export async function rankTools(query: string, candidates: ToolDef[], signal?: A
   const cards = candidates.map(toolCard);
   const missing = cards.filter((c) => !cardVectors.has(c));
   if (missing.length) {
-    const vecs = await embed(missing, "search_document: ", signal);
+    const vecs = await embed(missing, "document", signal);
     if (vecs) missing.forEach((c, i) => cardVectors.set(c, vecs[i]));
   }
-  const qv = cards.every((c) => cardVectors.has(c)) ? (await embed([query.slice(0, 2000)], "search_query: ", signal))?.[0] : null;
+  const qv = cards.every((c) => cardVectors.has(c)) ? (await embed([query.slice(0, 2000)], "query", signal))?.[0] : null;
   if (qv) {
     const ranked = candidates.map((d, i) => ({ name: d.function.name, score: cosine(qv, cardVectors.get(cards[i])!) }));
     return { ranked: ranked.sort((a, b) => b.score - a.score), semantic: true };

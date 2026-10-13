@@ -28,6 +28,38 @@ export const OLLAMA_KEEP_ALIVE = "30m";
  *  Mirrored in supabase/functions/_shared/ai-local.ts. */
 export const OLLAMA_NUM_BATCH = 512;
 
+/** The local embedding model. Set once per install by scripts/local-up.sh
+ *  (VITE_LOCAL_EMBED_MODEL, the same value it gives the edge functions as
+ *  LOCAL_EMBED_MODEL) — vectors from two models can't be compared, so the
+ *  browser and the server must agree. */
+export const LOCAL_EMBED_MODEL: string =
+  (import.meta.env.VITE_LOCAL_EMBED_MODEL as string | undefined) || "embeddinggemma:300m";
+
+/** The task prefix a retrieval model was trained with. Leaving it off costs
+ *  recall; queries and documents get different ones. Mirrors taskPrefix in
+ *  supabase/functions/_shared/embed.ts. */
+export function embedPrefix(model: string, kind: "query" | "document"): string {
+  const m = model.toLowerCase();
+  if (m.includes("nomic-embed")) return kind === "query" ? "search_query: " : "search_document: ";
+  if (m.includes("embeddinggemma")) return kind === "query" ? "task: search result | query: " : "title: none | text: ";
+  if (m.includes("qwen3-embedding")) return kind === "query" ? "Instruct: Given a search query, retrieve relevant passages\nQuery: " : "";
+  return "";
+}
+
+/** Cosine above which a later turn adds a tool to the roster unasked. Each
+ *  model has its own scale: on the app's tools nomic gives the RIGHT tool a
+ *  median 0.65 and the best WRONG one 0.64, so its old 0.55 floor passed 94%
+ *  of wrong tools; embeddinggemma's medians are 0.43 / 0.38, and at 0.45 it
+ *  adds the right tool 44% of the time and a wrong one 24%
+ *  (docs/local-ai/results/2026-10-13-embedders.txt). The model can still ask
+ *  for anything through find_tools. */
+export function rosterAutoAddFloor(model: string): number {
+  const m = model.toLowerCase();
+  if (m.includes("nomic-embed")) return 0.55;
+  if (m.includes("embeddinggemma")) return 0.45;
+  return 0.5;
+}
+
 const BASE_KEY = "ollama.baseUrl";
 const CTX_KEY = "ollama.numCtx";
 

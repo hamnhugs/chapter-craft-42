@@ -31,7 +31,7 @@ const OLLAMA_URL = (Deno.env.get("OLLAMA_URL") || "http://host.docker.internal:1
 // trades that for accuracy (14/14 vs 11/14 on the tool eval).
 export const LOCAL_LLM_MODEL = Deno.env.get("LOCAL_LLM_MODEL") || "qwen3:4b-instruct-2507-q4_K_M";
 export const LOCAL_VISION_MODEL = Deno.env.get("LOCAL_VISION_MODEL") || "qwen3.5:4b";
-export const LOCAL_EMBED_MODEL = Deno.env.get("LOCAL_EMBED_MODEL") || "nomic-embed-text";
+export const LOCAL_EMBED_MODEL = Deno.env.get("LOCAL_EMBED_MODEL") || "embeddinggemma:300m";
 const LOCAL_NUM_CTX = Number(Deno.env.get("LOCAL_NUM_CTX")) || 16384;
 
 type Json = Record<string, any>;
@@ -214,6 +214,7 @@ export function embedPrefix(kind: "query" | "document"): string {
   const m = LOCAL_EMBED_MODEL.toLowerCase();
   if (m.includes("nomic-embed")) return kind === "query" ? "search_query: " : "search_document: ";
   if (m.includes("embeddinggemma")) return kind === "query" ? "task: search result | query: " : "title: none | text: ";
+  if (m.includes("qwen3-embedding")) return kind === "query" ? "Instruct: Given a search query, retrieve relevant passages\nQuery: " : "";
   return "";
 }
 
