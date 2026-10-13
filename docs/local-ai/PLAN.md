@@ -282,3 +282,27 @@ database. Verified live:
 
 Still open:
 - import-hosted.mjs still never run (needs a hosted token from the user).
+
+## Status — 2026-10-13 (accuracy and speed pass)
+
+Measured, then switched (evidence in `results/2026-10-13-embedders.txt` and
+`results/2026-10-13-accuracy-speed.txt`):
+- **Embeddings → `embeddinggemma:300m`** (was nomic). Right tool ranked first 80% vs 54%;
+  better on STS-B. One `LOCAL_EMBED_MODEL` for browser and functions; the roster's auto-add
+  floor is per model. `local-up.sh` re-embeds stored memories once whenever the model changes
+  (`.local-state/embed-model`); verified on a row stamped with the old model.
+- **Chat → Unsloth Q6_K + `OLLAMA_KV_CACHE_TYPE=q8_0`** (was Q4_K_M, f16 KV). Answers match
+  the 8-bit model 93% vs 79% on MMLU-Pro, same tool choice in the app's pipeline, ~95% of the
+  speed, less VRAM. The q8 cache is a 4.5x prefill loss only for qwen3:4b at Q4; other models
+  are neutral or faster (qwen3:8b +25% decode).
+- `local-up.sh` restarts the edge functions when their env changes (before, a running server
+  kept stale settings).
+- Verified in a headless browser: Counsel answered on Q6_K, no console errors.
+
+Still open:
+- **Apply the KV setting**: rerun `bash scripts/local-ai/setup-once.sh` in a real terminal
+  (sudo). Until then Q6_K spills ~0.6 GiB off the card and decodes ~22 instead of ~33 tok/s;
+  `local-up.sh` warns.
+- The main remaining accuracy loss is the chat model answering in text where a tool call was
+  wanted (~1 in 3 long-tail requests, both quants) — a prompt/roster task, next.
+- import-hosted.mjs still never run (needs a hosted token).
