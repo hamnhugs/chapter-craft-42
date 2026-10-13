@@ -83,6 +83,10 @@ Why: docs/local-ai/PHOTOCRAFT-AI-FINDINGS.md (the user's purple-cat session).
   question with 2-4 choices when the layer is unclear or it's a matter of taste; and
   to always ask before merge, flatten or delete. After an edit the model says what
   changed and where, then offers 1-2 next ideas.
+- **Export from the open window.** The window refuses an explicit `format`, so
+  exports name the format by file extension. Before this fix every export failed
+  while PhotoCraft was open ("bridge mode saves with the app's current settings").
+  It writes a copy, and the document's own file is unchanged.
 - **Budget.** A reply that calls craft gets 8 tool rounds instead of 5
   (`CRAFT_TOOL_ITERATIONS`, ChatContext.tsx).
 

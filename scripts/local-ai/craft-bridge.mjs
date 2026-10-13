@@ -736,7 +736,11 @@ async function exportDoc(app, format, opts = {}) {
   const name = `${(opts.name || app).replace(/[^\w.-]+/g, "-").slice(0, 60)}-${Date.now()}.${fmt === "designcraft" ? "designcraft" : fmt}`;
   const path = join(WS, "out", name);
   if (app === "photocraft") {
-    await mustCall(app, "doc_export", { path, format: fmt });
+    // The format comes from the file name. The open window refuses an explicit
+    // `format` ("bridge mode saves with the app's current settings"), which
+    // broke every export from the window; headless gets it as a fallback.
+    const r = await callTool(app, "doc_export", { path });
+    if (r.isError) await mustCall(app, "doc_export", { path, format: fmt });
   } else if (app === "designcraft") {
     if (fmt === "png" || fmt === "jpg") await mustCall(app, "export_png", { page: Number(opts.page) || 0, path, scale: Number(opts.scale) || 2 });
     else if (fmt === "designcraft") await mustCall(app, "save_document", { path });
