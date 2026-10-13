@@ -22,7 +22,7 @@
 // turn's gates already allowed (toolAvailability.ts) — permissions, Lean
 // Mode, Foundry opt-ins all still apply because the pool is their output.
 
-import { LOCAL_EMBED_MODEL, embedPrefix, ollamaBaseUrl, rosterAutoAddFloor } from "@/lib/providers/ollamaConfig";
+import { LOCAL_EMBED_MODEL, embedPrefix, ollamaBaseUrl, rosterAutoAddFloor, rosterAutoAddMargin } from "@/lib/providers/ollamaConfig";
 
 /** Always offered (when the gates allow them). Chosen as the tools a reading
  *  conversation reaches for first; everything else is one find_tools away. */
@@ -45,6 +45,8 @@ const PER_TURN_ADDS = 4;
 /** Cosine floor for an automatic add — per embedding model, see
  *  rosterAutoAddFloor. Below it the model can still ask. */
 const AUTO_ADD_MIN_SCORE = rosterAutoAddFloor(LOCAL_EMBED_MODEL);
+/** ...or when the best match clearly leads the rest — see rosterAutoAddMargin. */
+const AUTO_ADD_MIN_LEAD = rosterAutoAddMargin(LOCAL_EMBED_MODEL);
 /** Past this the roster is rebuilt from core + the current request. */
 export const ROSTER_CAP = 24;
 
@@ -188,7 +190,10 @@ export async function planLocalRoster(input: {
   const isFirstTurn = prior.length === 0;
   // The first turn seeds generously (the 13/14 configuration offered the top
   // 8 outright); later turns add only confident matches.
-  const take = isFirstTurn ? ranked.slice(0, PER_TURN_ADDS) : ranked.filter((r) => r.score >= floor).slice(0, PER_TURN_ADDS);
+  let take = isFirstTurn ? ranked.slice(0, PER_TURN_ADDS) : ranked.filter((r) => r.score >= floor).slice(0, PER_TURN_ADDS);
+  if (!isFirstTurn && !take.length && semantic && ranked.length > 1 && ranked[0].score - ranked[1].score >= AUTO_ADD_MIN_LEAD) {
+    take = [ranked[0]];
+  }
   const added = take.map((r) => r.name);
 
   let rebuilt = false;

@@ -60,6 +60,15 @@ export function rosterAutoAddFloor(model: string): number {
   return 0.5;
 }
 
+/** A later turn also adds its best match when it leads the runner-up by this
+ *  much, even under the floor: on embeddinggemma a 0.08 lead added the right
+ *  tool for 4 more of 52 requests ("create an image in html…" → create_artifact,
+ *  0.37 vs 0.27), a wrong one for none, and fired on 0 of 10 chit-chat turns,
+ *  whose leads are ≤ 0.064. Unmeasured models get no margin rule. */
+export function rosterAutoAddMargin(model: string): number {
+  return model.toLowerCase().includes("embeddinggemma") ? 0.08 : Infinity;
+}
+
 const BASE_KEY = "ollama.baseUrl";
 const CTX_KEY = "ollama.numCtx";
 

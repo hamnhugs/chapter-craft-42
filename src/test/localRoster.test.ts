@@ -55,6 +55,37 @@ describe("planLocalRoster", () => {
     expect(second.added).toEqual([]);
   });
 
+  it("a later match under the floor is added only when it clearly leads (embeddinggemma)", async () => {
+    // Fake embedder: card i is the unit vector e_i; a query's cosine to each card is
+    // whatever `scores` says (others 0.05), the rest of its length on a spare axis.
+    const scores = (q: string): Record<string, number> =>
+      /html/.test(q) ? { create_artifact: 0.37, render_blocks: 0.27 }
+      : /chapter/.test(q) ? { delete_chapter: 0.36, isolate_chapter: 0.34 }
+      : { list_videos: 0.3, show_video: 0.29, generate_video: 0.28, list_images: 0.27 };
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: any) => {
+      const { input } = JSON.parse(init.body) as { input: string[] };
+      const dim = ALL.length + 1;
+      const embeddings = input.map((t) => {
+        const v = new Array(dim).fill(0);
+        if (t.startsWith("task: search result | query: ")) {
+          const s = scores(t);
+          ALL.forEach((d, i) => { v[i] = s[d.function.name] ?? 0.05; });
+          v[dim - 1] = Math.sqrt(1 - v.reduce((a, x) => a + x * x, 0));
+        } else {
+          const card = t.replace(/^title: none \| text: /, "");
+          v[ALL.findIndex((d) => card.startsWith(d.function.name.replace(/_/g, " ") + ":"))] = 1;
+        }
+        return v;
+      });
+      return new Response(JSON.stringify({ embeddings }), { status: 200 });
+    }));
+    await planLocalRoster({ userId: "u", query: "hello", pool: ALL });
+    const chat = await planLocalRoster({ userId: "u", query: "what do you think about chapter 2?", pool: ALL });
+    expect(chat.added).toEqual([]);
+    const html = await planLocalRoster({ userId: "u", query: "create an image in html describing the cashflow quadrant", pool: ALL });
+    expect(html.added).toEqual(["create_artifact"]);
+  });
+
   it("a strong later match is appended at the END, never inserted", async () => {
     const first = await planLocalRoster({ userId: "u", query: "hello there", pool: ALL });
     const second = await planLocalRoster({ userId: "u", query: "list my generated videos", pool: ALL });
