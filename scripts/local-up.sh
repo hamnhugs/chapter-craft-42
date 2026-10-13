@@ -26,7 +26,7 @@ mkdir -p "$LOGS" "$PIDS" "$STATE/searxng"
 SB=(npx -y supabase@2.120.0)
 # The models this install runs. Override any of them in the environment; the
 # browser and the edge functions are both told, so they always agree.
-LOCAL_LLM_MODEL=${LOCAL_LLM_MODEL:-qwen3:4b-instruct-2507-q4_K_M}
+LOCAL_LLM_MODEL=${LOCAL_LLM_MODEL:-hf.co/unsloth/Qwen3-4B-Instruct-2507-GGUF:Q6_K}
 LOCAL_VISION_MODEL=${LOCAL_VISION_MODEL:-qwen3.5:4b}
 LOCAL_EMBED_MODEL=${LOCAL_EMBED_MODEL:-embeddinggemma:300m}
 APP=built
@@ -60,6 +60,9 @@ if ! docker info >/dev/null 2>&1; then
   fail "Docker isn't usable by $USER. Run: bash scripts/local-ai/setup-once.sh (then log out/in)."
 fi
 up "$(svc ollama)/api/version" || fail "Ollama isn't running. Start it: sudo systemctl start ollama"
+# The Q6_K chat model only fits on the card with the 8-bit KV cache (setup-once.sh).
+systemctl show ollama -p Environment 2>/dev/null | grep -q "OLLAMA_KV_CACHE_TYPE=q8_0" \
+  || say "warning: Ollama lacks the 8-bit KV cache setting, so chat runs ~1/3 slower. Run once: bash scripts/local-ai/setup-once.sh"
 for m in "$LOCAL_LLM_MODEL" "$LOCAL_EMBED_MODEL"; do
   ollama show "$m" >/dev/null 2>&1 || fail "Model $m missing. Run: scripts/local-ai/install-services.sh"
 done

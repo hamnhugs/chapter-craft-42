@@ -33,6 +33,11 @@ fi
 #  MAX_LOADED_MODELS 2 chat + embedder together (~3 GiB + 0.3 GiB)
 #  NUM_PARALLEL 1      one 16K context, not four — VRAM is the constraint
 #  CONTEXT_LENGTH      requests always send num_ctx; this covers anything that doesn't
+#  FLASH_ATTENTION 1   on by default for Vulkan here; pinned because the KV type needs it
+#  KV_CACHE_TYPE q8_0  halves the 16K context (2.3 -> 1.2 GiB), which lets the Q6_K chat model
+#                      sit wholly on the card: 33 tok/s instead of 22 with f16 KV, answers 267/280
+#                      identical. Don't pair it with qwen3:4b at Q4 — that combination reads
+#                      prompts 4.5x slower here (docs/local-ai/results/2026-10-13-accuracy-speed.txt).
 say "ollama: systemd override"
 sudo mkdir -p /etc/systemd/system/ollama.service.d
 sudo tee /etc/systemd/system/ollama.service.d/chapter-craft.conf >/dev/null <<'EOF'
@@ -41,6 +46,8 @@ Environment="OLLAMA_KEEP_ALIVE=30m"
 Environment="OLLAMA_MAX_LOADED_MODELS=2"
 Environment="OLLAMA_NUM_PARALLEL=1"
 Environment="OLLAMA_CONTEXT_LENGTH=16384"
+Environment="OLLAMA_FLASH_ATTENTION=1"
+Environment="OLLAMA_KV_CACHE_TYPE=q8_0"
 EOF
 # (Ollama is restarted at the end of step 3, once the helper it calls exists.)
 

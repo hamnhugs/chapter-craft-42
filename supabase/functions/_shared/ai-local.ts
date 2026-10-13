@@ -28,8 +28,10 @@ export const AI_LOCAL = PROVIDER === "ollama";
 const OLLAMA_URL = (Deno.env.get("OLLAMA_URL") || "http://host.docker.internal:11434").replace(/\/+$/, "");
 // Same model as chat by default: one resident model on a 6 GiB card means no
 // swapping when a background job lands mid-conversation. LOCAL_LLM_MODEL=qwen3:8b
-// trades that for accuracy (14/14 vs 11/14 on the tool eval).
-export const LOCAL_LLM_MODEL = Deno.env.get("LOCAL_LLM_MODEL") || "qwen3:4b-instruct-2507-q4_K_M";
+// trades that for accuracy (14/14 vs 11/14 on the tool eval). Q6_K, not Q4_K_M:
+// it answers like the 8-bit model 93% of the time vs 79% at the same speed
+// (docs/local-ai/results/2026-10-13-accuracy-speed.txt).
+export const LOCAL_LLM_MODEL = Deno.env.get("LOCAL_LLM_MODEL") || "hf.co/unsloth/Qwen3-4B-Instruct-2507-GGUF:Q6_K";
 export const LOCAL_VISION_MODEL = Deno.env.get("LOCAL_VISION_MODEL") || "qwen3.5:4b";
 export const LOCAL_EMBED_MODEL = Deno.env.get("LOCAL_EMBED_MODEL") || "embeddinggemma:300m";
 const LOCAL_NUM_CTX = Number(Deno.env.get("LOCAL_NUM_CTX")) || 16384;

@@ -1,7 +1,8 @@
 // Live tool-selection eval through the REAL local pipeline: planLocalRoster
-// (live embeddings, LOCAL_EMBED_MODEL), buildChatSystemPrompt, slimToolDef and the Ollama
-// adapter. Skipped unless LIVE_OLLAMA=1. Writes its log to
-// docs/local-ai/results/ when LIVE_EVAL_OUT is set.
+// (live embeddings, LOCAL_EMBED_MODEL), buildChatSystemPrompt, slimToolDef and
+// the Ollama adapter. Skipped unless LIVE_OLLAMA=1; LIVE_OLLAMA_MODEL,
+// LIVE_OLLAMA_URL and LIVE_EVAL_EXTENDED=1 (the long tail) adjust it. Writes
+// its log to docs/local-ai/results/ when LIVE_EVAL_OUT is set.
 import { describe, it, expect, vi } from "vitest";
 import { appendFileSync } from "node:fs";
 
@@ -23,6 +24,8 @@ const { ollamaAdapter } = await import("@/lib/providers/ollamaAdapter");
 
 const live = process.env.LIVE_OLLAMA === "1";
 const model = process.env.LIVE_OLLAMA_MODEL || "qwen3.5:4b";
+// LIVE_OLLAMA_URL points at another Ollama (e.g. a test server with different KV settings).
+if (process.env.LIVE_OLLAMA_URL) (await import("@/lib/providers/ollamaConfig")).setOllamaBaseUrl(process.env.LIVE_OLLAMA_URL);
 const ALL: any[] = CHAT_TOOL_DEFINITIONS as unknown as any[];
 
 // [request, acceptable first tools] — a lookup that a careful agent makes
@@ -43,6 +46,38 @@ const CASES: Array<[string, string[]]> = [
   ["Write a tiny tool that counts words in a string", ["forge_tool", "find_tools"]],
   ["Open Foundation in the reader", ["set_active_book", "list_books"]],
 ];
+
+// LIVE_EVAL_EXTENDED=1 adds these: the long tail the roster must reach
+// through embeddings or find_tools. Requests that only make sense mid-
+// conversation ("that picture") are left out.
+const EXTENDED: Array<[string, string[]]> = [
+  ["Make a short clip of waves crashing on rocks", ["generate_video", "find_tools"]],
+  ["Draw a dragon curled around a tower", ["generate_image", "find_tools"]],
+  ["What pictures have I generated so far?", ["list_images", "find_tools"]],
+  ["Remove The Hobbit from my library", ["delete_book", "list_books", "find_tools"]],
+  ["Bring back the book I deleted yesterday", ["restore_book", "find_tools"]],
+  ["Delete the prologue chapter of Dune", ["delete_chapter", "get_book", "list_books", "find_tools"]],
+  ["Which wikis do I have?", ["list_wikis", "find_tools"]],
+  ["Start a new wiki for my fantasy novel", ["create_wiki", "find_tools"]],
+  ["Which wiki am I in right now?", ["get_active_wiki", "list_wikis", "find_tools"]],
+  ["Fix the note about Mara — she's actually right-handed", ["update_memory_entry", "supersede_memory_entry", "search_wiki", "find_tools"]],
+  ["Forget the memory about my old address", ["delete_memory_entry", "search_wiki", "find_tools"]],
+  ["Connect the note on Arrakis to the note on spice", ["link_memory_entries", "search_wiki", "find_tools"]],
+  ["How has the note about Paul changed over time?", ["get_memory_history", "search_wiki", "find_tools"]],
+  ["Run my word counter tool on 'the quick brown fox'", ["run_tool", "find_tools"]],
+  ["Build a small program that makes flashcards from a chapter", ["forge_program", "find_tools"]],
+  ["Make a 3D scene of the throne room I can fly through", ["generate_splat", "find_tools"]],
+  ["Lay out the stage for the duel scene with camera positions", ["create_stage_plan", "find_tools"]],
+  ["Make a blueprint sheet for the airship", ["create_blueprint_sheet", "find_tools"]],
+  ["What's in my workspace?", ["list_workspace_items", "find_tools"]],
+  ["Make an interactive timeline widget of the Dune books", ["create_artifact", "find_tools"]],
+  ["Load both Dune books at once", ["set_loaded_books", "list_books", "find_tools"]],
+  ["Show me the scenes in my production", ["list_scenes", "find_tools"]],
+  ["How many generations have I made this week?", ["get_production_stats", "find_tools"]],
+  ["What images do you remember of the castle?", ["recall_image_memories", "find_tools"]],
+  ["Delete my old worldbuilding wiki", ["delete_wiki", "list_wikis", "find_tools"]],
+];
+if (process.env.LIVE_EVAL_EXTENDED === "1") CASES.push(...EXTENDED);
 
 describe.skipIf(!live)("local tool eval (real pipeline)", () => {
   it("picks a correct first tool on most requests", async () => {
@@ -68,6 +103,6 @@ describe.skipIf(!live)("local tool eval (real pipeline)", () => {
     lines.push(`${model}: ${ok}/${CASES.length}`);
     console.log(lines.at(-1));
     if (process.env.LIVE_EVAL_OUT) appendFileSync(process.env.LIVE_EVAL_OUT, lines.join("\n") + "\n\n");
-    expect(ok).toBeGreaterThanOrEqual(11);
-  }, 1_800_000);
+    expect(ok / CASES.length).toBeGreaterThanOrEqual(11 / 14);
+  }, CASES.length * 60_000);
 });

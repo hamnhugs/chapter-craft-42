@@ -37,7 +37,7 @@ scripts/local-down.sh      # stop everything (your data stays)
 
 | Piece | Runs on | Model / engine |
 |---|---|---|
-| Chat + tools | RX 5600M (Vulkan, Ollama) | `qwen3:4b-instruct-2507` |
+| Chat + tools | RX 5600M (Vulkan, Ollama) | `qwen3:4b-instruct-2507`, Unsloth Q6_K + 8-bit KV cache (`results/2026-10-13-accuracy-speed.txt`) |
 | Image understanding | RX 5600M | `qwen3.5:4b` |
 | Deep Research | RX 5600M + CPU | `qwen3:8b` |
 | Background jobs (tagging, memory, figures) | Same as chat by default | `LOCAL_LLM_MODEL` overrides |

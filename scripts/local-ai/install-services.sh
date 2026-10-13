@@ -22,7 +22,7 @@ mkdir -p "$SRC" "$PREFIX" "$CC_HOME/voices" "$CC_HOME/image-models"
 # --- Ollama models ---------------------------------------------------------
 # Choices and evidence: docs/local-ai/PLAN.md, docs/local-ai/results/.
 if have ollama; then
-  for m in qwen3:4b-instruct-2507-q4_K_M qwen3.5:4b qwen3:8b embeddinggemma:300m; do
+  for m in hf.co/unsloth/Qwen3-4B-Instruct-2507-GGUF:Q6_K qwen3:4b-instruct-2507-q4_K_M qwen3.5:4b qwen3:8b embeddinggemma:300m; do
     if ollama show "$m" >/dev/null 2>&1; then say "ollama: $m present"; else say "ollama pull $m"; ollama pull "$m"; fi
   done
 else
@@ -74,7 +74,7 @@ dl() { [ -s "$IM/$1" ] || { say "downloading $1"; curl -fSL --retry 3 -o "$IM/$1
 dl TwinFlow_Z_Image_Turbo_exp-Q4_K.gguf https://huggingface.co/wbruna/TwinFlow-Z-Image-Turbo-sdcpp-GGUF/resolve/main/TwinFlow_Z_Image_Turbo_exp-Q4_K.gguf
 # Comfy-Org mirror: black-forest-labs/FLUX.1-schnell is gated (needs a login).
 dl ae.safetensors https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors
-# Text encoder = Qwen3-4B-Instruct-2507 Q4_K_M, the same file as Ollama's chat
+# Text encoder = Qwen3-4B-Instruct-2507 Q4_K_M, the same file as Ollama's Q4 chat
 # model: link Ollama's blob instead of downloading 2.5 GB twice.
 TE="$IM/Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
 if [ ! -s "$TE" ]; then

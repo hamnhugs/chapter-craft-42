@@ -11,11 +11,13 @@ export type LeanMode = "full" | "lean" | "chat_only";
 // choices are measured, not guessed — docs/local-ai/results/:
 //   chat      qwen3:4b-instruct-2507 — pure attention, so Ollama reuses the
 //             conversation's cache across turns (2026-10-12-multiturn.txt);
-//             11/14 first-tool picks.
+//             11/14 first-tool picks. Unsloth's Q6_K: it answers like the
+//             8-bit model 93% of the time (Q4_K_M: 79%) at ~95% of the speed,
+//             with Ollama's 8-bit KV cache (2026-10-13-accuracy-speed.txt).
 //   vision    qwen3.5:4b — 13/14 and sees images, but its hybrid layers can't
 //             rewind the cache, so it re-reads the whole chat every turn.
 //   research  qwen3:8b — 14/14 at ~3x the latency, which Deep Research affords.
-const DEFAULT_MODEL = "ollama:qwen3:4b-instruct-2507-q4_K_M";
+const DEFAULT_MODEL = "ollama:hf.co/unsloth/Qwen3-4B-Instruct-2507-GGUF:Q6_K";
 const DEFAULT_VISION_MODEL = "ollama:qwen3.5:4b";
 const DEFAULT_DEEP_RESEARCH_MODEL = "ollama:qwen3:8b";
 const DEFAULT_TTS_RATE = 1.05;
