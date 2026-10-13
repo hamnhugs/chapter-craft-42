@@ -44,3 +44,17 @@ Wake-from-suspend is the trigger (21:00-21:01)
 Change: the card is held awake (power/control=on) with the profile only while the app
 runs (cc-amdgpu-compute hold/release from local-up/local-down); stock otherwise. Retries
 now wait 4 s, then 8 s. To verify after re-running setup-once.sh: chats after long idles.
+
+ROOT CAUSE (21:09-21:26): prompt batch size, not the profile or the wake itself
+  Since the 18:35 Ollama restart it ran the chat model with n_batch/n_ubatch 1024
+  (512 in the morning's runs). Fresh model load + ~5K-token prompt:
+    num_batch 1024 (Ollama's choice), stock settings, card asleep   3/3 device lost (20.6 s)
+    1024, card held awake, fresh load                               1st fails, warm runner ok
+    1024, fresh load, with a 1-token warm-up first                  4/5 device lost
+    512, fresh load, card held                                      4/4 ok (15.5 s, faster)
+    512, stock settings, card asleep                                3/3 ok (85 tok/s: low clocks)
+    512 via the app (3 chats, model unloaded before each) + a background job: all ok
+  Reading: one 1024-token GPU job on a just-loaded/just-woken card (low clocks) outruns
+  the kernel's compute ring timeout -> reset -> ErrorDeviceLost. Fix: num_batch 512 in
+  every request (ollamaConfig.ts OLLAMA_NUM_BATCH, ai-local.ts). Holding the card awake
+  stays — it's for speed (330-415 vs 85 tok/s), not for stability.

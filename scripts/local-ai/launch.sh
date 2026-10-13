@@ -25,6 +25,9 @@ if ! flock -n 9; then notify "Already starting…"; exit 0; fi
 
 # Fast path: everything the window needs is already answering.
 if up "$APP_URL" && up "http://127.0.0.1:54321/auth/v1/health"; then
+  # Re-assert the GPU setting local-up.sh applies (awake + COMPUTE); cheap, and it
+  # may have been released (local-down, setup-once) while the app kept running.
+  sudo -n /usr/local/bin/cc-amdgpu-compute hold 2>/dev/null || true
   open_app
 fi
 

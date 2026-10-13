@@ -109,7 +109,10 @@ export async function translateChat(body: Json): Promise<{ req: Json; forcedTool
   else if (body.response_format?.type === "json_schema") format = body.response_format.json_schema?.schema ?? "json";
   else if (body.response_format?.type === "json_object") format = "json";
 
-  const options: Json = { num_ctx: LOCAL_NUM_CTX };
+  // num_batch 512: larger GPU jobs outran the kernel's compute timeout right
+  // after a model load (ErrorDeviceLost). Same value as the app's
+  // OLLAMA_NUM_BATCH (src/lib/providers/ollamaConfig.ts) so the model isn't reloaded.
+  const options: Json = { num_ctx: LOCAL_NUM_CTX, num_batch: 512 };
   if (typeof body.temperature === "number") options.temperature = body.temperature;
   const maxTok = body.max_tokens ?? body.max_completion_tokens;
   if (typeof maxTok === "number") options.num_predict = maxTok;

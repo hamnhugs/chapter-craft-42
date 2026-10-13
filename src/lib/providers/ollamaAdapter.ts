@@ -32,7 +32,7 @@ import {
   TokenUsage,
 } from "./types";
 import { ThoughtRouter } from "./sse";
-import { OLLAMA_KEEP_ALIVE, ollamaBaseUrl, ollamaNumCtx } from "./ollamaConfig";
+import { OLLAMA_KEEP_ALIVE, OLLAMA_NUM_BATCH, ollamaBaseUrl, ollamaNumCtx } from "./ollamaConfig";
 
 const FRIENDLY: Partial<Record<ProviderErrorCode, string>> = {
   network:
@@ -201,7 +201,7 @@ function baseBody(model: string, messages: any[], extraBody?: Record<string, unk
     messages,
     think: think === undefined ? false : think,
     keep_alive: OLLAMA_KEEP_ALIVE,
-    options: { num_ctx: ollamaNumCtx(), ...(options || {}) },
+    options: { num_ctx: ollamaNumCtx(), num_batch: OLLAMA_NUM_BATCH, ...(options || {}) },
     ...rest,
   };
 }

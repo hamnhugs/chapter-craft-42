@@ -171,7 +171,7 @@ describe("ollamaAdapter.streamChat", () => {
     await collect(ollamaAdapter.streamChat({ model: "m", messages: [], extraBody: { think: true, options: { temperature: 0.1 } } }));
     const body = JSON.parse(String((fetchMock.mock.calls[0] as any)[1].body));
     expect(body.think).toBe(true);
-    expect(body.options).toEqual({ num_ctx: 16384, temperature: 0.1 });
+    expect(body.options).toEqual({ num_ctx: 16384, num_batch: 512, temperature: 0.1 });
   });
 
   it("a server that isn't running is a network error that says how to start it", async () => {
@@ -242,7 +242,7 @@ describe("ollamaAdapter.completeChat", () => {
     expect(onMeta).toHaveBeenCalledWith({ finish: "length", usage: { inputTokens: 10, outputTokens: 5, cachedTokens: undefined, costUsd: 0 } });
     const body = JSON.parse(String((fetchMock.mock.calls[0] as any)[1].body));
     expect(body.stream).toBe(false);
-    expect(body.options).toEqual({ num_ctx: 16384, num_predict: 300 });
+    expect(body.options).toEqual({ num_ctx: 16384, num_batch: 512, num_predict: 300 });
   });
 
   it("an empty unfinished reply (the runner died) is retried once instead of returning ''", async () => {

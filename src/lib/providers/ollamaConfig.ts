@@ -20,6 +20,14 @@ export const OLLAMA_DEFAULT_NUM_CTX = 16384;
  *  4-5x slower prefill), short enough to give the VRAM back overnight. */
 export const OLLAMA_KEEP_ALIVE = "30m";
 
+/** Prompt tokens per GPU job. Ollama chose 1024 on this machine; right after a
+ *  model load or a GPU wake the card is at low clocks and one 1024-token job
+ *  outran the kernel's compute timeout — "ErrorDeviceLost", 9 of 9 fresh loads.
+ *  At 512: 0 of 7, and faster (docs/local-ai/results/2026-10-12-gpu-profile.txt).
+ *  Every caller must send the same value, or Ollama reloads the model to switch.
+ *  Mirrored in supabase/functions/_shared/ai-local.ts. */
+export const OLLAMA_NUM_BATCH = 512;
+
 const BASE_KEY = "ollama.baseUrl";
 const CTX_KEY = "ollama.numCtx";
 
