@@ -47,7 +47,7 @@ import { addUsage } from "@/lib/providers/sse";
 import { studioToolsActive } from "@/lib/studioTools";
 import { highlightsForTurn } from "@/lib/highlights";
 import { TOOL_ROUNDS_PER_REPLY } from "@/lib/deepResearchPrompt";
-import { attachTurnContext, isModelVisibleMessage, resolveUtilityModel, toolTraceNote } from "@/lib/chatHistory";
+import { assistantImageNote, attachTurnContext, expandImageTurns, fabricatedImageNote, imageReplayFor, isModelVisibleMessage, resolveUtilityModel, stripFabricatedNotes, toolTraceNote } from "@/lib/chatHistory";
 import { namespacedNvidiaId, nvidiaModelInfo, nvidiaNoThinkingBody, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
 import { namespacedGeminiId, GEMINI_STARTER_MODEL } from "@/lib/geminiCatalog";
 
@@ -1043,7 +1043,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const firstHistoryId = historySource[0]?.id;
       const baseHistory = historySource
         .map((m, i, arr) => {
-          const note = imageIdNote(m.images);
+          const note = m.role === "assistant" ? assistantImageNote(m.images) : imageIdNote(m.images);
           // Multimodal injection: turn the latest user message into a
           // [text, image_url[]] content array when this send has uploads.
           if (hasUploads && i === arr.length - 1 && m.role === "user") {
@@ -1060,7 +1060,16 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
           const trace = m.role === "assistant" ? toolTraceNote(m.toolEvents) : "";
           const extra = [note, trace].filter(Boolean).join("\n\n");
-          return { role: m.role, content: extra ? `${m.content}\n\n${extra}` : m.content };
+          // Replies saved before the guard below may still hold image notes the
+          // model invented; replayed, they teach it to keep inventing them.
+          const own = m.role === "assistant" && typeof m.content === "string" ? stripFabricatedNotes(m.content).text : m.content;
+          const content = extra ? `${own}\n\n${extra}` : own;
+          // Carried for expandImageTurns, which replays a reply's pictures as
+          // the tool call that made them (local models) and strips this field.
+          const replay = imageReplayFor(m, trace ? `${own}\n\n${trace}` : own);
+          if (replay) return { role: m.role, content, __imageReplay: replay };
+          if (m.role === "user" && m.images?.length) return { role: m.role, content, __imageIds: m.images.map((im) => im.id) };
+          return { role: m.role, content };
         });
 
       const isVoice = !!opts?.voiceMode;
@@ -1607,7 +1616,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // an untouched user's request stays byte-identical.
         ...(turnPromptBlock ? [{ role: "system", content: turnPromptBlock }] : []),
       ];
-      const workingMessages: any[] = [...leadingSystem, ...historyWithContext];
+      const workingMessages: any[] = [...leadingSystem, ...expandImageTurns(historyWithContext, turnProviderId === "ollama")];
       /** Where Anthropic-style explicit caches may mark "reusable up to here":
        *  the end of the stable system block (the rolling summary and the
        *  switchable prompt are both excluded — they churn), the end of the
@@ -1718,6 +1727,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // the same prose call from buying five round trips to be told the same
       // thing five times.
       let textCallNoteSent = false;
+      // Whether this send already told the model that a picture it "attached"
+      // as text was never made — once is enough (see fabricatedImageNote).
+      let imageNoteSent = false;
 
       try {
         // `<=`: one round PAST the tool budget is the FORCED ANSWER ROUND.
@@ -2070,6 +2082,37 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // same way. `textCallNoteSent` bounds it harder: the note is worth
           // one extra round, not five, and a model that keeps writing the same
           // prose call has already been told.
+          // App notes the model wrote itself never reach the bubble. One that
+          // claims a picture while no image tool ran this turn means nothing
+          // was shown: the round is withdrawn from the bubble and the model is
+          // told once, with the image tools offered, to make the real call.
+          if (toolCalls.length === 0 && !streamCutShort) {
+            const fake = stripFabricatedNotes(iterText);
+            if (fake.found) {
+              const rawText = iterText;
+              iterText = fake.text;
+              assistantText = assistantText.slice(0, capSegStart) + iterText;
+              if (fake.claimsImage && turnImages.length === 0 && !imageNoteSent && !finalRound && !toollessRound) {
+                imageNoteSent = true;
+                if (localPlan && toolDefs) {
+                  for (const n of ["generate_image", "edit_image", "show_image"]) {
+                    if (offeredNames.has(n) || !localDefByName.has(n)) continue;
+                    offeredNames.add(n);
+                    toolDefs.splice(toolDefs.length - 1, 0, slimToolDef(localDefByName.get(n)));
+                  }
+                }
+                assistantText = assistantText.slice(0, capSegStart);
+                updateAssistant();
+                workingMessages.push({ role: "assistant", content: rawText });
+                workingMessages.push({ role: "user", content: fabricatedImageNote(offeredNames) });
+                continue;
+              }
+              if (fake.claimsImage && turnImages.length === 0) {
+                assistantEvents.push({ name: "show_image", summary: "No picture was made — the reply described one without creating it. Ask again.", ok: false });
+              }
+              updateAssistant();
+            }
+          }
           if ((toolCalls.length === 0 && (!textCallNoted || textCallNoteSent)) || streamCutShort) {
             if (streamCutShort && toolCalls.length > 0) {
               // The calls were half-written and are NOT run. Without this
