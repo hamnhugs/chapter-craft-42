@@ -40,7 +40,7 @@ import {
 } from "@/lib/chatBooks";
 import { toast } from "sonner";
 import { isEmbeddingModel, isBatchOnlyModel } from "@/lib/utils";
-import { describeModel, freeChatProviders, localModelId, modelProvider, providerConfigured, providerKey, providerKeyUrl, providerLabel, resolveModel } from "@/lib/providers/registry";
+import { chatReady, describeModel, freeChatProviders, localModelId, modelProvider, providerConfigured, providerKey, providerKeyUrl, providerLabel, resolveModel } from "@/lib/providers/registry";
 import type { CacheBreakpoint, ProviderId, TokenUsage } from "@/lib/providers/types";
 import { FIND_TOOLS_DEFINITION, FIND_TOOLS_NAME, findTools, planLocalRoster, resetRoster, slimToolDef } from "@/lib/localRoster";
 import { addUsage } from "@/lib/providers/sse";
@@ -991,7 +991,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // actually requires is checked after model resolution below.
       // Any configured provider is enough — a Gemini-only or NVIDIA-only
       // user must not be told to go get a key they deliberately didn't pick.
-      if (!apiKey && !nvidiaKeyLast4 && !geminiApiKey) {
+      if (!chatReady({ apiKey, nvidiaKeyLast4, geminiApiKey }, selectedModel)) {
         toast.error("Add an API key in Settings first — OpenRouter, NVIDIA or Gemini");
         throw new Error("Missing API key");
       }

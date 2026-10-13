@@ -11,9 +11,13 @@ CREATE TABLE public.wiki_centroids (
   last_recomputed_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE public.wiki_centroids ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users can read own centroids" ON public.wiki_centroids;
 CREATE POLICY "Users can read own centroids" ON public.wiki_centroids FOR SELECT TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own centroids" ON public.wiki_centroids;
 CREATE POLICY "Users can insert own centroids" ON public.wiki_centroids FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own centroids" ON public.wiki_centroids;
 CREATE POLICY "Users can update own centroids" ON public.wiki_centroids FOR UPDATE TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own centroids" ON public.wiki_centroids;
 CREATE POLICY "Users can delete own centroids" ON public.wiki_centroids FOR DELETE TO authenticated USING (auth.uid() = user_id);
 
 CREATE TABLE public.reroute_suggestions (
@@ -29,9 +33,13 @@ CREATE TABLE public.reroute_suggestions (
 );
 CREATE INDEX reroute_user_status_idx ON public.reroute_suggestions(user_id, status);
 ALTER TABLE public.reroute_suggestions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users can read own reroutes" ON public.reroute_suggestions;
 CREATE POLICY "Users can read own reroutes" ON public.reroute_suggestions FOR SELECT TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own reroutes" ON public.reroute_suggestions;
 CREATE POLICY "Users can insert own reroutes" ON public.reroute_suggestions FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own reroutes" ON public.reroute_suggestions;
 CREATE POLICY "Users can update own reroutes" ON public.reroute_suggestions FOR UPDATE TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own reroutes" ON public.reroute_suggestions;
 CREATE POLICY "Users can delete own reroutes" ON public.reroute_suggestions FOR DELETE TO authenticated USING (auth.uid() = user_id);
 
 CREATE TABLE public.routing_decisions (
@@ -47,9 +55,13 @@ CREATE TABLE public.routing_decisions (
 );
 CREATE INDEX routing_decisions_user_idx ON public.routing_decisions(user_id, created_at DESC);
 ALTER TABLE public.routing_decisions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users can read own routing decisions" ON public.routing_decisions;
 CREATE POLICY "Users can read own routing decisions" ON public.routing_decisions FOR SELECT TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own routing decisions" ON public.routing_decisions;
 CREATE POLICY "Users can insert own routing decisions" ON public.routing_decisions FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own routing decisions" ON public.routing_decisions;
 CREATE POLICY "Users can update own routing decisions" ON public.routing_decisions FOR UPDATE TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own routing decisions" ON public.routing_decisions;
 CREATE POLICY "Users can delete own routing decisions" ON public.routing_decisions FOR DELETE TO authenticated USING (auth.uid() = user_id);
 
 ALTER TABLE public.user_settings ADD COLUMN IF NOT EXISTS smart_filing_enabled boolean NOT NULL DEFAULT false;

@@ -157,18 +157,22 @@ CREATE TABLE IF NOT EXISTS public.knowledge_conflicts (
 
 ALTER TABLE public.knowledge_conflicts ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can read own conflicts" ON public.knowledge_conflicts;
 CREATE POLICY "Users can read own conflicts"
   ON public.knowledge_conflicts FOR SELECT
   TO authenticated USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can insert own conflicts" ON public.knowledge_conflicts;
 CREATE POLICY "Users can insert own conflicts"
   ON public.knowledge_conflicts FOR INSERT
   TO authenticated WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update own conflicts" ON public.knowledge_conflicts;
 CREATE POLICY "Users can update own conflicts"
   ON public.knowledge_conflicts FOR UPDATE
   TO authenticated USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can delete own conflicts" ON public.knowledge_conflicts;
 CREATE POLICY "Users can delete own conflicts"
   ON public.knowledge_conflicts FOR DELETE
   TO authenticated USING (auth.uid() = user_id);

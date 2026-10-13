@@ -1,17 +1,21 @@
 
 -- Storage policies for generated-splats bucket
+DROP POLICY IF EXISTS "Users can upload own generated splats" ON storage.objects;
 CREATE POLICY "Users can upload own generated splats"
 ON storage.objects FOR INSERT
 WITH CHECK (bucket_id = 'generated-splats' AND auth.uid()::text = (storage.foldername(name))[1]);
 
+DROP POLICY IF EXISTS "Users can read own generated splats" ON storage.objects;
 CREATE POLICY "Users can read own generated splats"
 ON storage.objects FOR SELECT
 USING (bucket_id = 'generated-splats' AND auth.uid()::text = (storage.foldername(name))[1]);
 
+DROP POLICY IF EXISTS "Users can update own generated splats" ON storage.objects;
 CREATE POLICY "Users can update own generated splats"
 ON storage.objects FOR UPDATE
 USING (bucket_id = 'generated-splats' AND auth.uid()::text = (storage.foldername(name))[1]);
 
+DROP POLICY IF EXISTS "Users can delete own generated splats" ON storage.objects;
 CREATE POLICY "Users can delete own generated splats"
 ON storage.objects FOR DELETE
 USING (bucket_id = 'generated-splats' AND auth.uid()::text = (storage.foldername(name))[1]);
@@ -53,24 +57,28 @@ CREATE INDEX IF NOT EXISTS idx_splat_gen_created ON public.splat_generations(use
 
 ALTER TABLE public.splat_generations ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can view own splat generations" ON public.splat_generations;
 CREATE POLICY "Users can view own splat generations"
 ON public.splat_generations FOR SELECT
 USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can insert own splat generations" ON public.splat_generations;
 CREATE POLICY "Users can insert own splat generations"
 ON public.splat_generations FOR INSERT
 WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update own splat generations" ON public.splat_generations;
 CREATE POLICY "Users can update own splat generations"
 ON public.splat_generations FOR UPDATE
 USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can delete own splat generations" ON public.splat_generations;
 CREATE POLICY "Users can delete own splat generations"
 ON public.splat_generations FOR DELETE
 USING (auth.uid() = user_id);
 
 -- 3. Chat messages splats column
-ALTER TABLE public.chat_messages
+ALTER TABLE IF EXISTS public.chat_messages
   ADD COLUMN IF NOT EXISTS splats JSONB DEFAULT NULL;
 
 -- 4. Per-user splat settings

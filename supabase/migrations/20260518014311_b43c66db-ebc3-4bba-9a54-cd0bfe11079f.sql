@@ -15,9 +15,13 @@ CREATE TABLE public.wikis (
 
 ALTER TABLE public.wikis ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can read own wikis" ON public.wikis;
 CREATE POLICY "Users can read own wikis" ON public.wikis FOR SELECT TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own wikis" ON public.wikis;
 CREATE POLICY "Users can insert own wikis" ON public.wikis FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own wikis" ON public.wikis;
 CREATE POLICY "Users can update own wikis" ON public.wikis FOR UPDATE TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own wikis" ON public.wikis;
 CREATE POLICY "Users can delete own wikis" ON public.wikis FOR DELETE TO authenticated USING (auth.uid() = user_id);
 
 CREATE INDEX idx_wikis_user ON public.wikis(user_id);
@@ -91,8 +95,11 @@ CREATE TABLE public.entry_bridges (
 
 ALTER TABLE public.entry_bridges ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can read own bridges" ON public.entry_bridges;
 CREATE POLICY "Users can read own bridges" ON public.entry_bridges FOR SELECT TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own bridges" ON public.entry_bridges;
 CREATE POLICY "Users can insert own bridges" ON public.entry_bridges FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own bridges" ON public.entry_bridges;
 CREATE POLICY "Users can delete own bridges" ON public.entry_bridges FOR DELETE TO authenticated USING (auth.uid() = user_id);
 
 CREATE INDEX idx_entry_bridges_user ON public.entry_bridges(user_id);

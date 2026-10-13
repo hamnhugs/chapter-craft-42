@@ -103,7 +103,7 @@ ON public.splat_generations FOR DELETE
 USING (auth.uid() = user_id);
 
 -- 3. Chat messages can carry splat references ([{request_id, prompt, model}]).
-ALTER TABLE public.chat_messages
+ALTER TABLE IF EXISTS public.chat_messages
   ADD COLUMN IF NOT EXISTS splats JSONB DEFAULT NULL;
 
 -- 4. Per-user splat generation preferences.

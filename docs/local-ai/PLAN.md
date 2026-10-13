@@ -244,3 +244,35 @@ Still open:
 - Re-measure turn latency after the GPU profile.
 - import-hosted.mjs has never run (needs Docker + a hosted token).
 - Edge-function runtime reaching Ollama through `ollama-bridge` (172.17.0.1) is unverified.
+
+## Status — 2026-10-12 (second session: first real bring-up)
+
+setup-once.sh ran; `scripts/local-up.sh --no-app` now brings everything up from a wiped
+database. Verified live:
+- **Migrations**: all 136 replay on a clean local Supabase. The history was not replayable
+  as committed (duplicated Lovable migrations, objects altered before they're created,
+  grants on functions no migration defines). Fixes are guards only — `DROP POLICY IF EXISTS`
+  before each `CREATE POLICY`, `ALTER TABLE IF EXISTS` for early `chat_messages` changes,
+  grants skipped when the function is absent — so the end state is unchanged and they're
+  no-ops on hosted. Resulting RLS checked: no open policies except service-role-only.
+- **Schema drift**: `src/integrations/supabase/types.ts` (generated from hosted) diffed against
+  the replay → 7 columns hosted has that no migration creates → `supabase/local/000_hosted_schema_drift.sql`.
+  Without it settings failed to load. Unused hosted-only tables are listed there, not recreated.
+- **Settings defaults**: the settings row is created server-side, so hosted column defaults
+  (gemini) beat the app's local defaults → `supabase/local/002_local_model_defaults.sql`.
+- **No-key gates**: chat, the setup wizard, figure extraction and two settings hints assumed
+  "no cloud key = can't chat" → `chatReady()` in `registry.ts`.
+- **In a real browser (headless Chromium, production build)**: sign-up/sign-in with no email
+  step, first account admin, privacy gate, Counsel answered on the local model drawing on
+  knowledge entries, every local service reachable under the CSP. The dev server page isn't
+  drivable over CDP headless (its JS runs; evaluate calls time out) — tested on `vite build` + preview.
+- **SearXNG**: 20 results/query (brave/ddg rate-limit; others answer).
+- **GPU profile**: prefill ~80 → ~415 tok/s (`results/2026-10-12-gpu-profile.txt`). Two
+  device-lost hangs on the first heavy request after (re)start/wake; app retries once.
+
+Still open:
+- **Background jobs can't reach Ollama**: ufw (active, default deny in) drops container → host
+  traffic to the relay. Needs one user-approved rule:
+  `sudo ufw allow proto tcp from 172.16.0.0/12 to 172.17.0.1 port 11434 comment chapter-craft-ollama`.
+  Until then knowledge-embed / search-knowledge / auto-tag etc. fail with "local embedder unavailable".
+- import-hosted.mjs still never run (needs a hosted token from the user).

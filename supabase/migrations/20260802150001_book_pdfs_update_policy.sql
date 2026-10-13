@@ -5,6 +5,7 @@
 -- fails RLS — Storage upserts issue an UPDATE on the existing storage.objects
 -- row. Owners are identified by the {uid}-first path convention.
 DO $$ BEGIN
+  DROP POLICY IF EXISTS "Users can update own PDFs" ON storage.objects;
   CREATE POLICY "Users can update own PDFs"
   ON storage.objects FOR UPDATE
   USING (bucket_id = 'book-pdfs' AND auth.uid()::text = (storage.foldername(name))[1])

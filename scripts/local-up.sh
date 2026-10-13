@@ -40,7 +40,7 @@ start_bg() { # name cmd...   (skips if already running)
 docker info >/dev/null 2>&1 || fail "Docker isn't usable by $USER. Run: bash scripts/local-ai/setup-once.sh (then log out/in)."
 up "$(svc ollama)/api/version" || fail "Ollama isn't running. Start it: sudo systemctl start ollama"
 for m in qwen3:4b-instruct-2507-q4_K_M nomic-embed-text; do
-  ollama list | awk '{print $1}' | grep -qx "$m" || fail "Model $m missing. Run: scripts/local-ai/install-services.sh"
+  ollama show "$m" >/dev/null 2>&1 || fail "Model $m missing. Run: scripts/local-ai/install-services.sh"
 done
 [ -x "$CC_HOME/src/whisper.cpp/build/bin/whisper-server" ] || fail "Services not installed. Run: scripts/local-ai/install-services.sh"
 

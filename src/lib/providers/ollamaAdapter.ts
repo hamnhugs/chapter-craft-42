@@ -206,83 +206,125 @@ function baseBody(model: string, messages: any[], extraBody?: Record<string, unk
   };
 }
 
+/** A model-runner crash that is worth one silent retry. On the reference
+ *  laptop the discrete GPU occasionally hangs on the first heavy request after
+ *  waking from runtime suspend ("ErrorDeviceLost"); the kernel resets the ring
+ *  and Ollama respawns its runner, so the same request then succeeds
+ *  (docs/local-ai/results/2026-10-12-gpu-profile.txt). Out-of-memory is not
+ *  retried: it would fail the same way. */
+function retryable(e: unknown): boolean {
+  if (!(e instanceof ProviderError) || e.code !== "server") return false;
+  const detail = e.message.replace(FRIENDLY.server ?? "", ""); // our hint itself mentions memory
+  return !/out of memory|unable to allocate|cudaMalloc|ErrorOutOfDeviceMemory/i.test(detail);
+}
+
+async function* streamOnce(req: ChatStreamRequest): AsyncGenerator<ChatStreamEvent, void, unknown> {
+  const messages = await toOllamaMessages(req.messages as any[]);
+  // Ollama has no tool_choice. "none" (the forced answer round) is honoured
+  // by not sending tools at all: the model then cannot call one. Ollama's
+  // templates render a transcript containing earlier tool calls fine
+  // without the declarations.
+  const sendTools = req.tools && req.toolChoice !== "none";
+  const res = await post(
+    "/api/chat",
+    { ...baseBody(req.model, messages, req.extraBody), stream: true, ...(sendTools ? { tools: req.tools } : {}) },
+    req.signal,
+  );
+
+  const router = new ThoughtRouter();
+  let sawTools = false;
+  let produced = false;
+  let nextIndex = 0;
+  for await (const d of ndjson(res)) {
+    if (d?.error) {
+      const { code, message } = classify(200, JSON.stringify(d));
+      fail(code, 200, message);
+    }
+    const m = d?.message;
+    if (typeof m?.thinking === "string" && m.thinking) yield { type: "reasoning", delta: m.thinking };
+    if (typeof m?.content === "string" && m.content) {
+      const r = router.push(m.content);
+      if (r.reasoning) yield { type: "reasoning", delta: r.reasoning };
+      if (r.text) yield { type: "text", delta: r.text };
+    }
+    if (Array.isArray(m?.tool_calls)) {
+      for (const tc of m.tool_calls) {
+        const fn = tc?.function || {};
+        sawTools = true;
+        // Each chunk is a complete call. Ollama numbers them, but the
+        // number is per-message; a fresh counter keeps slots distinct even
+        // if a build ever repeats one.
+        yield {
+          type: "tool_call_delta",
+          index: nextIndex++,
+          id: tc?.id || `call_${Math.random().toString(36).slice(2, 10)}`,
+          name: fn.name || undefined,
+          argsDelta: typeof fn.arguments === "string" ? fn.arguments : JSON.stringify(fn.arguments ?? {}),
+        };
+      }
+    }
+    if (d?.done) {
+      const rest = router.flush();
+      if (rest.reasoning) yield { type: "reasoning", delta: rest.reasoning };
+      if (rest.text) yield { type: "text", delta: rest.text };
+      const usage = usageOf(d);
+      if (usage) yield { type: "usage", usage };
+      yield { type: "finish", reason: finishOf(d.done_reason, sawTools), native: String(d.done_reason ?? "") };
+      return;
+    }
+    if (m?.content || m?.thinking || m?.tool_calls) produced = true;
+  }
+  // The runner died mid-request: Ollama closes the stream without a done line.
+  if (!produced) fail("server", 200, "the model stopped before answering");
+  const rest = router.flush();
+  if (rest.reasoning) yield { type: "reasoning", delta: rest.reasoning };
+  if (rest.text) yield { type: "text", delta: rest.text };
+}
+
+async function completeOnce(req: ChatCompleteRequest): Promise<string> {
+  const messages = await toOllamaMessages(req.messages as any[]);
+  const body: any = { ...baseBody(req.model, messages, req.extraBody), stream: false };
+  if (req.maxTokens) body.options = { ...body.options, num_predict: req.maxTokens };
+  const res = await post("/api/chat", body, req.signal);
+  const data = await res.json();
+  if (data?.error) {
+    const { code, message } = classify(200, JSON.stringify(data));
+    fail(code, 200, message);
+  }
+  // A runner that died mid-request leaves an empty, unfinished reply.
+  if (data?.done === false && !data?.message?.content) fail("server", 200, "the model stopped before answering");
+  req.onMeta?.({ finish: finishOf(data?.done_reason, false), usage: usageOf(data) ?? undefined });
+  const router = new ThoughtRouter();
+  const a = router.push(String(data?.message?.content || ""));
+  const b = router.flush();
+  return (a.text + b.text).trim();
+}
+
 export const ollamaAdapter: ChatProviderAdapter = {
   id: "ollama",
 
   async *streamChat(req: ChatStreamRequest): AsyncGenerator<ChatStreamEvent, void, unknown> {
-    const messages = await toOllamaMessages(req.messages as any[]);
-    // Ollama has no tool_choice. "none" (the forced answer round) is honoured
-    // by not sending tools at all: the model then cannot call one. Ollama's
-    // templates render a transcript containing earlier tool calls fine
-    // without the declarations.
-    const sendTools = req.tools && req.toolChoice !== "none";
-    const res = await post(
-      "/api/chat",
-      { ...baseBody(req.model, messages, req.extraBody), stream: true, ...(sendTools ? { tools: req.tools } : {}) },
-      req.signal,
-    );
-
-    const router = new ThoughtRouter();
-    let sawTools = false;
-    let nextIndex = 0;
-    for await (const d of ndjson(res)) {
-      if (d?.error) {
-        const { code, message } = classify(200, JSON.stringify(d));
-        fail(code, 200, message);
-      }
-      const m = d?.message;
-      if (typeof m?.thinking === "string" && m.thinking) yield { type: "reasoning", delta: m.thinking };
-      if (typeof m?.content === "string" && m.content) {
-        const r = router.push(m.content);
-        if (r.reasoning) yield { type: "reasoning", delta: r.reasoning };
-        if (r.text) yield { type: "text", delta: r.text };
-      }
-      if (Array.isArray(m?.tool_calls)) {
-        for (const tc of m.tool_calls) {
-          const fn = tc?.function || {};
-          sawTools = true;
-          // Each chunk is a complete call. Ollama numbers them, but the
-          // number is per-message; a fresh counter keeps slots distinct even
-          // if a build ever repeats one.
-          yield {
-            type: "tool_call_delta",
-            index: nextIndex++,
-            id: tc?.id || `call_${Math.random().toString(36).slice(2, 10)}`,
-            name: fn.name || undefined,
-            argsDelta: typeof fn.arguments === "string" ? fn.arguments : JSON.stringify(fn.arguments ?? {}),
-          };
+    for (let attempt = 0; ; attempt++) {
+      let started = false;
+      try {
+        for await (const ev of streamOnce(req)) {
+          started = true;
+          yield ev;
         }
-      }
-      if (d?.done) {
-        const rest = router.flush();
-        if (rest.reasoning) yield { type: "reasoning", delta: rest.reasoning };
-        if (rest.text) yield { type: "text", delta: rest.text };
-        const usage = usageOf(d);
-        if (usage) yield { type: "usage", usage };
-        yield { type: "finish", reason: finishOf(d.done_reason, sawTools), native: String(d.done_reason ?? "") };
         return;
+      } catch (e) {
+        if (started || attempt > 0 || req.signal?.aborted || !retryable(e)) throw e;
       }
     }
-    const rest = router.flush();
-    if (rest.reasoning) yield { type: "reasoning", delta: rest.reasoning };
-    if (rest.text) yield { type: "text", delta: rest.text };
   },
 
   async completeChat(req: ChatCompleteRequest): Promise<string> {
-    const messages = await toOllamaMessages(req.messages as any[]);
-    const body: any = { ...baseBody(req.model, messages, req.extraBody), stream: false };
-    if (req.maxTokens) body.options = { ...body.options, num_predict: req.maxTokens };
-    const res = await post("/api/chat", body, req.signal);
-    const data = await res.json();
-    if (data?.error) {
-      const { code, message } = classify(200, JSON.stringify(data));
-      fail(code, 200, message);
+    try {
+      return await completeOnce(req);
+    } catch (e) {
+      if (req.signal?.aborted || !retryable(e)) throw e;
+      return completeOnce(req);
     }
-    req.onMeta?.({ finish: finishOf(data?.done_reason, false), usage: usageOf(data) ?? undefined });
-    const router = new ThoughtRouter();
-    const a = router.push(String(data?.message?.content || ""));
-    const b = router.flush();
-    return (a.text + b.text).trim();
   },
 };
 

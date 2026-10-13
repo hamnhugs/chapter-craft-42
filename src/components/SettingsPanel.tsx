@@ -28,6 +28,7 @@ import { getMemoryMode, setMemoryMode, MemoryMode } from "@/lib/knowledgeApi";
 import { consumeSettingsSection } from "@/lib/settingsNav";
 import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
 import { isEmbeddingModel, isBatchOnlyModel } from "@/lib/utils";
+import { isLocalBackend } from "@/lib/localServices";
 import { allProviders, describeModel, freeChatProviders, isNvidiaModel, localModelId, modelProvider, namespacedId, providerConfigured, providerKeyUrl, providerLabel, NVIDIA_PREFIX } from "@/lib/providers/registry";
 import type { ProviderId } from "@/lib/providers/types";
 import { namespacedNvidiaId, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
@@ -287,7 +288,8 @@ const SettingsPanel: React.FC = () => {
 
   // Every role that can pick its own model, with whether its provider is
   // actually usable right now.
-  const roleUsable = (id: string) => (modelProvider(id) === "nvidia" ? !!nvidiaKeyLast4 : !!apiKey);
+  const roleUsable = (id: string) =>
+    modelProvider(id) === "ollama" ? true : modelProvider(id) === "nvidia" ? !!nvidiaKeyLast4 : !!apiKey;
   const roleRows = [
     { label: "Chat", id: selectedModel },
     { label: "Deep Research", id: deepResearchModel },
@@ -1149,7 +1151,7 @@ const SettingsPanel: React.FC = () => {
                   <ModelOptions models={savedModels.filter((m) => !isBatchOnlyModel(m))} openrouterOnly />
                 </select>
                 <Hint>Powers wiki extract and health checks. Custom models use OpenRouter and need your API key above (NVIDIA models aren't available for wiki ops).</Hint>
-                {wikiModel && !apiKey && (
+                {wikiModel && !apiKey && !isLocalBackend() && (
                   <p className="text-xs text-destructive px-1 mt-1">
                     No OpenRouter API key found — wiki ops will fall back to the default model.
                   </p>

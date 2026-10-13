@@ -74,7 +74,7 @@ DROP POLICY IF EXISTS "Users can delete own splat generations" ON public.splat_g
 CREATE POLICY "Users can delete own splat generations"
 ON public.splat_generations FOR DELETE USING (auth.uid() = user_id);
 
-ALTER TABLE public.chat_messages
+ALTER TABLE IF EXISTS public.chat_messages
   ADD COLUMN IF NOT EXISTS splats JSONB DEFAULT NULL;
 
 ALTER TABLE public.user_settings

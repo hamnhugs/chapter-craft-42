@@ -13,6 +13,7 @@ CREATE TABLE public.book_folders (
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.book_folders TO authenticated;
 GRANT ALL ON public.book_folders TO service_role;
 ALTER TABLE public.book_folders ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "owner full access" ON public.book_folders;
 CREATE POLICY "owner full access" ON public.book_folders FOR ALL
   USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 CREATE INDEX book_folders_user_idx ON public.book_folders(user_id, sort_index);
@@ -40,6 +41,7 @@ CREATE TABLE public.ingest_jobs (
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.ingest_jobs TO authenticated;
 GRANT ALL ON public.ingest_jobs TO service_role;
 ALTER TABLE public.ingest_jobs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "owner full access" ON public.ingest_jobs;
 CREATE POLICY "owner full access" ON public.ingest_jobs FOR ALL
   USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 CREATE INDEX ingest_jobs_user_idx ON public.ingest_jobs(user_id, status, updated_at DESC);

@@ -26,13 +26,19 @@ ALTER TABLE public.books ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.chapters ENABLE ROW LEVEL SECURITY;
 
 -- Public read access (for bots)
+DROP POLICY IF EXISTS "Anyone can read books" ON public.books;
 CREATE POLICY "Anyone can read books" ON public.books FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Anyone can read chapters" ON public.chapters;
 CREATE POLICY "Anyone can read chapters" ON public.chapters FOR SELECT USING (true);
 
 -- Anyone can insert (no auth required for this app)
+DROP POLICY IF EXISTS "Anyone can insert books" ON public.books;
 CREATE POLICY "Anyone can insert books" ON public.books FOR INSERT WITH CHECK (true);
+DROP POLICY IF EXISTS "Anyone can insert chapters" ON public.chapters;
 CREATE POLICY "Anyone can insert chapters" ON public.chapters FOR INSERT WITH CHECK (true);
 
 -- Anyone can delete
+DROP POLICY IF EXISTS "Anyone can delete books" ON public.books;
 CREATE POLICY "Anyone can delete books" ON public.books FOR DELETE USING (true);
+DROP POLICY IF EXISTS "Anyone can delete chapters" ON public.chapters;
 CREATE POLICY "Anyone can delete chapters" ON public.chapters FOR DELETE USING (true);

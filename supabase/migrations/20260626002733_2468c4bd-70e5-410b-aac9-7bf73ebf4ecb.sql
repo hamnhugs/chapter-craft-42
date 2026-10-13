@@ -29,6 +29,7 @@ GRANT ALL ON public.cleanup_flags TO service_role;
 
 ALTER TABLE public.cleanup_flags ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "users manage own cleanup_flags" ON public.cleanup_flags;
 CREATE POLICY "users manage own cleanup_flags"
   ON public.cleanup_flags FOR ALL
   USING (auth.uid() = user_id)

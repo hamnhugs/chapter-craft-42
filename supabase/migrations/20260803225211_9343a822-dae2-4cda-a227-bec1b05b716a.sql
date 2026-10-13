@@ -25,6 +25,7 @@ DROP INDEX IF EXISTS public.idx_api_keys_key_value;
 ALTER TABLE public.api_keys DROP COLUMN IF EXISTS key_value;
 
 DO $$ BEGIN
+  DROP POLICY IF EXISTS "Users can update own PDFs" ON storage.objects;
   CREATE POLICY "Users can update own PDFs"
   ON storage.objects FOR UPDATE
   USING (bucket_id = 'book-pdfs' AND auth.uid()::text = (storage.foldername(name))[1])

@@ -22,7 +22,7 @@ import { openPricing } from "@/components/PricingDialog";
 import { useReadAloud } from "@/hooks/useReadAloud";
 import { useHandsFree } from "@/hooks/useHandsFree";
 import { isEmbeddingModel } from "@/lib/utils";
-import { describeModel } from "@/lib/providers/registry";
+import { chatReady, describeModel } from "@/lib/providers/registry";
 import { useDictation } from "@/hooks/useDictation";
 import { requestSettingsSection } from "@/lib/settingsNav";
 import VoiceNotesPanel, { appendVoiceNote, deleteVoiceNote } from "@/components/VoiceNotesPanel";
@@ -886,7 +886,7 @@ const ChatPanel: React.FC = () => {
       ? (handsFree.interim ? `“${handsFree.interim}”` : `Hands-free — ${handsFreeStateLabel}`)
       : dictation.isListening
         ? "Listening… speak now"
-        : !(apiKey || nvidiaKeyLast4 || geminiApiKey)
+        : !chatReady({ apiKey, nvidiaKeyLast4, geminiApiKey }, selectedModel)
           ? "Add an API key in Settings to start chatting"
           : activeModes.length
             ? `${activeModes.join(" · ")} — ask anything…`
@@ -912,7 +912,7 @@ const ChatPanel: React.FC = () => {
     const text = input.trim();
     const imagesToSend = pendingImages;
     if (!text && imagesToSend.length === 0) return;
-    if (!apiKey && !nvidiaKeyLast4 && !geminiApiKey) { toast.error("Add an API key in Settings first — OpenRouter, NVIDIA or Gemini"); openSettings("models"); return; }
+    if (!chatReady({ apiKey, nvidiaKeyLast4, geminiApiKey }, selectedModel)) { toast.error("Add an API key in Settings first — OpenRouter, NVIDIA or Gemini"); openSettings("models"); return; }
     sendingRef.current = true;
     // Desktop refocus eligibility: this send came from the composer area
     // (Enter or the send button). Touch devices never refocus.
@@ -1176,7 +1176,7 @@ const ChatPanel: React.FC = () => {
                 ? `Ready to discuss "${selectedBook.title}". ${selectedBook.chapters.length > 0 ? `${selectedBook.chapters.length} chapter(s) loaded.` : "No chapters isolated yet."}`
                 : "Select a book in Read, then come here to counsel with the AI about it."}
             </p>
-            {!apiKey && loaded && (
+            {!chatReady({ apiKey, nvidiaKeyLast4, geminiApiKey }, selectedModel) && loaded && (
               <button onClick={() => openSettings("models")} className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-lg text-primary text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all">
                 <span className="material-symbols-outlined text-sm">key</span> Set API Key
               </button>

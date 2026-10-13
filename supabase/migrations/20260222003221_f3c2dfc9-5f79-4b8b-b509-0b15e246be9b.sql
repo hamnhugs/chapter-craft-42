@@ -14,17 +14,27 @@ DROP POLICY IF EXISTS "Anyone can insert chapters" ON public.chapters;
 DROP POLICY IF EXISTS "Anyone can delete chapters" ON public.chapters;
 
 -- New RLS policies for books
+DROP POLICY IF EXISTS "Users can read own books" ON public.books;
 CREATE POLICY "Users can read own books" ON public.books FOR SELECT TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own books" ON public.books;
 CREATE POLICY "Users can insert own books" ON public.books FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own books" ON public.books;
 CREATE POLICY "Users can delete own books" ON public.books FOR DELETE TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own books" ON public.books;
 CREATE POLICY "Users can update own books" ON public.books FOR UPDATE TO authenticated USING (auth.uid() = user_id);
 
 -- New RLS policies for chapters
+DROP POLICY IF EXISTS "Users can read own chapters" ON public.chapters;
 CREATE POLICY "Users can read own chapters" ON public.chapters FOR SELECT TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own chapters" ON public.chapters;
 CREATE POLICY "Users can insert own chapters" ON public.chapters FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own chapters" ON public.chapters;
 CREATE POLICY "Users can delete own chapters" ON public.chapters FOR DELETE TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own chapters" ON public.chapters;
 CREATE POLICY "Users can update own chapters" ON public.chapters FOR UPDATE TO authenticated USING (auth.uid() = user_id);
 
 -- Allow the API edge function (anon key) to still read all data
+DROP POLICY IF EXISTS "Anon can read all books" ON public.books;
 CREATE POLICY "Anon can read all books" ON public.books FOR SELECT TO anon USING (true);
+DROP POLICY IF EXISTS "Anon can read all chapters" ON public.chapters;
 CREATE POLICY "Anon can read all chapters" ON public.chapters FOR SELECT TO anon USING (true);

@@ -100,18 +100,22 @@ ALTER TABLE public.prompt_routing_decisions ENABLE ROW LEVEL SECURITY;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'prompt_routing_decisions' AND policyname = 'Users can read own prompt routing decisions') THEN
+    DROP POLICY IF EXISTS "Users can read own prompt routing decisions" ON public.prompt_routing_decisions;
     CREATE POLICY "Users can read own prompt routing decisions" ON public.prompt_routing_decisions
       FOR SELECT TO authenticated USING (auth.uid() = user_id);
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'prompt_routing_decisions' AND policyname = 'Users can insert own prompt routing decisions') THEN
+    DROP POLICY IF EXISTS "Users can insert own prompt routing decisions" ON public.prompt_routing_decisions;
     CREATE POLICY "Users can insert own prompt routing decisions" ON public.prompt_routing_decisions
       FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'prompt_routing_decisions' AND policyname = 'Users can update own prompt routing decisions') THEN
+    DROP POLICY IF EXISTS "Users can update own prompt routing decisions" ON public.prompt_routing_decisions;
     CREATE POLICY "Users can update own prompt routing decisions" ON public.prompt_routing_decisions
       FOR UPDATE TO authenticated USING (auth.uid() = user_id);
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'prompt_routing_decisions' AND policyname = 'Users can delete own prompt routing decisions') THEN
+    DROP POLICY IF EXISTS "Users can delete own prompt routing decisions" ON public.prompt_routing_decisions;
     CREATE POLICY "Users can delete own prompt routing decisions" ON public.prompt_routing_decisions
       FOR DELETE TO authenticated USING (auth.uid() = user_id);
   END IF;
@@ -160,18 +164,22 @@ ALTER TABLE public.prompt_incubator_turns ENABLE ROW LEVEL SECURITY;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'prompt_incubator_turns' AND policyname = 'Users can read own prompt incubator') THEN
+    DROP POLICY IF EXISTS "Users can read own prompt incubator" ON public.prompt_incubator_turns;
     CREATE POLICY "Users can read own prompt incubator" ON public.prompt_incubator_turns
       FOR SELECT TO authenticated USING (auth.uid() = user_id);
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'prompt_incubator_turns' AND policyname = 'Users can insert own prompt incubator') THEN
+    DROP POLICY IF EXISTS "Users can insert own prompt incubator" ON public.prompt_incubator_turns;
     CREATE POLICY "Users can insert own prompt incubator" ON public.prompt_incubator_turns
       FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'prompt_incubator_turns' AND policyname = 'Users can update own prompt incubator') THEN
+    DROP POLICY IF EXISTS "Users can update own prompt incubator" ON public.prompt_incubator_turns;
     CREATE POLICY "Users can update own prompt incubator" ON public.prompt_incubator_turns
       FOR UPDATE TO authenticated USING (auth.uid() = user_id);
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'prompt_incubator_turns' AND policyname = 'Users can delete own prompt incubator') THEN
+    DROP POLICY IF EXISTS "Users can delete own prompt incubator" ON public.prompt_incubator_turns;
     CREATE POLICY "Users can delete own prompt incubator" ON public.prompt_incubator_turns
       FOR DELETE TO authenticated USING (auth.uid() = user_id);
   END IF;
@@ -219,18 +227,22 @@ ALTER TABLE public.prompt_proposals ENABLE ROW LEVEL SECURITY;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'prompt_proposals' AND policyname = 'Users can read own prompt proposals') THEN
+    DROP POLICY IF EXISTS "Users can read own prompt proposals" ON public.prompt_proposals;
     CREATE POLICY "Users can read own prompt proposals" ON public.prompt_proposals
       FOR SELECT TO authenticated USING (auth.uid() = user_id);
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'prompt_proposals' AND policyname = 'Users can insert own prompt proposals') THEN
+    DROP POLICY IF EXISTS "Users can insert own prompt proposals" ON public.prompt_proposals;
     CREATE POLICY "Users can insert own prompt proposals" ON public.prompt_proposals
       FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'prompt_proposals' AND policyname = 'Users can update own prompt proposals') THEN
+    DROP POLICY IF EXISTS "Users can update own prompt proposals" ON public.prompt_proposals;
     CREATE POLICY "Users can update own prompt proposals" ON public.prompt_proposals
       FOR UPDATE TO authenticated USING (auth.uid() = user_id);
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'prompt_proposals' AND policyname = 'Users can delete own prompt proposals') THEN
+    DROP POLICY IF EXISTS "Users can delete own prompt proposals" ON public.prompt_proposals;
     CREATE POLICY "Users can delete own prompt proposals" ON public.prompt_proposals
       FOR DELETE TO authenticated USING (auth.uid() = user_id);
   END IF;

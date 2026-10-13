@@ -17,9 +17,13 @@ CREATE TABLE public.knowledge_entries (
 
 ALTER TABLE public.knowledge_entries ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can read own knowledge entries" ON public.knowledge_entries;
 CREATE POLICY "Users can read own knowledge entries" ON public.knowledge_entries FOR SELECT TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own knowledge entries" ON public.knowledge_entries;
 CREATE POLICY "Users can insert own knowledge entries" ON public.knowledge_entries FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own knowledge entries" ON public.knowledge_entries;
 CREATE POLICY "Users can update own knowledge entries" ON public.knowledge_entries FOR UPDATE TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own knowledge entries" ON public.knowledge_entries;
 CREATE POLICY "Users can delete own knowledge entries" ON public.knowledge_entries FOR DELETE TO authenticated USING (auth.uid() = user_id);
 
 CREATE INDEX idx_knowledge_entries_user ON public.knowledge_entries(user_id);
@@ -40,9 +44,13 @@ CREATE TABLE public.memory_graph (
 
 ALTER TABLE public.memory_graph ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can read own memory graph" ON public.memory_graph;
 CREATE POLICY "Users can read own memory graph" ON public.memory_graph FOR SELECT TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own memory graph" ON public.memory_graph;
 CREATE POLICY "Users can insert own memory graph" ON public.memory_graph FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own memory graph" ON public.memory_graph;
 CREATE POLICY "Users can update own memory graph" ON public.memory_graph FOR UPDATE TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own memory graph" ON public.memory_graph;
 CREATE POLICY "Users can delete own memory graph" ON public.memory_graph FOR DELETE TO authenticated USING (auth.uid() = user_id);
 
 CREATE INDEX idx_memory_graph_user ON public.memory_graph(user_id);
@@ -61,9 +69,13 @@ CREATE TABLE public.conversation_memory (
 
 ALTER TABLE public.conversation_memory ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can read own conversation memory" ON public.conversation_memory;
 CREATE POLICY "Users can read own conversation memory" ON public.conversation_memory FOR SELECT TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own conversation memory" ON public.conversation_memory;
 CREATE POLICY "Users can insert own conversation memory" ON public.conversation_memory FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own conversation memory" ON public.conversation_memory;
 CREATE POLICY "Users can update own conversation memory" ON public.conversation_memory FOR UPDATE TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own conversation memory" ON public.conversation_memory;
 CREATE POLICY "Users can delete own conversation memory" ON public.conversation_memory FOR DELETE TO authenticated USING (auth.uid() = user_id);
 
 -- Trigger to auto-update updated_at

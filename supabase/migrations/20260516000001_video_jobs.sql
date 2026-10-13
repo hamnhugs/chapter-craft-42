@@ -16,6 +16,7 @@ create table if not exists public.video_jobs (
 
 alter table public.video_jobs enable row level security;
 
+drop policy if exists "Users can manage their own video jobs" on public.video_jobs;
 create policy "Users can manage their own video jobs"
   on public.video_jobs
   for all

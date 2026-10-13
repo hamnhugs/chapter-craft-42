@@ -11,8 +11,13 @@ CREATE TABLE public.notes (
 
 ALTER TABLE public.notes ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can read own notes" ON public.notes;
 CREATE POLICY "Users can read own notes" ON public.notes FOR SELECT TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own notes" ON public.notes;
 CREATE POLICY "Users can insert own notes" ON public.notes FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own notes" ON public.notes;
 CREATE POLICY "Users can update own notes" ON public.notes FOR UPDATE TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own notes" ON public.notes;
 CREATE POLICY "Users can delete own notes" ON public.notes FOR DELETE TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Anon can read all notes" ON public.notes;
 CREATE POLICY "Anon can read all notes" ON public.notes FOR SELECT TO anon USING (true);

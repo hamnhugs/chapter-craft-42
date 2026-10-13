@@ -11,12 +11,16 @@ CREATE TABLE public.prompt_presets (
 
 ALTER TABLE public.prompt_presets ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can read own prompt presets" ON public.prompt_presets;
 CREATE POLICY "Users can read own prompt presets" ON public.prompt_presets
   FOR SELECT TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own prompt presets" ON public.prompt_presets;
 CREATE POLICY "Users can insert own prompt presets" ON public.prompt_presets
   FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own prompt presets" ON public.prompt_presets;
 CREATE POLICY "Users can update own prompt presets" ON public.prompt_presets
   FOR UPDATE TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own prompt presets" ON public.prompt_presets;
 CREATE POLICY "Users can delete own prompt presets" ON public.prompt_presets
   FOR DELETE TO authenticated USING (auth.uid() = user_id);
 

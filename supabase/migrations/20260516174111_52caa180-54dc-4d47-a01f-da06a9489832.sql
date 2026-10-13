@@ -20,15 +20,19 @@ CREATE INDEX IF NOT EXISTS idx_episodic_log_user_session
 
 ALTER TABLE public.episodic_log ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can read own episodic log" ON public.episodic_log;
 CREATE POLICY "Users can read own episodic log"
   ON public.episodic_log FOR SELECT TO authenticated
   USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own episodic log" ON public.episodic_log;
 CREATE POLICY "Users can insert own episodic log"
   ON public.episodic_log FOR INSERT TO authenticated
   WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own episodic log" ON public.episodic_log;
 CREATE POLICY "Users can update own episodic log"
   ON public.episodic_log FOR UPDATE TO authenticated
   USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own episodic log" ON public.episodic_log;
 CREATE POLICY "Users can delete own episodic log"
   ON public.episodic_log FOR DELETE TO authenticated
   USING (auth.uid() = user_id);
@@ -54,15 +58,19 @@ CREATE INDEX IF NOT EXISTS idx_consolidation_queue_pending
 
 ALTER TABLE public.consolidation_queue ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can read own consolidation queue" ON public.consolidation_queue;
 CREATE POLICY "Users can read own consolidation queue"
   ON public.consolidation_queue FOR SELECT TO authenticated
   USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own consolidation queue" ON public.consolidation_queue;
 CREATE POLICY "Users can insert own consolidation queue"
   ON public.consolidation_queue FOR INSERT TO authenticated
   WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own consolidation queue" ON public.consolidation_queue;
 CREATE POLICY "Users can update own consolidation queue"
   ON public.consolidation_queue FOR UPDATE TO authenticated
   USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own consolidation queue" ON public.consolidation_queue;
 CREATE POLICY "Users can delete own consolidation queue"
   ON public.consolidation_queue FOR DELETE TO authenticated
   USING (auth.uid() = user_id);

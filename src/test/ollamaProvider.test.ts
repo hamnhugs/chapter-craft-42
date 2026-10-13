@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { ollamaAdapter, toOllamaMessages, ndjson } from "@/lib/providers/ollamaAdapter";
 import { isLoopbackUrl, ollamaBaseUrl, setOllamaBaseUrl, ollamaNumCtx, setOllamaNumCtx } from "@/lib/providers/ollamaConfig";
-import { describeModel, modelProvider, providerConfigured, providerKey, resolveModel } from "@/lib/providers/registry";
+import { chatReady, describeModel, modelProvider, providerConfigured, providerKey, resolveModel } from "@/lib/providers/registry";
 import type { ChatStreamEvent } from "@/lib/providers/types";
 
 /** A Response whose body streams the given NDJSON objects, split mid-line to
@@ -49,6 +49,15 @@ describe("registry: the ollama: namespace", () => {
     expect(providerKey("ollama", { apiKey: "sk-or-secret" })).toBe("");
     // NVIDIA's keyless-in-browser rule is unchanged.
     expect(providerConfigured("nvidia", {})).toBe(false);
+  });
+});
+
+describe("chatReady", () => {
+  it("a local model needs no key; a cloud model needs some key", () => {
+    expect(chatReady({}, "ollama:qwen3:4b-instruct-2507-q4_K_M")).toBe(true);
+    expect(chatReady({}, "openai/gpt-4o-mini")).toBe(false);
+    expect(chatReady({ geminiApiKey: "g" }, "openai/gpt-4o-mini")).toBe(true);
+    expect(chatReady({}, null)).toBe(false);
   });
 });
 
@@ -181,6 +190,42 @@ describe("ollamaAdapter.streamChat", () => {
     vi.stubGlobal("fetch", vi.fn(async () => ndjsonResponse([{ error: "unable to allocate Vulkan buffer" }])));
     await expect(collect(ollamaAdapter.streamChat({ model: "m", messages: [] }))).rejects.toMatchObject({ code: "server" });
   });
+
+  it("retries once, silently, when the runner dies before answering (GPU device lost)", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "decode() failed: vk::Queue::submit: ErrorDeviceLost" }), { status: 500 }))
+      .mockResolvedValueOnce(ndjsonResponse([{ message: { content: "ok" }, done: true, done_reason: "stop" }]));
+    vi.stubGlobal("fetch", fetchMock);
+    const evs = await collect(ollamaAdapter.streamChat({ model: "m", messages: [] }));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(evs.filter((e) => e.type === "text").map((e: any) => e.delta).join("")).toBe("ok");
+  });
+
+  it("a stream that ends with no done line and no output counts as a crash", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(ndjsonResponse([]))
+      .mockResolvedValueOnce(ndjsonResponse([{ message: { content: "ok" }, done: true }]));
+    vi.stubGlobal("fetch", fetchMock);
+    await collect(ollamaAdapter.streamChat({ model: "m", messages: [] }));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("never retries after output reached the screen, nor out-of-memory, nor twice", async () => {
+    const partial = vi.fn(async () => ndjsonResponse([{ message: { content: "half" } }, { error: "llama runner process has terminated" }]));
+    vi.stubGlobal("fetch", partial);
+    await expect(collect(ollamaAdapter.streamChat({ model: "m", messages: [] }))).rejects.toMatchObject({ code: "server" });
+    expect(partial).toHaveBeenCalledTimes(1);
+
+    const oom = vi.fn(async () => new Response(JSON.stringify({ error: "out of memory" }), { status: 500 }));
+    vi.stubGlobal("fetch", oom);
+    await expect(collect(ollamaAdapter.streamChat({ model: "m", messages: [] }))).rejects.toMatchObject({ code: "server" });
+    expect(oom).toHaveBeenCalledTimes(1);
+
+    const dead = vi.fn(async () => new Response(JSON.stringify({ error: "ErrorDeviceLost" }), { status: 500 }));
+    vi.stubGlobal("fetch", dead);
+    await expect(collect(ollamaAdapter.streamChat({ model: "m", messages: [] }))).rejects.toMatchObject({ code: "server" });
+    expect(dead).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("ollamaAdapter.completeChat", () => {
@@ -196,6 +241,15 @@ describe("ollamaAdapter.completeChat", () => {
     const body = JSON.parse(String((fetchMock.mock.calls[0] as any)[1].body));
     expect(body.stream).toBe(false);
     expect(body.options).toEqual({ num_ctx: 16384, num_predict: 300 });
+  });
+
+  it("an empty unfinished reply (the runner died) is retried once instead of returning ''", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ model: "", done: false, message: { content: "" } })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: { content: "fine" }, done: true, done_reason: "stop" })));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await ollamaAdapter.completeChat({ model: "m", messages: [] })).toBe("fine");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -1,23 +1,27 @@
 -- Storage policies for generated-videos bucket
 DO $$ BEGIN
+  DROP POLICY IF EXISTS "Users can upload own generated videos" ON storage.objects;
   CREATE POLICY "Users can upload own generated videos"
   ON storage.objects FOR INSERT
   WITH CHECK (bucket_id = 'generated-videos' AND auth.uid()::text = (storage.foldername(name))[1]);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 DO $$ BEGIN
+  DROP POLICY IF EXISTS "Users can read own generated videos" ON storage.objects;
   CREATE POLICY "Users can read own generated videos"
   ON storage.objects FOR SELECT
   USING (bucket_id = 'generated-videos' AND auth.uid()::text = (storage.foldername(name))[1]);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 DO $$ BEGIN
+  DROP POLICY IF EXISTS "Users can update own generated videos" ON storage.objects;
   CREATE POLICY "Users can update own generated videos"
   ON storage.objects FOR UPDATE
   USING (bucket_id = 'generated-videos' AND auth.uid()::text = (storage.foldername(name))[1]);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 DO $$ BEGIN
+  DROP POLICY IF EXISTS "Users can delete own generated videos" ON storage.objects;
   CREATE POLICY "Users can delete own generated videos"
   ON storage.objects FOR DELETE
   USING (bucket_id = 'generated-videos' AND auth.uid()::text = (storage.foldername(name))[1]);
@@ -56,21 +60,25 @@ GRANT ALL ON public.video_generations TO service_role;
 ALTER TABLE public.video_generations ENABLE ROW LEVEL SECURITY;
 
 DO $$ BEGIN
+  DROP POLICY IF EXISTS "Users can view own video generations" ON public.video_generations;
   CREATE POLICY "Users can view own video generations"
   ON public.video_generations FOR SELECT USING (auth.uid() = user_id);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 DO $$ BEGIN
+  DROP POLICY IF EXISTS "Users can insert own video generations" ON public.video_generations;
   CREATE POLICY "Users can insert own video generations"
   ON public.video_generations FOR INSERT WITH CHECK (auth.uid() = user_id);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 DO $$ BEGIN
+  DROP POLICY IF EXISTS "Users can update own video generations" ON public.video_generations;
   CREATE POLICY "Users can update own video generations"
   ON public.video_generations FOR UPDATE USING (auth.uid() = user_id);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 DO $$ BEGIN
+  DROP POLICY IF EXISTS "Users can delete own video generations" ON public.video_generations;
   CREATE POLICY "Users can delete own video generations"
   ON public.video_generations FOR DELETE USING (auth.uid() = user_id);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
@@ -81,7 +89,7 @@ CREATE TRIGGER update_video_generations_updated_at
   FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 -- Chat messages: video references
-ALTER TABLE public.chat_messages
+ALTER TABLE IF EXISTS public.chat_messages
   ADD COLUMN IF NOT EXISTS videos JSONB DEFAULT NULL;
 
 -- Per-user video preferences

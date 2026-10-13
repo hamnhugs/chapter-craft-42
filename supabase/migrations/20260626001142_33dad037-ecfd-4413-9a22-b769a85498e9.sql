@@ -7,12 +7,15 @@ DROP POLICY IF EXISTS "book-covers owner delete" ON storage.objects;
 CREATE POLICY "book-covers owner read" ON storage.objects
   FOR SELECT TO authenticated
   USING (bucket_id = 'book-covers' AND auth.uid()::text = (storage.foldername(name))[1]);
+DROP POLICY IF EXISTS "book-covers owner write" ON storage.objects;
 CREATE POLICY "book-covers owner write" ON storage.objects
   FOR INSERT TO authenticated
   WITH CHECK (bucket_id = 'book-covers' AND auth.uid()::text = (storage.foldername(name))[1]);
+DROP POLICY IF EXISTS "book-covers owner update" ON storage.objects;
 CREATE POLICY "book-covers owner update" ON storage.objects
   FOR UPDATE TO authenticated
   USING (bucket_id = 'book-covers' AND auth.uid()::text = (storage.foldername(name))[1]);
+DROP POLICY IF EXISTS "book-covers owner delete" ON storage.objects;
 CREATE POLICY "book-covers owner delete" ON storage.objects
   FOR DELETE TO authenticated
   USING (bucket_id = 'book-covers' AND auth.uid()::text = (storage.foldername(name))[1]);
@@ -26,8 +29,10 @@ BEGIN
   END LOOP;
 END$$;
 
+DROP POLICY IF EXISTS "subscribers_select_own" ON public.subscribers;
 CREATE POLICY "subscribers_select_own" ON public.subscribers
   FOR SELECT TO authenticated USING (user_id = auth.uid());
+DROP POLICY IF EXISTS "subscribers_service_all" ON public.subscribers;
 CREATE POLICY "subscribers_service_all" ON public.subscribers
   FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -37,15 +42,15 @@ CREATE POLICY "user_settings_delete_own" ON public.user_settings
   FOR DELETE TO authenticated USING (user_id = auth.uid());
 
 -- Lock down SECURITY DEFINER functions
-REVOKE EXECUTE ON FUNCTION public.validate_wiki_log_operation() FROM PUBLIC, anon, authenticated;
-REVOKE EXECUTE ON FUNCTION public.validate_knowledge_entry_enums() FROM PUBLIC, anon, authenticated;
-REVOKE EXECUTE ON FUNCTION public.validate_knowledge_entry_atomicity() FROM PUBLIC, anon, authenticated;
-REVOKE EXECUTE ON FUNCTION public.update_updated_at_column() FROM PUBLIC, anon, authenticated;
-REVOKE EXECUTE ON FUNCTION public.grant_admin_on_signup() FROM PUBLIC, anon, authenticated;
-REVOKE EXECUTE ON FUNCTION public.grant_owner_admin_on_signup() FROM PUBLIC, anon, authenticated;
-REVOKE EXECUTE ON FUNCTION public.grant_admin_lifetime_on_role() FROM PUBLIC, anon, authenticated;
-REVOKE EXECUTE ON FUNCTION public.set_memory_graph_edge_class() FROM PUBLIC, anon, authenticated;
-REVOKE EXECUTE ON FUNCTION public.enforce_neuron_limit() FROM PUBLIC, anon, authenticated;
+DO $g$ BEGIN IF to_regprocedure('public.validate_wiki_log_operation()') IS NOT NULL THEN REVOKE EXECUTE ON FUNCTION public.validate_wiki_log_operation() FROM PUBLIC, anon, authenticated; END IF; END $g$;
+DO $g$ BEGIN IF to_regprocedure('public.validate_knowledge_entry_enums()') IS NOT NULL THEN REVOKE EXECUTE ON FUNCTION public.validate_knowledge_entry_enums() FROM PUBLIC, anon, authenticated; END IF; END $g$;
+DO $g$ BEGIN IF to_regprocedure('public.validate_knowledge_entry_atomicity()') IS NOT NULL THEN REVOKE EXECUTE ON FUNCTION public.validate_knowledge_entry_atomicity() FROM PUBLIC, anon, authenticated; END IF; END $g$;
+DO $g$ BEGIN IF to_regprocedure('public.update_updated_at_column()') IS NOT NULL THEN REVOKE EXECUTE ON FUNCTION public.update_updated_at_column() FROM PUBLIC, anon, authenticated; END IF; END $g$;
+DO $g$ BEGIN IF to_regprocedure('public.grant_admin_on_signup()') IS NOT NULL THEN REVOKE EXECUTE ON FUNCTION public.grant_admin_on_signup() FROM PUBLIC, anon, authenticated; END IF; END $g$;
+DO $g$ BEGIN IF to_regprocedure('public.grant_owner_admin_on_signup()') IS NOT NULL THEN REVOKE EXECUTE ON FUNCTION public.grant_owner_admin_on_signup() FROM PUBLIC, anon, authenticated; END IF; END $g$;
+DO $g$ BEGIN IF to_regprocedure('public.grant_admin_lifetime_on_role()') IS NOT NULL THEN REVOKE EXECUTE ON FUNCTION public.grant_admin_lifetime_on_role() FROM PUBLIC, anon, authenticated; END IF; END $g$;
+DO $g$ BEGIN IF to_regprocedure('public.set_memory_graph_edge_class()') IS NOT NULL THEN REVOKE EXECUTE ON FUNCTION public.set_memory_graph_edge_class() FROM PUBLIC, anon, authenticated; END IF; END $g$;
+DO $g$ BEGIN IF to_regprocedure('public.enforce_neuron_limit()') IS NOT NULL THEN REVOKE EXECUTE ON FUNCTION public.enforce_neuron_limit() FROM PUBLIC, anon, authenticated; END IF; END $g$;
 
 DO $$
 DECLARE fn text;

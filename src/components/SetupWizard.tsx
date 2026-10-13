@@ -15,6 +15,7 @@ import {
 import { useConsentResolved } from "@/components/WelcomeGate";
 import { fetchCatalog, isFreeModel, type ORModel } from "@/lib/openrouterCatalog";
 import { namespacedNvidiaId, NVIDIA_FEATURED, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
+import { isOllamaModel } from "@/lib/providers/registry";
 
 // First-run setup helper. Research-backed shape: 4 steps max (completion
 // roughly halves per extra step), skippable everywhere, teaches the
@@ -92,15 +93,16 @@ const SetupWizard: React.FC = () => {
     if (autoOpenedRef.current || open) return;
     if (!user || !settingsLoaded || !consentResolved) return;
     if (localStorage.getItem(DONE_KEY)) return;
-    if (apiKey || nvidiaKeyLast4) {
+    if (apiKey || nvidiaKeyLast4 || isOllamaModel(selectedModel)) {
       // Existing user who set up before the wizard existed (either provider
-      // counts as configured) — never nag them.
+      // counts as configured), or chat already runs on this computer with no
+      // key — never nag them.
       localStorage.setItem(DONE_KEY, "1");
       return;
     }
     autoOpenedRef.current = true;
     openSetupWizard(0);
-  }, [user, settingsLoaded, apiKey, nvidiaKeyLast4, open, consentResolved]);
+  }, [user, settingsLoaded, apiKey, nvidiaKeyLast4, selectedModel, open, consentResolved]);
 
   // Lazy-load quick picks for the models step: top free models by real usage.
   useEffect(() => {

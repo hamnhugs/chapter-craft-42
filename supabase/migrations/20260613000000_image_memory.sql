@@ -7,14 +7,17 @@ INSERT INTO storage.buckets (id, name, public)
 VALUES ('generated-images', 'generated-images', false)
 ON CONFLICT (id) DO NOTHING;
 
+DROP POLICY IF EXISTS "Users can upload own generated images" ON storage.objects;
 CREATE POLICY "Users can upload own generated images"
 ON storage.objects FOR INSERT
 WITH CHECK (bucket_id = 'generated-images' AND auth.uid()::text = (storage.foldername(name))[1]);
 
+DROP POLICY IF EXISTS "Users can read own generated images" ON storage.objects;
 CREATE POLICY "Users can read own generated images"
 ON storage.objects FOR SELECT
 USING (bucket_id = 'generated-images' AND auth.uid()::text = (storage.foldername(name))[1]);
 
+DROP POLICY IF EXISTS "Users can delete own generated images" ON storage.objects;
 CREATE POLICY "Users can delete own generated images"
 ON storage.objects FOR DELETE
 USING (bucket_id = 'generated-images' AND auth.uid()::text = (storage.foldername(name))[1]);
@@ -40,22 +43,26 @@ CREATE INDEX IF NOT EXISTS idx_image_attachments_entry ON public.image_attachmen
 
 ALTER TABLE public.image_attachments ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can view own image attachments" ON public.image_attachments;
 CREATE POLICY "Users can view own image attachments"
 ON public.image_attachments FOR SELECT
 USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can insert own image attachments" ON public.image_attachments;
 CREATE POLICY "Users can insert own image attachments"
 ON public.image_attachments FOR INSERT
 WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update own image attachments" ON public.image_attachments;
 CREATE POLICY "Users can update own image attachments"
 ON public.image_attachments FOR UPDATE
 USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can delete own image attachments" ON public.image_attachments;
 CREATE POLICY "Users can delete own image attachments"
 ON public.image_attachments FOR DELETE
 USING (auth.uid() = user_id);
 
 -- 3. Chat messages can carry image references (array of {id, storage_path, prompt, entry_id}).
-ALTER TABLE public.chat_messages
+ALTER TABLE IF EXISTS public.chat_messages
   ADD COLUMN IF NOT EXISTS images JSONB DEFAULT NULL;

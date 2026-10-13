@@ -28,6 +28,7 @@ import { seekLibrary, SEEK_FETCH_CAP, type SeekOutcome } from "@/lib/librarySeek
 import LibraryList from "@/components/LibraryList";
 import LibraryShowcase from "@/components/LibraryShowcase";
 import { seedOf } from "@/lib/bookProfile";
+import { isLocalBackend } from "@/lib/localServices";
 
 // The 3D mind map pulls in three.js (~300KB gzip); lazy-load so that chunk is
 // only fetched when the user actually toggles the graph view on.
@@ -801,7 +802,8 @@ const Library: React.FC = () => {
     // exempt) — the run could only end in a 402 AFTER the minutes-long PDF
     // scan. Say what actually unblocks it, before any scanning; the retired
     // paywall (openPricing no-ops under OPEN_ACCESS) is not the answer.
-    if (!apiKey && adminLoaded && !isAdmin) {
+    // A local backend answers describe-figures with local models: no key needed.
+    if (!apiKey && adminLoaded && !isAdmin && !isLocalBackend()) {
       toast("Figure extraction needs your OpenRouter API key — add one in Settings → AI Models & Keys.");
       return;
     }

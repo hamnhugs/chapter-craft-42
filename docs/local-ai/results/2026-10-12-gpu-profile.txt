@@ -1,0 +1,27 @@
+GPU COMPUTE power profile — before/after, and the device-lost hangs
+=====================================================================
+Machine: RX 5600M (Navi 10, 6 GB) + Renoir iGPU, kernel 7.2.3, Ollama 0.33.3 Vulkan
+Model: qwen3:4b-instruct-2507-q4_K_M, num_ctx 16384, ~4540-token prompt, no cache hit
+(unique prefix per run). Applied by scripts/local-ai/setup-once.sh step 3.
+
+Prefill throughput
+  before (power_dpm_force_performance_level=auto)   ~79-84 tok/s   (2026-10-12-latency-profile.txt)
+  after  (manual + COMPUTE profile)                 390-421 tok/s  (4 consecutive runs)
+    num_batch 128: 390   512: 421   256: 413   512: 416   -> batch size doesn't matter
+  first run right after applying the profile: 84 tok/s (clocks still ramping)
+  generation: ~50-51 tok/s, unchanged
+
+A ~4.5K-token first turn: ~55 s of prompt reading before -> ~11 s after.
+
+Device-lost hangs (kernel: "ring comp_1.x.0 timeout", Ollama: vk::DeviceLostError)
+  16:00:21, 16:03:01  sd-server Z-Image on the dGPU, profile NOT applied (auto) -> moved to iGPU
+  18:37:48            first long prompt after setup-once.sh restarted Ollama, profile applied
+  18:53:11            first long prompt after the dGPU had been idle (runtime-suspended, D3cold)
+  After each: kernel ring reset succeeded, desktop unaffected (display is on the iGPU),
+  Ollama respawned its runner; a short request right after worked.
+  Then 6 long prompts in a row with the profile on: no hang.
+Reading: hangs cluster on the first heavy request after a (re)start or wake.
+Not proven whether the profile raises the odds. Mitigation in the app:
+ollamaAdapter retries a runner crash ONCE when nothing has been shown yet
+(src/lib/providers/ollamaAdapter.ts, retryable()). If hangs keep happening, undo the
+profile (setup-once.sh prints the undo line) and compare.

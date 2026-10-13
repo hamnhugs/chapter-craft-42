@@ -23,7 +23,7 @@ mkdir -p "$SRC" "$PREFIX" "$CC_HOME/voices" "$CC_HOME/image-models"
 # Choices and evidence: docs/local-ai/PLAN.md, docs/local-ai/results/.
 if have ollama; then
   for m in qwen3:4b-instruct-2507-q4_K_M qwen3.5:4b qwen3:8b nomic-embed-text; do
-    if ollama list | awk '{print $1}' | grep -qx "$m"; then say "ollama: $m present"; else say "ollama pull $m"; ollama pull "$m"; fi
+    if ollama show "$m" >/dev/null 2>&1; then say "ollama: $m present"; else say "ollama pull $m"; ollama pull "$m"; fi
   done
 else
   echo "Ollama is not installed (pacman -S ollama ollama-vulkan). Skipping models." >&2

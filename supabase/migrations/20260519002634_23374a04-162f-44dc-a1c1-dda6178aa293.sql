@@ -17,9 +17,13 @@ CREATE INDEX incubator_entries_user_status_idx ON public.incubator_entries(user_
 CREATE INDEX incubator_entries_expires_idx ON public.incubator_entries(expires_at) WHERE status = 'pending';
 
 ALTER TABLE public.incubator_entries ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users can read own incubator" ON public.incubator_entries;
 CREATE POLICY "Users can read own incubator" ON public.incubator_entries FOR SELECT TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own incubator" ON public.incubator_entries;
 CREATE POLICY "Users can insert own incubator" ON public.incubator_entries FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own incubator" ON public.incubator_entries;
 CREATE POLICY "Users can update own incubator" ON public.incubator_entries FOR UPDATE TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own incubator" ON public.incubator_entries;
 CREATE POLICY "Users can delete own incubator" ON public.incubator_entries FOR DELETE TO authenticated USING (auth.uid() = user_id);
 
 -- Wiki proposals: candidate new wikis formed from incubator clusters
@@ -38,9 +42,13 @@ CREATE TABLE public.wiki_proposals (
 CREATE INDEX wiki_proposals_user_status_idx ON public.wiki_proposals(user_id, status);
 
 ALTER TABLE public.wiki_proposals ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users can read own proposals" ON public.wiki_proposals;
 CREATE POLICY "Users can read own proposals" ON public.wiki_proposals FOR SELECT TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own proposals" ON public.wiki_proposals;
 CREATE POLICY "Users can insert own proposals" ON public.wiki_proposals FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own proposals" ON public.wiki_proposals;
 CREATE POLICY "Users can update own proposals" ON public.wiki_proposals FOR UPDATE TO authenticated USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own proposals" ON public.wiki_proposals;
 CREATE POLICY "Users can delete own proposals" ON public.wiki_proposals FOR DELETE TO authenticated USING (auth.uid() = user_id);
 
 CREATE TRIGGER update_wiki_proposals_updated_at

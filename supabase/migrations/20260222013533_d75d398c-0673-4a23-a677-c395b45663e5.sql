@@ -13,18 +13,22 @@ CREATE TABLE public.api_keys (
 ALTER TABLE public.api_keys ENABLE ROW LEVEL SECURITY;
 
 -- Users can manage their own keys
+DROP POLICY IF EXISTS "Users can read own api keys" ON public.api_keys;
 CREATE POLICY "Users can read own api keys"
   ON public.api_keys FOR SELECT
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can insert own api keys" ON public.api_keys;
 CREATE POLICY "Users can insert own api keys"
   ON public.api_keys FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update own api keys" ON public.api_keys;
 CREATE POLICY "Users can update own api keys"
   ON public.api_keys FOR UPDATE
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can delete own api keys" ON public.api_keys;
 CREATE POLICY "Users can delete own api keys"
   ON public.api_keys FOR DELETE
   USING (auth.uid() = user_id);

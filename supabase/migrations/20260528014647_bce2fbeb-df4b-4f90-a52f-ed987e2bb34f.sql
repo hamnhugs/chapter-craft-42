@@ -17,19 +17,23 @@ GRANT ALL ON public.workspace_items TO service_role;
 
 ALTER TABLE public.workspace_items ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can read own workspace_items" ON public.workspace_items;
 CREATE POLICY "Users can read own workspace_items"
   ON public.workspace_items FOR SELECT TO authenticated
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can insert own workspace_items" ON public.workspace_items;
 CREATE POLICY "Users can insert own workspace_items"
   ON public.workspace_items FOR INSERT TO authenticated
   WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update own workspace_items" ON public.workspace_items;
 CREATE POLICY "Users can update own workspace_items"
   ON public.workspace_items FOR UPDATE TO authenticated
   USING (auth.uid() = user_id)
   WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can delete own workspace_items" ON public.workspace_items;
 CREATE POLICY "Users can delete own workspace_items"
   ON public.workspace_items FOR DELETE TO authenticated
   USING (auth.uid() = user_id);

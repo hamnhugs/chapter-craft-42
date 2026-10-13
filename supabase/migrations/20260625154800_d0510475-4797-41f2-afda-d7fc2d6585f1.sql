@@ -26,6 +26,7 @@ GRANT ALL ON public.image_memories TO service_role;
 
 ALTER TABLE public.image_memories ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users manage own image memories" ON public.image_memories;
 CREATE POLICY "Users manage own image memories"
   ON public.image_memories FOR ALL
   USING (auth.uid() = user_id)

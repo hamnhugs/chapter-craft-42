@@ -18,6 +18,7 @@ CREATE INDEX idx_subscribers_user ON public.subscribers (user_id);
 
 ALTER TABLE public.subscribers ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can read own subscription" ON public.subscribers;
 CREATE POLICY "Users can read own subscription" ON public.subscribers
   FOR SELECT TO authenticated
   USING (user_id = auth.uid() OR email = auth.email());

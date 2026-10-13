@@ -109,6 +109,16 @@ export function isOllamaModel(id: string): boolean {
   return modelProvider(id) === "ollama";
 }
 
+/** Can chat run at all right now? Any saved cloud key, or a model that runs
+ *  on this computer (keyless). Which key the chosen model actually needs is
+ *  checked later, after model resolution. */
+export function chatReady(
+  keys: { apiKey?: string | null; nvidiaKeyLast4?: string | null; geminiApiKey?: string | null },
+  model?: string | null,
+): boolean {
+  return !!(keys.apiKey || keys.nvidiaKeyLast4 || keys.geminiApiKey) || (!!model && isOllamaModel(model));
+}
+
 export function isGeminiModel(id: string): boolean {
   return modelProvider(id) === "gemini";
 }
