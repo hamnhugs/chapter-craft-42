@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { ollamaAdapter, toOllamaMessages, ndjson } from "@/lib/providers/ollamaAdapter";
+import { ollamaAdapter, ollamaRetry, toOllamaMessages, ndjson } from "@/lib/providers/ollamaAdapter";
+
+ollamaRetry.delaysMs = [0, 0]; // retries are timed for a real runner restart; not in tests
 import { isLoopbackUrl, ollamaBaseUrl, setOllamaBaseUrl, ollamaNumCtx, setOllamaNumCtx } from "@/lib/providers/ollamaConfig";
 import { chatReady, describeModel, modelProvider, providerConfigured, providerKey, resolveModel } from "@/lib/providers/registry";
 import type { ChatStreamEvent } from "@/lib/providers/types";
@@ -210,7 +212,7 @@ describe("ollamaAdapter.streamChat", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("never retries after output reached the screen, nor out-of-memory, nor twice", async () => {
+  it("never retries after output reached the screen, nor out-of-memory, nor endlessly", async () => {
     const partial = vi.fn(async () => ndjsonResponse([{ message: { content: "half" } }, { error: "llama runner process has terminated" }]));
     vi.stubGlobal("fetch", partial);
     await expect(collect(ollamaAdapter.streamChat({ model: "m", messages: [] }))).rejects.toMatchObject({ code: "server" });
@@ -224,7 +226,7 @@ describe("ollamaAdapter.streamChat", () => {
     const dead = vi.fn(async () => new Response(JSON.stringify({ error: "ErrorDeviceLost" }), { status: 500 }));
     vi.stubGlobal("fetch", dead);
     await expect(collect(ollamaAdapter.streamChat({ model: "m", messages: [] }))).rejects.toMatchObject({ code: "server" });
-    expect(dead).toHaveBeenCalledTimes(2);
+    expect(dead).toHaveBeenCalledTimes(3); // first try + two retries
   });
 });
 

@@ -61,7 +61,23 @@ done
 [ -x "$CC_HOME/src/whisper.cpp/build/bin/whisper-server" ] || fail "Services not installed. Run: scripts/local-ai/install-services.sh"
 
 # GPU COMPUTE profile (see setup-once.sh). Best effort: needs its sudoers rule.
-sudo -n /usr/local/bin/cc-amdgpu-compute 2>/dev/null && say "gpu: COMPUTE profile applied" || say "gpu: COMPUTE profile not applied (run setup-once.sh for faster prompts)"
+# GPU awake + COMPUTE profile while the app runs; local-down.sh releases it.
+# (setup-once.sh step 3: the profile alone hung the card on wake-from-suspend.)
+dgpu() { # the AMD card with the most VRAM, as the helper picks it
+  local best="" bestv=0 d v
+  for d in /sys/class/drm/card[0-9]*/device; do
+    [ "$(cat "$d/vendor" 2>/dev/null)" = "0x1002" ] || continue
+    v=$(cat "$d/mem_info_vram_total" 2>/dev/null || echo 0)
+    [ "$v" -gt "$bestv" ] && { best="$d"; bestv="$v"; }
+  done
+  echo "$best"
+}
+if sudo -n /usr/local/bin/cc-amdgpu-compute hold 2>/dev/null \
+   && [ "$(cat "$(dgpu)/power/control" 2>/dev/null)" = on ]; then
+  say "gpu: held awake with the COMPUTE profile"
+else
+  say "gpu: not fully tuned — re-run: bash scripts/local-ai/setup-once.sh"
+fi
 
 # --- containers: SearXNG + the Ollama bridge ----------------------------------
 if [ ! -f "$STATE/searxng/settings.yml" ]; then
@@ -81,7 +97,7 @@ else
   "${SB[@]}" start >"$LOGS/supabase-start.log" 2>&1 || { tail -20 "$LOGS/supabase-start.log"; fail "supabase start failed"; }
 fi
 for f in supabase/local/*.sql; do
-  docker exec -i "supabase_db_$PROJECT_ID" psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres <"$f" >/dev/null \
+  docker exec -i -e PGOPTIONS=--client-min-messages=warning "supabase_db_$PROJECT_ID" psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres <"$f" >/dev/null \
     || fail "applying $f failed"
 done
 

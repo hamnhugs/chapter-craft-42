@@ -22,7 +22,7 @@ Device-lost hangs (kernel: "ring comp_1.x.0 timeout", Ollama: vk::DeviceLostErro
   Then 6 long prompts in a row with the profile on: no hang.
 Reading: hangs cluster on the first heavy request after a (re)start or wake.
 Not proven whether the profile raises the odds. Mitigation in the app:
-ollamaAdapter retries a runner crash ONCE when nothing has been shown yet
+ollamaAdapter retries a runner crash (after 4 s, then 8 s) when nothing has been shown yet
 (src/lib/providers/ollamaAdapter.ts, retryable()). If hangs keep happening, undo the
 profile (setup-once.sh prints the undo line) and compare.
 
@@ -33,3 +33,14 @@ Embedder placement (found once background jobs could reach Ollama)
   After: chat model 100% GPU, 51 tok/s.
   knowledge-extract  >150 s (gateway 504)  ->  66 s
   knowledge-lint      123 s                ->  63 s
+
+Wake-from-suspend is the trigger (21:00-21:01)
+  The dGPU runtime-suspends (D3cold) 5 s after each request even with a model "loaded"
+  (VRAM evicted), so most chats begin with a full resume. Kernel log, wake -> hang:
+    18:37:29 -> 18:37:48   18:52:53 -> 18:53:11   21:00:24 -> 21:00:42   21:01:12 -> 21:01:32
+  4/4 hangs with the COMPUTE profile came 18-20 s after a resume. ~30 resumes before the
+  profile: no chat hangs (the 16:00/16:03 ones were Z-Image on the dGPU).
+  The app's immediate retry (6 s after) hit the dying runner and failed too.
+Change: the card is held awake (power/control=on) with the profile only while the app
+runs (cc-amdgpu-compute hold/release from local-up/local-down); stock otherwise. Retries
+now wait 4 s, then 8 s. To verify after re-running setup-once.sh: chats after long idles.

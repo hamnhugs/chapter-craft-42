@@ -206,12 +206,25 @@ function baseBody(model: string, messages: any[], extraBody?: Record<string, unk
   };
 }
 
-/** A model-runner crash that is worth one silent retry. On the reference
+/** A model-runner crash that is worth a silent retry. On the reference
  *  laptop the discrete GPU occasionally hangs on the first heavy request after
  *  waking from runtime suspend ("ErrorDeviceLost"); the kernel resets the ring
  *  and Ollama respawns its runner, so the same request then succeeds
  *  (docs/local-ai/results/2026-10-12-gpu-profile.txt). Out-of-memory is not
  *  retried: it would fail the same way. */
+/** Waits before each retry. Ollama needs a few seconds to notice the dead
+ *  runner and load a fresh one: a retry 0-6 s after the crash hit the dying
+ *  runner and failed too (2026-10-12 21:00:42 / 21:00:48). Mutable for tests. */
+export const ollamaRetry = { delaysMs: [4000, 8000] };
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new DOMException("Aborted", "AbortError"));
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => { clearTimeout(t); reject(new DOMException("Aborted", "AbortError")); }, { once: true });
+  });
+}
+
 function retryable(e: unknown): boolean {
   if (!(e instanceof ProviderError) || e.code !== "server") return false;
   const detail = e.message.replace(FRIENDLY.server ?? "", ""); // our hint itself mentions memory
@@ -313,17 +326,20 @@ export const ollamaAdapter: ChatProviderAdapter = {
         }
         return;
       } catch (e) {
-        if (started || attempt > 0 || req.signal?.aborted || !retryable(e)) throw e;
+        if (started || attempt >= ollamaRetry.delaysMs.length || req.signal?.aborted || !retryable(e)) throw e;
+        await sleep(ollamaRetry.delaysMs[attempt], req.signal);
       }
     }
   },
 
   async completeChat(req: ChatCompleteRequest): Promise<string> {
-    try {
-      return await completeOnce(req);
-    } catch (e) {
-      if (req.signal?.aborted || !retryable(e)) throw e;
-      return completeOnce(req);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await completeOnce(req);
+      } catch (e) {
+        if (attempt >= ollamaRetry.delaysMs.length || req.signal?.aborted || !retryable(e)) throw e;
+        await sleep(ollamaRetry.delaysMs[attempt], req.signal);
+      }
     }
   },
 };

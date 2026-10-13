@@ -18,6 +18,7 @@ for f in "$PIDS"/*.pid; do
   if kill -0 "$pid" 2>/dev/null; then say "stopping $name"; kill "$pid" 2>/dev/null; fi
   rm -f "$f"
 done
+sudo -n /usr/local/bin/cc-amdgpu-compute release 2>/dev/null && say "gpu: back to stock power management"
 say "containers: down"
 docker compose -f docker-compose.local.yml down >/dev/null 2>&1
 say "supabase: stop (data kept)"
