@@ -109,7 +109,9 @@ async function embed(texts: string[], prefix: string, signal?: AbortSignal): Pro
     const res = await fetch(`${ollamaBaseUrl()}/api/embed`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: EMBED_MODEL, input: texts.map((t) => prefix + t), keep_alive: "30m" }),
+      // CPU, so the chat model keeps the whole GPU — same setting as the edge
+      // functions (supabase/functions/_shared/ai-local.ts localEmbed).
+      body: JSON.stringify({ model: EMBED_MODEL, input: texts.map((t) => prefix + t), keep_alive: "30m", options: { num_gpu: 0 } }),
       signal,
     });
     if (!res.ok) return null;

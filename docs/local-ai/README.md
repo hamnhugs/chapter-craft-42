@@ -67,4 +67,4 @@ The measurements behind every choice are in `results/`. The design is in `PLAN.m
 | Voice input does nothing | `curl 127.0.0.1:8771/` and `.local-state/logs/stt.log` |
 | Search errors | `docker compose -f docker-compose.local.yml ps` |
 | Image fails | `.local-state/logs/images.log`; ~75 s per image is expected |
-| Background jobs fail | `.local-state/logs/functions.log` |
+| Background jobs fail ("local embedder unavailable") | ufw blocks containers → Ollama. One rule: `sudo ufw allow proto tcp from 172.16.0.0/12 to 172.17.0.1 port 11434 comment chapter-craft-ollama`. Logs: `.local-state/logs/functions.log` |

@@ -167,7 +167,14 @@ export async function localEmbed(input: string | string[], dimensions?: number):
     const r = await fetch(`${OLLAMA_URL}/api/embed`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: LOCAL_EMBED_MODEL, input: texts, keep_alive: "30m", ...(dimensions ? { dimensions } : {}) }),
+      // num_gpu 0: the embedder runs on the CPU (~0.1 s/query). Loaded on the
+      // 6 GiB card it pushed 2 of the chat model's 37 layers to the CPU and
+      // generation fell 50 -> 17 tok/s (docs/local-ai/results/2026-10-12-gpu-profile.txt).
+      // Must match src/lib/localRoster.ts, or Ollama reloads it on every switch.
+      body: JSON.stringify({
+        model: LOCAL_EMBED_MODEL, input: texts, keep_alive: "30m", options: { num_gpu: 0 },
+        ...(dimensions ? { dimensions } : {}),
+      }),
     });
     if (!r.ok) return null;
     const d = await r.json();

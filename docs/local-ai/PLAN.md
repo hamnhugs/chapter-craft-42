@@ -270,9 +270,15 @@ database. Verified live:
 - **GPU profile**: prefill ~80 → ~415 tok/s (`results/2026-10-12-gpu-profile.txt`). Two
   device-lost hangs on the first heavy request after (re)start/wake; app retries once.
 
-Still open:
-- **Background jobs can't reach Ollama**: ufw (active, default deny in) drops container → host
-  traffic to the relay. Needs one user-approved rule:
+- **Background jobs** (after the user added the ufw rule below): knowledge-embed 0.6–2 s,
+  search-knowledge 0.1 s with correct ranking, auto-tag 13 s, knowledge-extract 66 s,
+  knowledge-lint 63 s. Embedder moved to CPU — on the GPU it pushed the chat model partly
+  off the card (17 vs 51 tok/s; `results/2026-10-12-gpu-profile.txt`).
+  Firewall rule (added by the user, not by a script):
   `sudo ufw allow proto tcp from 172.16.0.0/12 to 172.17.0.1 port 11434 comment chapter-craft-ollama`.
-  Until then knowledge-embed / search-knowledge / auto-tag etc. fail with "local embedder unavailable".
+- Note: `knowledge-embed {all_missing}` fills only the 768-d column; search reads
+  `embedding_v2`, which fills on per-entry calls (what the app sends) — import-hosted.mjs
+  must use those or `embed-entries`.
+
+Still open:
 - import-hosted.mjs still never run (needs a hosted token from the user).

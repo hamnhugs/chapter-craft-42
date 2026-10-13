@@ -25,3 +25,11 @@ Not proven whether the profile raises the odds. Mitigation in the app:
 ollamaAdapter retries a runner crash ONCE when nothing has been shown yet
 (src/lib/providers/ollamaAdapter.ts, retryable()). If hangs keep happening, undo the
 profile (setup-once.sh prints the undo line) and compare.
+
+Embedder placement (found once background jobs could reach Ollama)
+  nomic-embed-text loaded on the dGPU first -> qwen3:4b at 16K ctx (5.2 GB) got 35/37
+  layers on GPU ("6%/94% CPU/GPU" in `ollama ps`) -> generation 17 tok/s instead of 51.
+  Fix: embed requests send options.num_gpu=0 (CPU). CPU embed: 0.09 s/query, 2.5 s/32 texts.
+  After: chat model 100% GPU, 51 tok/s.
+  knowledge-extract  >150 s (gateway 504)  ->  66 s
+  knowledge-lint      123 s                ->  63 s
