@@ -48,17 +48,43 @@ done
 # The app menu opens each app with its control port, the same way the craft
 # bridge does (desktopArgs in craft-bridge.mjs), so a window opened by hand can
 # be driven from the chat too. Ports: CC_<APP>_PORT, defaults below.
+#
+# One window per app: when the app is already open (or still starting), the
+# launcher brings that window forward and hands it any files through the craft
+# bridge instead of starting a second copy, which couldn't bind the control
+# port and so couldn't be driven from the chat.
 APPS_DIR="$HOME/.local/share/applications"
+BRIDGE="$(sed -n 's/.*"crafts": *"\([^"]*\)".*/\1/p' "$(dirname "$0")/../../local-services.json" 2>/dev/null)"
+BRIDGE="${BRIDGE:-http://127.0.0.1:8773}"
 mkdir -p "$CRAFTS/bin" "$APPS_DIR" "$CRAFTS/.state" && chmod 700 "$CRAFTS/.state"
 for app in photocraft designcraft filmcraft; do
   dest="$CRAFTS/$app"; [ -x "$dest/usr/bin/$app" ] || continue
   case "$app" in
-    photocraft) args="--control ${CC_PHOTOCRAFT_PORT:-7878} --control-token-file \"$CRAFTS/.state/photocraft.token\" --automation-read-root \"$CRAFTS/workspace\" --automation-write-root \"$CRAFTS/workspace\"" ;;
-    designcraft) args="--control ${CC_DESIGNCRAFT_PORT:-7979}" ;;
-    filmcraft) args="--control ${CC_FILMCRAFT_PORT:-9876}" ;;
+    photocraft) port="${CC_PHOTOCRAFT_PORT:-7878}"; args="--control $port --control-token-file \"$CRAFTS/.state/photocraft.token\" --automation-read-root \"$CRAFTS/workspace\" --automation-write-root \"$CRAFTS/workspace\"" ;;
+    designcraft) port="${CC_DESIGNCRAFT_PORT:-7979}"; args="--control $port" ;;
+    filmcraft) port="${CC_FILMCRAFT_PORT:-9876}"; args="--control $port" ;;
   esac
-  printf '#!/bin/sh\n# Written by install-crafts.sh: %s with the control port Chapter Craft drives.\nexec "%s" %s "$@"\n' \
-    "$app" "$dest/usr/bin/$app" "$args" > "$CRAFTS/bin/$app"
+  cat > "$CRAFTS/bin/$app" <<LAUNCHER
+#!/usr/bin/env bash
+# Written by install-crafts.sh: $app with the control port Chapter Craft drives,
+# reusing the open window instead of starting a second one.
+app=$app port=$port bridge="$BRIDGE"
+up() { (exec 3<>"/dev/tcp/127.0.0.1/\$port") 2>/dev/null; }
+running() { pgrep -x "\$app" >/dev/null 2>&1; }
+if up || running; then
+  for _ in \$(seq 1 100); do up && break; sleep 0.3; done
+  for f in "\$@"; do
+    [ -f "\$f" ] || continue
+    p="\$(curl -sf -H 'X-Chapter-Craft: 1' --data-binary @"\$f" "\$bridge/files?name=\$(basename "\$f" | tr -c 'A-Za-z0-9._-' '-')" | sed -n 's/.*"path":"\([^"]*\)".*/\1/p')"
+    [ -n "\$p" ] && curl -sf -H 'X-Chapter-Craft: 1' -H 'Content-Type: application/json' \\
+      -d "{\"app\":\"\$app\",\"path\":\"\$p\",\"new_document\":true}" "\$bridge/open" >/dev/null \\
+      || notify-send "\$app is already open" "Couldn't pass \$(basename "\$f") to it — use File › Open." 2>/dev/null
+  done
+  command -v hyprctl >/dev/null && hyprctl dispatch focuswindow "class:(?i).*\$app.*" >/dev/null 2>&1
+  exit 0
+fi
+exec "$dest/usr/bin/$app" $args "\$@"
+LAUNCHER
   chmod +x "$CRAFTS/bin/$app"
   # The app's own entry, pointed at the wrapper (same file name, so it replaces
   # the one an AppImage registers for itself).

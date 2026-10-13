@@ -248,6 +248,11 @@ interface ChatContextValue {
 const ChatContext = createContext<ChatContextValue | null>(null);
 
 const MAX_TOOL_ITERATIONS = TOOL_ROUNDS_PER_REPLY;
+/** A reply that is working in a creative app (the craft tool) gets this many
+ *  rounds instead: one PhotoCraft edit is look → find → run → check, and at 5
+ *  the user's own sessions ran out mid-edit and had to say "try again"
+ *  (docs/local-ai/PHOTOCRAFT-AI-FINDINGS.md). */
+const CRAFT_TOOL_ITERATIONS = 8;
 
 /** The ONE app-authored sentence added to the conversation when the recovery
  *  pass found call syntax in the prose that it will not run (textToolCalls'
@@ -1766,9 +1771,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Every view_image payload served this turn — the toolless retry
         // rebuilds from preLoopMessages and must not lose viewed pixels.
         const turnVisionPayloads: string[] = [];
-        for (let iteration = 0; iteration <= MAX_TOOL_ITERATIONS + 1; iteration++) {
-          const finalRound = iteration === MAX_TOOL_ITERATIONS;
-          const toollessRound = iteration === MAX_TOOL_ITERATIONS + 1;
+        // Grows to CRAFT_TOOL_ITERATIONS the first round the model calls craft.
+        let toolBudget = MAX_TOOL_ITERATIONS;
+        for (let iteration = 0; iteration <= toolBudget + 1; iteration++) {
+          const finalRound = iteration === toolBudget;
+          const toollessRound = iteration === toolBudget + 1;
           if (finalRound) {
             // role "user", not "system": providers that hoist or merge system
             // messages into the head of the request (Gemini's adapter does)
@@ -1935,6 +1942,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
 
           const toolCalls = Object.values(toolCallAcc).filter((t) => t.name);
+          if (iteration < toolBudget && toolCalls.some((t) => t.name === "craft")) toolBudget = Math.max(toolBudget, CRAFT_TOOL_ITERATIONS);
           // Set when the salvage pass found call syntax it will not run. It is
           // a BOOLEAN, deliberately: the only thing that travels out of that
           // branch is the fact that it happened. The name and the arguments go

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { designSlot, inWorkspace, plainText, rankCommands } from "../../scripts/local-ai/craft-bridge.mjs";
+import { compactLayers, designSlot, desktopPids, docCount, findLayer, inWorkspace, lookTarget, plainText, rankCommands, textBox } from "../../scripts/local-ai/craft-bridge.mjs";
 
 describe("rankCommands", () => {
   const list = [
@@ -60,5 +60,72 @@ describe("inWorkspace", () => {
     expect(() => inWorkspace("../" + outside.split("/").pop() + "/secret.txt", root)).toThrow(/Only files/);
     expect(() => inWorkspace("in/link.txt", root)).toThrow(/Only files/);
     expect(() => inWorkspace("in/missing.png", root)).toThrow(/No such file/);
+  });
+});
+
+// Shapes captured from the user's live PhotoCraft window, 2026-10-13: the purple
+// cat with a headline above it (docs/local-ai/PHOTOCRAFT-AI-FINDINGS.md).
+const catStack = {
+  document: {
+    layers: [
+      { id: 21, name: "Headline", kind: "Type", bounds: [55, 23, 351, 44], selected: true, text: { text: "I came. I saw." } },
+      { id: 20, name: "Layer 1", kind: "Pixel", bounds: [0, 0, 0, 0] },
+      { id: 19, name: "Layer 0", kind: "Pixel", bounds: [0, 0, 512, 512] },
+    ],
+  },
+};
+
+describe("docCount", () => {
+  it("counts documents headless and with the window open", () => {
+    expect(docCount({ documents: [{}, {}] })).toBe(2);
+    // Live: session_list is ui.inspect, with the list under session. Reading
+    // only `documents` counted 0 and every picture opened as a new tab.
+    expect(docCount({ document: {}, session: { active: 0, documents: [{ name: "cat" }] } })).toBe(1);
+    expect(docCount(null)).toBe(0);
+  });
+});
+
+describe("PhotoCraft layers", () => {
+  const layers = compactLayers(catStack);
+
+  it("compacts the stack top first and marks empty pixel layers", () => {
+    expect(layers.map((l: any) => l.id)).toEqual([21, 20, 19]);
+    expect(layers[1]).toMatchObject({ name: "Layer 1", empty: true });
+    expect(layers[0]).toMatchObject({ selected: true, text: "I came. I saw.", box: { x: 55, y: 23, w: 351, h: 44 } });
+  });
+
+  it("finds a layer by id, name or a unique part of it, and lists choices otherwise", () => {
+    expect(findLayer(layers, 19)).toBe(19);
+    expect(findLayer(layers, "headline")).toBe(21);
+    expect(findLayer(layers, "layer 0")).toBe(19);
+    expect(() => findLayer(layers, "layer")).toThrow(/More than one layer.*Ask the user/);
+    expect(() => findLayer(layers, "sky")).toThrow(/No layer is called "sky".*Headline/);
+  });
+
+  it("aims a colour fix at the photo when the text is active", () => {
+    // The user's "make it look better" brightened the headline instead.
+    expect(lookTarget(layers, [{ id: "layer.newAdjustmentLayer.brightnessContrast" }])).toBe(19);
+    expect(lookTarget(layers, [{ id: "image.autoTone" }])).toBe(19);
+    expect(lookTarget(layers, [{ id: "type.setStyle" }])).toBeNull();
+    const photoActive = layers.map((l: any) => ({ ...l, selected: l.id === 19 }));
+    expect(lookTarget(photoActive, [{ id: "filter.blur.gaussian" }])).toBeNull();
+  });
+
+  it("puts new text below the text already there", () => {
+    const [, y] = textBox(layers, 512, 512, 31);
+    expect(y).toBeGreaterThan(67);
+    expect(textBox([], 512, 512, 31)[1]).toBe(31);
+  });
+});
+
+describe("desktopPids", () => {
+  it("finds a running window by its binary, not the CLI", () => {
+    const root = mkdtempSync(join(tmpdir(), "proc-"));
+    const add = (pid: string, argv: string[]) => { mkdirSync(join(root, pid)); writeFileSync(join(root, pid, "cmdline"), argv.join("\0") + "\0"); };
+    add("100", ["/x/crafts/photocraft/usr/bin/photocraft", "--control", "7878"]);
+    add("101", ["/x/crafts/photocraft/usr/bin/photocraft-cli", "mcp"]);
+    add("102", ["bash", "-c", "photocraft"]);
+    mkdirSync(join(root, "self"));
+    expect(desktopPids("photocraft", root)).toEqual([100]);
   });
 });

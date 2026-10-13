@@ -35,7 +35,7 @@ export const CRAFT_TOOL_DEFINITION = {
     // slimToolDef) with the action guide inside it: parameter descriptions are
     // clipped to 200, which cut the guide off after four actions.
     description:
-      "Edit photos (crop, blur, sharpen, colours, retouch, text), lay out pages, posters and books (PDF, EPUB), and edit videos, slideshows, titles and trailers (MP4) in the user's apps PhotoCraft (like Photoshop), DesignCraft (like InDesign) and FilmCraft (like Premiere Pro); every feature is reachable. Act on sensible defaults; don't ask first. Actions: send (or open) puts image_id, chapter_id or text into the app; find_commands searches the app's menu commands, then run does one; export saves as `format` (pictures return to the library and show); transfer moves the app's work into `to`; open shows the window, where edits happen live; inspect / preview check it; status; app_tools / call.",
+      "Edit photos (layers, text, colour, retouch), lay out pages and books (PDF, EPUB) and edit video (MP4) in the user's apps PhotoCraft (like Photoshop), DesignCraft (like InDesign) and FilmCraft (like Premiere Pro). A clear, undoable ask: just do it. Ask ONE short question with 2-4 choices first when it's unclear which layer or item is meant, or it's taste ('make it better', 'a funny headline'); always ask before merge, flatten or delete. Keep the user's layers: add new ones. Actions: send/open puts image_id, chapter_id or text in; find_commands, then run (with `layer`); export; transfer; inspect/preview; status; app_tools/call.",
     parameters: {
       type: "object",
       properties: {
@@ -48,12 +48,13 @@ export const CRAFT_TOOL_DEFINITION = {
         query: { type: "string", description: "find_commands: what you want to do, in plain words, e.g. 'gaussian blur', 'add text layer', 'export pdf', 'add transition'." },
         steps: {
           type: "array",
-          description: "run: commands in order, each {id, params} with ids and params exactly as find_commands lists them.",
+          description: "run: [{id, params}] as find_commands lists them. PhotoCraft: layer.new.layer, type.create, type.setStyle, layer.newAdjustmentLayer.brightnessContrast / vibrance / curves, image.autoTone",
           items: { type: "object", properties: { id: { type: "string" }, params: { type: "object" } }, required: ["id"] },
         },
         image_id: { type: "string", description: "send/open: a library image to bring into the app." },
         chapter_id: { type: "string", description: "send/open: a chapter id from the book's chapter list; the app reads its text itself (DesignCraft adds pages as needed) — don't open or read the chapter first." },
         text: { type: "string", description: "send/open: text to put into the app (a text frame, a type layer, or a title in the video)." },
+        layer: { type: "string", description: "PhotoCraft run/send: the layer to act on, by name or id (e.g. the photo for a colour fix). New layers go just above it; nothing above it changes." },
         to: { type: "string", enum: [...CRAFT_APPS], description: "transfer: the app that receives `app`'s work." },
         format: { type: "string", description: "export/transfer: png, jpg, webp, psd (PhotoCraft); png, pdf, epub, html, txt, idml (DesignCraft); png (one frame), mp4, gif, wav, srt (FilmCraft). Default png." },
         to_library: { type: "boolean", description: "export with format pdf or epub: also add it to the user's bookshelf as a book." },
@@ -68,6 +69,12 @@ export const CRAFT_TOOL_DEFINITION = {
     },
   },
 } as const;
+
+/** Rides on every successful edit: the stack the bridge returns shows where
+ *  things landed, so no extra inspect round is needed, and the reply ends the
+ *  way the user asked for — what changed, where, and what could come next. */
+const AFTER_EDIT =
+  "Done. `layers` (top first) shows where it landed — if it sits on or affects the wrong layer, fix that now. Tell the user in a line what changed and on which layer, then offer 1-2 short next ideas.";
 
 export interface CraftDeps {
   books: BookDocument[];
@@ -233,7 +240,7 @@ export async function runCraftTool(args: any, deps: CraftDeps): Promise<Outcome>
         // Takes the same content as send: "lay out this chapter in DesignCraft"
         // reaches for open, so open with a chapter_id does the whole job.
         const img = args.image_id ? await libraryImageToWorkspace(String(args.image_id), deps) : null;
-        const r = await bridge("/open", { app, path: img?.path });
+        const r = await bridge("/open", { app, path: img?.path, ...(args.options || {}), ...(args.layer != null ? { layer: args.layer } : {}) });
         let placed: unknown;
         if (!img && (args.chapter_id || (typeof args.text === "string" && args.text.trim()))) {
           const content = args.chapter_id ? await chapterText(String(args.chapter_id), deps) : { text: String(args.text), name: "text" };
@@ -250,14 +257,14 @@ export async function runCraftTool(args: any, deps: CraftDeps): Promise<Outcome>
         return ok({
           ...r,
           next: best
-            ? `Now do it: call craft with action "run", app "${app}", steps [{"id": "${best}", "params": {…}}] — the best match is first; fill params from its description and leave out optional ones. Run it rather than telling the user how.`
+            ? `Now do it: call craft with action "run", app "${app}", steps [{"id": "${best}", "params": {…}}] — the best match is first; fill params from its description and leave out optional ones${app === "photocraft" ? ', and pass `layer` (name or id) for the layer it is meant for' : ""}. Run it rather than telling the user how.`
             : "Nothing matched. Try other words for the same thing.",
         }, `Searched ${L} commands for "${String(args.query || "").slice(0, 40)}"`);
       }
       case "run": {
         const steps = Array.isArray(args.steps) ? args.steps : [];
-        const r = await bridge("/run", { app, steps });
-        return { result: { ...r, result: capResult(r.result) }, event: { name, summary: r.ok ? `Ran ${steps.length} ${L} command${steps.length === 1 ? "" : "s"}` : `${L} command failed`, ok: !!r.ok } };
+        const r = await bridge("/run", { app, steps, ...(args.layer != null ? { layer: args.layer } : {}), ...(args.options?.bake ? { bake: true } : {}) });
+        return { result: { ...r, result: capResult(r.result), ...(r.ok ? { note: [r.note, AFTER_EDIT].filter(Boolean).join(" ") } : {}) }, event: { name, summary: r.ok ? `Ran ${steps.length} ${L} command${steps.length === 1 ? "" : "s"}` : `${L} command failed`, ok: !!r.ok } };
       }
       case "inspect": {
         const r = await bridge("/inspect", { app });
@@ -272,16 +279,16 @@ export async function runCraftTool(args: any, deps: CraftDeps): Promise<Outcome>
         let r: any;
         if (args.image_id) {
           const img = await libraryImageToWorkspace(String(args.image_id), deps);
-          r = await bridge("/import", { app, path: img.path, ...(args.options || {}) });
+          r = await bridge("/import", { app, path: img.path, ...(args.options || {}), ...(args.layer != null ? { layer: args.layer } : {}) });
         } else if (args.chapter_id) {
           const ch = await chapterText(String(args.chapter_id), deps);
           r = await bridge("/import", { app, text: ch.text, name: ch.name, ...(args.options || {}) });
         } else if (typeof args.text === "string" && args.text.trim()) {
-          r = await bridge("/import", { app, text: args.text, ...(args.options || {}) });
+          r = await bridge("/import", { app, text: args.text, ...(args.options || {}), ...(args.layer != null ? { layer: args.layer } : {}) });
         } else {
           throw new CraftError("send needs image_id, chapter_id or text.");
         }
-        return ok({ ok: true, result: capResult(r) }, `Sent ${args.image_id ? "an image" : args.chapter_id ? "a chapter" : "text"} to ${L}`);
+        return ok({ ok: true, result: capResult(r), note: AFTER_EDIT }, `Sent ${args.image_id ? "an image" : args.chapter_id ? "a chapter" : "text"} to ${L}`);
       }
       case "export": {
         const file = await bridge("/export", { app, format: args.format || "png", page: args.page, seconds: args.seconds, name: args.title });

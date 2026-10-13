@@ -657,9 +657,13 @@ describe("forced answer round after the tool budget (live-line pins)", () => {
   // satisfy.
   const ctx = readFileSync(resolve(process.cwd(), "src", "context", "ChatContext.tsx"), "utf8");
   it("the loop runs up to two rounds past MAX_TOOL_ITERATIONS (forced answer + toolless retry)", () => {
-    expect(ctx).toMatch(/^\s*for \(let iteration = 0; iteration <= MAX_TOOL_ITERATIONS \+ 1; iteration\+\+\) \{$/m);
-    expect(ctx).toMatch(/^\s*const finalRound = iteration === MAX_TOOL_ITERATIONS;$/m);
-    expect(ctx).toMatch(/^\s*const toollessRound = iteration === MAX_TOOL_ITERATIONS \+ 1;$/m);
+    // The budget starts at MAX_TOOL_ITERATIONS and grows only for creative-app
+    // (craft) turns, to CRAFT_TOOL_ITERATIONS.
+    expect(ctx).toMatch(/^\s*let toolBudget = MAX_TOOL_ITERATIONS;$/m);
+    expect(ctx).toMatch(/^\s*if \(iteration < toolBudget && toolCalls\.some\(\(t\) => t\.name === "craft"\)\) toolBudget = Math\.max\(toolBudget, CRAFT_TOOL_ITERATIONS\);$/m);
+    expect(ctx).toMatch(/^\s*for \(let iteration = 0; iteration <= toolBudget \+ 1; iteration\+\+\) \{$/m);
+    expect(ctx).toMatch(/^\s*const finalRound = iteration === toolBudget;$/m);
+    expect(ctx).toMatch(/^\s*const toollessRound = iteration === toolBudget \+ 1;$/m);
   });
   it("the final round pins tool_choice none; the toolless retry strips tools and is terminal", () => {
     expect(ctx).toMatch(/^\s*toolChoice: finalRound \? "none" : undefined,$/m);
