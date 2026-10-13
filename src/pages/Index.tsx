@@ -21,6 +21,7 @@ import { useTheme } from "@/context/ThemeContext";
 import { useVisitTracker } from "@/hooks/useVisitTracker";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { useAutoSleepCycle } from "@/hooks/useAutoSleepCycle";
+import { localAutoSignInEnabled } from "@/lib/localAutoSignIn";
 
 // Admin-only surface: lazy so regular users never download it.
 const AdminPanel = React.lazy(() => import("@/components/AdminPanel"));
@@ -245,12 +246,15 @@ const Index: React.FC = () => {
           <PlanBadgeButton />
           <ConflictNotifier />
           <ThemeSwitcher />
-          <button
-            onClick={signOut}
-            className="text-primary hover:bg-primary/10 transition-all duration-200 px-4 py-2 rounded-lg font-body font-medium text-sm active:scale-95"
-          >
-            Sign out
-          </button>
+          {/* Local edition signs itself in; signing out would only sign back in. */}
+          {!localAutoSignInEnabled() && (
+            <button
+              onClick={signOut}
+              className="text-primary hover:bg-primary/10 transition-all duration-200 px-4 py-2 rounded-lg font-body font-medium text-sm active:scale-95"
+            >
+              Sign out
+            </button>
+          )}
         </div>
       </header>
       {isFruitStripe && <StripeBar thickness={4} />}

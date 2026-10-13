@@ -14,8 +14,9 @@
 //                    hosted app, DevTools → Application → Local Storage →
 //                    key "sb-ktzaysdkdkocqhewwtnn-auth-token" → copy the value
 //                    of "access_token". It expires in about an hour.
-//   LOCAL_EMAIL / LOCAL_PASSWORD   your account on the local app (created if
-//                    it doesn't exist; the first local account is admin).
+//   LOCAL_EMAIL / LOCAL_PASSWORD   optional: the local account to import into.
+//                    Defaults to this computer's owner account (the one the app
+//                    signs into by itself; created by scripts/local-up.sh).
 //
 // Vectors are NOT copied: they came from cloud embedding models, and mixing
 // them with local ones makes every similarity score noise. Every vector
@@ -74,8 +75,10 @@ try {
 if (!serviceKey) die("couldn't read the local service key from 'supabase status' — is the local stack running?");
 
 const hostedToken = process.env.HOSTED_TOKEN || await ask("Hosted access_token (see header of this script): ", { secret: true });
-const localEmail = process.env.LOCAL_EMAIL || await ask("Local account email: ");
-const localPassword = process.env.LOCAL_PASSWORD || await ask("Local account password (6+ chars): ", { secret: true });
+let ownerPassword = "";
+try { ownerPassword = readFileSync(resolve(ROOT, ".local-state/owner-password"), "utf8").trim(); } catch { /* not started yet */ }
+const localEmail = process.env.LOCAL_EMAIL || (ownerPassword ? "owner@chapter-craft.local" : await ask("Local account email: "));
+const localPassword = process.env.LOCAL_PASSWORD || ownerPassword || await ask("Local account password (6+ chars): ", { secret: true });
 
 const hostedHeaders = { apikey: HOSTED_ANON, Authorization: `Bearer ${hostedToken}` };
 const serviceHeaders = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` };

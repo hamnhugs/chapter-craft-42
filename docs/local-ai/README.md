@@ -8,12 +8,13 @@ Settings if you add keys.
 
 ```bash
 bash scripts/local-ai/setup-once.sh       # sudo, once: Docker access, Ollama settings, GPU profile
-# log out and back in if it says you were added to the docker group
 scripts/local-ai/install-services.sh      # models + Vulkan builds (~9 GB, no sudo, re-runnable)
-scripts/local-up.sh                       # everything, then the app at http://127.0.0.1:8080
+scripts/local-ai/install-launcher.sh      # adds "Chapter Craft" to the app menu
 ```
 
-Then create an account on the sign-in page. The **first** local account is the admin.
+There is no sign-in: the first start creates an owner account for this computer
+(admin) and the app signs into it by itself. Its random password is in
+`.local-state/owner-password`.
 
 Bringing your hosted library across (optional, reads only your own data):
 
@@ -23,9 +24,13 @@ node scripts/local-ai/import-hosted.mjs   # instructions at the top of the file
 
 ## Every day
 
+Open **Chapter Craft** from the app menu (Super+Space). It starts whatever isn't
+running and opens the app in its own window — about 5 s after a reboot, ~35 s after
+`local-down.sh`, instant if it's already up. Progress shows as notifications.
+
 ```bash
-scripts/local-up.sh        # start
-scripts/local-down.sh      # stop (your data stays)
+scripts/local-up.sh        # the same start, from a terminal (--dev: hot-reload dev server)
+scripts/local-down.sh      # stop everything (your data stays)
 ```
 
 ## What runs where
@@ -67,4 +72,5 @@ The measurements behind every choice are in `results/`. The design is in `PLAN.m
 | Voice input does nothing | `curl 127.0.0.1:8771/` and `.local-state/logs/stt.log` |
 | Search errors | `docker compose -f docker-compose.local.yml ps` |
 | Image fails | `.local-state/logs/images.log`; ~75 s per image is expected |
+| Launcher says "Couldn't start" | `.local-state/logs/launch.log` |
 | Background jobs fail ("local embedder unavailable") | ufw blocks containers → Ollama. One rule: `sudo ufw allow proto tcp from 172.16.0.0/12 to 172.17.0.1 port 11434 comment chapter-craft-ollama`. Logs: `.local-state/logs/functions.log` |

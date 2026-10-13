@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/hooks/useAuth";
+import { localAutoSignInEnabled } from "@/lib/localAutoSignIn";
 import {
   Announcement,
   fetchAnnouncementsAndReceipts,
@@ -108,6 +109,10 @@ const WelcomeGate: React.FC = () => {
 
   useEffect(() => {
     if (!user) return;
+    // Local edition: the statement describes the hosted service (an operator
+    // who can see your content, a cloud AI provider). Neither applies to a
+    // library that only exists on this computer, so there is nothing to accept.
+    if (localAutoSignInEnabled()) { markConsentResolved(); return; }
     let cancelled = false;
     void (async () => {
       try {

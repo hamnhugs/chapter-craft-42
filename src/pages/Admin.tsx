@@ -26,6 +26,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { localAutoSignInEnabled } from "@/lib/localAutoSignIn";
 
 /* ------------------------------------------------------------------ */
 /* helpers                                                            */
@@ -387,9 +388,11 @@ const AdminDashboard: React.FC<{ onSignOut: () => void }> = ({ onSignOut }) => {
             <Button variant="outline" size="sm" onClick={load} disabled={refreshing}>
               <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
             </Button>
-            <Button variant="outline" size="sm" onClick={onSignOut}>
-              <LogOut className="w-4 h-4 mr-1" /> Sign out
-            </Button>
+            {!localAutoSignInEnabled() && (
+              <Button variant="outline" size="sm" onClick={onSignOut}>
+                <LogOut className="w-4 h-4 mr-1" /> Sign out
+              </Button>
+            )}
           </div>
         </div>
       </header>
