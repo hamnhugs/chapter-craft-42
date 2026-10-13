@@ -64,7 +64,12 @@ import { CHAT_TOOL_DEFINITIONS } from "@/lib/chatTools";
 // as an action enum without the verb's own name lying about half its
 // behaviour, and it is the cheapest kind of slot to add: one object, one
 // intent, a description that names no sibling.
-const ROSTER_BUDGET = 80;
+//
+// +1 (creative apps): craft. PhotoCraft, DesignCraft and FilmCraft bring
+// ~2,300 commands and three dozen raw tools between them; all of it rides on
+// ONE verb with an action enum and a searchable catalog (find_commands), the
+// consolidation this file asks for, instead of a tool per app or per verb.
+const ROSTER_BUDGET = 81;
 
 describe("the tool roster stays within its stated budget", () => {
   it(`ships at most ${ROSTER_BUDGET} tools`, () => {

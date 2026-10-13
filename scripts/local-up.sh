@@ -190,6 +190,13 @@ else
   say "images: models not downloaded — skipping (install-services.sh fetches them)"
 fi
 
+# --- ArtCraft apps (PhotoCraft, DesignCraft, FilmCraft) ------------------------------
+# The bridge Counsel drives them through. Only when they're installed
+# (scripts/local-ai/install-crafts.sh); the apps themselves start on demand.
+if [ -x "$CC_HOME/crafts/photocraft/usr/bin/photocraft-cli" ] || [ -x "$CC_HOME/crafts/designcraft/usr/bin/designcraft-cli" ] || [ -x "$CC_HOME/crafts/filmcraft/usr/bin/filmcraft-cli" ]; then
+  start_bg crafts env CC_HOME="$CC_HOME" node scripts/local-ai/craft-bridge.mjs
+fi
+
 # --- the app ----------------------------------------------------------------------
 APP_URL="http://127.0.0.1:8080"
 if [ "$APP" = built ]; then

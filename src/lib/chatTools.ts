@@ -2,6 +2,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { tavilySearch } from "@/lib/tavilySearch";
 import { localSearchAvailable, searxngSearch } from "@/lib/searxngSearch";
 import { localImagesAvailable } from "@/lib/localImageGen";
+import { CRAFT_TOOL_DEFINITION, runCraftTool } from "@/lib/craftApps";
 import { modelProvider, providerLabel } from "@/lib/providers/registry";
 import { blockedToolResult, isToolBlocked, type LeanMode } from "@/lib/leanMode";
 import { TOOL_PERMISSION, permissionRefusal } from "@/lib/toolPermissions";
@@ -2048,6 +2049,9 @@ export const CHAT_TOOL_DEFINITIONS = [
   // delete_program) own their definitions in chatPrograms.ts, next to the code
   // that serves them — same split as the Tool Foundry's inspection verbs.
   ...PROGRAM_TOOL_DEFINITIONS,
+  // The creative apps (PhotoCraft / DesignCraft / FilmCraft): one verb with an
+  // action, defined and served in craftApps.ts beside the bridge client.
+  CRAFT_TOOL_DEFINITION,
 ] as const;
 
 
@@ -6209,6 +6213,14 @@ export async function executeChatTool(
         // Rendered client-side from the tool-call arguments (see ChatContext).
         return { result: { ok: true, title: art.title, kind: art.kind, bytes: art.content.length }, event: { name, summary: `Created artifact "${art.title}"`, ok: true } };
       }
+      case "craft":
+        return runCraftTool(args, {
+          books: deps.books,
+          loadChapterText: deps.loadChapterText,
+          addBook: deps.addBook,
+          currentModel: deps.currentModel,
+          fetchImage: fetchImageById,
+        });
       case "save_file": {
         // Deliberately ungated: writing a text file into the user's own
         // Workspace costs nothing and destroys nothing, and a permission with

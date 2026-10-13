@@ -81,6 +81,8 @@ export const TOOL_PERMISSION: Record<string, string> = {
   // here for the same reason; delete_program destroys the only copy of a
   // program's source, so it too gets its own off switch on top of the opt-in.
   delete_program: "delete_program",
+  // Creative apps: one switch for the one craft verb.
+  craft: "craft_apps",
 };
 
 /** Permissions enforced INSIDE an executor branch rather than at the tool
@@ -175,6 +177,12 @@ export const PERMISSION_GROUPS: PermGroup[] = [
     group: "Program Foundry",
     items: [
       { id: "delete_program", label: "Delete Foundry programs", description: "Let the AI permanently delete a VPS program it built for you, including its earlier versions. It must ask you first.", danger: true },
+    ],
+  },
+  {
+    group: "Creative apps",
+    items: [
+      { id: "craft_apps", label: "Use PhotoCraft, DesignCraft and FilmCraft", description: "Let the AI open these apps on this computer, run any of their commands, and move pictures, text and chapters between them and your library. Nothing leaves this computer." },
     ],
   },
   {

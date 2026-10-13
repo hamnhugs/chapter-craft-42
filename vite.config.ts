@@ -17,11 +17,11 @@ const LOCAL_ORIGINS = Object.entries(LOCAL_SERVICES)
     return [u.origin, `${u.protocol}//localhost:${u.port}`, `ws://${u.host}`];
   });
 /** Same-origin routes to the local services that send no CORS headers
- *  (SearXNG, Piper, whisper.cpp, sd-server): the browser calls
+ *  (SearXNG, Piper, whisper.cpp, sd-server, the craft bridge): the browser calls
  *  /local/<service>/…, the dev/preview server forwards to loopback. Ollama is
  *  CORS-open for localhost origins and is called directly. */
 const LOCAL_PROXY = Object.fromEntries(
-  (["searxng", "tts", "stt", "images"] as const).map((k) => [
+  (["searxng", "tts", "stt", "images", "crafts"] as const).map((k) => [
     `/local/${k}`,
     { target: LOCAL_SERVICES[k], changeOrigin: true, rewrite: (p: string) => p.replace(new RegExp(`^/local/${k}`), "") },
   ]),

@@ -10,6 +10,7 @@ Settings if you add keys.
 bash scripts/local-ai/setup-once.sh       # sudo, once: Docker access, Ollama settings, GPU profile
 scripts/local-ai/install-services.sh      # models + Vulkan builds (~9 GB, no sudo, re-runnable)
 scripts/local-ai/install-launcher.sh      # adds "Chapter Craft" to the app menu
+scripts/local-ai/install-crafts.sh        # optional: PhotoCraft, DesignCraft, FilmCraft for Counsel (CRAFTS.md)
 ```
 
 There is no sign-in: the first start creates an owner account for this computer
@@ -48,6 +49,7 @@ scripts/local-down.sh      # stop everything (your data stays)
 | Web search | Docker | SearXNG |
 | Database, auth, storage, edge functions | Docker | Supabase local |
 | Video, 3D splats | — | Cloud only (needs keys). Not feasible on 6 GB. |
+| Photo editing, page layout, video editing | CPU / iGPU | PhotoCraft, DesignCraft, FilmCraft through the craft bridge (`CRAFTS.md`) |
 
 Ports: `local-services.json` (the single source the CSP, clients and scripts read).
 

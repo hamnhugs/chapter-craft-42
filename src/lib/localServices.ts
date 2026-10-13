@@ -10,6 +10,8 @@ export interface LocalServices {
   tts: string;
   stt: string;
   images: string;
+  /** The craft bridge (scripts/local-ai/craft-bridge.mjs). */
+  crafts: string;
 }
 
 export const LOCAL_SERVICES: LocalServices = services as unknown as LocalServices;

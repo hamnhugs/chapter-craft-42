@@ -39,6 +39,14 @@ export const LOCAL_CORE_TOOLS = [
   "save_file",
 ] as const;
 
+/** A tool the user named outright joins the roster on any turn, whatever the
+ *  embedder scores it: "open the fox in Photoshop" scored craft 0.20 against
+ *  a 0.45 floor (eval 2026-10-13), and a request that names the app leaves
+ *  no doubt which tool it wants. */
+export const LOCAL_NAMED_TOOLS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\b(?:photo|design|film)\s?craft\b|\bphoto\s?shop\b|\bin\s?design\b|\bpremiere\b/i, "craft"],
+];
+
 export const FIND_TOOLS_NAME = "find_tools";
 /** Matches added per turn from the user's message, at most. */
 const PER_TURN_ADDS = 4;
@@ -195,6 +203,9 @@ export async function planLocalRoster(input: {
     take = [ranked[0]];
   }
   const added = take.map((r) => r.name);
+  for (const [named, tool] of LOCAL_NAMED_TOOLS) {
+    if (named.test(input.query) && allowed.has(tool) && !names.includes(tool) && !added.includes(tool)) added.push(tool);
+  }
 
   let rebuilt = false;
   if (names.length + added.length > ROSTER_CAP) {
@@ -217,13 +228,29 @@ export async function findTools(input: {
 }): Promise<{ result: Record<string, unknown>; added: string[] }> {
   const need = String(input.need || "").trim();
   if (!need) return { result: { error: "Say what you need to do in `need`." }, added: [] };
+  const byName = new Map(input.pool.map((d) => [d.function.name, d]));
+  // A model that reaches for find_tools while already holding the right tool
+  // ("add a gaussian blur in PhotoCraft" with craft offered, eval 2026-10-13)
+  // must hear that, not get handed the best of the REST — which here was
+  // edit_image, a 3-minute diffusion redraw instead of a filter.
+  const named = LOCAL_NAMED_TOOLS.find(([re, tool]) => re.test(need) && input.offered.has(tool))?.[1];
+  let have = named;
+  if (!have) {
+    const { ranked: overall } = await rankTools(need, input.pool.filter((d) => d.function.name !== FIND_TOOLS_NAME), input.signal);
+    if (overall[0] && input.offered.has(overall[0].name)) have = overall[0].name;
+  }
+  const already = have
+    ? {
+        already_available: { name: have, does: (byName.get(have)?.function.description || "").slice(0, 200) },
+        note: `${have}, which you already have, fits this best — call it now.`,
+      }
+    : null;
   const candidates = input.pool.filter((d) => !input.offered.has(d.function.name) && d.function.name !== FIND_TOOLS_NAME);
   const { ranked } = await rankTools(need, candidates, input.signal);
-  const top = ranked.slice(0, 3);
+  const top = already ? [] : ranked.slice(0, 3);
   if (top.length === 0) {
-    return { result: { found: [], note: "Every tool you can use is already available to you." }, added: [] };
+    return { result: already ?? { found: [], note: "Every tool you can use is already available to you." }, added: [] };
   }
-  const byName = new Map(input.pool.map((d) => [d.function.name, d]));
   const roster = readRoster(input.userId);
   const added = top.map((t) => t.name);
   writeRoster(input.userId, [...roster, ...added.filter((n) => !roster.includes(n))]);
