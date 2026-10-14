@@ -4,6 +4,7 @@
 // the pre-adapter code; the only addition is surfacing `delta.reasoning`,
 // which the old parser silently dropped.
 
+import { rememberNoTools } from "@/lib/openrouterCatalog";
 import {
   ChatCompleteRequest,
   ChatProviderAdapter,
@@ -133,16 +134,16 @@ export const openrouterAdapter: ChatProviderAdapter = {
 
   async *streamChat(req: ChatStreamRequest): AsyncGenerator<ChatStreamEvent, void, unknown> {
     if (!req.apiKey) throw new ProviderError("openrouter", "no_key", null, "Set your OpenRouter API key first");
-    const res = await fetch(OR_CHAT, {
+    const send = (withTools: boolean) => fetch(OR_CHAT, {
       method: "POST",
-      headers: orHeaders(req.apiKey),
+      headers: orHeaders(req.apiKey!),
       body: JSON.stringify({
         model: req.model,
         messages: withCacheBreakpoint(req),
         // Sticky routing: later requests of this conversation go to the same
         // upstream provider, whose prompt cache is the warm one.
         ...(req.sessionId ? { session_id: req.sessionId.slice(0, 256) } : {}),
-        ...(req.tools ? { tools: req.tools, tool_choice: req.toolChoice ?? "auto" } : {}),
+        ...(req.tools && withTools ? { tools: req.tools, tool_choice: req.toolChoice ?? "auto" } : {}),
         stream: true,
         // OpenRouter reserves the MAXIMUM possible reply against the balance
         // before running. Omitting this made it reserve its ~65k default, so
@@ -153,6 +154,18 @@ export const openrouterAdapter: ChatProviderAdapter = {
       }),
       signal: req.signal,
     });
+    let res = await send(true);
+    if (res.status === 404 && req.tools) {
+      // A model with no tool-calling endpoint (perplexity/sonar-pro as the
+      // Deep Research model, 2026-10-13) — sent tools only because the catalog
+      // wasn't cached yet (modelToolSupport fails open). Answer without them
+      // rather than fail the turn, and remember it so later turns skip them.
+      const raw = await res.clone().text().catch(() => "");
+      if (/support tool use/i.test(raw)) {
+        rememberNoTools(req.model);
+        res = await send(false);
+      }
+    }
     if (!res.ok) await throwOrError(res);
 
     const indexer = new ToolCallIndexer();

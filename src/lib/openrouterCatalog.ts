@@ -108,8 +108,17 @@ export async function fetchCatalog(opts: { category?: string; sort?: ORSort } = 
  *  hour-old row is still the best evidence we have; honouring the TTL here
  *  would answer `null` for almost every turn and make the check inert.
  */
+const NO_TOOLS_KEY = "or_no_tools:";
+
+/** OpenRouter answered "no endpoints support tool use" for this model: a fact
+ *  learned from the model itself, so it outranks a cold catalog. */
+export function rememberNoTools(modelId: string): void {
+  try { localStorage.setItem(NO_TOOLS_KEY + modelId, "1"); } catch { /* storage unavailable */ }
+}
+
 export function cachedOrToolSupport(modelId: string): boolean | null {
   if (!modelId) return null;
+  try { if (localStorage.getItem(NO_TOOLS_KEY + modelId) === "1") return false; } catch { /* storage unavailable */ }
   // Routing suffixes ("author/slug:free", ":nitro", ":floor") choose which
   // upstream serves the SAME model, so the base row answers for them. Only
   // strip a suffix from something that already looks like author/slug, so a
