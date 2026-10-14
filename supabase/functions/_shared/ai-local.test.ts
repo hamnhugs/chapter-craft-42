@@ -1,6 +1,6 @@
 // deno test --allow-env --allow-net supabase/functions/_shared/ai-local.test.ts
 import { assertEquals, assert } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { fitDims, toOllamaMessages, translateChat, wrapChat } from "./ai-local.ts";
+import { cloudRequest, fitDims, routeFor, toOllamaMessages, translateChat, wrapChat } from "./ai-local.ts";
 
 Deno.test("forced tool call becomes a JSON-schema format and is wrapped back as tool_calls", async () => {
   const schema = { type: "object", properties: { same_claim: { type: "boolean" } }, required: ["same_claim"] };
@@ -67,4 +67,29 @@ Deno.test("fitDims: zero-pad keeps cosine exact; truncate when longer", () => {
   assert(Math.abs(cos(a, b) - cos(pa, pb)) < 1e-12);
   assertEquals(fitDims([1, 2, 3, 4], 2), [1, 2]);
   assertEquals(fitDims([1, 2], undefined), [1, 2]);
+});
+
+Deno.test("Ollama only when a local chat model is selected", () => {
+  assertEquals(routeFor(null), { local: true });
+  assertEquals(routeFor({ selected_model: "ollama:qwen3:8b" }), { local: true });
+  const r = routeFor({ selected_model: "google/gemini-4-argon", openrouter_api_key: " k " });
+  assertEquals(r, { local: false, selected: "google/gemini-4-argon", utility: "", openrouterKey: "k" });
+});
+
+Deno.test("cloud selected: gateway calls go to OpenRouter on the user's key; keyed OpenRouter calls pass through", () => {
+  const route = { local: false as const, selected: "google/gemini-4-argon", utility: "", openrouterKey: "k" };
+  const body = { model: "google/gemini-2.5-flash", messages: [{ role: "user", content: "hi" }] };
+  const gw = cloudRequest("https://ai.gateway.lovable.dev/v1/chat/completions", { method: "POST", headers: { Authorization: "Bearer " } }, body, route)!;
+  assertEquals(gw.url, "https://openrouter.ai/api/v1/chat/completions");
+  assertEquals(new Headers(gw.init.headers).get("Authorization"), "Bearer k");
+  const sent = JSON.parse(String(gw.init.body));
+  assertEquals(sent.model, "google/gemini-2.5-flash-lite");
+  assertEquals(sent.messages, body.messages);
+
+  const own = { method: "POST", headers: { Authorization: "Bearer theirs" }, body: "{}" };
+  assertEquals(cloudRequest("https://openrouter.ai/api/v1/chat/completions", own, body, route)!.init, own);
+
+  const util = cloudRequest("https://ai.gateway.lovable.dev/v1/chat/completions", {}, body, { ...route, utility: "ollama:qwen3:8b" })!;
+  assertEquals(JSON.parse(String(util.init.body)).model, "google/gemini-2.5-flash-lite");
+  assertEquals(cloudRequest("https://ai.gateway.lovable.dev/v1/chat/completions", {}, body, { ...route, openrouterKey: "" }), null);
 });

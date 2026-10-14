@@ -160,6 +160,73 @@ export function wrapChat(d: Json, forcedTool: string | null, requestedModel: str
   };
 }
 
+// Same default as the app's background model (UTILITY_DEFAULTS in
+// src/lib/chatHistory.ts); the second is auto-tag's default, a known-good id.
+const CLOUD_UTILITY_MODELS = ["google/gemini-2.5-flash-lite", "google/gemini-3.5-flash"];
+const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
+
+export type ChatRoute = { local: true } | { local: false; selected: string; utility: string; openrouterKey: string };
+
+/** Pure part of chatRoute: which way the user's settings point. No settings,
+ *  or an `ollama:` chat model, is local — the edition's default. */
+export function routeFor(s: { selected_model?: string | null; utility_model?: string | null; openrouter_api_key?: string | null } | null): ChatRoute {
+  const selected = (s?.selected_model || "").trim();
+  if (!selected || selected.startsWith("ollama:")) return { local: true };
+  return { local: false, selected, utility: (s?.utility_model || "").trim(), openrouterKey: (s?.openrouter_api_key || "").trim() };
+}
+
+let routeCache: { at: number; route: ChatRoute } | null = null;
+
+/** The local edition has one user, so their settings row decides. Cached
+ *  briefly: a sweep makes dozens of calls, and a model switch should still
+ *  take effect on the next job. */
+async function chatRoute(): Promise<ChatRoute> {
+  if (routeCache && Date.now() - routeCache.at < 10_000) return routeCache.route;
+  const base = Deno.env.get("SUPABASE_URL");
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  let route: ChatRoute = { local: true };
+  if (base && key) {
+    try {
+      const r = await fetch(`${base}/rest/v1/user_settings?select=selected_model,utility_model,openrouter_api_key&order=updated_at.desc&limit=1`, {
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
+      });
+      if (r.ok) route = routeFor(((await r.json()) as any[])[0] ?? null);
+    } catch { /* settings unreadable: keep the local default */ }
+  }
+  routeCache = { at: Date.now(), route };
+  return route;
+}
+
+/** A chat request when a cloud model is selected. A caller that already
+ *  targets OpenRouter with a key keeps its own model; anything else (the
+ *  Lovable gateway, which has no key here) goes to OpenRouter on the user's
+ *  key with their background model. No key: fail the job rather than fall
+ *  back to Ollama the user didn't choose. */
+export function cloudRequest(url: string, init: RequestInit, body: Json, route: Extract<ChatRoute, { local: false }>): { url: string; init: RequestInit } | null {
+  const auth = new Headers(init.headers).get("Authorization") || "";
+  if (url.startsWith("https://openrouter.ai/") && /^Bearer\s+\S+/.test(auth)) return { url, init };
+  if (!route.openrouterKey) return null;
+  const utility = route.utility && !/^(ollama|gemini|nvidia):/.test(route.utility) ? route.utility : "";
+  const models = [...new Set([utility, ...CLOUD_UTILITY_MODELS].filter(Boolean))];
+  return {
+    url: OPENROUTER_CHAT_URL,
+    init: {
+      ...init,
+      method: "POST",
+      headers: { Authorization: `Bearer ${route.openrouterKey}`, "Content-Type": "application/json", "X-Title": "Chapter Craft" },
+      body: JSON.stringify({ ...body, model: models[0], models }),
+    },
+  };
+}
+
+async function cloudFetch(url: string, init: RequestInit, body: Json, route: Extract<ChatRoute, { local: false }>): Promise<Response> {
+  const req = cloudRequest(url, init, body, route);
+  if (!req) {
+    return json(503, { error: { message: `Cloud model ${route.selected} is selected but there is no OpenRouter key, so this background job did not run (Ollama is only used when a local model is selected).` } });
+  }
+  return fetch(req.url, req.init);
+}
+
 function json(status: number, obj: unknown): Response {
   return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
 }
@@ -239,6 +306,14 @@ export async function aiFetch(url: string, init: RequestInit = {}): Promise<Resp
       data: vecs.map((v, index) => ({ object: "embedding", index, embedding: fitDims(v, dims) })),
     });
   }
+
+  // Ollama only when the user has picked a local chat model. With a cloud
+  // model selected, background jobs go to the cloud too — a 4B model on the
+  // CPU ran the laptop at 97°C while the user was chatting on Gemini
+  // (2026-10-14). Embeddings above stay local: the stored vectors are
+  // embeddinggemma's, and it runs in ~0.1 s on the CPU.
+  const route = await chatRoute();
+  if (!route.local) return cloudFetch(url, init, body, route);
 
   const { req, forcedTool } = await translateChat(body);
   let r: Response;
