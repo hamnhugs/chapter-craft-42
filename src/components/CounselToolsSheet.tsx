@@ -47,8 +47,6 @@ export interface CounselToolsSheetProps {
   onToggleWorkspace: () => void;
   notesOpen: boolean;
   onToggleNotes: () => void;
-  designOpen: boolean;
-  onToggleDesign: () => void;
 
   /** Modes */
   deepResearch: boolean;
@@ -192,14 +190,6 @@ const CounselToolsSheet: React.FC<CounselToolsSheetProps> = (p) => {
             state={p.notesOpen ? "OPEN" : undefined}
             active={p.notesOpen}
             onClick={andClose(p.onToggleNotes)}
-          />
-          <Row
-            icon={sym("design_services", p.designOpen)}
-            label="Design studio"
-            detail="DesignCraft templates, looks and page parts"
-            state={p.designOpen ? "OPEN" : undefined}
-            active={p.designOpen}
-            onClick={andClose(p.onToggleDesign)}
           />
         </Group>
 

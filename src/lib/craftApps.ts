@@ -105,7 +105,7 @@ export function isPagePart(args: any): boolean {
   if (args?.app !== "designcraft" || args?.chapter_id) return false;
   const o = args?.options || {};
   if (o.x != null || o.y != null || o.frame != null) return false;
-  if (args?.role || args?.look || o.look) return true;
+  if (args?.role || args?.look || o.look || (Array.isArray(args?.ids) && args.ids.length)) return true;
   if (pageImageId(args)) return true;
   return typeof args?.text === "string" && args.text.trim().length > 0 && args.text.length <= PAGE_PART_MAX;
 }
@@ -120,13 +120,21 @@ function pageImageId(args: any): string | null {
 }
 
 async function composePart(args: any, deps: CraftDeps): Promise<any> {
+  // "headline,footer" or ["headline","footer"]: the same change on each part
+  // (Qwen3-4B sent "make these red" that way, 2026-10-14).
+  const roles = Array.isArray(args.role) ? args.role : typeof args.role === "string" && args.role.includes(",") ? args.role.split(",") : null;
+  if (roles) {
+    let last: any = null;
+    for (const r of roles.map((x: any) => String(x).trim().toLowerCase()).filter(Boolean)) last = await composePart({ ...args, role: r }, deps);
+    return last;
+  }
   const imageId = pageImageId(args);
   const img = imageId ? await libraryImageToWorkspace(imageId, deps) : null;
   const o = args.options || {};
   const look = args.look || o.look;
   // With a look in the call, the look sets the type; a size or font the model
   // adds alongside ("48pt Impact") would undo it. Colour still goes through.
-  const style = { ...(look ? {} : { size: o.size, font: o.font, align: o.align }), color: o.color, add: o.add, page: args.page, look };
+  const style = { ...(look ? {} : { size: o.size, font: o.font, align: o.align }), color: o.color, add: o.add, page: args.page, look, ...(Array.isArray(args.ids) && args.ids.length ? { ids: args.ids } : {}) };
   const text = typeof args.text === "string" && args.text.trim() ? args.text : undefined;
   // The part named in `layer` (PhotoCraft's word) when there's no role.
   const layerRole = PAGE_ROLES.includes(String(args.layer || "").toLowerCase()) ? String(args.layer).toLowerCase() : undefined;
@@ -134,6 +142,8 @@ async function composePart(args: any, deps: CraftDeps): Promise<any> {
   if (!img) return bridge("/compose", { app: "designcraft", role: args.role, text, ...style, replace: o.replace });
   // A picture is the image part. With text in the same call ("place the image
   // and add a headline"), the text goes on as its own part after it.
+  // A picture for selected frames goes into them.
+  if (Array.isArray(args.ids) && args.ids.length) return bridge("/compose", { app: "designcraft", path: img.path, ids: args.ids, page: args.page, ...(text ? { text } : {}) });
   const placed = await bridge("/compose", { app: "designcraft", role: "image", path: img.path, page: args.page, replace: o.replace, look });
   // A text role with a picture but no words: Qwen3-4B's way of leaving out
   // the headline it meant to write (2 of 5 sessions, 2026-10-14). Say so as an
@@ -282,11 +292,15 @@ async function bringBack(app: CraftApp, file: any, args: any, deps: CraftDeps): 
 export function resolveAction(args: any): string {
   const action = String(args?.action || "").trim().toLowerCase();
   const hasSteps = Array.isArray(args?.steps) && args.steps.length > 0;
-  const hasContent = !!(args?.image_id || args?.chapter_id || args?.role || args?.look || (typeof args?.text === "string" && args.text.trim()));
+  const hasContent = !!(args?.image_id || args?.chapter_id || args?.role || args?.look || (Array.isArray(args?.ids) && args.ids.length) || (typeof args?.text === "string" && args.text.trim()));
   if (action === "run" && !hasSteps && args?.query) return "find_commands";
   // "create_template", "apply template", "load_template"…
   if (/templ/.test(action)) return /save|creat|make|store|new/.test(action) ? "save_template" : "use_template";
   if ((CRAFT_ACTIONS as readonly string[]).includes(action)) return action;
+  // No action, content and a page size: the content wins. "Make it look
+  // amazing" came as {look:"bold", options:{preset:"A4"}} and opened a new,
+  // empty page over the user's work (Qwen3-4B, 2026-10-14).
+  if (hasContent && !hasSteps) return "send";
   // No action and a page size: "open a flyer-sized page" (Qwen3-4B, 2026-10-13).
   if (args?.options?.preset || (args?.options?.width && args?.options?.height)) return "open";
   if (hasSteps) return "run";
@@ -350,6 +364,7 @@ export async function runCraftTool(args: any, deps: CraftDeps): Promise<Outcome>
         if (isPagePart(args)) {
           const r = await bridge("/open", { app });
           const part = await composePart(args, deps);
+          if (part.ok === false) return { result: { ...r, ...part }, event: { name, summary: `Put the picture on the ${L} page; the ${args.role} had no text`, ok: false } };
           return ok({ ...r, ...part, note: `${L} is open on the user's screen. ${pageNote(part)}` }, `Opened ${L} and put it on the page`);
         }
         const img = args.image_id ? await libraryImageToWorkspace(String(args.image_id), deps) : null;
@@ -479,41 +494,27 @@ export async function runCraftTool(args: any, deps: CraftDeps): Promise<Outcome>
   }
 }
 
-// ---------------------------------------------------------------------------
-// The design studio panel (DesignStudioPanel.tsx) reads DesignCraft's state
-// directly; every change it makes goes through runCraftTool, the same path as
-// the chat's craft tool, so a button and a request behave the same.
-// ---------------------------------------------------------------------------
-
-export interface DesignState {
-  installed: boolean;
-  window_open: boolean;
-  document: string | null;
-  pages?: number;
-  page?: {
-    page: number; look?: string | null; template?: string;
-    items: { id: number; role: string; text?: string; set_by_hand?: Record<string, unknown> }[];
-    placeholders?: { role: string; id: number; text?: string }[];
-    issues?: string[];
-  };
-  preview?: string | null;
-}
-export interface DesignTemplate { name: string; slug: string; about: string; width: number; height: number; parts: string[]; created: string }
-
-export async function designState(page?: number): Promise<DesignState> {
-  return bridge("/design/state", page == null ? {} : { page });
-}
-export async function designTemplates(): Promise<DesignTemplate[]> {
-  return (await bridge("/template/list", {})).templates || [];
-}
-/** A template's screenshot as an object URL (revoke it when done). */
-export async function templateThumbUrl(slug: string): Promise<string | null> {
+/** What the user has selected in the DesignCraft window, as a line for
+ *  their message — visibly appended, like an @mention's note, so the
+ *  transcript shows what the model was told. Null when the window is closed,
+ *  nothing is selected or the bridge is down; never holds a send for long. */
+export async function designSelectionNote(timeoutMs = 1500): Promise<string | null> {
   try {
-    const res = await fetch(`${BASE}/template/thumb?slug=${encodeURIComponent(slug)}`, { headers: HEADERS, signal: AbortSignal.timeout(20_000) });
-    return res.ok ? URL.createObjectURL(await res.blob()) : null;
+    const res = await fetch(`${BASE}/design/selection`, { method: "POST", headers: { ...HEADERS, "Content-Type": "application/json" }, body: "{}", signal: AbortSignal.timeout(timeoutMs) });
+    if (!res.ok) return null;
+    return selectionNote(await res.json());
   } catch { return null; }
 }
-/** Whether a craft tool event touched DesignCraft (auto-opens the studio). */
-export function isDesignEvent(ev: { name?: string; summary?: string } | undefined): boolean {
-  return ev?.name === "craft" && /DesignCraft|template/i.test(String(ev.summary || ""));
+
+export function selectionNote(sel: any): string | null {
+  const items: any[] = sel?.items || [];
+  if (!items.length) return null;
+  const say = (i: any) => {
+    const what = i.role || (i.kind === "image" ? "picture" : i.kind === "text" ? "text frame" : `shape${i.name ? ` "${String(i.name).replace(/^Deco (tpl )?/, "")}"` : ""}`);
+    return `${what} (id ${i.id})${i.text ? ` "${String(i.text).slice(0, 60)}${String(i.text).length > 60 ? "…" : ""}"` : ""}`;
+  };
+  const range = sel.text_range ? `the highlighted words "${String(sel.text_range.text).slice(0, 60)}" in ` : "";
+  const ids = items.map((i) => i.id);
+  return `[Selected in DesignCraft — the user clicked ${items.length > 1 ? "these" : "this"}; "this/these/it" means ${items.length > 1 ? "them" : "it"}: ${range}${items.map(say).join("; ")}. To change ${items.length > 1 ? "them" : "it"}: craft send with ids [${ids.join(", ")}] and text, image_id or options (color, size 'bigger'/'smaller'/'+20%', font, align).]`;
 }
+

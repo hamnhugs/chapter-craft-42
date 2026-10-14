@@ -47,7 +47,7 @@ import { addUsage } from "@/lib/providers/sse";
 import { studioToolsActive } from "@/lib/studioTools";
 import { highlightsForTurn } from "@/lib/highlights";
 import { TOOL_ROUNDS_PER_REPLY } from "@/lib/deepResearchPrompt";
-import { assistantImageNote, attachTurnContext, expandImageTurns, fabricatedImageNote, imageReplayFor, isModelVisibleMessage, resolveUtilityModel, stripFabricatedNotes, toolTraceNote } from "@/lib/chatHistory";
+import { assistantImageNote, attachTurnContext, claimsUnmadeDesignEdit, expandImageTurns, fabricatedImageNote, imageReplayFor, isModelVisibleMessage, resolveUtilityModel, stripFabricatedNotes, toolTraceNote, touchedDesignCraft, unmadeDesignEditNote } from "@/lib/chatHistory";
 import { namespacedNvidiaId, nvidiaModelInfo, nvidiaNoThinkingBody, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
 import { namespacedGeminiId, GEMINI_STARTER_MODEL } from "@/lib/geminiCatalog";
 
@@ -1735,6 +1735,15 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Whether this send already told the model that a picture it "attached"
       // as text was never made — once is enough (see fabricatedImageNote).
       let imageNoteSent = false;
+      // The same for DesignCraft: a reply that says the page changed (or is
+      // about to) with no craft call this turn gets one note and one more
+      // round to make the call (see claimsUnmadeDesignEdit).
+      let designNoteSent = false;
+      let pendingCraftNext: string | null = null;
+      let nextNoteSent = false;
+      let craftCalledThisTurn = false;
+      const designContext = messagesRef.current.slice(-8).some((m) => touchedDesignCraft(m.toolEvents));
+      const selectedIds = (/\[Selected in DesignCraft[^\]]*ids \[([\d,\s]+)\]/.exec(text)?.[1] || "").split(",").map((x) => Number(x.trim())).filter((n) => Number.isFinite(n) && n > 0);
 
       try {
         // `<=`: one round PAST the tool budget is the FORCED ANSWER ROUND.
@@ -1942,6 +1951,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
 
           const toolCalls = Object.values(toolCallAcc).filter((t) => t.name);
+          if (toolCalls.some((t) => t.name === "craft")) craftCalledThisTurn = true;
           if (iteration < toolBudget && toolCalls.some((t) => t.name === "craft")) toolBudget = Math.max(toolBudget, CRAFT_TOOL_ITERATIONS);
           // Set when the salvage pass found call syntax it will not run. It is
           // a BOOLEAN, deliberately: the only thing that travels out of that
@@ -2120,6 +2130,36 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               }
               updateAssistant();
             }
+          }
+          // Said the DesignCraft page changed, but nothing was called: one note,
+          // one more round, with craft offered.
+          if (toolCalls.length === 0 && !streamCutShort && !craftCalledThisTurn && claimsUnmadeDesignEdit(iterText, text, designContext || selectedIds.length > 0)) {
+            const canCraft = offeredNames.has("craft") || (!!localPlan && localDefByName.has("craft"));
+            if (canCraft && !designNoteSent && !finalRound && !toollessRound) {
+              designNoteSent = true;
+              if (localPlan && toolDefs && !offeredNames.has("craft")) {
+                offeredNames.add("craft");
+                toolDefs.splice(toolDefs.length - 1, 0, slimToolDef(localDefByName.get("craft")));
+              }
+              const rawText = iterText;
+              assistantText = assistantText.slice(0, capSegStart);
+              updateAssistant();
+              workingMessages.push({ role: "assistant", content: rawText });
+              workingMessages.push({ role: "user", content: unmadeDesignEditNote(selectedIds) });
+              continue;
+            }
+            if (canCraft) assistantEvents.push({ name: "craft", summary: "Nothing was changed in DesignCraft — the reply described a change without making it. Ask again.", ok: false });
+          }
+          // The last craft result named a next call the model didn't make.
+          if (toolCalls.length === 0 && !streamCutShort && pendingCraftNext && !nextNoteSent && !finalRound && !toollessRound) {
+            nextNoteSent = true;
+            const rawText = iterText;
+            assistantText = assistantText.slice(0, capSegStart);
+            updateAssistant();
+            workingMessages.push({ role: "assistant", content: rawText });
+            workingMessages.push({ role: "user", content: `[App note — not done yet: ${pendingCraftNext}]` });
+            pendingCraftNext = null;
+            continue;
           }
           if ((toolCalls.length === 0 && (!textCallNoted || textCallNoteSent)) || streamCutShort) {
             if (streamCutShort && toolCalls.length > 0) {
@@ -2385,6 +2425,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 toast.error("An artifact could not be displayed (too large or malformed).");
               }
             }
+            // A craft result that spells out the next call (use_template,
+            // find_commands): if the model then stops without making it, it
+            // hears it once more (the "not done yet" note in the round loop).
+            if (t.name === "craft") { const nx = (modelResult as any)?.next; pendingCraftNext = typeof nx === "string" && /^Now do it/.test(nx) ? nx : null; }
             const toolResultText = JSON.stringify(modelResult).slice(0, 24000);
             workingMessages.push({
               role: "tool",

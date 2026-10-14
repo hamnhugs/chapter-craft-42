@@ -23,7 +23,8 @@ vi.mock("@/lib/imageGen", () => ({
   storeGeneratedImage: async (o: any) => ({ id: "exported", storage_path: "x", prompt: o.prompt }),
 }));
 
-import { CRAFT_TOOL_DEFINITION, resolveAction, runCraftTool } from "@/lib/craftApps";
+import { CRAFT_TOOL_DEFINITION, designSelectionNote, resolveAction, runCraftTool } from "@/lib/craftApps";
+import { claimsUnmadeDesignEdit, unmadeDesignEditNote } from "@/lib/chatHistory";
 import { slimToolDef } from "@/lib/localRoster";
 
 const CLOUD = !!process.env.EVAL_BASE_URL;
@@ -83,6 +84,10 @@ async function turn(history: any[], user: string) {
   history.push({ role: "user", content: user });
   const calls: string[] = [];
   const t0 = Date.now();
+  // As ChatContext: a reply claiming a page change with no craft call gets one note.
+  let noted = false;
+  let pendingNext: string | null = null, nextNoted = false;
+  const ids = (/\[Selected in DesignCraft[^\]]*ids \[([\d,\s]+)\]/.exec(user)?.[1] || "").split(",").map(Number).filter((n) => n > 0);
   for (let round = 0; round <= ROUNDS; round++) {
     const res = await fetch(`${BASE}/chat/completions`, {
       method: "POST",
@@ -92,8 +97,25 @@ async function turn(history: any[], user: string) {
     const j = await res.json();
     if (!res.ok || j.error) throw new Error(`model: ${JSON.stringify(j.error ?? j).slice(0, 300)}`);
     const msg = j.choices?.[0]?.message ?? { role: "assistant", content: "" };
+    if (process.env.DESIGN_EVAL_DEBUG) console.log("TOKENS", j.usage?.prompt_tokens, "finish", j.choices?.[0]?.finish_reason);
+    if (process.env.DESIGN_EVAL_DUMP && !msg.content && !msg.tool_calls?.length) require("fs").writeFileSync(process.env.DESIGN_EVAL_DUMP, JSON.stringify({ model: MODEL, messages: [{ role: "system", content: SYSTEM }, ...history], tools: [TOOL] }));
     history.push({ role: "assistant", content: msg.content || "", ...(msg.tool_calls?.length ? { tool_calls: msg.tool_calls } : {}) });
-    if (!msg.tool_calls?.length) return { text: String(msg.content || ""), calls, rounds: round, seconds: (Date.now() - t0) / 1000 };
+    if (!msg.tool_calls?.length) {
+      if (pendingNext && !nextNoted) {
+        nextNoted = true;
+        calls.push("(noted: next step)");
+        history.push({ role: "user", content: `[App note — not done yet: ${pendingNext}]` });
+        pendingNext = null;
+        continue;
+      }
+      if (!noted && !calls.length && claimsUnmadeDesignEdit(String(msg.content || ""), user, true)) {
+        noted = true;
+        calls.push("(noted: claimed without calling)");
+        history.push({ role: "user", content: unmadeDesignEditNote(ids) });
+        continue;
+      }
+      return { text: String(msg.content || ""), calls, rounds: round, seconds: (Date.now() - t0) / 1000 };
+    }
     for (const tc of msg.tool_calls) {
       let args: any = {};
       try { args = JSON.parse(tc.function.arguments || "{}"); } catch { /* bad json → tool error */ }
@@ -105,6 +127,7 @@ async function turn(history: any[], user: string) {
         : await runCraftTool(args, { books: [], fetchImage: async (id) => (id === IMAGE_ID ? { id, storage_path: "x" } : null) });
       calls.push(`${resolveAction(args)}${args.look ? ":look=" + args.look : ""}${args.role ? ":" + args.role : ""}${args.steps ? ":" + args.steps.map((s: any) => s.id).join("+") : ""}${out.event.ok ? "" : `!(${String(out.result?.error ?? "").slice(0, 160)})`}`);
       const { __vision: _v, __images: _i, ...forModel } = out.result || {};
+      pendingNext = typeof forModel.next === "string" && /^Now do it/.test(forModel.next) ? forModel.next : null;
       history.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(forModel).slice(0, 8000) });
     }
   }
@@ -163,6 +186,39 @@ describe.skipIf(process.env.LIVE_DESIGN_EVAL !== "1")(`DesignCraft flyer session
       log(`footer: ${r.calls.join(" ")} (${r.seconds.toFixed(0)} s) ${JSON.stringify(roles(p))} issues=${p.issues.join("; ") || "none"} → ${r.text.slice(0, 160)}`);
       expect(roles(p).at(-1)).toMatch(/footer|caption|body|text/);
       expect(p.issues).toEqual([]);
+
+      // The user clicks the headline in the window, then asks without naming it.
+      const nameOf = async (role: string) => { const d = (await bridge("/inspect", { app: "designcraft" })).result; return (d.spreads?.[0]?.items || []).find((it: any) => String(it.name || "").toLowerCase().startsWith(role)); };
+      const select = async (...roles: string[]) => {
+        const ids = (await Promise.all(roles.map(nameOf))).filter(Boolean).map((it: any) => it.id);
+        await bridge("/call", { app: "designcraft", tool: "execute", arguments: { command: "selection.set", params: { ids } } });
+        return ids;
+      };
+      const headBefore = await nameOf("headline");
+      const sizeOf = async (id: number) => { await bridge("/call", { app: "designcraft", tool: "execute", arguments: { command: "selection.set", params: { ids: [id] } } }); const a = (await bridge("/call", { app: "designcraft", tool: "execute", arguments: { command: "type.selectionAttrs", params: {} } })).result; return Number(a?.chars?.size) || 0; };
+      const size0 = await sizeOf(headBefore.id);
+      await select("headline");
+      let note = await designSelectionNote(4000);
+      expect(note, "selection note").toMatch(/headline \(id/);
+      r = await turn(h, `make this bigger and blue\n\n${note}`);
+      const headAfter = await nameOf("headline");
+      const size1 = await sizeOf(headAfter.id);
+      p = await page();
+      log(`select+bigger blue: ${r.calls.join(" ")} (${r.seconds.toFixed(0)} s) name="${headAfter?.name}" size ${size0}→${size1} issues=${p.issues.join("; ") || "none"} → ${r.text.slice(0, 100)}`);
+      expect(String(headAfter?.name), "blue kept on the headline").toMatch(/color #/);
+      expect(size1, "bigger").toBeGreaterThan(size0);
+      expect(p.issues).toEqual([]);
+
+      const bottomRole = (await nameOf("footer")) ? "footer" : "body";
+      await select("headline", bottomRole);
+      note = await designSelectionNote(4000);
+      r = await turn(h, `make these red\n\n${note}`);
+      const [hn, fn] = [await nameOf("headline"), await nameOf(bottomRole)];
+      const reddish = (n: any) => { const m = /color #([0-9A-F]{6})/i.exec(String(n?.name)); if (!m) return false; const [rr, gg, bb] = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16)); return rr > gg + 40 && rr > bb + 40; };
+      p = await page();
+      log(`select 2 + red: ${r.calls.join(" ")} (${r.seconds.toFixed(0)} s) "${hn?.name}" / "${fn?.name}" issues=${p.issues.join("; ") || "none"}`);
+      expect(reddish(hn), "headline red").toBe(true);
+      expect(reddish(fn), `${bottomRole} red`).toBe(true);
 
       // Taste, said plainly: act on it with a look rather than ask.
       r = await turn(h, "make it look amazing, like a pro designer made it");

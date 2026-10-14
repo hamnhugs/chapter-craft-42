@@ -26,8 +26,7 @@ import { chatReady, describeModel } from "@/lib/providers/registry";
 import { useDictation } from "@/hooks/useDictation";
 import { requestSettingsSection } from "@/lib/settingsNav";
 import VoiceNotesPanel, { appendVoiceNote, deleteVoiceNote } from "@/components/VoiceNotesPanel";
-import DesignStudioPanel from "@/components/DesignStudioPanel";
-import { isDesignEvent } from "@/lib/craftApps";
+import { designSelectionNote } from "@/lib/craftApps";
 import { classifyNotePress, NOTE_PRESS } from "@/lib/notePress";
 // Lazy: ResponseBlocks pulls recharts (~large) but only renders when a model emits chart blocks
 const ResponseBlocks = React.lazy(() => import("@/components/ResponseBlocks"));
@@ -213,30 +212,6 @@ const ChatPanel: React.FC = () => {
 
   // ---- Voice features absorbed from the former Echo (Voice) tab ----
   const [notesPanelOpen, setNotesPanelOpen] = useState(false);
-  // ── Design studio ────────────────────────────────────────────────────────
-  // Opens by itself the first time Counsel works in DesignCraft; once the
-  // user closes it, it stays closed (a chip above the composer brings it
-  // back) until they open it again. The latest DesignCraft event's position
-  // is the preview's refresh key.
-  const [designOpen, setDesignOpen] = useState(false);
-  const designDismissed = useRef(false);
-  const designKey = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const evs = messages[i].toolEvents || [];
-      const n = evs.filter(isDesignEvent).length;
-      if (n) return `${messages[i].id}:${n}`;
-    }
-    return "";
-  }, [messages]);
-  const designSeen = useRef<string | null>(null);
-  useEffect(() => {
-    // The first key after mount is history, not something that just happened.
-    if (designSeen.current === null) { designSeen.current = designKey; return; }
-    if (designKey && designKey !== designSeen.current) {
-      designSeen.current = designKey;
-      if (!designDismissed.current) setDesignOpen(true);
-    }
-  }, [designKey]);
   const [toolsOpen, setToolsOpen] = useState(false);
   // Configured in the Settings tab; read-only here.
   const [voiceQuickSearch] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_KEY) === "true");
@@ -960,6 +935,12 @@ const ChatPanel: React.FC = () => {
               new Promise<string | null>((resolve) => { window.setTimeout(() => resolve(null), 1500); }),
             ]).catch(() => null)
           : Promise.resolve(null);
+      // What the user has selected in the DesignCraft window (click, shift-
+      // click, or highlighted words) rides along, so "make this red" has a
+      // "this". Same contract as the mention note: visible, advisory, capped
+      // at 1.5 s, skipped when creative apps are switched off.
+      const selectionNotePromise: Promise<string | null> =
+        chatToolPermissions?.[TOOL_PERMISSION.craft] !== false ? designSelectionNote(1500) : Promise.resolve(null);
       // Voice quick-search fires a REAL Burplexity/Tavily call and injects its
       // results into the turn, so it has to clear the SAME gates the executor
       // applies to web_search: Lean Mode AND the user's own switch. It only ever
@@ -1030,7 +1011,8 @@ const ChatPanel: React.FC = () => {
       }
       // Visibly appended (the transcript shows exactly what the model saw).
       const mentionNote = await mentionNotePromise;
-      const outgoing = mentionNote ? `${text}\n\n${mentionNote}` : text;
+      const selectionNote = await selectionNotePromise;
+      const outgoing = [text, mentionNote, selectionNote].filter(Boolean).join("\n\n");
       try {
         await sendMessage(outgoing || "(see attached image)", { images: imagesForModel });
       } catch { /* surfaced via toast */ }
@@ -1712,18 +1694,6 @@ const ChatPanel: React.FC = () => {
               ))}
             </div>
           )}
-          {designKey && !designOpen && (
-            <div className="px-1 pb-1">
-              <button
-                onClick={() => { designDismissed.current = false; setDesignOpen(true); }}
-                className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full border border-outline-variant/30 text-on-surface-variant hover:text-primary hover:border-primary/50 transition-colors"
-                title="Templates, looks and the page's words, one click away"
-              >
-                <span className="material-symbols-outlined text-[14px]" aria-hidden>design_services</span>
-                Design studio
-              </button>
-            </div>
-          )}
           {pendingImages.length > 0 && (
             <div className="flex flex-wrap gap-2 px-1 pb-1">
               {pendingImages.map((p) => (
@@ -1992,14 +1962,6 @@ const ChatPanel: React.FC = () => {
         onClose={() => setWorkspaceOpen(false)}
       />
 
-      <DesignStudioPanel
-        open={designOpen}
-        onClose={() => { designDismissed.current = true; setDesignOpen(false); }}
-        refreshKey={designKey}
-        currentModel={selectedModel}
-        onAsk={(text) => { if (!isLoading) sendMessage(text); else toast("Counsel is still answering — try again in a moment."); }}
-      />
-
       <VoiceNotesPanel open={notesPanelOpen} onClose={() => setNotesPanelOpen(false)} />
 
       {/* Everything the composer's chip row used to carry. Mounted here, beside
@@ -2023,8 +1985,6 @@ const ChatPanel: React.FC = () => {
         onToggleWorkspace={() => setWorkspaceOpen((v) => !v)}
         notesOpen={notesPanelOpen}
         onToggleNotes={() => setNotesPanelOpen((v) => !v)}
-        designOpen={designOpen}
-        onToggleDesign={() => setDesignOpen((v) => { designDismissed.current = v; return !v; })}
         deepResearch={chatDeepResearch}
         deepResearchAllowed={isPaid}
         onToggleDeepResearch={() => {

@@ -143,6 +143,54 @@ export function fabricatedImageNote(offered: Set<string>): string {
   );
 }
 
+// --- "Done!" with nothing done, in DesignCraft --------------------------------
+// The commonest failure the user reported: asked to change the page, the model
+// replied as if it had ("The headline is now red", "Let me add one:") and no
+// craft call ran, so the document never changed. Small models do it most
+// (Qwen3-4B: "**Headline:** …" then stop, 2026-10-13/14). Same shape as the
+// fabricated-image check: detect it, tell the model once, let it act.
+
+const DESIGN_REQUEST_RE = /\[Selected in DesignCraft|designcraft|\b(flyer|poster|cover|headline|subhead|footer|caption|template|layout|font|colou?r|bigger|smaller|page|look)\b/i;
+const DONE_RE = /\b(i'?ve|i have|has been|have been|is now|are now|now (?:has|have|shows?|features?|looks?|reads?|says?|is|uses?)|(?:updated|changed|made|added|moved|set|applied|placed|replaced|resized|recolou?red|turned|removed|deleted|swapped|centred|centered|aligned|enlarged|shrunk|bolded)\b)/i;
+const INTENT_RE = /\b(let me|i'?ll|i will|i'?m going to|going to)\b/i;
+// The request asks for a change to the page, not for ideas or an opinion.
+const EDIT_REQUEST_RE = /\b(make|change|add|put|place|insert|move|remove|delete|replace|use|turn|set|resize|apply|swap|align|cent(?:er|re)|recolou?r|bold|bigger|smaller|larger|shrink|enlarge|try|redesign|restyle|fix|open|create|save|write)\b/i;
+const ADVICE_RE = /\b(ideas?|suggest(?:ions?)?|options|what do you think|should i|which (?:one|is better)|opinion)\b/i;
+
+/** True when `reply` says the page was changed (or is about to be), or is
+ *  empty, though no craft call ran this turn, for a request to change a
+ *  DesignCraft page. A reply that only asks the user something doesn't
+ *  count — asking is allowed. */
+export function claimsUnmadeDesignEdit(reply: string, request: string, designContext = false): boolean {
+  const r = String(reply || "").trim();
+  const q = String(request || "");
+  if (!(designContext || DESIGN_REQUEST_RE.test(q))) return false;
+  if (!EDIT_REQUEST_RE.test(q.replace(/\[Selected in DesignCraft[^\]]*\]/, "")) || ADVICE_RE.test(q)) return false;
+  // No reply at all to an edit request is the same failure (Qwen3-4B ended
+  // "save this design as a template" with nothing, 2026-10-14).
+  if (!r) return true;
+  const claims = DONE_RE.test(r) || INTENT_RE.test(r);
+  if (!claims) return false;
+  // "Which part do you mean — the headline or the footer?" is a question, not a claim.
+  const lastLine = r.split("\n").filter((l) => l.trim()).pop() || "";
+  if (/\?\s*$/.test(lastLine) && !DONE_RE.test(r)) return false;
+  return true;
+}
+
+/** Sent once after such a reply. `ids`: what the user selected, if anything. */
+export function unmadeDesignEditNote(ids: number[] = []): string {
+  return (
+    "[App note — nothing changed in DesignCraft: no craft call ran this turn, so the user's page is exactly as it was, whatever the last reply said. " +
+    `Make the change now by calling the craft tool${ids.length ? ` — the user selected ids [${ids.join(", ")}]: action "send", app "designcraft", ids [${ids.join(", ")}] with text, image_id or options` : ` (action "send", app "designcraft", with the part's role, or a look)`}. ` +
+    "Call it first; describe the result after it returns.]"
+  );
+}
+
+/** Whether a message's tool events touched DesignCraft. */
+export function touchedDesignCraft(events: { name?: string; summary?: string }[] | undefined): boolean {
+  return (events || []).some((ev) => ev?.name === "craft" && /DesignCraft|template/i.test(String(ev.summary || "")));
+}
+
 /** Append the turn's app-added context to the LAST user message of a history
  *  array, leaving every other message byte-identical. Handles the image-turn
  *  part-array shape by adding one trailing text part. */

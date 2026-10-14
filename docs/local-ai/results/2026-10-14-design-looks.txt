@@ -46,3 +46,25 @@ make a poster for our book club's film night this Friday at 7pm"), Qwen3-4B Q6_K
 DesignCraft 0.7.1 bug found: paragraph balanceRagged splits words ("SUMME / R BOOK"). Looks now set
 it off and balance headings themselves by narrowing the frame to the tightest measure that keeps
 the line count.
+
+--- Selecting for the AI + "did nothing" fixes (2026-10-14, design studio panel removed) ---
+10 turns: the 8 above + "make this bigger and blue" with the headline selected and "make these
+red" with headline + footer selected (the eval selects them in the headless document the way a
+click does, and appends the same note the chat does). Qwen3-4B Q6_K, 6 sessions per row:
+  `ids` declared as a craft parameter ......... picture+headline turn broke 7/7 (model switched to
+                                                "open" with the picture only) → ids NOT declared;
+                                                the selection note teaches it, composePart honours it
+  bigger+blue on the clicked headline ......... 6/6, 6/6, 6/6 across three runs
+                                                (size via 'bigger'/'+20%' after the note named those
+                                                words; before that the model sent 24pt for "bigger")
+  red on two clicked parts .................... 5/6 → 6/6 once a style sent for one part of a
+                                                multi-selection goes on every selected item
+  claims-without-calling note fired ........... 5 + 4 times over two runs; every time the next round
+                                                made the call (mostly "save this as a template",
+                                                which had come back empty or as "Saved!")
+  "not done yet" (template `next`) note ....... fired 2 + 1 times; each time the headline was then
+                                                written into the template
+  found: {look:"bold", options:{preset:"A4"}} with no action was read as "open a new page"
+         and replaced the page with a blank one → content now wins over a stray page size.
+  still failing: "now try it as a movie poster" → bold on an already-cinematic page, about 1 in 4.
+  final run (4 sessions, all fixes): 3/4 full 10-turn sessions pass; both selection turns 4/4 (one session sent a single restyle for 'make these red' and both parts turned red via the multi-selection rule); the failure was 'movie poster' → bold.

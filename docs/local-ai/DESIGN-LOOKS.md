@@ -89,13 +89,14 @@ Google Fonts families into `~/.local/share/fonts/chapter-craft` as static TTFs, 
 weight, about 85 files. DesignCraft reads that folder in the window and headless.
 Without them the looks fall back to the bundled Source Sans 3 and still lay out.
 
-## Templates and the design studio
+## Templates, and pointing the AI at things
 
 A page you like can be saved as a template: the whole page, with its pictures and a
 screenshot. A template can start the next document, with the new words fitted into the
-same frames. The chat's **Design studio** panel puts templates, looks, the page's words,
-pictures, page sizes and export one click away. How both work: [CRAFTS.md](CRAFTS.md),
-section "Templates and the design studio".
+same frames. To point Counsel at something, click it in the DesignCraft window, or
+shift-click several, before asking ("make this bigger"). The selection rides along with
+the message. How both work: [CRAFTS.md](CRAFTS.md), section "Templates, and selecting
+for the AI".
 
 ## Seeing and testing the looks
 

@@ -800,15 +800,34 @@ async function composeDesign(opts) {
   const W = page.content.right - page.content.left;
   const text = opts.text != null && String(opts.text).trim() ? plainText(String(opts.text)).trim() : null;
   const over = Object.fromEntries(OVERRIDE_KEYS.filter((k) => opts[k] != null && opts[k] !== "").map((k) => [k, opts[k]]));
-  if (over.size != null) over.size = parseFloat(over.size); // "28pt"
+  // "28pt" → 28; "bigger", "+20%" stay words until there's a size to scale.
+  if (over.size != null && /^\s*\d+(\.\d+)?\s*(pt|px)?\s*$/i.test(String(over.size))) over.size = parseFloat(over.size);
   if (over.color && /^[0-9a-f]{6}$/i.test(over.color)) over.color = `#${over.color}`;
   if (over.color) over.color = String(over.color).toUpperCase();
   if (!/^#[0-9A-F]{6}$/.test(String(over.color || "#000000"))) delete over.color;
-  if (over.size != null && !(Number(over.size) > 0)) delete over.size;
+  if (over.size != null && !(Number(over.size) > 0) && !/^(bigger|larger|big|large|up|smaller|small|down|[+-]?\d+(\.\d+)?%?)$/i.test(String(over.size).trim())) delete over.size;
   // A font that isn't installed would fall back to whatever DesignCraft
   // substitutes ("Impact", "Arial" — what models reach for): keep the look's.
   let fontNote = null;
   if (over.font) { const f = installedFamily(over.font); if (f) over.font = f; else { fontNote = `"${over.font}" isn't installed, so the look's fonts stay.`; delete over.font; } }
+  // The items the user selected (or ids the model names): act on those.
+  // Without a role, text, picture or look, a style change means the selection.
+  if ((Array.isArray(opts.ids) && opts.ids.length) || (opts.selection === true) || (!opts.role && !text && !opts.path && !pickLook(opts.look) && Object.keys(over).length)) {
+    return editSelection(opts, over);
+  }
+  // A style for one part while the user has several selected ("make these
+  // red", sent as role headline): it goes on all of them.
+  if (opts.role && !text && !opts.path && Object.keys(over).length) {
+    const sel = await designSelection();
+    if (sel.items.length > 1 && sel.items.some((i) => i.role === opts.role)) return editSelection({ ...opts, ids: sel.items.map((i) => i.id) }, over);
+  }
+  // Words with no part named while one text frame is selected: they replace
+  // that frame's words ("change this to …").
+  if (!opts.role && text && !opts.path) {
+    const sel = await designSelection();
+    const texts = sel.items.filter((i) => i.kind === "text");
+    if (texts.length === 1 && sel.items.length === 1) return editSelection({ ...opts, ids: [texts[0].id] }, over);
+  }
   // Just a look ("make it look like a movie poster"): lay the page out again.
   // Also with a role that isn't a part to restyle ("page", "image" with no picture).
   const restylesPart = DESIGN_ROLES.includes(String(opts.role)) && opts.role !== "image" && Object.keys(over).length > 0;
@@ -828,6 +847,14 @@ async function composeDesign(opts) {
   if (role === "image") {
     if (!opts.path) throw httpError(400, "image needs a picture");
     const imgs = page.items.filter((it) => it.kind === "image");
+    // The same picture sent again ("add a border to the image" came with its
+    // image_id) is that picture, not a second copy of it.
+    const links = !opts.add && !tpl && !opts.replace ? (await callTool("designcraft", "execute", { command: "links.list", params: {} })).json || [] : [];
+    const same = (Array.isArray(links) ? links : []).find((l) => samePicture(l.path, opts.path) && (l.uses || []).some((u) => imgs.some((i) => i.id === u.id)));
+    if (same) {
+      const lay = await layoutPage(page.index, opts.look);
+      return designSummary(page.index, lay, opts, "That picture is already on the page (nothing added).");
+    }
     const into = tpl && !opts.add ? imgs.find((it) => it.placeholder) || [...imgs].sort((a, b) => area(b.bounds) - area(a.bounds))[0] : opts.replace ? imgs[0] : null;
     await dc("selection.set", { ids: [] });
     const r = await mustCall("designcraft", "place_image", into ? { path: opts.path, frame: into.id } : { path: opts.path, spread: page.spread, x: page.content.left, y: page.content.top, width: W });
@@ -846,6 +873,11 @@ async function composeDesign(opts) {
       target = { id: r.json?.id, over: {} };
     }
     const keep = target.over || {};
+    if (over.size != null && !(Number(over.size) > 0)) {
+      await dc("selection.set", { ids: [target.id] });
+      const z = resolveSize(over.size, Number((await dc("type.selectionAttrs", {})).json?.chars?.size) || null);
+      if (z) over.size = z; else delete over.size;
+    }
     await dc("object.rename", { id: target.id, name: partName(role, { ...keep, ...over }, !text && !!target.placeholder) });
   }
   if (opts.layout === false) return designSummary(page.index, { issues: [] }, opts);
@@ -866,24 +898,149 @@ function serialCompose(b) {
 const area = (b) => (b[2] - b[0]) * (b[3] - b[1]);
 const LOOK_USES = "bold: event flyer; cinematic: book cover, movie poster; editorial: magazine; swiss: modern; classic: elegant; minimal: calm; split: announcement; pop: fun";
 
-/** What the design studio panel shows: whether the window is open, the
- *  document, the page's parts (as a page edit returns them) and a picture of
- *  the page, inline so previews don't pile up in the workspace. */
-async function designState(opts) {
-  const windowOpen = await portOpen(APPS.designcraft.control);
-  if (!installed("designcraft")) return { installed: false, window_open: false, document: null };
-  let doc = null;
-  try { doc = await designDoc(); } catch { /* no session yet */ }
-  if (!doc) return { installed: true, window_open: windowOpen, document: null };
-  const pages = (doc.spreads || []).reduce((n, sp) => n + (sp.pages || []).length, 0);
-  const index = opts.page == null ? pages - 1 : Math.max(0, Math.min(pages - 1, Number(opts.page) || 0));
-  const page = await designSummary(index, { issues: [] }, {}, null);
-  let preview = null;
-  try {
-    const r = await mustCall("designcraft", "render_page", { page: index, scale: Number(opts.scale) || 0.75 });
-    if (r.images?.[0]) preview = `data:${r.images[0].mime || "image/png"};base64,${r.images[0].base64}`;
-  } catch { /* an empty page renders nothing */ }
-  return { installed: true, window_open: windowOpen, document: doc.title || "Untitled", pages, page, preview };
+/** What the user has selected in the DesignCraft window — items they
+ *  clicked or shift-clicked, or text they highlighted inside a frame — so the
+ *  chat can tell the model where to act. Only the open window counts: this
+ *  never starts a headless session, and an empty answer means "nothing
+ *  selected" or "no window". */
+async function designSelection() {
+  // Test bridges (CC_CRAFTS_HEADLESS=1) read their headless document's selection.
+  const windowOpen = installed("designcraft") && (await portOpen(APPS.designcraft.control));
+  if (!windowOpen && process.env.CC_CRAFTS_HEADLESS !== "1") return { window_open: false, items: [] };
+  const doc = await designDoc().catch(() => null);
+  if (!doc) return { window_open: windowOpen, items: [] };
+  const sel = doc.selection || {};
+  const all = (doc.spreads || []).flatMap((sp) => sp.items || []);
+  let ids = (sel.items || []).slice(0, 24);
+  let range = null;
+  if (sel.text?.story != null) {
+    const st = await dcJson("get_story", { story: sel.text.story }).catch(() => null);
+    const frame = st?.frames?.[0];
+    if (frame != null && !ids.includes(frame)) ids = [frame, ...ids];
+    const [a, b] = [sel.text.anchor, sel.text.focus].sort((x, y) => x - y);
+    if (st?.text && b > a) range = { frame, story: sel.text.story, start: a, end: b, text: Buffer.from(st.text).subarray(a, b).toString("utf8") };
+  }
+  const items = [];
+  for (const id of ids) {
+    const it = all.find((x) => x.id === id);
+    if (!it) continue;
+    const isText = it.story != null || /text/.test(String(it.kind));
+    const isImage = !isText && (it.asset != null || /image|graphic/.test(String(it.kind)));
+    const { role, over } = parsePartName(it.name);
+    const row = { id, kind: isText ? "text" : isImage ? "image" : "shape", ...(DESIGN_ROLES.includes(role) ? { role } : {}), ...(it.name && !DESIGN_ROLES.includes(role) ? { name: String(it.name) } : {}), ...(Object.keys(over).length ? { set_by_hand: over } : {}) };
+    if (isText) row.text = String((await dcJson("get_story", { frame: id }).catch(() => null))?.text || "").slice(0, 120);
+    items.push(row);
+  }
+  return { window_open: windowOpen, document: doc.title || null, items, ...(range ? { text_range: range } : {}) };
+}
+
+/** Two workspace copies of one library picture ("<time>-image-ab12cd34.png"). */
+export function samePicture(a, b) {
+  const key = (p) => basename(String(p || "")).replace(/^\d+-/, "");
+  return !!a && !!b && key(a) === key(b);
+}
+
+/** "make this bigger", "+20%", "smaller" → a size in points from `current`. */
+export function resolveSize(v, current) {
+  if (v == null || v === "") return null;
+  const s = String(v).trim().toLowerCase();
+  const n = parseFloat(s);
+  if (/^(bigger|larger|big|large|up)$/.test(s)) return current ? Math.round(current * 1.25 * 2) / 2 : null;
+  if (/^(smaller|small|down)$/.test(s)) return current ? Math.round(current * 0.8 * 2) / 2 : null;
+  if (/%$/.test(s) && Number.isFinite(n)) return current ? Math.round(current * (/^[+-]/.test(s) ? 1 + n / 100 : n / 100) * 2) / 2 : null;
+  if (/^[+-]/.test(s) && Number.isFinite(n)) return current ? Math.max(4, current + n) : null;
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+async function swatchFor(hex) {
+  const name = `CC ${String(hex).toUpperCase()}`;
+  const doc = await designDoc();
+  if (!(doc.swatches || []).some((sw) => (sw.name || sw) === name)) await dc("swatch.create", { color: hex, name });
+  return name;
+}
+
+/** Act on what the user selected (or on `ids` the model names): new words
+ *  into a selected text frame, a picture into a selected picture frame, a
+ *  colour, size, font or alignment onto each. On a page part the change is
+ *  kept in its name, so later layouts keep it; highlighted text inside a
+ *  frame gets the change on just those words. */
+async function editSelection(opts, over) {
+  const sel = Array.isArray(opts.ids) && opts.ids.length ? null : await designSelection();
+  const ids = Array.isArray(opts.ids) && opts.ids.length ? opts.ids.map(Number).filter(Number.isFinite) : (sel?.items || []).map((i) => i.id);
+  if (!ids.length) throw httpError(400, "Nothing is selected in DesignCraft. Name the part (role) instead, or ask the user to click the item first.");
+  const doc = await designDoc();
+  const all = (doc.spreads || []).flatMap((sp) => sp.items || []);
+  const acted = [], notes = [];
+  let relayout = false, pageIndex = null;
+  const text = opts.text != null && String(opts.text).trim() ? plainText(String(opts.text)).trim() : null;
+  // Highlighted words only, when that's what is selected and only a style is asked for.
+  if (sel?.text_range && !text && !opts.path && Object.keys(over).length) {
+    const r = sel.text_range;
+    await dc("text.select", { story: r.story, anchor: r.start, focus: r.end });
+    const cur = Number((await dc("type.selectionAttrs", {})).json?.chars?.size) || null;
+    const attrs = {};
+    if (over.color) attrs.fill = await swatchFor(over.color);
+    if (over.size != null) { const z = resolveSize(over.size, cur); if (z) attrs.size = z; }
+    if (over.font) attrs.fontFamily = over.font;
+    if (Object.keys(attrs).length) await dc("type.char", { attrs });
+    if (over.align) await dc("type.para", { attrs: { align: over.align } });
+    await dc("text.exitToFrame", {}).catch(() => {});
+    acted.push({ id: r.frame, words: r.text, changed: Object.keys(over) });
+    notes.push("Changed just the highlighted words. A later restyle of the whole page (a look) sets them back.");
+  } else {
+    for (const id of ids) {
+      const it = all.find((x) => x.id === id);
+      if (!it) { notes.push(`No item ${id} on the page.`); continue; }
+      const isText = it.story != null || /text/.test(String(it.kind));
+      const isImage = !isText && (it.asset != null || /image|graphic/.test(String(it.kind)));
+      const { role, over: keep, placeholder } = parsePartName(it.name);
+      const part = DESIGN_ROLES.includes(role);
+      const changed = [];
+      if (isText) {
+        if (text && ids.length === 1) { await mustCall("designcraft", "set_story_text", { frame: id, text }); changed.push("text"); }
+        await dc("selection.set", { ids: [id] });
+        const cur = Number((await dc("type.selectionAttrs", {})).json?.chars?.size) || null;
+        const o = { ...over };
+        if (o.size != null) { const z = resolveSize(o.size, cur); if (z) o.size = z; else delete o.size; }
+        if (part) {
+          // Kept in the name; the layout applies it (and keeps it next time).
+          await dc("object.rename", { id, name: partName(role, { ...keep, ...o }, placeholder && !text) });
+          relayout = true;
+        } else {
+          const attrs = {};
+          if (o.color) attrs.fill = await swatchFor(o.color);
+          if (o.size) attrs.size = o.size;
+          if (o.font) attrs.fontFamily = o.font;
+          if (Object.keys(attrs).length) await dc("type.char", { attrs });
+          if (o.align) await dc("type.para", { attrs: { align: o.align } });
+        }
+        changed.push(...Object.keys(o));
+      } else if (isImage || opts.path) {
+        if (opts.path) {
+          await mustCall("designcraft", "place_image", { path: opts.path, frame: id });
+          await dc("object.fit", { mode: "fillProportionally", ids: [id] });
+          if (part && placeholder) await dc("object.rename", { id, name: partName("image", keep) });
+          changed.push("picture");
+        }
+        if (over.color) { await dc("object.fill", { swatch: await swatchFor(over.color), ids: [id] }); changed.push("background colour"); }
+      } else if (over.color) {
+        await dc("object.fill", { swatch: await swatchFor(over.color), ids: [id] });
+        changed.push("colour");
+      }
+      if (!changed.length) notes.push(`Nothing to change on item ${id} with what was sent${isText ? "" : " (it isn't text)"}.`);
+      acted.push({ id, ...(part ? { role } : {}), changed });
+      if (pageIndex == null) {
+        const pages = (doc.spreads || []).flatMap((sp) => sp.pages || []);
+        const cx = (it.bounds[0] + it.bounds[2]) / 2, cy = (it.bounds[1] + it.bounds[3]) / 2;
+        const pi = pages.findIndex((p) => p.bounds && cx >= p.bounds[0] && cx <= p.bounds[2] && cy >= p.bounds[1] && cy <= p.bounds[3]);
+        if (pi >= 0) pageIndex = pi;
+      }
+    }
+  }
+  await dc("selection.set", { ids: [] }).catch(() => {});
+  const lay = relayout ? await layoutPage(pageIndex ?? opts.page, opts.look) : { issues: [] };
+  const sum = await designSummary(pageIndex ?? opts.page, lay, opts, notes.join(" ") || null);
+  return { ...sum, acted_on: acted };
 }
 const templateRow = (t) => ({ name: t.name, slug: t.slug, about: describeTemplate(t), width: t.width, height: t.height, parts: t.slots.map((x) => x.role), created: t.created, thumb: join(TEMPLATES, t.slug, "thumb.png") });
 
@@ -1308,7 +1465,7 @@ const ROUTES = {
   "POST /compose": (b) => serialCompose(b),
   "POST /template/save": (b) => serialCompose({ ...b, _do: saveTemplate }),
   "POST /template/use": (b) => serialCompose({ ...b, _do: useTemplate }),
-  "POST /design/state": (b) => serialCompose({ ...b, _do: designState }),
+  "POST /design/selection": () => designSelection(),
   "POST /template/list": () => ({ templates: listTemplates(TEMPLATES).map(templateRow) }),
   "POST /template/delete": (b) => { const t = findTemplate(TEMPLATES, b.name); if (!t || !deleteTemplate(TEMPLATES, t.slug)) throw httpError(404, `No template "${b.name}".`); return { deleted: t.name }; },
   "POST /export": (b) => exportDoc(b.app, b.format, b),

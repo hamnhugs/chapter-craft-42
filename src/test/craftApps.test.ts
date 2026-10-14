@@ -165,6 +165,8 @@ describe("DesignCraft page parts", () => {
     calls = [];
     // No action at all, just a look: still a send (small models drop the action).
     expect(resolveAction({ app: "designcraft", look: "bold" })).toBe("send");
+    // A look with a stray page size restyles this page; it doesn't open a blank one.
+    expect(resolveAction({ app: "designcraft", look: "bold", options: { preset: "A4" } })).toBe("send");
     await runCraftTool({ action: "send", app: "designcraft", role: "headline", text: "Plan to Win", options: { look: "bold" } }, deps);
     expect(calls[0].body).toMatchObject({ role: "headline", text: "Plan to Win", look: "bold" });
   });

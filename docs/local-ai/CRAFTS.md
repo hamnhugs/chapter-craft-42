@@ -153,14 +153,14 @@ text frame's box. Looks are excluded from these checks, and so is cinematic type
 faded photo. Results: `results/2026-10-13-designcraft-flyer.txt` (parts) and
 `results/2026-10-14-design-looks.txt` (looks: Qwen3-4B 6/6).
 
-## Templates and the design studio (2026-10-14)
+## Templates, and selecting for the AI (2026-10-14)
 
 **Templates.** "Save this design as a template called Movie Night" stores one page in
 `crafts/workspace/templates/<slug>/` (`scripts/local-ai/design-templates.mjs`):
 - `template.designcraft` is DesignCraft's own file (`file.serialize`). Its pictures are
   embedded, so it reopens exactly: fonts, gradients, effects, positions.
 - `thumb.png` is a screenshot of the page (`render_page`). It is shown in the chat when
-  the template is saved, and in the studio's gallery.
+  the template is saved.
 - `manifest.json` lists the slots (which frame is the headline, picture, body…), the
   type size each was designed at, and the page size. Frames the bridge named keep their
   role. On a hand-made page the roles are guessed the way a reader takes the page in:
@@ -181,23 +181,37 @@ actions: `save_template` (title) and `use_template` (title; none lists them;
 `options.delete` deletes one). Bridge: `/template/save|use|list|delete`,
 `GET /template/thumb?slug=`.
 
-**Design studio** (`src/components/DesignStudioPanel.tsx`). This is a panel beside the
-chat; it is full screen on phones.
-- **When it opens:** by itself the first time Counsel works in DesignCraft
-  (`isDesignEvent`). Once closed, it stays closed until reopened from the chip above the
-  composer or Tools › Design studio.
-- **What it shows:** the page as it is now (`/design/state` returns the page's parts and
-  an inline preview), and which parts still show template content.
-- **Tabs:**
-  - Templates: the screenshot gallery (use, delete), plus saving the current page under
-    a name.
-  - Looks: sample cards.
-  - Content: each part's words and colour, and a picture from the image library.
-  - Page: page sizes and export to PDF or PNG.
-- **Ask Counsel buttons** send a request to the chat.
+**Selecting for the AI** (replaced the design studio panel, 2026-10-14; the user found
+a panel too limiting). Click an item in the DesignCraft window, shift-click several, or
+highlight words inside a frame, then ask in the chat ("make this bigger and blue",
+"make these red", "change this to …").
+- `designSelectionNote` (craftApps.ts) reads the window's selection through
+  `/design/selection`. It has a 1.5 s cap and only reads an open window; it never starts
+  a headless session (test bridges with `CC_CRAFTS_HEADLESS=1` read theirs).
+- ChatPanel appends the note visibly to the message, like an @mention note:
+  `[Selected in DesignCraft — the user clicked this; …: headline (id 11) "Plan to Win".
+  To change it: craft send with ids [11] and text, image_id or options (…).]`
+- The bridge acts on the selection (`editSelection`) when a send carries `ids`, or has
+  only style options and no role, text, picture or look. It also does so when a send has
+  text but no role and exactly one text frame is selected.
+- What it does:
+  - new words go into a selected text frame and a picture into a selected picture frame;
+  - colour, size, font and alignment go onto each item; size understands
+    'bigger'/'smaller'/'+20%' (`resolveSize`);
+  - on a page part the change is kept in its name, so looks keep it;
+  - highlighted words get the change on just those words.
+- `ids` is deliberately not a declared tool parameter. Declaring it, even as the last
+  property, flipped Qwen3-4B from "send picture + headline" to "open picture only" in 7
+  of 7 runs. The note teaches it instead, and composePart honours `ids` when sent.
 
-Every button goes through `runCraftTool`, the chat's own tool, so a click and a request
-do the same thing.
+**"Done!" with nothing done** (ChatContext, `claimsUnmadeDesignEdit` in chatHistory.ts).
+This is the user's main complaint: a reply that says the page changed, says "let me…"
+and stops, or says nothing at all, with no craft call this turn, for a request to change
+a DesignCraft page. Such a reply gets one app note ("nothing changed in DesignCraft … call
+the craft tool now", with the selection's ids) and one more round, with craft added to a
+local roster if it was missing. Questions back to the user and requests for ideas or
+advice are left alone. If it still doesn't call, the reply carries a failed "Nothing was
+changed in DesignCraft" event. It works the same way as the fabricated-picture check.
 
 Eval (`localDesignEval.test.ts`, now 8 turns, including "save this design as a
 template called Movie Night" and "use the Movie Night template to make a poster for
@@ -205,7 +219,7 @@ our book club's film night"): Qwen3-4B passed 5/6. In every session that reached
 the template turns saved the template, opened a new document from it and wrote a new
 headline into it. After opening, the result carries a spelled-out `next` call. Without
 it, 4/4 sessions left the template's old words on the page. The model usually replaces
-only the headline. The other placeholders stay listed, and the studio flags them. The
+only the headline. The other placeholders stay listed in each page result. The
 one failure was "movie poster" answered with bold on a page that was already cinematic.
 
 ## Measurements (2026-10-13, Qwen3-4B Q6_K)
