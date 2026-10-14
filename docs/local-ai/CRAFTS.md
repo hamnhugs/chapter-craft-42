@@ -96,6 +96,51 @@ it, 2 of 3 full sessions pass. Every request finished in one reply, adjustments 
 above the cat and below the text, and nothing opened a new tab. The failed session's
 model guessed a wrong command for the font change, then said it had worked.
 
+## Flyers and posters in DesignCraft: parts, not coordinates (2026-10-13)
+
+Why: the user's Cashflow Quadrant flyer session. "Place the image and add a headline
+to the top" needed frames, type sizes, moving the picture down, refitting it and a
+cut-off check, all by coordinates, and the turn never finished. Also, the app in the
+browser was a 14:49 build that predated both PhotoCraft fixes. Rebuild after
+changing `src/` (`scripts/local-up.sh` does it when the code changed).
+
+- **`send` with `role`.** The roles are headline, subhead, image, body, caption and footer.
+  The bridge (`/compose`, `composeDesign` in craft-bridge.mjs) keeps the page as a stack
+  of named frames. The headline goes on top, then the subhead, the image, the body and
+  the caption, with the footer pinned to the bottom margin. Text frames are fitted
+  against DesignCraft's own line breaks: `get_story`'s `overset` is null when nothing
+  is cut off. Headings get smaller type rather than an extra line, and hyphenation is
+  off. Pictures share what's left at their own aspect ratio, and spare room goes
+  between the parts. This follows the slot-then-check shape of PosterMELD
+  (arXiv 2608.02218), PosterGen (CVPR 2026) and Any2Poster. It's done in code instead
+  of an extra model or vision pass, so a request costs 1-2 model rounds and the layout
+  itself takes milliseconds.
+- **Same role again changes that part.** New text replaces it. With no text, the options
+  restyle it or move it (`{color:'#hex', size, font, align, at:'top'|'bottom'}`). An
+  image with `{replace:true}` goes into the existing picture frame.
+- **No role.** A library picture is an image. Short text becomes the headline, then
+  the subhead, then body. Text over 1,200 characters and `chapter_id` still flow
+  across threaded pages, as before.
+- **Every page edit returns** `items` (role, id, box, text, top first) and `issues`:
+  cut-off text, anything off the page, or no room left for the picture.
+- **`open` with `options.preset`** ('Letter', 'A4', 'Tabloid', or `width`+`height`)
+  starts a new page in one call, without a command search.
+- The card says to write wording (headlines) from the book in context. It asks only
+  when the target is unclear or the request is pure taste.
+
+Eval (`src/test/localDesignEval.test.ts`): the session is replayed through a real model
+on a **private headless bridge** (`CC_CRAFTS_HEADLESS=1 CC_CRAFTS_PORT=8799 CC_DESIGNCRAFT_PORT=7999`),
+so the user's window is never driven. Without `CC_CRAFTS_HEADLESS=1`, a model's `open`
+starts a visible window.
+Results are in `results/2026-10-13-designcraft-flyer.txt`. The user's DeepSeek V4.1 Flash
+passed 5/5 at 1-7 s a request. Local Qwen3-4B passed 3/3 at 15-70 s once its slips were
+read for what they meant: the image id sent in `layer`, a picture and a headline in one
+send, and a page size with no action. Neither model coloured the box behind a heading
+after the bridge started rerouting `object.color` on text frames to the text. The eval only lets the model reach DesignCraft, because
+the private bridge would otherwise open the user's real PhotoCraft or FilmCraft window.
+After each request it checks the page for cut-off text, items off the page, overlaps,
+and colour put on a text frame's box instead of its text.
+
 ## Measurements (2026-10-13, Qwen3-4B Q6_K)
 
 - Roster: the tool card ranks in the top 3 for 10 of 12 everyday requests.

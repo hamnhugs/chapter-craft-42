@@ -132,3 +132,65 @@ describe("helpers", () => {
     expect(pdfPageCount(new TextEncoder().encode("/Type /Pages /Type /Page /Type/Page"))).toBe(2);
   });
 });
+
+describe("DesignCraft page parts", () => {
+  it("lays out a picture and a headline by role, not by coordinates", async () => {
+    replies["/files"] = () => ({ json: { path: "/ws/in/image-img1.png" } });
+    replies["/compose"] = (b) => ({ json: { page: 0, items: [{ id: 9, role: b.role ?? "image" }] } });
+    let r = await runCraftTool({ action: "send", app: "designcraft", image_id: "img1" }, deps);
+    expect(r.event.ok).toBe(true);
+    expect(calls.find((c) => c.url.endsWith("/compose"))!.body).toMatchObject({ app: "designcraft", path: "/ws/in/image-img1.png" });
+    calls = [];
+    r = await runCraftTool({ action: "send", app: "designcraft", role: "headline", text: "Your Plan to Win", options: { color: "#B3261E" } }, deps);
+    expect(calls[0].body).toMatchObject({ role: "headline", text: "Your Plan to Win", color: "#B3261E" });
+    expect(r.result.note).toMatch(/issues/);
+  });
+
+  it("restyles a part with no new text, and still flows a chapter over pages", async () => {
+    replies["/compose"] = () => ({ json: { page: 0, items: [] } });
+    await runCraftTool({ action: "send", app: "designcraft", role: "headline", options: { at: "bottom" } }, deps);
+    expect(calls[0].url).toMatch(/\/compose$/);
+    expect(calls[0].body).toMatchObject({ role: "headline", at: "bottom" });
+    calls = [];
+    await runCraftTool({ action: "send", app: "designcraft", chapter_id: "c1" }, deps);
+    expect(calls[0].url).toMatch(/\/import$/);
+  });
+
+  it("reads an invented action carrying a role as a send", () => {
+    expect(resolveAction({ action: "add_headline", app: "designcraft", role: "headline", text: "Hi" })).toBe("send");
+  });
+});
+
+describe("DesignCraft new page", () => {
+  it("opens a page size in one call", async () => {
+    replies["/inspect"] = () => ({ json: { result: { settings: { pageWidth: 595.3, pageHeight: 841.9 } } } });
+    const r = await runCraftTool({ action: "open", app: "designcraft", options: { preset: "A4" } }, deps);
+    expect(r.event.ok).toBe(true);
+    expect(calls.find((c) => c.url.endsWith("/call"))!.body).toMatchObject({ tool: "new_document", arguments: { preset: "A4", facingPages: false } });
+    expect(r.result.page).toEqual({ width_pt: 595, height_pt: 842 });
+  });
+});
+
+describe("small-model slips on a DesignCraft page", () => {
+  it("reads a page size with no action as open", () => {
+    expect(resolveAction({ app: "designcraft", options: { preset: "Letter" } })).toBe("open");
+  });
+
+  it("places a picture sent with a text role as the image", async () => {
+    replies["/files"] = () => ({ json: { path: "/ws/in/image-img1.png" } });
+    replies["/compose"] = () => ({ json: { page: 0, items: [] } });
+    await runCraftTool({ action: "send", app: "designcraft", image_id: "img1", role: "headline" }, deps);
+    expect(calls.find((c) => c.url.endsWith("/compose"))!.body).toMatchObject({ role: "image", path: "/ws/in/image-img1.png" });
+  });
+});
+
+describe("a picture and a headline in one call", () => {
+  it("places the picture, then the headline", async () => {
+    replies["/files"] = () => ({ json: { path: "/ws/in/image-img1.png" } });
+    replies["/compose"] = () => ({ json: { page: 0, items: [] } });
+    const id = "b9fe2624-d08f-43bb-bd55-d4648d2e4302";
+    await runCraftTool({ action: "send", app: "designcraft", layer: id, role: "headline", text: "Plan to Win" }, { ...deps, fetchImage: async (x: string) => (x === id ? { id, storage_path: "u/q.png" } : null) });
+    const composes = calls.filter((c) => c.url.endsWith("/compose")).map((c) => c.body);
+    expect(composes).toMatchObject([{ role: "image", path: "/ws/in/image-img1.png" }, { role: "headline", text: "Plan to Win" }]);
+  });
+});

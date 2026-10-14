@@ -1,0 +1,26 @@
+DesignCraft flyer session eval — 2026-10-13
+src/test/localDesignEval.test.ts on a private headless bridge (CC_CRAFTS_HEADLESS=1, :8799).
+Turns: "open the appropriate page size to create a flyer" / "place the cashflow quadrant
+image into our flyer and then add a headline to the top" / "make the headline red" /
+"add the book title and author at the bottom". The page is checked after each turn
+(cut off, off the page, overlaps, colour on a text box).
+
+Before (the user's real session, old build, no roles): page setup took 5 tool calls
+including a failed command, and "place the image and add a headline" never got a reply.
+
+deepseek/deepseek-v4.1-flash (the user's chat model), via OpenRouter:
+  first pass, roles only ............ 3/3 (one run painted the headline's BOX red; the eval missed it)
+  + text-box colour check ........... 5/5
+  + open {preset}, options reordered  0/5: "make it red" went to object.color on the frame in 5/5
+  + bridge reroutes object.color on a text frame to the text: 5/5, then 5/5 again after the Qwen fixes
+  per request: 1-7 s; image+headline in 1-2 rounds (send:image, send:headline)
+  headlines: "Why Do You Need a Plan?" (chapter title) about half the time, otherwise its own
+  ("Plan to Win: From Self-Employed to Business Owner", "One Planned. One Didn't. Guess Who Won.")
+
+hf.co/unsloth/Qwen3-4B-Instruct-2507-GGUF:Q6_K (local):
+  before slip handling .............. 0/3 (no action on open; image id sent in `layer` with role headline)
+  after resolveAction(preset)→open, image id in `layer`, picture+text in one send: 3/3
+  per request: 15 s (page) / 40-57 s (image+headline) / 31-69 s (red) / 42-45 s (footer)
+  one red turn guessed two command ids that don't exist; headline colour isn't asserted by the eval
+
+Layout cost in the bridge (headless): 4 compose calls in 80 ms total.
