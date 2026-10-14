@@ -177,7 +177,7 @@ and steps down only when it wouldn't fit. A new picture fills the first slot sti
 holding the template's picture, cropped toward the subject. A part the template has no
 frame for goes into the free band its role belongs in, styled like the template's
 nearest text. A `look` on a template page replaces the template's design. Craft
-actions: `save_template` (title) and `use_template` (title; none lists them;
+actions: `save_template` (title) and `use_template` (title; none lists them and shows the picker;
 `options.delete` deletes one). Bridge: `/template/save|use|list|delete`,
 `GET /template/thumb?slug=`.
 
@@ -221,6 +221,48 @@ headline into it. After opening, the result carries a spelled-out `next` call. W
 it, 4/4 sessions left the template's old words on the page. The model usually replaces
 only the headline. The other placeholders stay listed in each page result. The
 one failure was "movie poster" answered with bold on a page that was already cinematic.
+
+## Save as Template from the DesignCraft window, pick from the chat (2026-10-14)
+
+**In DesignCraft.** Every page in the Pages panel has a small bookmark button beside it
+(and "Save Page as Template…" in its right-click menu). It asks for a name, with the
+suggestion selected so typing replaces it, then says "Saved" or what went wrong. The same
+name again updates that template.
+- The button is a patch on DesignCraft, not part of its release. The source is
+  `~/Work/designcraft`, branch `bookworm-templates`: one commit on the release tag,
+  `crates/ui-egui/src/panels/save_template.rs`. To build it and put it in place of the
+  released binary, run `scripts/local-ai/build-designcraft.sh` (~2–3 min warm, cargo target
+  in `~/.cache/designcraft-target`). It keeps the released binary as `designcraft.release`
+  and writes `crafts/designcraft/PATCHED` (tag + commit). When `install-crafts.sh` installs
+  a new DesignCraft release, it re-runs the build, which rebases the commit onto the new
+  tag. If the patch doesn't apply, the app still works, just without the button.
+- How the click reaches us: DesignCraft shows the button only when
+  `DESIGNCRAFT_TEMPLATE_INBOX` is set. The menu launcher and the bridge's own launch both
+  set it to `crafts/.state/template-inbox`. The click writes `<id>.json` `{page, name,
+  document}` there. The bridge (`drainTemplateInbox`, polled every 0.6 s) saves it exactly
+  like `save_template` and answers with `<id>.result.json` (`{ok, name, replaced}` or
+  `{ok:false, error}`). The dialog shows that answer. After 25 s with no answer it says
+  Bookworm Studio didn't answer. Test bridges (`CC_CRAFTS_HEADLESS=1`) don't watch the
+  inbox; `CC_TEMPLATE_INBOX` moves it.
+
+**In the chat: the template picker** (`TemplatePickerCard.tsx`). A card in the reply shows
+each saved template as its screenshot, with its name, size and parts (newest first, a
+search box past 6, delete on a second click). Clicking one sends `Use my "<name>"
+template.` as the user's next message, and the model then runs `use_template` and fills
+the parts as before. The card reads the list live from the bridge. It appears:
+- when `craft use_template` is called with no name (the result carries `__templatePicker`
+  and tells the model to ask the user to pick there, in one line);
+- or when the user's message asks for their saved templates (`wantsTemplatePicker` in
+  `src/lib/templatePicker.ts`: "my/saved/our … templates", or templates together with
+  DesignCraft/layout) and the reply neither listed nor opened one. A bare "template" (as
+  in "a query letter template"), a save request, or a quoted template name doesn't
+  trigger it.
+
+Tests: `src/test/templatePicker.test.ts` (trigger + inbox), `templatePickerCard.test.tsx`,
+and `cargo test -p designcraft-ui-egui --lib save_template` in the DesignCraft checkout.
+To see the button headless, use DesignCraft's `ui_shot` example with
+`DESIGNCRAFT_TEMPLATE_INBOX` set (a hidden Hyprland window doesn't present frames, so
+`ui.screenshot` goes stale there).
 
 ## Measurements (2026-10-13, Qwen3-4B Q6_K)
 

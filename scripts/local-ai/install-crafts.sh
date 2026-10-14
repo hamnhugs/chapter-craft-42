@@ -25,6 +25,8 @@ APPS=(${APPS[*]})
 
 for app in "${APPS[@]}"; do
   case "$app" in photocraft|designcraft|filmcraft) ;; *) echo "Unknown app: $app" >&2; exit 1 ;; esac
+  # CC_LAUNCHERS_ONLY=1: just rewrite the menu launchers (build-designcraft.sh).
+  [ -n "${CC_LAUNCHERS_ONLY:-}" ] && continue
   tag="$(gh release view -R "storytold/$app" --json tagName --jq .tagName)"
   dest="$CRAFTS/$app"
   if [ "$(cat "$dest/VERSION" 2>/dev/null)" = "$tag" ] && [ -x "$dest/usr/bin/$app-cli" ]; then
@@ -41,6 +43,7 @@ for app in "${APPS[@]}"; do
   echo "$tag" > "$dest.new/VERSION"
   rm -rf "$dest" && mv "$dest.new" "$dest"
   rm -rf "$tmp"
+  [ "$app" = designcraft ] && DESIGNCRAFT_FRESH=1
   "$dest/usr/bin/$app-cli" --version >/dev/null 2>&1 || "$dest/usr/bin/$app" --version >/dev/null
   say "$app $tag installed"
 done
@@ -83,6 +86,7 @@ if up || running; then
   command -v hyprctl >/dev/null && hyprctl dispatch focuswindow "class:(?i).*\$app.*" >/dev/null 2>&1
   exit 0
 fi
+$([ "$app" = designcraft ] && echo "export DESIGNCRAFT_TEMPLATE_INBOX=\"$CRAFTS/.state/template-inbox\"  # Save as Template buttons (craft-bridge.mjs)")
 exec "$dest/usr/bin/$app" $args "\$@"
 LAUNCHER
   chmod +x "$CRAFTS/bin/$app"
@@ -92,6 +96,11 @@ LAUNCHER
     "$dest/ai.storyteller.$app.desktop" > "$APPS_DIR/ai.storyteller.$app.desktop"
 done
 command -v update-desktop-database >/dev/null && update-desktop-database "$APPS_DIR" 2>/dev/null || true
+# DesignCraft's "Save as Template" buttons are a patch on the release
+# (build-designcraft.sh); a new release needs it rebuilt.
+if [ "${DESIGNCRAFT_FRESH:-}" = 1 ] && [ -z "${CC_SKIP_DESIGNCRAFT_BUILD:-}" ] && [ -d "${DESIGNCRAFT_SRC:-$HOME/Work/designcraft}/.git" ]; then
+  "$(dirname "$0")/build-designcraft.sh" || echo "DesignCraft's Save as Template buttons weren't rebuilt (see above); the app works without them" >&2
+fi
 # The typefaces DesignCraft's page looks use (docs/local-ai/DESIGN-LOOKS.md).
 "$(dirname "$0")/install-design-fonts.sh" || echo "design fonts not installed (offline?); page looks fall back to Source Sans" >&2
 say "crafts ready in $CRAFTS (start them with scripts/local-up.sh)"

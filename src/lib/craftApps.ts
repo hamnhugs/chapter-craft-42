@@ -190,6 +190,28 @@ async function bridge(path: string, body?: unknown, init?: RequestInit): Promise
   return data;
 }
 
+/** A saved DesignCraft template, as the chat's template picker shows it. */
+export interface DesignTemplate { name: string; slug: string; about: string; width: number; height: number; parts: string[]; created: string }
+
+/** The saved templates, newest first (the template picker card). */
+export async function listDesignTemplates(): Promise<DesignTemplate[]> {
+  const r = await bridge("/template/list", {});
+  const all: DesignTemplate[] = (r.templates || []).map((t: any) => ({ name: t.name, slug: t.slug, about: t.about, width: t.width, height: t.height, parts: t.parts || [], created: t.created || "" }));
+  return all.sort((a, b) => b.created.localeCompare(a.created));
+}
+
+/** A template's screenshot as an object URL (the bridge wants its header, so
+ *  an <img src> can't fetch it directly). The caller revokes it. */
+export async function designTemplateThumb(slug: string): Promise<string> {
+  const res = await fetch(`${BASE}/template/thumb?slug=${encodeURIComponent(slug)}`, { headers: HEADERS, signal: AbortSignal.timeout(15_000) });
+  if (!res.ok) throw new CraftError("no screenshot");
+  return URL.createObjectURL(await res.blob());
+}
+
+export async function deleteDesignTemplate(name: string): Promise<void> {
+  await bridge("/template/delete", { name });
+}
+
 async function uploadBlob(blob: Blob, name: string): Promise<string> {
   const r = await bridge(`/files?name=${encodeURIComponent(name)}`, undefined, { body: blob });
   return r.path;
@@ -447,7 +469,15 @@ export async function runCraftTool(args: any, deps: CraftDeps): Promise<Outcome>
         const name = String(args.title || args.text || "").trim();
         if (!name || args.options?.list) {
           const r = await bridge("/template/list", {});
-          return ok({ templates: r.templates.map((t: any) => t.about), note: r.templates.length ? "Ask which one, or use the one the user named: use_template with its title." : "No templates yet. Design a page, then save_template with a name." }, "Listed DesignCraft templates");
+          // The user picks from a card in the chat (TemplatePickerCard); picking
+          // one sends 'Use my "<name>" template.' as their next message.
+          return ok({
+            templates: r.templates.map((t: any) => t.about),
+            note: r.templates.length
+              ? "The user now sees these templates as pictures in the chat to pick from. If they already named one, use_template with its title; otherwise say in one short line to pick one there, and stop."
+              : "No templates yet. Tell the user: in DesignCraft's Pages panel, click the bookmark beside a page to save it as a template (or ask you to save the page).",
+            __templatePicker: true,
+          }, "Listed DesignCraft templates");
         }
         if (args.options?.delete) {
           const r = await bridge("/template/delete", { name });

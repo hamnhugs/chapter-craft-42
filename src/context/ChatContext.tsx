@@ -50,6 +50,7 @@ import { TOOL_ROUNDS_PER_REPLY } from "@/lib/deepResearchPrompt";
 import { assistantImageNote, attachTurnContext, claimsUnmadeDesignEdit, expandImageTurns, fabricatedImageNote, imageReplayFor, isModelVisibleMessage, resolveUtilityModel, stripFabricatedNotes, toolTraceNote, touchedDesignCraft, unmadeDesignEditNote } from "@/lib/chatHistory";
 import { namespacedNvidiaId, nvidiaModelInfo, nvidiaNoThinkingBody, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
 import { namespacedGeminiId, GEMINI_STARTER_MODEL } from "@/lib/geminiCatalog";
+import { wantsTemplatePicker } from "@/lib/templatePicker";
 
 /** Every registered tool name, in registration order — the input to the gate
  *  map, and the denominator for "how many did we offer this turn". */
@@ -96,6 +97,9 @@ export interface ChatMessage {
   /** Program Foundry: drafted VPS programs awaiting approval — rendered as
    *  program approval cards (ephemeral; Settings → Program Foundry is canonical). */
   programProposals?: ProgramProposal[];
+  /** Show the DesignCraft template picker under this reply (TemplatePickerCard;
+   *  templatePicker.ts says when). Ephemeral: the card reads the list live. */
+  templatePicker?: boolean;
   /** Generated video clips rendered inline in the bubble (from the
    *  generate_video / show_video tools). Each resolves live via its job_id. */
   videos?: ChatVideoRef[];
@@ -1430,6 +1434,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const turnToolProposals: ToolProposal[] = [];
       // Program Foundry proposals forged this turn (VPS program approval cards).
       const turnProgramProposals: ProgramProposal[] = [];
+      // The template picker card, and whether a template was already opened
+      // this turn (then the user's ask is answered and no picker is needed).
+      let turnTemplatePicker = false;
+      let turnUsedTemplate = false;
       let assistantText = "";
       // Model "thinking" streamed alongside the reply (reasoning_content /
       // think-tag content, normalized by the adapter). Rendered as a
@@ -1469,6 +1477,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 memoryImageChips: lensChipsHolder ?? copy[i].memoryImageChips,
                 toolProposals: turnToolProposals.length > 0 ? [...turnToolProposals] : copy[i].toolProposals,
                 programProposals: turnProgramProposals.length > 0 ? [...turnProgramProposals] : copy[i].programProposals,
+                templatePicker: turnTemplatePicker || copy[i].templatePicker,
               };
               break;
             }
@@ -2386,6 +2395,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               if (r.__programProposal && typeof r.__programProposal === "object") {
                 turnProgramProposals.push(r.__programProposal);
               }
+              if (r.__templatePicker) turnTemplatePicker = true;
+              if (t.name === "craft" && r.ok && r.template && typeof r.next === "string") turnUsedTemplate = true;
               // A tool that renders its own document (blueprint sheets, stage
               // plans) hands it over here rather than through create_artifact's
               // arguments. This is the whole reason it is a side channel: a
@@ -2404,8 +2415,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   toast.error("A drawing could not be displayed (too large or malformed).");
                 }
               }
-              if ("__images" in r || "__videos" in r || "__splats" in r || "__vision" in r || "__toolProposal" in r || "__programProposal" in r || "__artifact" in r) {
-                const { __images, __videos, __splats, __vision, __toolProposal, __programProposal, __artifact, ...clean } = r;
+              if ("__images" in r || "__videos" in r || "__splats" in r || "__vision" in r || "__toolProposal" in r || "__programProposal" in r || "__artifact" in r || "__templatePicker" in r) {
+                const { __images, __videos, __splats, __vision, __toolProposal, __programProposal, __artifact, __templatePicker, ...clean } = r;
                 modelResult = clean;
               }
             }
@@ -2560,6 +2571,13 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             lensChipsHolder = chips.length > 0 ? chips : undefined;
             if (expand || lensChipsHolder) updateAssistant();
           } catch { /* lens is best-effort — never block the reply */ }
+        }
+
+        // Asked for their saved templates, but the reply neither listed nor
+        // opened one: the picker is the answer, so show it anyway.
+        if (!turnTemplatePicker && !turnUsedTemplate && wantsTemplatePicker(trimmed)) {
+          turnTemplatePicker = true;
+          updateAssistant();
         }
 
         if (assistantText || turnImages.length > 0 || turnVideos.length > 0 || turnSplats.length > 0 || artifacts.length > 0 || assistantEvents.length > 0) {

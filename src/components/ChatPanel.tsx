@@ -13,6 +13,7 @@ import { resolvePocketCaption } from "@/lib/sprite/pocketCaption";
 import { LensImageFrame, MemoryChips } from "@/components/MemoryLensStrip";
 import ToolApprovalCard from "@/components/ToolApprovalCard";
 import ProgramApprovalCard from "@/components/ProgramApprovalCard";
+import TemplatePickerCard from "@/components/TemplatePickerCard";
 import { Loader2, BookmarkPlus } from "lucide-react";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { isToolBlocked } from "@/lib/leanMode";
@@ -1372,6 +1373,7 @@ const ChatPanel: React.FC = () => {
                   {msg.programProposals && msg.programProposals.map((p) => (
                     <ProgramApprovalCard key={p.program_id} proposal={p} />
                   ))}
+                  {msg.templatePicker && <TemplatePickerCard />}
                   {msg.viaModel && (
                     <div className="text-[10px] text-on-surface-variant/60 mb-1.5 font-medium tracking-wide">
                       via {describeModel(msg.viaModel)}

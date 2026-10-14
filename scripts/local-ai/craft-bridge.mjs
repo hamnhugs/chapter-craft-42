@@ -21,7 +21,7 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { connect } from "node:net";
 import { createInterface } from "node:readline";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync, chmodSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync, chmodSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, extname, join, resolve, sep } from "node:path";
 import { homedir } from "node:os";
@@ -39,6 +39,10 @@ const STATE = join(CRAFTS, ".state");
 /** Saved page templates (design-templates.mjs), inside the workspace so their
  *  screenshots can be served like any other workspace file. */
 const TEMPLATES = process.env.CC_TEMPLATES_DIR || join(WS, "templates");
+/** The "Save as Template" button beside each page in the DesignCraft window
+ *  (our build, scripts/local-ai/build-designcraft.sh) drops requests here.
+ *  DesignCraft is started with DESIGNCRAFT_TEMPLATE_INBOX pointing at it. */
+export const TEMPLATE_INBOX = process.env.CC_TEMPLATE_INBOX || join(STATE, "template-inbox");
 const ALLOWED_ORIGINS = new Set(["http://127.0.0.1:8080", "http://localhost:8080", ...(process.env.CC_APP_ORIGINS || "").split(",").filter(Boolean)]);
 const CALL_TIMEOUT_MS = 120_000;
 const EXPORT_TIMEOUT_MS = 30 * 60_000;
@@ -452,7 +456,8 @@ async function openAppNow(app, path, opts) {
       focusWindow(app);
     } else {
       log(app, "launching the window");
-      const proc = spawn(bin(app, false), desktopArgs(app), { detached: true, stdio: "ignore", cwd: WS });
+      const env = app === "designcraft" ? { ...process.env, DESIGNCRAFT_TEMPLATE_INBOX: TEMPLATE_INBOX } : process.env;
+      const proc = spawn(bin(app, false), desktopArgs(app), { detached: true, stdio: "ignore", cwd: WS, env });
       proc.on("error", (e) => log(app, "launch failed", e.message));
       proc.unref();
       launching[app] = proc;
@@ -1069,6 +1074,41 @@ async function saveTemplate(opts) {
   return { saved: name, replaced: existed, ...templateRow(manifest) };
 }
 
+/** Answer the window's "Save as Template" requests: each `<id>.json` ({page,
+ *  name}) is saved like save_template and answered with `<id>.result.json`
+ *  ({ok, name, replaced} or {ok: false, error}), which the window's dialog
+ *  shows. Answers nobody picked up go after an hour. */
+export async function drainTemplateInbox(dir = TEMPLATE_INBOX, save = (b) => serialCompose({ ...b, _do: saveTemplate })) {
+  let names;
+  try { names = readdirSync(dir); } catch { return 0; }
+  let n = 0;
+  for (const f of names) {
+    const path = join(dir, f);
+    if (f.endsWith(".result.json")) {
+      try { if (Date.now() - statSync(path).mtimeMs > 3_600_000) unlinkSync(path); } catch { /* gone */ }
+      continue;
+    }
+    if (!/^[\w-]+\.json$/.test(f)) continue;
+    let req = null;
+    try { req = JSON.parse(readFileSync(path, "utf8")); } catch { /* answered below */ }
+    try { unlinkSync(path); } catch { continue; }
+    let out;
+    try {
+      if (!req || typeof req !== "object") throw new Error("That request couldn't be read.");
+      const r = await save({ app: "designcraft", name: req.name, page: Number.isInteger(req.page) && req.page >= 0 ? req.page : undefined });
+      out = { ok: true, name: r.saved, replaced: !!r.replaced };
+      log("designcraft", `saved template "${r.saved}" from the window (page ${req.page})`);
+    } catch (e) {
+      out = { ok: false, error: e.message };
+    }
+    const id = f.slice(0, -".json".length);
+    writeFileSync(join(dir, `${id}.result.json.tmp`), JSON.stringify(out));
+    renameSync(join(dir, `${id}.result.json.tmp`), join(dir, `${id}.result.json`));
+    n++;
+  }
+  return n;
+}
+
 /** Start a new document from a template: its file opens as a new document
  *  (in the window, a new tab), other pages go, the parts are named by role
  *  and marked as still holding the template's content, and everything else
@@ -1514,6 +1554,16 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   mkdirSync(join(WS, "out"), { recursive: true });
   mkdirSync(STATE, { recursive: true });
   chmodSync(STATE, 0o700);
+  // Test bridges (CC_CRAFTS_HEADLESS=1) leave the window's requests to the real one.
+  if (process.env.CC_CRAFTS_HEADLESS !== "1") {
+    mkdirSync(TEMPLATE_INBOX, { recursive: true });
+    let draining = false;
+    setInterval(() => {
+      if (draining) return;
+      draining = true;
+      drainTemplateInbox().catch((e) => log("template inbox", e.message)).finally(() => { draining = false; });
+    }, 600).unref();
+  }
   server.listen(PORT, "127.0.0.1", () => log(`craft bridge on 127.0.0.1:${PORT}, workspace ${WS}`));
   const stop = () => { for (const s of Object.values(sessions)) s.close(); process.exit(0); };
   process.on("SIGTERM", stop); process.on("SIGINT", stop);
