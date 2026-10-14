@@ -209,8 +209,8 @@ export function deniesSaveToLibrary(reply: string, request: string): boolean {
 export function unmadeSaveNote(): string {
   return (
     "[App note — you DO have save_to_library this turn: it saves a document you wrote into the user's library (the Vault) as a PDF book, and `shelf` puts it on a shelf by name. " +
-    "Call it now instead of saying you can't. The document is one of your earlier replies, so use source last_reply with reply_starts_with = that reply's first words exactly as you wrote them " +
-    "(or source this_reply after writing a new version). Report the result after it returns.]"
+    "Call it now instead of saying you can't: an earlier reply → source last_reply (add reply_starts_with = its first words, as written, if it isn't your latest); text the user pasted → source content (or write it out, then this_reply). " +
+    "Only if the document is in neither the conversation nor the message, say exactly that and ask them to paste it — never that the tool is missing. Report the result after it returns.]"
   );
 }
 
