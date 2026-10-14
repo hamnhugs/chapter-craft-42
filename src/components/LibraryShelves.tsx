@@ -13,6 +13,7 @@ import {
   DropdownMenuCheckboxItem, DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
+import { useShelfMarks, type ShelfMark } from "@/lib/shelfMarks";
 
 // Shelves: the Vault's single grouping surface. One user-managed primitive
 // (book_folders rows, presented as "shelves") replaces the former Folders view
@@ -111,6 +112,10 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
   const { selectedModel, apiKey, geminiApiKey, nvidiaKeyLast4 } = useChatSettings();
   const catJobs = useCatalogJobs();
   const { user } = useAuth();
+  // Each shelf's color + glyph. Hovering (or focusing) a shelf card lights up
+  // its books in the grid below and dims the rest.
+  const marks = useShelfMarks();
+  const [spotlight, setSpotlight] = useState<string | null>(null);
 
   // This view WRITES to the book-context store, so it must init it — on a
   // cold start straight to the Vault, no chat surface has mounted yet, and
@@ -136,7 +141,21 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
   useEffect(() => { allBooksRef.current = allBooks; }, [allBooks]);
 
   const [digesting, setDigesting] = useState<string | null>(null);
-  const [openShelfId, setOpenShelfId] = useState<string | null>(null);
+  // Several shelves can be open at once, shown one section after another.
+  // Clicking a shelf card opens just that shelf; picking shelves first (the
+  // check on a card, or ctrl/shift-click) opens them together, and the open
+  // view's "Open another shelf" menu adds or drops one in place.
+  const [openShelfIds, setOpenShelfIds] = useState<string[]>([]);
+  const [pickedIds, setPickedIds] = useState<string[]>([]);
+  const togglePicked = (id: string) =>
+    setPickedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  const toggleOpen = (id: string) =>
+    setOpenShelfIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  const openShelves = (ids: string[]) => { setOpenShelfIds(ids); setPickedIds([]); };
+  const onShelfCardClick = (e: React.MouseEvent, id: string) => {
+    if (e.ctrlKey || e.metaKey || e.shiftKey) togglePicked(id);
+    else openShelves(pickedIds.length > 0 ? [...pickedIds.filter((x) => x !== id), id] : [id]);
+  };
   const [newName, setNewName] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -242,15 +261,15 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
     }
   };
 
-  const isUnshelved = openShelfId === UNSHELVED_ID;
-  const booksOnShelf = useMemo(
-    () => (isUnshelved ? unshelvedVisible : openShelfId ? visibleByShelf.get(openShelfId) || [] : []),
-    [isUnshelved, unshelvedVisible, visibleByShelf, openShelfId],
+  // Shelves deleted elsewhere drop out of the open set.
+  const openIds = useMemo(
+    () => openShelfIds.filter((id) => id === UNSHELVED_ID || shelves.some((f) => f.id === id)),
+    [openShelfIds, shelves],
   );
-  /** True size of the open shelf, independent of search and facets. */
-  const openShelfTotal = isUnshelved
-    ? unshelvedAll.length
-    : openShelfId ? (membersByShelf.get(openShelfId) || []).length : 0;
+  /** What search + facets leave on screen for one open shelf. */
+  const visibleOn = (id: string) => (id === UNSHELVED_ID ? unshelvedVisible : visibleByShelf.get(id) || []);
+  /** True contents of one open shelf, independent of search and facets. */
+  const membersOf = (id: string) => (id === UNSHELVED_ID ? unshelvedAll : membersByShelf.get(id) || []);
 
   // Facet chips carry QUERY PREVIEWS (Hearst): each facet's counts are taken
   // with the OTHER facet applied, so a count never promises results that the
@@ -303,9 +322,9 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
   // The reset key is everything the user can change that should send them back
   // to the top: the search (via `filtered`), the facets, and which shelf is
   // open. Notably NOT the book list itself — see usePagedBooks.
-  const pageResetKey = `${filtered}|${activeCategory ?? ""}|${activeTags.join(",")}|${openShelfId ?? ""}`;
+  const facetKey = `${filtered}|${activeCategory ?? ""}|${activeTags.join(",")}`;
+  const pageResetKey = `${facetKey}|${openIds.join(",")}`;
   const allBooksPage = usePagedBooks(visibleBooks, pageResetKey);
-  const shelfPage = usePagedBooks(booksOnShelf, pageResetKey);
 
   const handleCreate = async () => {
     const name = newName.trim();
@@ -339,7 +358,8 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
       // book's folderIds — the DB cascades the junction rows, so client state
       // must follow without a reload.
       await deleteShelf(id);
-      if (openShelfId === id) setOpenShelfId(null);
+      setOpenShelfIds((prev) => prev.filter((x) => x !== id));
+      setPickedIds((prev) => prev.filter((x) => x !== id));
       toast.success("Shelf deleted");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Delete failed");
@@ -374,7 +394,13 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
   // onSelect preventDefault keeps the menu open across toggles — putting a
   // book on three shelves is one open, three clicks.
   const renderBookCard = (b: BookDocument, index: number) => (
-    <div key={b.id} className="relative group">
+    <div
+      key={b.id}
+      className="relative group transition-[opacity,filter] duration-200"
+      style={spotlight && spotlight !== UNSHELVED_ID
+        ? (b.folderIds.includes(spotlight) ? undefined : { opacity: 0.22, filter: "grayscale(0.8)" })
+        : spotlight === UNSHELVED_ID && b.folderIds.length > 0 ? { opacity: 0.22, filter: "grayscale(0.8)" } : undefined}
+    >
       {renderBook(b, index)}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -401,6 +427,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
               onCheckedChange={() => toggleShelf(b, f.id)}
               onSelect={(e) => e.preventDefault()}
             >
+              <MarkChip mark={marks.get(f.id)} />
               {f.name}
             </DropdownMenuCheckboxItem>
           ))}
@@ -415,68 +442,81 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
   // returns is most of why the Vault felt slow to open. The shelf strip below
   // shows its own placeholder while the roster is still coming.
 
-  // Open-shelf drill-in view.
-  if (openShelfId) {
-    const shelf = shelves.find((f) => f.id === openShelfId);
+  const actionPill = "inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-container-high text-foreground text-xs font-bold border border-outline-variant/20 hover:bg-surface-container-highest disabled:opacity-50";
+
+  /** One open shelf: its header and actions, its digest, and its books. */
+  const renderShelfSection = (id: string, several: boolean) => {
+    const isUnshelved = id === UNSHELVED_ID;
+    const shelf = isUnshelved ? undefined : shelves.find((f) => f.id === id);
     const openName = isUnshelved ? "Unshelved" : shelf?.name;
+    const source = membersOf(id);
+    const booksOnShelf = visibleOn(id);
+    const openShelfTotal = source.length;
+    const { ready, total } = catalogReadiness(source);
+    const running = source.some((b) => {
+      const j = catJobs[b.id];
+      return j?.status === "queued" || j?.status === "running";
+    });
     return (
-      <div className="cc-container flex flex-col gap-5">
-        <nav aria-label="Shelf navigation" className="flex flex-wrap items-center gap-1.5 text-sm">
-          <button
-            onClick={() => setOpenShelfId(null)}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors"
-          >
-            <span className="material-symbols-outlined text-base" aria-hidden>shelves</span>
-            All shelves
-          </button>
-          <span className="text-on-surface-variant/50" aria-hidden>/</span>
+      <section
+        key={id}
+        aria-label={openName}
+        className="flex flex-col gap-4 rounded-2xl"
+        style={shelf && marks.get(shelf.id) ? { borderTop: `3px solid ${marks.get(shelf.id)!.color}`, paddingTop: "0.75rem" } : undefined}
+      >
+        <div className="flex flex-wrap items-center gap-1.5 text-sm">
           <span className="flex min-w-0 items-center gap-1.5 px-2 py-1 font-semibold text-foreground">
-            <span className="material-symbols-outlined text-base text-primary" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden>
-              {isUnshelved ? "inbox" : "folder_open"}
-            </span>
+            {shelf && marks.get(shelf.id) ? (
+              <MarkChip mark={marks.get(shelf.id)} size="lg" />
+            ) : (
+              <span className="material-symbols-outlined text-base text-primary" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden>
+                {isUnshelved ? "inbox" : "folder_open"}
+              </span>
+            )}
             <span className="truncate">{openName}</span>
             <span className="shrink-0 text-on-surface-variant font-normal">
               ({narrowing ? `${booksOnShelf.length} of ${openShelfTotal}` : openShelfTotal})
             </span>
           </span>
+          {several && (
+            <button
+              onClick={() => toggleOpen(id)}
+              aria-label={`Close ${openName}`}
+              title="Close this shelf (the others stay open)"
+              className="cc-tap-32 p-1 rounded text-on-surface-variant hover:text-primary hover:bg-surface-container-high"
+            >
+              <span className="material-symbols-outlined text-sm" aria-hidden>close</span>
+            </button>
+          )}
           <span className="ml-auto" />
-          {(() => {
-            const source = isUnshelved ? unshelvedAll : (membersByShelf.get(openShelfId!) || []);
-            const { ready, total } = catalogReadiness(source);
-            if (total === 0) return null;
-            const running = source.some((b) => {
-              const j = catJobs[b.id];
-              return j?.status === "queued" || j?.status === "running";
-            });
-            return (
-              <>
-                <span
-                  className="shrink-0 text-xs text-on-surface-variant"
-                  title="Books with a catalog ride the compact chapter map in chat; the rest fall back to full text."
+          {total > 0 && (
+            <>
+              <span
+                className="shrink-0 text-xs text-on-surface-variant"
+                title="Books with a catalog ride the compact chapter map in chat; the rest fall back to full text."
+              >
+                {ready} of {total} catalogued
+              </span>
+              {ready < total && (
+                <button
+                  onClick={() => catalogShelf(source)}
+                  disabled={running}
+                  className={actionPill}
+                  title="Generate chapter summaries and a book summary for the books here that have none (uses your model key)"
                 >
-                  {ready} of {total} catalogued
-                </span>
-                {ready < total && (
-                  <button
-                    onClick={() => catalogShelf(source)}
-                    disabled={running}
-                    className="inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-container-high text-foreground text-xs font-bold border border-outline-variant/20 hover:bg-surface-container-highest disabled:opacity-50"
-                    title="Generate chapter summaries and a book summary for the books here that have none (uses your model key)"
-                  >
-                    <span className={`material-symbols-outlined text-sm ${running ? "animate-spin" : ""}`} aria-hidden>
-                      {running ? "progress_activity" : "menu_book"}
-                    </span>
-                    {running ? "Cataloguing…" : `Catalog the rest`}
-                  </button>
-                )}
-              </>
-            );
-          })()}
+                  <span className={`material-symbols-outlined text-sm ${running ? "animate-spin" : ""}`} aria-hidden>
+                    {running ? "progress_activity" : "menu_book"}
+                  </span>
+                  {running ? "Cataloguing…" : `Catalog the rest`}
+                </button>
+              )}
+            </>
+          )}
           {shelf && (
             <button
-              onClick={() => writeDigest(shelf, membersByShelf.get(shelf.id) || [])}
+              onClick={() => writeDigest(shelf, source)}
               disabled={digesting === shelf.id}
-              className="inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface-container-high text-foreground text-xs font-bold border border-outline-variant/20 hover:bg-surface-container-highest disabled:opacity-50"
+              className={actionPill}
               title="Summarize what this shelf is about, from its books' summaries (uses your model key)"
             >
               <span className={`material-symbols-outlined text-sm ${digesting === shelf.id ? "animate-spin" : ""}`} aria-hidden>
@@ -505,7 +545,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
               Chat with this shelf
             </button>
           )}
-        </nav>
+        </div>
 
         {shelf?.summary && (
           <div className="rounded-xl bg-surface-container-low/60 border border-outline-variant/10 px-5 py-3">
@@ -525,19 +565,104 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
                 : "This shelf is empty — hover any book card and use the shelf menu to add it here."}
           </div>
         ) : (
-          <>
-            <div className="book-grid">
-              {shelfPage.page.map((b, i) => renderBookCard(b, i))}
-            </div>
-            <ShowMore remaining={shelfPage.remaining} onClick={shelfPage.showMore} />
-          </>
+          <PagedGrid items={booksOnShelf} resetKey={facetKey} render={renderBookCard} />
         )}
+      </section>
+    );
+  };
+
+  // Open-shelf drill-in view: every open shelf, one section after another.
+  if (openIds.length > 0) {
+    const several = openIds.length > 1;
+    // A book on two open shelves is loaded once.
+    const unionBooks = several
+      ? [...new Map(openIds.flatMap((id) => visibleOn(id)).map((b) => [b.id, b])).values()]
+      : [];
+    const openableIds = [...shelves.map((f) => f.id), ...(unshelvedAll.length > 0 ? [UNSHELVED_ID] : [])];
+    const nameOf = (id: string) => (id === UNSHELVED_ID ? "Unshelved" : shelves.find((f) => f.id === id)?.name || "");
+    return (
+      <div className="cc-container flex flex-col gap-5">
+        <nav aria-label="Shelf navigation" className="flex flex-wrap items-center gap-1.5 text-sm">
+          <button
+            onClick={() => setOpenShelfIds([])}
+            className="flex items-center gap-1 px-2 py-1 rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container-high transition-colors"
+          >
+            <span className="material-symbols-outlined text-base" aria-hidden>shelves</span>
+            All shelves
+          </button>
+          <span className="text-on-surface-variant/50" aria-hidden>/</span>
+          <span className="min-w-0 truncate px-2 py-1 font-semibold text-foreground">
+            {several ? `${openIds.length} shelves open` : nameOf(openIds[0])}
+          </span>
+          <span className="ml-auto" />
+          {openableIds.length > 1 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className={actionPill} title="Open more shelves alongside this one, or close some">
+                  <span className="material-symbols-outlined text-sm" aria-hidden>library_add</span>
+                  Open another shelf
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="max-h-80 overflow-y-auto">
+                <DropdownMenuLabel>Open shelves</DropdownMenuLabel>
+                {openableIds.map((id) => (
+                  <DropdownMenuCheckboxItem
+                    key={id}
+                    checked={openIds.includes(id)}
+                    // The last open shelf is closed with "All shelves", not here.
+                    disabled={openIds.length === 1 && openIds[0] === id}
+                    onSelect={(e) => e.preventDefault()}
+                    onCheckedChange={() => toggleOpen(id)}
+                  >
+                    <MarkChip mark={marks.get(id)} />
+                    {nameOf(id)}
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          {several && unionBooks.length > 0 && (
+            <button
+              onClick={() => chatWithBooks(unionBooks, openIds.map(nameOf).join(" + "))}
+              className="inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-on-primary-container text-xs font-bold"
+              title="Load the books on every open shelf as chat context and open Counsel"
+            >
+              <span className="material-symbols-outlined text-sm">psychology</span>
+              Chat with these {openIds.length} shelves
+            </button>
+          )}
+        </nav>
+
+        {openIds.map((id, i) => (
+          <React.Fragment key={id}>
+            {i > 0 && <hr className="border-outline-variant/15" />}
+            {renderShelfSection(id, several)}
+          </React.Fragment>
+        ))}
       </div>
     );
   }
 
   return (
     <div className="cc-container flex flex-col gap-6">
+      {pickedIds.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl bg-primary/10 border border-primary/30 px-4 py-2 text-sm">
+          <span className="font-semibold text-foreground">
+            {pickedIds.length} shel{pickedIds.length === 1 ? "f" : "ves"} picked
+          </span>
+          <span className="ml-auto" />
+          <button onClick={() => setPickedIds([])} className="px-2 py-1 text-on-surface-variant hover:text-primary underline underline-offset-2">
+            Clear
+          </button>
+          <button
+            onClick={() => openShelves(pickedIds)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-on-primary-container text-xs font-bold"
+          >
+            <span className="material-symbols-outlined text-sm" aria-hidden>folder_open</span>
+            Open {pickedIds.length === 1 ? "it" : `these ${pickedIds.length} together`}
+          </button>
+        </div>
+      )}
       {/* Shelf cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
         {shelves.map((f) => {
@@ -548,14 +673,31 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
             .filter((b) => b.coverImageUrl)
             .slice(0, 3)
             .map((b) => b.coverImageUrl as string);
+          const mark = marks.get(f.id);
           return (
             <div
               key={f.id}
-              className="group relative flex flex-col items-start gap-3 rounded-2xl p-5 text-left border border-outline-variant/15 bg-surface-container-high transition-all hover:-translate-y-0.5 hover:shadow-xl"
+              data-shelf-card
+              onMouseEnter={() => setSpotlight(f.id)}
+              onMouseLeave={() => setSpotlight((cur) => (cur === f.id ? null : cur))}
+              onFocus={() => setSpotlight(f.id)}
+              onBlur={() => setSpotlight((cur) => (cur === f.id ? null : cur))}
+              className={`group relative flex flex-col items-start gap-3 overflow-hidden rounded-2xl p-5 pl-6 text-left border bg-surface-container-high transition-all hover:-translate-y-0.5 hover:shadow-xl ${pickedIds.includes(f.id) ? "border-primary ring-1 ring-primary/40" : "border-outline-variant/15"}`}
+              style={mark ? {
+                backgroundImage: `linear-gradient(135deg, ${mark.color}38, transparent 65%)`,
+                borderColor: pickedIds.includes(f.id) ? undefined : `${mark.color}66`,
+              } : undefined}
             >
-              <button onClick={() => setOpenShelfId(f.id)} className="absolute inset-0" aria-label={`Open ${f.name}`} />
+              {mark && (
+                <span aria-hidden className="absolute left-0 top-0 bottom-0 w-1.5 pointer-events-none" style={{ background: mark.color }} />
+              )}
+              <button onClick={(e) => onShelfCardClick(e, f.id)} className="absolute inset-0" aria-label={`Open ${f.name}`} />
               <div className="flex items-center justify-between w-full pointer-events-none">
-                <span className="material-symbols-outlined text-4xl text-primary" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden>shelves</span>
+                {mark ? (
+                  <MarkChip mark={mark} size="xl" />
+                ) : (
+                  <span className="material-symbols-outlined text-4xl text-primary" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden>shelves</span>
+                )}
                 {/* Cover peeks — covers are the highest-recognition cue for books */}
                 <div className="flex -space-x-2">
                   {covers.map((url, i) => (
@@ -622,6 +764,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
                   are (WCAG 2.4.7). The book card's shelf trigger already had
                   this; the shelf card was missed. */}
               <div className="cc-hover-reveal absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity z-20">
+                <PickButton picked={pickedIds.includes(f.id)} name={f.name} onClick={() => togglePicked(f.id)} />
                 <button
                   onClick={(e) => { e.stopPropagation(); chatWithShelf(f); }}
                   title={`Chat with "${f.name}" — load its books as chat context`}
@@ -655,9 +798,15 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
             distinct (dashed edge, inbox glyph) since it is computed, has no
             row, and cannot be renamed or deleted. */}
         {membershipLoaded && unshelvedAll.length > 0 && (
-          <div className="group relative flex flex-col items-start gap-3 rounded-2xl p-5 text-left border border-dashed border-outline-variant/40 bg-surface-container-low transition-all hover:-translate-y-0.5 hover:shadow-xl">
+          <div
+            onMouseEnter={() => setSpotlight(UNSHELVED_ID)}
+            onMouseLeave={() => setSpotlight((cur) => (cur === UNSHELVED_ID ? null : cur))}
+            className={`group relative flex flex-col items-start gap-3 rounded-2xl p-5 text-left border border-dashed bg-surface-container-low transition-all hover:-translate-y-0.5 hover:shadow-xl ${pickedIds.includes(UNSHELVED_ID) ? "border-primary ring-1 ring-primary/40" : "border-outline-variant/40"}`}>
+            <div className="cc-hover-reveal absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity z-20">
+              <PickButton picked={pickedIds.includes(UNSHELVED_ID)} name="Unshelved" onClick={() => togglePicked(UNSHELVED_ID)} />
+            </div>
             <button
-              onClick={() => setOpenShelfId(UNSHELVED_ID)}
+              onClick={(e) => onShelfCardClick(e, UNSHELVED_ID)}
               className="absolute inset-0"
               aria-label={`Open Unshelved (${unshelvedAll.length} book${unshelvedAll.length === 1 ? "" : "s"})`}
             />
@@ -791,6 +940,48 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
     </div>
   );
 };
+
+/** A paged book grid. Its own component so every open shelf keeps its own
+ *  "Show more" position (hooks can't run in a loop). */
+const PagedGrid: React.FC<{ items: BookDocument[]; resetKey: string; render: (b: BookDocument, i: number) => React.ReactNode }> = ({ items, resetKey, render }) => {
+  const paged = usePagedBooks(items, resetKey);
+  return (
+    <>
+      <div className="book-grid">{paged.page.map((b, i) => render(b, i))}</div>
+      <ShowMore remaining={paged.remaining} onClick={paged.showMore} />
+    </>
+  );
+};
+
+/** A shelf's mark as a small badge: its glyph on its color. */
+const MarkChip: React.FC<{ mark?: ShelfMark; size?: "sm" | "lg" | "xl" }> = ({ mark, size = "sm" }) => {
+  if (!mark) return null;
+  const box = size === "xl" ? "w-11 h-11 rounded-xl text-[26px]" : size === "lg" ? "w-6 h-6 rounded-md text-[15px]" : "w-4 h-4 rounded text-[11px] mr-1.5";
+  return (
+    <span
+      aria-hidden
+      className={`inline-flex shrink-0 items-center justify-center shadow-sm ${box}`}
+      style={{ background: mark.color, color: mark.ink }}
+    >
+      <span className="material-symbols-outlined leading-none" style={{ fontSize: "inherit", fontVariationSettings: "'FILL' 1" }}>
+        {mark.glyph}
+      </span>
+    </span>
+  );
+};
+
+/** The check on a shelf card that picks it to open with others. */
+const PickButton: React.FC<{ picked: boolean; name: string; onClick: () => void }> = ({ picked, name, onClick }) => (
+  <button
+    onClick={(e) => { e.stopPropagation(); onClick(); }}
+    aria-pressed={picked}
+    aria-label={picked ? `Unpick ${name}` : `Pick ${name} to open with other shelves`}
+    title={picked ? "Picked — open it together with the other picked shelves" : "Pick to open several shelves at once (or ctrl-click the shelf)"}
+    className={`cc-tap-32 p-1 rounded ${picked ? "bg-primary text-on-primary-container" : "bg-surface-container-high hover:bg-primary/20 text-primary"}`}
+  >
+    <span className="material-symbols-outlined text-sm" aria-hidden>{picked ? "check_box" : "check_box_outline_blank"}</span>
+  </button>
+);
 
 const ShowMore: React.FC<{ remaining: number; onClick: () => void }> = ({ remaining, onClick }) => {
   if (remaining <= 0) return null;

@@ -28,6 +28,8 @@ import { seekLibrary, SEEK_FETCH_CAP, type SeekOutcome } from "@/lib/librarySeek
 import LibraryList from "@/components/LibraryList";
 import LibraryShowcase from "@/components/LibraryShowcase";
 import { seedOf } from "@/lib/bookProfile";
+import { marksForBook, markStripes, useShelfMarks, type ShelfMark } from "@/lib/shelfMarks";
+import type { BookFolder } from "@/lib/bookFolders";
 import { isLocalBackend } from "@/lib/localServices";
 
 // The 3D mind map pulls in three.js (~300KB gzip); lazy-load so that chunk is
@@ -138,6 +140,7 @@ const Library: React.FC = () => {
     shelves, toggleBookShelf, booksLoading, booksError, retryLoadBooks } = useApp();
   const { apiKey, imageExtractionModel, selectedModel, geminiApiKey, nvidiaKeyLast4, autoCatalogOnUpload } = useChatSettings();
   const { user } = useAuth();
+  const shelfMarks = useShelfMarks();
   const { isPaid, loaded: planLoaded } = usePlan();
   const { isAdmin, loaded: adminLoaded } = useIsAdmin();
   const jobs = useStructureJobs();
@@ -1358,6 +1361,8 @@ const Library: React.FC = () => {
                 catJob={catJobs[book.id]}
                 match={matchByBook.get(book.id) ?? null}
                 softDelete={softDelete}
+                shelves={shelves}
+                shelfMarks={shelfMarks}
                 {...cardHandlers}
               />
             )}
@@ -1499,7 +1504,11 @@ const BookCardImpl: React.FC<{
   /** True while books go to the Trash rather than being destroyed. */
   softDelete?: boolean;
   onRename: (book: BookDocument, newTitle: string) => void;
-}> = ({ book, query = "", job, figJob, catJob, match, onDetect, onExtractFigures, onRead, onRemove, onRename, softDelete = false }) => {
+  /** The shelf roster and every shelf's mark (src/lib/shelfMarks.ts). Both
+   *  are stable identities from context, so they don't defeat the memo. */
+  shelves?: BookFolder[];
+  shelfMarks?: Map<string, ShelfMark>;
+}> = ({ book, query = "", job, figJob, catJob, match, onDetect, onExtractFigures, onRead, onRemove, onRename, softDelete = false, shelves = [], shelfMarks }) => {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(book.title);
   const renameFromMenu = useRef(false);
@@ -1557,6 +1566,12 @@ const BookCardImpl: React.FC<{
   const hues = [35, 25, 40, 15, 45, 20];
   const hue = hues[seedOf(book.id) % hues.length];
 
+  // The shelves this book is on, wearing their marks: ribbons on the cover, a
+  // spine down the card's edge, and — with no cover image — a jacket in the
+  // first shelf's color, so a shelf's books read as a set across the grid.
+  const onShelves = shelfMarks ? marksForBook(book.folderIds, shelves, shelfMarks) : [];
+  const jacket = !book.coverImageUrl && onShelves.length > 0 ? onShelves[0] : null;
+
   return (
     <div
       data-book-card
@@ -1566,12 +1581,21 @@ const BookCardImpl: React.FC<{
          back in — every card flashed, on every search keystroke. It was also
          not covered by the reduced-motion block. Removing it fixes the flash,
          the stagger cost, and a standing request for less motion at once. */
-      className="group bg-surface-container-high rounded-2xl overflow-hidden flex flex-col transition-all hover:-translate-y-1 hover:shadow-2xl hover:shadow-black/40"
+      className="group relative bg-surface-container-high rounded-xl overflow-hidden flex flex-col transition-all hover:-translate-y-1 hover:shadow-2xl hover:shadow-black/40"
     >
+      {/* The spine: one stripe per shelf, full height of the card. */}
+      {onShelves.length > 0 && (
+        <div
+          data-shelf-spine
+          aria-hidden
+          className="absolute left-0 top-0 bottom-0 w-1.5 z-10"
+          style={{ background: markStripes(onShelves.map((s) => s.mark.color)) }}
+        />
+      )}
       {/* Cover */}
       <div
-        data-book-cover-placeholder={book.coverImageUrl ? undefined : ""}
-        className="cc-book-cover aspect-[3/2] relative overflow-hidden bg-surface-container-highest flex items-center justify-center"
+        data-book-cover-placeholder={book.coverImageUrl || jacket ? undefined : ""}
+        className="cc-book-cover aspect-[2/1] relative overflow-hidden bg-surface-container-highest flex items-center justify-center"
         style={{
           background: book.coverImageUrl
             ? undefined
@@ -1580,20 +1604,71 @@ const BookCardImpl: React.FC<{
       >
         {book.coverImageUrl ? (
           <img src={book.coverImageUrl} alt={book.title} className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+        ) : jacket ? (
+          // Its own layer, not the placeholder's background: themes restyle
+          // the placeholder with !important, and the jacket must win.
+          <div
+            data-shelf-jacket
+            className="absolute inset-0 flex items-center justify-center"
+            style={{
+              background: `radial-gradient(120% 90% at 85% 15%, ${jacket.mark.color}d9, ${jacket.mark.color}59 55%, transparent 100%), repeating-linear-gradient(90deg, rgba(255,255,255,0.05) 0 2px, transparent 2px 14px), #0b0812`,
+            }}
+          >
+            <span
+              className="material-symbols-outlined text-[3.5rem] opacity-90 transition-transform duration-500 group-hover:scale-110"
+              style={{ color: jacket.mark.color, fontVariationSettings: "'FILL' 1", filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.5)) brightness(1.25)" }}
+              aria-hidden
+            >
+              {jacket.mark.glyph}
+            </span>
+            <span className="absolute bottom-1.5 left-3 right-3 truncate text-[10px] font-bold uppercase tracking-widest text-white/85 drop-shadow">
+              {jacket.name}
+            </span>
+          </div>
         ) : (
-          <span className="material-symbols-outlined text-5xl text-primary/30">
+          <span className="material-symbols-outlined text-4xl text-primary/30">
             {isPdf ? "auto_stories" : isHtml ? "article" : "description"}
           </span>
         )}
-        <div data-book-cover-overlay className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-60" />
-        <YoutubeTranscriptBadge book={book} className="absolute top-3 left-3 shadow-lg" />
+        {!jacket && (
+          <div data-book-cover-overlay className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-60" />
+        )}
+        <YoutubeTranscriptBadge book={book} className={`absolute ${onShelves.length > 0 ? "bottom-2 right-2" : "top-3 left-3"} shadow-lg`} />
+        {/* Ribbons: a bookmark per shelf hanging from the top edge, each in
+            its shelf's color with its glyph. Hover names the shelf. */}
+        {onShelves.length > 0 && (
+          <div data-shelf-ribbons className="absolute top-0 left-3 flex gap-1 z-10">
+            {onShelves.slice(0, 5).map(({ id, name, mark }) => (
+              <span
+                key={id}
+                title={`On “${name}”`}
+                aria-label={`On shelf ${name}`}
+                className="flex h-7 w-5 items-start justify-center pt-0.5 shadow-md"
+                style={{
+                  background: mark.color,
+                  color: mark.ink,
+                  clipPath: "polygon(0 0, 100% 0, 100% 100%, 50% 78%, 0 100%)",
+                }}
+              >
+                <span className="material-symbols-outlined text-[13px]" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden>
+                  {mark.glyph}
+                </span>
+              </span>
+            ))}
+            {onShelves.length > 5 && (
+              <span className="self-start mt-1 rounded bg-black/60 px-1 text-[10px] font-bold text-white">
+                +{onShelves.length - 5}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Info */}
-      <div className="cc-book-info p-6">
+      <div className="cc-book-info p-4 flex flex-col flex-1">
         {editing ? (
           <input
-            className="cc-book-title w-full text-xl font-headline font-bold bg-transparent border border-outline-variant rounded-lg px-2 py-1 mb-1 text-primary focus:outline-none focus:ring-1 focus:ring-primary/40"
+            className="cc-book-title w-full text-base font-headline font-bold bg-transparent border border-outline-variant rounded-lg px-2 py-1 mb-1 text-primary focus:outline-none focus:ring-1 focus:ring-primary/40"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             autoFocus
@@ -1608,13 +1683,13 @@ const BookCardImpl: React.FC<{
           />
         ) : (
           <h4
-            className="cc-book-title font-headline text-2xl font-bold text-primary mb-1 cursor-pointer hover:text-accent transition-colors line-clamp-2"
+            className="cc-book-title font-headline text-base leading-snug font-bold text-primary mb-1 cursor-pointer hover:text-accent transition-colors line-clamp-2"
             onClick={onTitleClick}
           >
             <Highlight text={book.title} query={query} />
           </h4>
         )}
-        <p className="cc-book-meta text-on-surface-variant text-xs font-medium uppercase tracking-wider mb-2">
+        <p className="cc-book-meta text-on-surface-variant text-[10px] font-medium uppercase tracking-wider mb-2">
           {metadataText}
         </p>
 
@@ -1626,7 +1701,7 @@ const BookCardImpl: React.FC<{
             (CHI 2026), so the label is not optional. */}
         {book.summary && (
           <div className="cc-book-summary mb-2">
-            <p className="text-xs leading-relaxed text-on-surface-variant line-clamp-3" title={book.summary}>
+            <p className="text-xs leading-relaxed text-on-surface-variant line-clamp-2" title={book.summary}>
               <Highlight text={book.summary} query={query} />
             </p>
             <p className="text-[10px] text-on-surface-variant/60 mt-1">
@@ -1668,7 +1743,7 @@ const BookCardImpl: React.FC<{
         )}
 
         {/* Auto-structure + figure-extraction status */}
-        <div className="cc-book-status min-h-5 mb-4 space-y-1">
+        <div className="cc-book-status mb-3 space-y-1 empty:mb-0">
           {detecting ? (
             <p className="flex items-center gap-1.5 text-xs text-primary">
               <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>
@@ -1736,10 +1811,10 @@ const BookCardImpl: React.FC<{
             one from the CARD's own width. Rendering them as two JSX branches
             instead would remount the subtree on every column-count change and
             drop the dropdown's open state mid-interaction. */}
-        <div className="cc-book-actions flex items-center gap-3">
+        <div className="cc-book-actions mt-auto flex items-center gap-2">
           <button
             onClick={() => onRead(book)}
-            className="cc-book-open flex-1 min-w-0 py-3 bg-primary/10 text-primary font-bold rounded-lg hover:bg-primary hover:text-on-primary-container transition-all active:scale-95"
+            className="cc-book-open flex-1 min-w-0 py-2 text-sm bg-primary/10 text-primary font-bold rounded-lg hover:bg-primary hover:text-on-primary-container transition-all active:scale-95"
           >
             Open
           </button>
@@ -1750,9 +1825,9 @@ const BookCardImpl: React.FC<{
               disabled={detecting}
               title={detectLabel}
               aria-label={detectLabel}
-              className="p-3 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              className="p-2 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <span className={`material-symbols-outlined text-xl ${detecting ? "animate-spin" : ""}`}>
+              <span className={`material-symbols-outlined text-lg leading-none ${detecting ? "animate-spin" : ""}`}>
                 {detecting ? "progress_activity" : "auto_awesome"}
               </span>
             </button>
@@ -1764,9 +1839,9 @@ const BookCardImpl: React.FC<{
               disabled={extracting}
               title={extractLabel}
               aria-label={extractLabel}
-              className="p-3 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              className="p-2 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <span className={`material-symbols-outlined text-xl ${extracting ? "animate-spin" : ""}`}>
+              <span className={`material-symbols-outlined text-lg leading-none ${extracting ? "animate-spin" : ""}`}>
                 {extracting ? "progress_activity" : "image_search"}
               </span>
             </button>
@@ -1776,9 +1851,9 @@ const BookCardImpl: React.FC<{
             onClick={(e) => { e.stopPropagation(); onRemove(book); }}
             title={removeLabel}
             aria-label={removeLabel}
-            className="p-3 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-error-container/20 hover:text-destructive transition-all"
+            className="p-2 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-error-container/20 hover:text-destructive transition-all"
           >
-            <span className="material-symbols-outlined text-xl">delete</span>
+            <span className="material-symbols-outlined text-lg leading-none">delete</span>
           </button>
 
           {/* Narrow cards: the same three actions behind one 44px target. */}
