@@ -26,7 +26,8 @@ import { readFile } from "node:fs/promises";
 import { basename, extname, join, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { DESIGN_FAMILIES, FONT_DIR, LOOK_NAMES, autoLook, imagePalette, isDecoName, layoutLook, lookOf } from "./design-looks.mjs";
+import { DESIGN_FAMILIES, FONT_DIR, LOOK_NAMES, TEMPLATE_PREFIX, autoLook, imagePalette, isDecoName, layoutLook, lookOf } from "./design-looks.mjs";
+import { deleteTemplate, describeTemplate, designcraftJson, findTemplate, guessSlots, listTemplates, slugify, writeTemplate } from "./design-templates.mjs";
 
 const ROOT = resolve(fileURLToPath(import.meta.url), "../../..");
 const SERVICES = JSON.parse(readFileSync(join(ROOT, "local-services.json"), "utf8"));
@@ -35,6 +36,9 @@ const CC_HOME = process.env.CC_HOME || join(homedir(), ".local/share/chapter-cra
 const CRAFTS = join(CC_HOME, "crafts");
 const WS = join(CRAFTS, "workspace");
 const STATE = join(CRAFTS, ".state");
+/** Saved page templates (design-templates.mjs), inside the workspace so their
+ *  screenshots can be served like any other workspace file. */
+const TEMPLATES = process.env.CC_TEMPLATES_DIR || join(WS, "templates");
 const ALLOWED_ORIGINS = new Set(["http://127.0.0.1:8080", "http://localhost:8080", ...(process.env.CC_APP_ORIGINS || "").split(",").filter(Boolean)]);
 const CALL_TIMEOUT_MS = 120_000;
 const EXPORT_TIMEOUT_MS = 30 * 60_000;
@@ -651,16 +655,18 @@ const roleName = (r) => r[0].toUpperCase() + r.slice(1);
  *  its name after the role — "Headline · color #E63946 · size 60" — so it
  *  survives saving, reopening and every later layout. */
 const OVERRIDE_KEYS = ["color", "size", "font", "align"];
-export function partName(role, over = {}) {
+/** "· template" marks a part of a page started from a template that still
+ *  holds the template's own words or picture. */
+export function partName(role, over = {}, placeholder = false) {
   const extra = OVERRIDE_KEYS.filter((k) => over[k] != null && over[k] !== "").map((k) => `${k} ${over[k]}`);
-  return [roleName(role), ...extra].join(" · ");
+  return [roleName(role), ...extra, ...(placeholder ? ["template"] : [])].join(" · ");
 }
 export function parsePartName(name) {
   const [head, ...rest] = String(name || "").split(" · ");
   const over = {};
   for (const r of rest) { const i = r.indexOf(" "); if (i > 0 && OVERRIDE_KEYS.includes(r.slice(0, i))) over[r.slice(0, i)] = r.slice(i + 1); }
   if (over.size != null) over.size = Number(over.size) || undefined;
-  return { role: head.toLowerCase().replace(/\s*\d+$/, ""), over };
+  return { role: head.toLowerCase().replace(/\s*\d+$/, ""), over, placeholder: rest.includes("template") };
 }
 
 /** Page `index` of the document → its bounds, content box and the parts on
@@ -683,15 +689,17 @@ export function designPage(doc, index) {
   const items = all
     .filter((it) => !it.hidden && !it.locked && !isDecoName(it.name))
     .map((it) => {
-      const { role: named, over } = parsePartName(it.name);
+      const { role: named, over, placeholder } = parsePartName(it.name);
       const isText = /text/.test(String(it.kind)) || it.story != null;
       const isImage = /image|graphic/.test(String(it.kind)) || it.asset != null;
       if (!isText && !isImage) return null;
-      return { id: it.id, story: it.story, kind: isText ? "text" : "image", role: DESIGN_ROLES.includes(named) ? named : isText ? "body" : "image", over, bounds: it.bounds };
+      const ours = DESIGN_ROLES.includes(named);
+      return { id: it.id, story: it.story, kind: isText ? "text" : "image", role: ours ? named : isText ? "body" : "image", named: ours, over, placeholder, bounds: it.bounds };
     })
     .filter(Boolean)
     .sort((a, b) => a.bounds[1] - b.bounds[1]);
-  return { index: i, spread: p.spread, bounds: [x0, y0, x1, y1], content, items, look: lookOf(all) };
+  const marker = all.find((it) => String(it.name || "").startsWith(TEMPLATE_PREFIX));
+  return { index: i, spread: p.spread, bounds: [x0, y0, x1, y1], content, items, look: lookOf(all), template: marker ? String(marker.name).slice(TEMPLATE_PREFIX.length).trim() : null, others: all.filter((it) => !isDecoName(it.name)) };
 }
 
 /** A role for text sent without one: short text heads the page (headline,
@@ -751,6 +759,8 @@ async function layoutPage(index, lookArg) {
   const doc = await designDoc();
   const page = designPage(doc, index);
   if (!page?.items.length) return { look: null, issues: [] };
+  // A page from a template keeps the template's design unless a look is asked for.
+  if (page.template && !pickLook(lookArg)) return fitTemplate(page);
   const links = (await callTool("designcraft", "execute", { command: "links.list", params: {} })).json || [];
   const linkOf = (id) => (Array.isArray(links) ? links : []).find((l) => (l.uses || []).some((u) => u.id === id));
   const parts = [];
@@ -807,16 +817,23 @@ async function composeDesign(opts) {
     return designSummary(page.index, lay, opts, `Restyled the page: ${lay.look}.`);
   }
   const role = DESIGN_ROLES.includes(String(opts.role)) ? String(opts.role) : opts.path ? "image" : autoRole(page.items, text);
-  let target = role !== "image" && ONE_PER_PAGE.has(role) && !opts.add ? page.items.find((it) => it.role === role) : null;
+  const tpl = page.template && !pickLook(opts.look);
+  // On a template page, new words go into the template's frame for that part
+  // (the first one still holding the template's text), and a picture into its
+  // first picture frame still holding the template's picture (else the main one).
+  let target = role === "image" ? null
+    : tpl && !opts.add ? page.items.find((it) => it.role === role && it.placeholder) || page.items.find((it) => it.role === role)
+    : ONE_PER_PAGE.has(role) && !opts.add ? page.items.find((it) => it.role === role) : null;
   let replaced = false;
   if (role === "image") {
     if (!opts.path) throw httpError(400, "image needs a picture");
-    const into = opts.replace ? page.items.find((it) => it.kind === "image") : null;
+    const imgs = page.items.filter((it) => it.kind === "image");
+    const into = tpl && !opts.add ? imgs.find((it) => it.placeholder) || [...imgs].sort((a, b) => area(b.bounds) - area(a.bounds))[0] : opts.replace ? imgs[0] : null;
     await dc("selection.set", { ids: [] });
     const r = await mustCall("designcraft", "place_image", into ? { path: opts.path, frame: into.id } : { path: opts.path, spread: page.spread, x: page.content.left, y: page.content.top, width: W });
     const id = into?.id ?? r.json?.id;
     if (id == null) throw httpError(422, `DesignCraft placed the picture but didn't say where: ${r.text}`);
-    if (!into) await dc("object.rename", { id, name: "Image" });
+    if (!into || into.placeholder) await dc("object.rename", { id, name: partName("image", into?.over || {}) });
     replaced = !!into;
   } else {
     // No text with a part that's there: restyle it ("make the headline red").
@@ -829,7 +846,7 @@ async function composeDesign(opts) {
       target = { id: r.json?.id, over: {} };
     }
     const keep = target.over || {};
-    await dc("object.rename", { id: target.id, name: partName(role, { ...keep, ...over }) });
+    await dc("object.rename", { id: target.id, name: partName(role, { ...keep, ...over }, !text && !!target.placeholder) });
   }
   if (opts.layout === false) return designSummary(page.index, { issues: [] }, opts);
   const lay = await layoutPage(page.index, opts.look);
@@ -841,9 +858,217 @@ async function composeDesign(opts) {
 let composeLock = Promise.resolve();
 function serialCompose(b) {
   if (b.app && b.app !== "designcraft") throw httpError(400, "compose is for DesignCraft pages");
-  const run = composeLock.then(() => composeDesign(b));
+  const run = composeLock.then(() => (b._do ? b._do(b) : composeDesign(b)));
   composeLock = run.catch(() => {});
   return run;
+}
+
+const area = (b) => (b[2] - b[0]) * (b[3] - b[1]);
+const LOOK_USES = "bold: event flyer; cinematic: book cover, movie poster; editorial: magazine; swiss: modern; classic: elegant; minimal: calm; split: announcement; pop: fun";
+
+/** What the design studio panel shows: whether the window is open, the
+ *  document, the page's parts (as a page edit returns them) and a picture of
+ *  the page, inline so previews don't pile up in the workspace. */
+async function designState(opts) {
+  const windowOpen = await portOpen(APPS.designcraft.control);
+  if (!installed("designcraft")) return { installed: false, window_open: false, document: null };
+  let doc = null;
+  try { doc = await designDoc(); } catch { /* no session yet */ }
+  if (!doc) return { installed: true, window_open: windowOpen, document: null };
+  const pages = (doc.spreads || []).reduce((n, sp) => n + (sp.pages || []).length, 0);
+  const index = opts.page == null ? pages - 1 : Math.max(0, Math.min(pages - 1, Number(opts.page) || 0));
+  const page = await designSummary(index, { issues: [] }, {}, null);
+  let preview = null;
+  try {
+    const r = await mustCall("designcraft", "render_page", { page: index, scale: Number(opts.scale) || 0.75 });
+    if (r.images?.[0]) preview = `data:${r.images[0].mime || "image/png"};base64,${r.images[0].base64}`;
+  } catch { /* an empty page renders nothing */ }
+  return { installed: true, window_open: windowOpen, document: doc.title || "Untitled", pages, page, preview };
+}
+const templateRow = (t) => ({ name: t.name, slug: t.slug, about: describeTemplate(t), width: t.width, height: t.height, parts: t.slots.map((x) => x.role), created: t.created, thumb: join(TEMPLATES, t.slug, "thumb.png") });
+
+/** Save page `page` (default: the last) of the open document as a template:
+ *  DesignCraft's own file with the pictures in it, a screenshot of the page,
+ *  and which frame is which part. Same name again replaces it. */
+async function saveTemplate(opts) {
+  const name = String(opts.name || "").trim().slice(0, 80);
+  if (!name) throw httpError(400, "Give the template a name (title).");
+  const doc = await designDoc();
+  if (!doc) throw httpError(422, "DesignCraft has no document open to save as a template.");
+  const page = designPage(doc, opts.page);
+  if (!page?.items.length && !page?.others.length) throw httpError(422, "That page is empty — design something first.");
+  const ser = (await dc("file.serialize", {})).json;
+  const buf = Buffer.from(String(ser?.base64 || ""), "base64");
+  const docJson = designcraftJson(buf);
+  const slots = guessSlots(page.items, page, docJson);
+  const slug = slugify(name);
+  const existed = !!findTemplate(TEMPLATES, slug) && findTemplate(TEMPLATES, slug).slug === slug;
+  mkdirSync(join(TEMPLATES, slug), { recursive: true });
+  const thumbPath = join(TEMPLATES, slug, "thumb.png");
+  await mustCall("designcraft", "render_page", { page: page.index, path: thumbPath });
+  const [x0, y0, x1, y1] = page.bounds;
+  const manifest = { name, slug, created: new Date().toISOString(), page: page.index, width: x1 - x0, height: y1 - y0, look: page.look, from: doc.title || null, slots };
+  writeTemplate(TEMPLATES, manifest, buf, null);
+  return { saved: name, replaced: existed, ...templateRow(manifest) };
+}
+
+/** Start a new document from a template: its file opens as a new document
+ *  (in the window, a new tab), other pages go, the parts are named by role
+ *  and marked as still holding the template's content, and everything else
+ *  on the page is named as decoration, so a look can replace it later. */
+async function useTemplate(opts) {
+  const t = findTemplate(TEMPLATES, opts.name);
+  if (!t) {
+    const all = listTemplates(TEMPLATES);
+    throw httpError(404, all.length ? `No template "${opts.name}". Saved templates: ${all.map((x) => x.name).join(", ")}.` : "No templates saved yet. Design a page, then save it as a template.");
+  }
+  const buf = readFileSync(join(TEMPLATES, t.slug, "template.designcraft"));
+  await dc("file.openBytes", { name: `${t.name}.designcraft`, base64: buf.toString("base64") });
+  let doc = await designDoc();
+  const pages = (doc.spreads || []).flatMap((sp) => sp.pages || []);
+  const drop = pages.map((_, i) => i).filter((i) => i !== t.page);
+  if (drop.length && pages.length > 1) await dc("layout.pages.delete", { pages: drop });
+  doc = await designDoc();
+  const page = designPage(doc, 0);
+  const steps = [];
+  const slotIds = new Set(t.slots.map((x) => x.id));
+  for (const sl of t.slots) {
+    const it = page.items.find((i) => i.id === sl.id);
+    if (it) steps.push({ command: "object.rename", params: { id: sl.id, name: partName(sl.role, it.over, true) } });
+  }
+  for (const it of page.others) if (!slotIds.has(it.id)) steps.push({ command: "object.rename", params: { id: it.id, name: `Deco tpl ${String(it.name || it.kind || "").replace(/[<>]/g, "").trim()}`.trim() } });
+  const [x0, y0] = page.bounds;
+  const m = (await dc("frame.create", { rect: [x0, y0, x0 + 1, y0 + 1], content: "unassigned" })).json;
+  steps.push(
+    { command: "object.rename", params: { id: m.id, name: `${TEMPLATE_PREFIX}${t.slug}` } },
+    { command: "object.stroke", params: { swatch: "[None]", ids: [m.id] } },
+    { command: "object.setFlags", params: { ids: [m.id], hidden: true } },
+    { command: "selection.set", params: { ids: [] } },
+  );
+  await mustCall("designcraft", "batch", { commands: steps });
+  return designSummary(0, { issues: [] }, opts, `A new document from the "${t.name}" template is open.`);
+}
+
+/** Lay out a template page: frames stay where the template put them. Text is
+ *  set at the size the template designed it at and steps down only when it
+ *  wouldn't otherwise fit; pictures fill their frame, cropped toward what the
+ *  eye goes to; a part the template has no frame for goes into free room,
+ *  set like the template's nearest text. */
+async function fitTemplate(page) {
+  const t = findTemplate(TEMPLATES, page.template);
+  const slots = t?.slots || [];
+  const issues = [];
+  const links = (await callTool("designcraft", "execute", { command: "links.list", params: {} })).json || [];
+  const linkOf = (id) => (Array.isArray(links) ? links : []).find((l) => (l.uses || []).some((u) => u.id === id));
+  for (const it of page.items.filter((i) => i.kind === "image")) {
+    const ref = await imageFocus(linkOf(it.id)?.path);
+    await mustCall("designcraft", "batch", { commands: [
+      { command: "object.fittingOptions", params: { fitting: "fillProportionally", align: ref, ids: [it.id] } },
+      { command: "object.fit", params: { mode: "fillProportionally", ids: [it.id] } },
+    ] });
+  }
+  for (const it of page.items.filter((i) => i.kind === "text")) {
+    const slot = slots.find((x) => x.id === it.id);
+    if (!slot) await placeNewPart(page, it, slots);
+    const cut = await fitTextSize(it.id, slot?.size, it.over);
+    if (cut) issues.push(`${roleName(it.role)} (id ${it.id}) is cut off even at the smallest size: shorten it.`);
+  }
+  await dc("selection.set", { ids: [] });
+  return { template: t?.name || page.template, issues };
+}
+
+async function charAttrs(id) {
+  await dc("selection.set", { ids: [id] });
+  return (await dc("type.selectionAttrs", {})).json || {};
+}
+
+/** Text frame `id` at its designed size if that fits, else stepped down
+ *  (leading with it) until it does. Returns true when even the smallest step
+ *  is cut off. Hand-set colour and font are applied too. */
+async function fitTextSize(id, designed, over = {}) {
+  const story = async () => (await dcJson("get_story", { frame: id })) || {};
+  const a = await charAttrs(id);
+  const cur = Number(a.chars?.size) || null;
+  const lead = a.chars?.leading?.kind === "points" && cur ? a.chars.leading.value / cur : null;
+  const extra = {};
+  if (over.color) {
+    const name = `CC ${String(over.color).toUpperCase()}`;
+    const doc = await designDoc();
+    if (!(doc.swatches || []).some((sw) => (sw.name || sw) === name)) await dc("swatch.create", { color: over.color, name });
+    extra.fill = name;
+  }
+  if (over.font) extra.fontFamily = over.font;
+  const setSize = async (size) => { await dc("selection.set", { ids: [id] }); await dc("type.char", { attrs: { size, ...(lead ? { leading: { kind: "points", value: Math.round(size * lead * 10) / 10 } } : {}), ...extra } }); };
+  const start = Number(over.size) || designed || cur;
+  if (!start) return false;
+  if (Object.keys(extra).length || (cur && Math.abs(cur - start) > 0.25)) await setSize(start);
+  let s = await story();
+  let size = start;
+  for (let k = 0; s.overset != null && k < 14 && size > Math.max(6, start * 0.4); k++) {
+    size = Math.round(size * 0.92 * 2) / 2;
+    await setSize(size);
+    s = await story();
+  }
+  return s.overset != null;
+}
+
+/** How deep text frame `id` needs to be for its text: the shallowest height
+ *  with nothing cut off (the frame is put back as it was). */
+async function usedHeight(id, bounds) {
+  const [x0, y0, x1, y1] = bounds;
+  let lo = 4, hi = y1 - y0;
+  const fits = async (h) => { await dc("transform.set", { height: h, ref: 0, ids: [id] }); return ((await dcJson("get_story", { frame: id })) || {}).overset == null; };
+  if (!(await fits(hi))) { await dc("transform.set", { x: x0, y: y0, width: x1 - x0, height: y1 - y0, ref: 0, ids: [id] }); return hi; }
+  for (let k = 0; k < 9 && hi - lo > 2; k++) { const mid = (lo + hi) / 2; if (await fits(mid)) hi = mid; else lo = mid; }
+  await dc("transform.set", { x: x0, y: y0, width: x1 - x0, height: y1 - y0, ref: 0, ids: [id] });
+  return Math.ceil(hi);
+}
+
+/** A part the template has no frame for (a caption on a page without one):
+ *  set like the template's nearest kind of text, in the free band the role
+ *  belongs in — a footer at the foot, a headline at the top, anything else
+ *  in the biggest gap. */
+async function placeNewPart(page, it, slots) {
+  const { left, right, top, bottom } = page.content;
+  const like = { headline: ["headline", "subhead"], subhead: ["subhead", "headline", "body"], footer: ["footer", "caption", "body"], caption: ["caption", "footer", "body"], body: ["body", "subhead"] }[it.role] || ["body"];
+  const ref = like.map((r) => page.items.find((i) => i.kind === "text" && i.id !== it.id && i.role === r)).find(Boolean);
+  if (ref) {
+    const a = (await charAttrs(ref.id)).chars || {};
+    const pick = Object.fromEntries(["fontFamily", "fontStyle", "size", "leading", "tracking", "capitalization", "fill"].filter((k) => a[k] != null).map((k) => [k, a[k]]));
+    if (["footer", "caption"].includes(it.role) && ref.role !== it.role && pick.size) pick.size = Math.max(7, Math.round(pick.size * 0.8));
+    // Running text borrowed from a label or heading: the family and colour,
+    // but plain, readable setting.
+    if (it.role === "body" && ref.role !== "body") {
+      Object.assign(pick, { capitalization: "normal", tracking: 0, size: Math.max(10, Math.round((right - left) / 46)), leading: { kind: "auto" } });
+      if (!/Italic/.test(String(pick.fontStyle))) pick.fontStyle = "Regular";
+      const head = page.items.find((i) => i.kind === "text" && i.role === "headline" && i.id !== it.id);
+      if (head) { const f = (await charAttrs(head.id)).chars?.fill; if (f) pick.fill = f; }
+    }
+    await dc("selection.set", { ids: [it.id] });
+    await dc("type.char", { attrs: pick });
+    if (it.role === "body") await dc("type.para", { attrs: { align: "left", hyphenate: false } });
+  }
+  // Free vertical bands inside the margins, between the other parts — a text
+  // frame counts only as deep as its text goes.
+  const taken = [];
+  for (const i of page.items.filter((x) => x.id !== it.id)) taken.push([i.bounds[1], i.kind === "text" ? i.bounds[1] + (await usedHeight(i.id, i.bounds)) : i.bounds[3]]);
+  taken.sort((a, b) => a[0] - b[0]);
+  const gaps = [];
+  let y = top;
+  for (const [a, b] of taken) { if (a > y + 4) gaps.push([y, Math.min(a, bottom)]); y = Math.max(y, b); }
+  if (bottom > y + 4) gaps.push([y, bottom]);
+  const W = right - left;
+  await dc("transform.set", { x: left, y: top, width: W, height: 400, ref: 0, ids: [it.id] });
+  const s = (await dcJson("get_story", { frame: it.id })) || {};
+  const a = (await charAttrs(it.id)).chars || {};
+  const size = Number(a.size) || 12;
+  const h = Math.ceil((s.lines || 1) * size * 1.3 + size * 0.4);
+  const gap = it.role === "footer" ? gaps.filter((g) => g[1] - g[0] >= h).pop() || gaps[gaps.length - 1]
+    : it.role === "headline" ? gaps.find((g) => g[1] - g[0] >= h) || gaps[0]
+    : [...gaps].sort((p, q) => (q[1] - q[0]) - (p[1] - p[0]))[0];
+  const [g0, g1] = gap || [bottom - h, bottom];
+  const yy = it.role === "footer" ? Math.max(g0, g1 - h) : g0 + Math.min(12, Math.max(0, (g1 - g0 - h) / 2));
+  await dc("transform.set", { x: left, y: yy, width: W, height: Math.max(h, Math.min(h, g1 - yy)), ref: 0, ids: [it.id] });
 }
 
 /** The page after an edit, compact: its look, what's on it, top first, and
@@ -864,11 +1089,23 @@ async function designSummary(index, lay, opts, note) {
     if (Object.keys(it.over || {}).length) row.set_by_hand = it.over;
     items.push(row);
   }
-  const others = LOOK_NAMES.filter((l) => l !== (lay.look || page.look));
+  if (page.template && !lay.look) {
+    const t = findTemplate(TEMPLATES, page.template);
+    const placeholders = page.items.filter((it) => it.placeholder).map((it) => ({ role: it.role, id: it.id, ...(it.kind === "text" ? { text: items.find((r) => r.id === it.id)?.text } : { picture: "the template's own" }) }));
+    return {
+      page: page.index, template: t?.name || page.template, items,
+      ...(placeholders.length ? { placeholders } : {}),
+      ...(issues.length ? { issues } : {}), ...(note ? { note } : {}),
+      looks: `a look (${LOOK_NAMES.join(", ")}) replaces the template's design`,
+    };
+  }
   return {
     page: page.index, look: lay.look || page.look, items,
     ...(issues.length ? { issues } : {}), ...(note ? { note } : {}),
-    other_looks: others.join(", "),
+    // Every look and what it's for, the current one included: listing only
+    // the others sent "now try it as a movie poster" on a page that was already
+    // cinematic to bold (2 of 4 sessions, 2026-10-14).
+    looks: LOOK_USES,
   };
 }
 
@@ -1069,6 +1306,11 @@ const ROUTES = {
   "POST /open": (b) => openApp(b.app, b.path, b),
   "POST /import": (b) => (b.text != null ? importText(b.app, b.text, b) : importFile(b.app, b.path, b)),
   "POST /compose": (b) => serialCompose(b),
+  "POST /template/save": (b) => serialCompose({ ...b, _do: saveTemplate }),
+  "POST /template/use": (b) => serialCompose({ ...b, _do: useTemplate }),
+  "POST /design/state": (b) => serialCompose({ ...b, _do: designState }),
+  "POST /template/list": () => ({ templates: listTemplates(TEMPLATES).map(templateRow) }),
+  "POST /template/delete": (b) => { const t = findTemplate(TEMPLATES, b.name); if (!t || !deleteTemplate(TEMPLATES, t.slug)) throw httpError(404, `No template "${b.name}".`); return { deleted: t.name }; },
   "POST /export": (b) => exportDoc(b.app, b.format, b),
   "POST /transfer": (b) => transfer(b.from, b.to, b),
 };
@@ -1087,6 +1329,12 @@ const server = createServer(async (req, res) => {
       const path = join(WS, "in", `${Date.now()}-${name}`);
       writeFileSync(path, await body(req));
       return send(200, fileInfo(path));
+    }
+    if (url.pathname === "/template/thumb" && req.method === "GET") {
+      const t = findTemplate(TEMPLATES, String(url.searchParams.get("slug") || ""));
+      const path = t && join(TEMPLATES, t.slug, "thumb.png");
+      if (!path || !existsSync(path)) return send(404, { error: "no such template" });
+      return send(200, readFileSync(path), "image/png");
     }
     if (url.pathname === "/files" && req.method === "GET") {
       const path = inWorkspace(url.searchParams.get("path"));

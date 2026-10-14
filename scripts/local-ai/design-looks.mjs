@@ -352,7 +352,10 @@ function setText(part, t, width, opt = {}) {
   // DesignCraft kerns and composes whole paragraphs, so it can break a line
   // earlier or later than the estimate; `fudge` (learned from the page, see
   // layoutLook) narrows or widens the measure the estimate uses.
-  const mw = width / (part.fudge || 1);
+  // 3% narrower than the frame: headlines are sized right to the edge, where
+  // DesignCraft's measure (within ~1% of ours, more with wide tracking) would
+  // otherwise break the longest word ("SUMME / R").
+  const mw = (width * 0.97) / (part.fudge || 1);
   if (!part.over?.size && opt.fit) size = fitSize(part.text, t, mw, { ...opt.fit, max: Math.max(opt.fit.min, opt.fit.max * SQUEEZE) }).size;
   const tt = part.over?.font ? overFont(t, part.over.font) : t;
   const n = part.dcLines?.size === size && part.dcLines?.w === Math.round(width) ? part.dcLines.lines : wrap(part.text, tt, size, mw).lines.length;
@@ -382,6 +385,25 @@ export function planLook(look, page, parts, pal) {
       if (!planIssues(plan, page).length) break;
     }
   } finally { SQUEEZE = 1; }
+  // Balanced headings: the tightest measure that keeps the line count, so a
+  // two-line title doesn't leave one word on its own ("Summer Book / Fair" →
+  // "Summer / Book Fair"). Done by narrowing the frame (centred ones stay
+  // centred); DesignCraft's own balancing splits words.
+  for (const f of plan.frames) {
+    if (!f.text || !["headline", "subhead"].includes(f.role) || f.text.lines < 2) continue;
+    const part = parts.find((p) => p.id === f.id);
+    if (!part || part.dcLines) continue;
+    const k = 0.97 / (part.fudge || 1), t = f.text.t, size = f.text.size, n = f.text.lines;
+    const fits = (w) => { const r = wrap(part.text, t, size, w * k); return !r.tooWide && r.lines.length <= n; };
+    let lo = f.box[2] * 0.4, hi = f.box[2];
+    if (fits(lo)) continue;
+    for (let i = 0; i < 18; i++) { const mid = (lo + hi) / 2; if (fits(mid)) hi = mid; else lo = mid; }
+    const bw = Math.ceil(hi + 1);
+    if (bw >= f.box[2] - 2) continue;
+    const dx = f.text.align === "center" ? (f.box[2] - bw) / 2 : f.text.align === "right" ? f.box[2] - bw : 0;
+    f.box = [f.box[0] + dx, f.box[1], bw, f.box[3]];
+    f.text = { ...f.text, w: bw };
+  }
   // A colour picked by hand keeps its hue but is lightened or darkened until
   // it reads on what's behind it (red on navy becomes a brighter red).
   for (const f of plan.frames) {
@@ -822,7 +844,10 @@ function overlaps(a, b) {
  *  them: the background carries the look ("Look bold"), the rest "Deco …". */
 export const LOOK_PREFIX = "Look ";
 export const DECO_PREFIX = "Deco ";
-export const isDecoName = (n) => String(n || "").startsWith(LOOK_PREFIX) || String(n || "").startsWith(DECO_PREFIX);
+/** A page started from a saved template carries a hidden "Template <slug>"
+ *  marker (craft-bridge.mjs useTemplate); a look clears it with the rest. */
+export const TEMPLATE_PREFIX = "Template ";
+export const isDecoName = (n) => [LOOK_PREFIX, DECO_PREFIX, TEMPLATE_PREFIX].some((pre) => String(n || "").startsWith(pre));
 export function lookOf(items) {
   const bg = (items || []).find((it) => String(it.name || "").startsWith(LOOK_PREFIX));
   const name = bg ? String(bg.name).slice(LOOK_PREFIX.length).trim() : null;
@@ -831,9 +856,11 @@ export function lookOf(items) {
 
 const swatchName = (hex) => `CC ${hex.toUpperCase()}`;
 
-export async function applyPlan(call, plan, doc) {
+export async function applyPlan(call, plan, doc, page) {
   const exec = (command, params = {}) => call("execute", { command, params });
-  const items = (doc?.spreads || []).flatMap((sp) => sp.items || []);
+  // Only this page's: a look on page 2 mustn't clear page 1's.
+  const onPage = (it) => !page || !Array.isArray(it.bounds) || (() => { const cx = (it.bounds[0] + it.bounds[2]) / 2, cy = (it.bounds[1] + it.bounds[3]) / 2; return cx >= page.x && cx <= page.x + page.W && cy >= page.y && cy <= page.y + page.H; })();
+  const items = (doc?.spreads || []).flatMap((sp) => sp.items || []).filter(onPage);
   const swatches = new Set((doc?.swatches || []).map((s) => (typeof s === "string" ? s : s.name)));
   const swatch = async (hex) => {
     const name = swatchName(hex);
@@ -887,7 +914,7 @@ export async function applyPlan(call, plan, doc) {
       tracking: t.t.tracking || 0, capitalization: t.t.caps ? "allCaps" : "normal",
       fill: await swatch(t.color), fillTint: 1,
     } } });
-    steps.push({ command: "type.para", params: { attrs: { align: t.align, hyphenate: f.role === "body" && (t.columns || 1) > 1, balanceRagged: f.role === "headline" || f.role === "subhead", spaceBefore: 0, spaceAfter: f.role === "body" ? Math.round(t.size * 0.6) : 0 } } });
+    steps.push({ command: "type.para", params: { attrs: { align: t.align, hyphenate: f.role === "body" && (t.columns || 1) > 1, balanceRagged: false /* DesignCraft 0.7.1 splits words to balance ("SUMME / R BOOK") */, spaceBefore: 0, spaceAfter: f.role === "body" ? Math.round(t.size * 0.6) : 0 } } });
   }
   // Stacking, back to front: the look's background, the photos, the look's
   // fades and blocks, then the type.
@@ -936,7 +963,7 @@ export async function layoutLook(call, look, page, parts, pal) {
   let plan, res;
   for (let pass = 0; pass < 4; pass++) {
     plan = planLook(look, page, parts, pal);
-    res = await applyPlan(call, plan, await call("inspect_document", {}));
+    res = await applyPlan(call, plan, await call("inspect_document", {}), page);
     const off = plan.frames.filter((f) => f.text && ((res.lines[f.id] != null && res.lines[f.id] !== f.text.lines) || res.grew[f.id]));
     if (process.env.CC_LOOK_DEBUG) console.error("pass", pass, plan.frames.filter((f) => f.text).map((f) => `${f.role} ${f.text.size}pt plan ${f.text.lines} dc ${res.lines[f.id]} h ${Math.round(f.box[3])}`).join(" / "));
     if (!off.length) break;

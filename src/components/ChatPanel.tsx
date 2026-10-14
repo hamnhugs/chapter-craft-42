@@ -26,6 +26,8 @@ import { chatReady, describeModel } from "@/lib/providers/registry";
 import { useDictation } from "@/hooks/useDictation";
 import { requestSettingsSection } from "@/lib/settingsNav";
 import VoiceNotesPanel, { appendVoiceNote, deleteVoiceNote } from "@/components/VoiceNotesPanel";
+import DesignStudioPanel from "@/components/DesignStudioPanel";
+import { isDesignEvent } from "@/lib/craftApps";
 import { classifyNotePress, NOTE_PRESS } from "@/lib/notePress";
 // Lazy: ResponseBlocks pulls recharts (~large) but only renders when a model emits chart blocks
 const ResponseBlocks = React.lazy(() => import("@/components/ResponseBlocks"));
@@ -211,6 +213,30 @@ const ChatPanel: React.FC = () => {
 
   // ---- Voice features absorbed from the former Echo (Voice) tab ----
   const [notesPanelOpen, setNotesPanelOpen] = useState(false);
+  // ── Design studio ────────────────────────────────────────────────────────
+  // Opens by itself the first time Counsel works in DesignCraft; once the
+  // user closes it, it stays closed (a chip above the composer brings it
+  // back) until they open it again. The latest DesignCraft event's position
+  // is the preview's refresh key.
+  const [designOpen, setDesignOpen] = useState(false);
+  const designDismissed = useRef(false);
+  const designKey = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const evs = messages[i].toolEvents || [];
+      const n = evs.filter(isDesignEvent).length;
+      if (n) return `${messages[i].id}:${n}`;
+    }
+    return "";
+  }, [messages]);
+  const designSeen = useRef<string | null>(null);
+  useEffect(() => {
+    // The first key after mount is history, not something that just happened.
+    if (designSeen.current === null) { designSeen.current = designKey; return; }
+    if (designKey && designKey !== designSeen.current) {
+      designSeen.current = designKey;
+      if (!designDismissed.current) setDesignOpen(true);
+    }
+  }, [designKey]);
   const [toolsOpen, setToolsOpen] = useState(false);
   // Configured in the Settings tab; read-only here.
   const [voiceQuickSearch] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_KEY) === "true");
@@ -1686,6 +1712,18 @@ const ChatPanel: React.FC = () => {
               ))}
             </div>
           )}
+          {designKey && !designOpen && (
+            <div className="px-1 pb-1">
+              <button
+                onClick={() => { designDismissed.current = false; setDesignOpen(true); }}
+                className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-full border border-outline-variant/30 text-on-surface-variant hover:text-primary hover:border-primary/50 transition-colors"
+                title="Templates, looks and the page's words, one click away"
+              >
+                <span className="material-symbols-outlined text-[14px]" aria-hidden>design_services</span>
+                Design studio
+              </button>
+            </div>
+          )}
           {pendingImages.length > 0 && (
             <div className="flex flex-wrap gap-2 px-1 pb-1">
               {pendingImages.map((p) => (
@@ -1954,6 +1992,14 @@ const ChatPanel: React.FC = () => {
         onClose={() => setWorkspaceOpen(false)}
       />
 
+      <DesignStudioPanel
+        open={designOpen}
+        onClose={() => { designDismissed.current = true; setDesignOpen(false); }}
+        refreshKey={designKey}
+        currentModel={selectedModel}
+        onAsk={(text) => { if (!isLoading) sendMessage(text); else toast("Counsel is still answering — try again in a moment."); }}
+      />
+
       <VoiceNotesPanel open={notesPanelOpen} onClose={() => setNotesPanelOpen(false)} />
 
       {/* Everything the composer's chip row used to carry. Mounted here, beside
@@ -1977,6 +2023,8 @@ const ChatPanel: React.FC = () => {
         onToggleWorkspace={() => setWorkspaceOpen((v) => !v)}
         notesOpen={notesPanelOpen}
         onToggleNotes={() => setNotesPanelOpen((v) => !v)}
+        designOpen={designOpen}
+        onToggleDesign={() => setDesignOpen((v) => { designDismissed.current = v; return !v; })}
         deepResearch={chatDeepResearch}
         deepResearchAllowed={isPaid}
         onToggleDeepResearch={() => {

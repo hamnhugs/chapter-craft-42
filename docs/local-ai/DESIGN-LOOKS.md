@@ -22,7 +22,7 @@ places and checks everything. The model never handles coordinates.
 From the chat: `craft send {app: designcraft, look: "cinematic"}` restyles the whole
 page, and a look can also ride along with any part. "Make it look amazing" is now
 treated as a clear request: the tool card no longer counts taste as a reason to ask.
-The result always carries `look` and `other_looks`, so the model can offer another one.
+The result always carries `look` and `looks` (every look and what it is for), so the model can offer another one.
 Hand-set changes such as "make the headline red" are kept in the part's name
 (`Headline · color #E63946`), and every later layout keeps them.
 
@@ -88,6 +88,14 @@ New page sizes besides DesignCraft's own: `Poster` (18×24 in), `Square`, `Story
 Google Fonts families into `~/.local/share/fonts/chapter-craft` as static TTFs, one per
 weight, about 85 files. DesignCraft reads that folder in the window and headless.
 Without them the looks fall back to the bundled Source Sans 3 and still lay out.
+
+## Templates and the design studio
+
+A page you like can be saved as a template: the whole page, with its pictures and a
+screenshot. A template can start the next document, with the new words fitted into the
+same frames. The chat's **Design studio** panel puts templates, looks, the page's words,
+pictures, page sizes and export one click away. How both work: [CRAFTS.md](CRAFTS.md),
+section "Templates and the design studio".
 
 ## Seeing and testing the looks
 

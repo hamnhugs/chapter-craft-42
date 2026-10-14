@@ -23,7 +23,7 @@ export const PAGE_LOOKS = ["bold", "cinematic", "editorial", "swiss", "classic",
 /** Page sizes beyond DesignCraft's own presets, in points: an 18×24 in
  *  poster, a square and a 9:16 social post, a 6×9 in book cover. */
 export const EXTRA_PRESETS: Record<string, [number, number]> = { poster: [1296, 1728], square: [720, 720], story: [540, 960], book: [432, 648], "book cover": [432, 648], cover: [432, 648], instagram: [720, 900] };
-export const CRAFT_ACTIONS = ["status", "open", "find_commands", "run", "inspect", "preview", "send", "export", "transfer", "app_tools", "call"] as const;
+export const CRAFT_ACTIONS = ["status", "open", "find_commands", "run", "inspect", "preview", "send", "export", "transfer", "save_template", "use_template", "app_tools", "call"] as const;
 type CraftAction = (typeof CRAFT_ACTIONS)[number];
 
 const BASE = "/local/crafts";
@@ -40,7 +40,7 @@ export const CRAFT_TOOL_DEFINITION = {
     // slimToolDef) with the action guide inside it: parameter descriptions are
     // clipped to 200, which cut the guide off after four actions.
     description:
-      "Edit photos (layers, text, colour), design flyers, posters, covers and books (PDF, EPUB) and edit video (MP4) in the user's apps PhotoCraft (like Photoshop), DesignCraft (like InDesign) and FilmCraft (like Premiere Pro). A clear, undoable ask: just do it, writing any wording yourself from the book in context. Ask ONE short question with 2-4 choices when it's unclear which layer or item is meant; always ask before merge, flatten or delete. Keep the user's layers. Actions: send/open puts image_id, chapter_id or text in (DesignCraft: with `role`; `look` designs the page); find_commands, then run (with `layer`); export; transfer; inspect/preview; status; app_tools/call.",
+      "Edit photos (layers, text, colour), design flyers, posters, covers and books and edit video in the user's apps PhotoCraft (like Photoshop), DesignCraft (like InDesign) and FilmCraft (like Premiere Pro). A clear, undoable ask: just do it, writing any wording yourself from the book in context. Ask ONE short question with 2-4 choices when it's unclear which layer or item is meant; always ask before merge, flatten or delete. Keep the user's layers. Actions: send/open puts image_id, chapter_id or text in (DesignCraft: `role`; `look` designs the page); save_template/use_template (title; none = list); find_commands, then run (with `layer`); export; transfer; inspect/preview; status; app_tools/call.",
     parameters: {
       type: "object",
       properties: {
@@ -65,7 +65,7 @@ export const CRAFT_TOOL_DEFINITION = {
         to: { type: "string", enum: [...CRAFT_APPS], description: "transfer: the app that receives `app`'s work." },
         format: { type: "string", description: "export/transfer: png, jpg, webp, psd (PhotoCraft); png, pdf, epub, html, txt, idml (DesignCraft); png (one frame), mp4, gif, wav, srt (FilmCraft). Default png." },
         to_library: { type: "boolean", description: "export with format pdf or epub: also add it to the user's bookshelf as a book." },
-        title: { type: "string", description: "export: a name for the result." },
+        title: { type: "string", description: "export: a name for the result. save_template/use_template: the template's name (DesignCraft)." },
         page: { type: "integer", description: "preview/export in DesignCraft: page index, 0 = first." },
         seconds: { type: "number", description: "preview/export in FilmCraft: the moment to show, in seconds." },
         tool: { type: "string", description: "call: the app tool's name, from app_tools." },
@@ -85,7 +85,7 @@ const AFTER_EDIT =
 /** The same for a DesignCraft page, whose parts the bridge has laid out and
  *  checked (cut-off text, off the page) already. */
 const AFTER_PAGE =
-  "Done — the page is laid out in its `look`. `items` lists it top first. Fix anything in `issues` now (shorter text). Tell the user in a line what's on the page, then offer 1-2 short next ideas (a subhead, another look from `other_looks`, export to PDF).";
+  "Done — the page is laid out in its `look`. `items` lists it top first. Fix anything in `issues` now (shorter text). Tell the user in a line what's on the page, then offer 1-2 short next ideas (a subhead, another look from `looks`, export to PDF).";
 
 /** The note after a page edit, leading with what the page still lacks: with
  *  only the picture placed, Qwen3-4B replied about the picture and dropped the
@@ -284,6 +284,8 @@ export function resolveAction(args: any): string {
   const hasSteps = Array.isArray(args?.steps) && args.steps.length > 0;
   const hasContent = !!(args?.image_id || args?.chapter_id || args?.role || args?.look || (typeof args?.text === "string" && args.text.trim()));
   if (action === "run" && !hasSteps && args?.query) return "find_commands";
+  // "create_template", "apply template", "load_template"…
+  if (/templ/.test(action)) return /save|creat|make|store|new/.test(action) ? "save_template" : "use_template";
   if ((CRAFT_ACTIONS as readonly string[]).includes(action)) return action;
   // No action and a page size: "open a flyer-sized page" (Qwen3-4B, 2026-10-13).
   if (args?.options?.preset || (args?.options?.width && args?.options?.height)) return "open";
@@ -411,6 +413,45 @@ export async function runCraftTool(args: any, deps: CraftDeps): Promise<Outcome>
         const r = await bringBack(app, file, args, deps);
         return ok(r, `Exported ${String(args.format || "png").toUpperCase()} from ${L}`);
       }
+      case "save_template": {
+        if (app !== "designcraft") throw new CraftError("Templates are for DesignCraft pages.");
+        const name = String(args.title || args.text || "").trim();
+        if (!name) throw new CraftError("save_template needs a title: the template's name (ask the user if they didn't give one).");
+        const r = await bridge("/template/save", { app, name, page: args.page });
+        // The screenshot, so the user sees what was kept.
+        let shown: any = {};
+        try {
+          const dataUrl = await blobToDataUrl(await fileBlob(r.thumb));
+          const ref: ChatImageRef = await storeGeneratedImage({ prompt: `Template: ${r.name}`, caption: `DesignCraft template "${r.name}"`, model: "local:designcraft", dataUrl, mime: "image/png" });
+          shown = { __images: [ref] };
+        } catch { /* the template is saved either way */ }
+        return ok({ ok: true, template: r.about, replaced: r.replaced, note: `Saved${r.replaced ? " (replacing the old one)" : ""} with a screenshot, shown to the user. Later: use_template with title "${r.name}" starts a new document from it, then send the new parts by role.`, ...shown }, `Saved the "${r.name}" template`);
+      }
+      case "use_template": {
+        if (app !== "designcraft") throw new CraftError("Templates are for DesignCraft pages.");
+        const name = String(args.title || args.text || "").trim();
+        if (!name || args.options?.list) {
+          const r = await bridge("/template/list", {});
+          return ok({ templates: r.templates.map((t: any) => t.about), note: r.templates.length ? "Ask which one, or use the one the user named: use_template with its title." : "No templates yet. Design a page, then save_template with a name." }, "Listed DesignCraft templates");
+        }
+        if (args.options?.delete) {
+          const r = await bridge("/template/delete", { name });
+          return ok({ ok: true, deleted: r.deleted }, `Deleted the "${r.deleted}" template`);
+        }
+        await bridge("/open", { app });
+        const r = await bridge("/template/use", { app, name });
+        // What to do next, as a call: Qwen3-4B stopped after opening the
+        // template and left its old words in place (4/4, 2026-10-14); it
+        // follows a spelled-out next call (find_commands' `next` works the same).
+        const first = (r.placeholders || []).find((x: any) => x.role !== "image") || (r.placeholders || [])[0];
+        return ok({
+          ok: true,
+          next: first
+            ? `Now do it: the page still shows the template's old words. Call craft with action "send", app "designcraft", role "${first.role}", text = the new ${first.role} for what the user asked. Then the same for each other part in \`placeholders\` (${(r.placeholders || []).map((x: any) => x.role).join(", ")}), with image_id for a picture if the user gave one. Write the words yourself; don't ask.`
+            : "The template is open. Put the user's content in with send + role.",
+          ...r,
+        }, `Started a new page from the "${r.template}" template`);
+      }
       case "transfer": {
         if (!isApp(args.to)) throw new CraftError(`to must be one of: ${CRAFT_APPS.join(", ")}`);
         const r = await bridge("/transfer", { from: app, to: args.to, format: args.format, page: args.page, seconds: args.seconds, ...(args.options || {}) });
@@ -436,4 +477,43 @@ export async function runCraftTool(args: any, deps: CraftDeps): Promise<Outcome>
     const message = e instanceof Error ? e.message : String(e);
     return { result: { error: message, ...(e instanceof CraftError ? {} : { retriable: false }) }, event: { name, summary: message.slice(0, 120), ok: false } };
   }
+}
+
+// ---------------------------------------------------------------------------
+// The design studio panel (DesignStudioPanel.tsx) reads DesignCraft's state
+// directly; every change it makes goes through runCraftTool, the same path as
+// the chat's craft tool, so a button and a request behave the same.
+// ---------------------------------------------------------------------------
+
+export interface DesignState {
+  installed: boolean;
+  window_open: boolean;
+  document: string | null;
+  pages?: number;
+  page?: {
+    page: number; look?: string | null; template?: string;
+    items: { id: number; role: string; text?: string; set_by_hand?: Record<string, unknown> }[];
+    placeholders?: { role: string; id: number; text?: string }[];
+    issues?: string[];
+  };
+  preview?: string | null;
+}
+export interface DesignTemplate { name: string; slug: string; about: string; width: number; height: number; parts: string[]; created: string }
+
+export async function designState(page?: number): Promise<DesignState> {
+  return bridge("/design/state", page == null ? {} : { page });
+}
+export async function designTemplates(): Promise<DesignTemplate[]> {
+  return (await bridge("/template/list", {})).templates || [];
+}
+/** A template's screenshot as an object URL (revoke it when done). */
+export async function templateThumbUrl(slug: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${BASE}/template/thumb?slug=${encodeURIComponent(slug)}`, { headers: HEADERS, signal: AbortSignal.timeout(20_000) });
+    return res.ok ? URL.createObjectURL(await res.blob()) : null;
+  } catch { return null; }
+}
+/** Whether a craft tool event touched DesignCraft (auto-opens the studio). */
+export function isDesignEvent(ev: { name?: string; summary?: string } | undefined): boolean {
+  return ev?.name === "craft" && /DesignCraft|template/i.test(String(ev.summary || ""));
 }

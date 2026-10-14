@@ -126,7 +126,7 @@ changing `src/` (`scripts/local-up.sh` does it when the code changed).
   the subhead, then body. Text over 1,200 characters and `chapter_id` still flow
   across threaded pages, as before.
 - **Every page edit returns** `look`, `items` (role, id, box, text, top first),
-  `other_looks` and `issues`: cut-off text, type off the page, type colliding, type on a
+  `looks` and `issues`: cut-off text, type off the page, type colliding, type on a
   picture without a fade, and low contrast.
 - **`open` with `options.preset`** ('Letter', 'A4', 'Tabloid', 'Poster' 18×24 in,
   'Square', 'Story' 9:16, 'Instagram' 4:5, 'Book' 6×9 in, or `width`+`height`) starts a
@@ -152,6 +152,61 @@ turn it checks the page for cut-off text, items off the page, overlaps and colou
 text frame's box. Looks are excluded from these checks, and so is cinematic type on its
 faded photo. Results: `results/2026-10-13-designcraft-flyer.txt` (parts) and
 `results/2026-10-14-design-looks.txt` (looks: Qwen3-4B 6/6).
+
+## Templates and the design studio (2026-10-14)
+
+**Templates.** "Save this design as a template called Movie Night" stores one page in
+`crafts/workspace/templates/<slug>/` (`scripts/local-ai/design-templates.mjs`):
+- `template.designcraft` is DesignCraft's own file (`file.serialize`). Its pictures are
+  embedded, so it reopens exactly: fonts, gradients, effects, positions.
+- `thumb.png` is a screenshot of the page (`render_page`). It is shown in the chat when
+  the template is saved, and in the studio's gallery.
+- `manifest.json` lists the slots (which frame is the headline, picture, body…), the
+  type size each was designed at, and the page size. Frames the bridge named keep their
+  role. On a hand-made page the roles are guessed the way a reader takes the page in:
+  the biggest short type is the headline, small type on the bottom strip is the footer,
+  short italic type under a picture is the caption, the next-biggest short line is the
+  subhead, and the rest is body.
+
+`use_template` opens that file as a new document (a new tab in the window) and keeps
+only the template's page. It names the slots by role, marked `· template` while they
+still hold the template's own words or picture, and adds a hidden `Template <slug>`
+marker. New parts then go into the slots (`fitTemplate` in craft-bridge.mjs). Frames
+stay where the designer put them. Text starts at the size the template designed it at
+and steps down only when it wouldn't fit. A new picture fills the first slot still
+holding the template's picture, cropped toward the subject. A part the template has no
+frame for goes into the free band its role belongs in, styled like the template's
+nearest text. A `look` on a template page replaces the template's design. Craft
+actions: `save_template` (title) and `use_template` (title; none lists them;
+`options.delete` deletes one). Bridge: `/template/save|use|list|delete`,
+`GET /template/thumb?slug=`.
+
+**Design studio** (`src/components/DesignStudioPanel.tsx`). This is a panel beside the
+chat; it is full screen on phones.
+- **When it opens:** by itself the first time Counsel works in DesignCraft
+  (`isDesignEvent`). Once closed, it stays closed until reopened from the chip above the
+  composer or Tools › Design studio.
+- **What it shows:** the page as it is now (`/design/state` returns the page's parts and
+  an inline preview), and which parts still show template content.
+- **Tabs:**
+  - Templates: the screenshot gallery (use, delete), plus saving the current page under
+    a name.
+  - Looks: sample cards.
+  - Content: each part's words and colour, and a picture from the image library.
+  - Page: page sizes and export to PDF or PNG.
+- **Ask Counsel buttons** send a request to the chat.
+
+Every button goes through `runCraftTool`, the chat's own tool, so a click and a request
+do the same thing.
+
+Eval (`localDesignEval.test.ts`, now 8 turns, including "save this design as a
+template called Movie Night" and "use the Movie Night template to make a poster for
+our book club's film night"): Qwen3-4B passed 5/6. In every session that reached them,
+the template turns saved the template, opened a new document from it and wrote a new
+headline into it. After opening, the result carries a spelled-out `next` call. Without
+it, 4/4 sessions left the template's old words on the page. The model usually replaces
+only the headline. The other placeholders stay listed, and the studio flags them. The
+one failure was "movie poster" answered with bold on a page that was already cinematic.
 
 ## Measurements (2026-10-13, Qwen3-4B Q6_K)
 

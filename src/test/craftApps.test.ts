@@ -183,6 +183,33 @@ describe("DesignCraft page parts", () => {
   });
 });
 
+describe("DesignCraft templates", () => {
+  it("saves the page as a template and shows its screenshot", async () => {
+    replies["/template/save"] = (b) => ({ json: { saved: b.name, name: b.name, about: `${b.name}: 612×792 pt; parts headline, image`, thumb: "/ws/templates/x/thumb.png", replaced: false } });
+    const r = await runCraftTool({ action: "save_template", app: "designcraft", title: "Summer Fair" }, deps);
+    expect(r.event.ok).toBe(true);
+    expect(calls.find((c) => c.url.endsWith("/template/save"))!.body).toMatchObject({ name: "Summer Fair" });
+    expect(r.result.template).toMatch(/Summer Fair/);
+    expect((await runCraftTool({ action: "save_template", app: "designcraft" }, deps)).result.error).toMatch(/title/);
+  });
+
+  it("starts a new document from one, and lists them when none is named", async () => {
+    replies["/template/use"] = () => ({ json: { template: "Summer Fair", items: [], placeholders: [{ role: "headline", id: 3, text: "Summer Book Fair" }] } });
+    replies["/template/list"] = () => ({ json: { templates: [{ about: "Summer Fair: 612×792 pt; parts headline" }] } });
+    const r = await runCraftTool({ action: "use_template", app: "designcraft", title: "summer fair" }, deps);
+    expect(r.event.ok).toBe(true);
+    expect(calls.map((c) => c.url.replace(/^.*\/local\/crafts/, ""))).toEqual(["/open", "/template/use"]);
+    expect(r.result.next).toMatch(/role "headline"/);
+    const l = await runCraftTool({ action: "use_template", app: "designcraft" }, deps);
+    expect(l.result.templates).toEqual(["Summer Fair: 612×792 pt; parts headline"]);
+  });
+
+  it("reads invented template actions", () => {
+    expect(resolveAction({ action: "create_template", app: "designcraft" })).toBe("save_template");
+    expect(resolveAction({ action: "apply_template", app: "designcraft" })).toBe("use_template");
+  });
+});
+
 describe("DesignCraft new page", () => {
   it("opens a page size in one call", async () => {
     replies["/inspect"] = () => ({ json: { result: { settings: { pageWidth: 595.3, pageHeight: 841.9 } } } });

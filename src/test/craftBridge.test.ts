@@ -157,8 +157,11 @@ describe("DesignCraft pages by role", () => {
 
   it("keeps what the user set by hand in the part's name", () => {
     expect(partName("headline", { color: "#E63946", size: 60 })).toBe("Headline · color #E63946 · size 60");
-    expect(parsePartName("Headline · color #E63946 · size 60")).toEqual({ role: "headline", over: { color: "#E63946", size: 60 } });
-    expect(parsePartName("Footer 2")).toEqual({ role: "footer", over: {} });
+    expect(parsePartName("Headline · color #E63946 · size 60")).toEqual({ role: "headline", over: { color: "#E63946", size: 60 }, placeholder: false });
+    expect(parsePartName("Footer 2")).toEqual({ role: "footer", over: {}, placeholder: false });
+    // A template's part still holding the template's own words.
+    expect(partName("subhead", {}, true)).toBe("Subhead · template");
+    expect(parsePartName("Subhead · template")).toEqual({ role: "subhead", over: {}, placeholder: true });
   });
 
   it("leaves a look's background and fades out of the parts, and reads the look", () => {
@@ -169,6 +172,7 @@ describe("DesignCraft pages by role", () => {
       { id: 4, kind: "<text frame>", story: 5, name: "Headline · color #FFFFFF", bounds: [42, 500, 553, 600] },
     ]), undefined)!;
     expect(page.look).toBe("cinematic");
+    expect(page.template).toBeNull();
     expect(page.items.map((i: any) => [i.id, i.role])).toEqual([[3, "image"], [4, "headline"]]);
     expect(page.items[1].over).toEqual({ color: "#FFFFFF" });
   });

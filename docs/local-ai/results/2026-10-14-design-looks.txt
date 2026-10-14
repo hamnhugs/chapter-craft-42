@@ -35,3 +35,14 @@ Not measured: the user's cloud model (DeepSeek V4.1 Flash). Its key lives in the
 and wasn't read for this run. To run it:
   EVAL_BASE_URL=https://openrouter.ai/api/v1 EVAL_API_KEY=… EVAL_MODEL=deepseek/deepseek-v4.1-flash \
   DESIGN_EVAL_IMAGE=<png in crafts/workspace> LIVE_DESIGN_EVAL=1 npx vitest run src/test/localDesignEval.test.ts
+
+--- Templates + design studio (later 2026-10-14) ---
+8 turns (+ "save this design as a template called Movie Night", "use the Movie Night template to
+make a poster for our book club's film night this Friday at 7pm"), Qwen3-4B Q6_K:
+  use_template result with a note only ............ 0/4 replaced the template's words (model stopped)
+  + `next`: "Now do it: … send … role headline …" .. template turns 5/5 when reached
+  `other_looks` (current look left out) ............. "movie poster" on an already-cinematic page → bold 2/4
+  + `looks`: every look and what it's for ............ 5/6 sessions pass (1 bold for "movie poster")
+DesignCraft 0.7.1 bug found: paragraph balanceRagged splits words ("SUMME / R BOOK"). Looks now set
+it off and balance headings themselves by narrowing the frame to the tightest measure that keeps
+the line count.

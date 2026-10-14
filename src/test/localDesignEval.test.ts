@@ -5,7 +5,7 @@
 // after it: the parts are where they were asked for, nothing overlaps, nothing
 // is cut off or off the page.
 //
-//   CC_CRAFTS_HEADLESS=1 CC_CRAFTS_PORT=8799 CC_DESIGNCRAFT_PORT=7999 node scripts/local-ai/craft-bridge.mjs &
+//   CC_CRAFTS_HEADLESS=1 CC_CRAFTS_PORT=8799 CC_DESIGNCRAFT_PORT=7999 CC_TEMPLATES_DIR=$(mktemp -d) node scripts/local-ai/craft-bridge.mjs &
 //   DESIGN_EVAL_IMAGE=<png in crafts/workspace> LIVE_DESIGN_EVAL=1 npx vitest run src/test/localDesignEval.test.ts
 //
 // Model: local Ollama by default (LIVE_OLLAMA_MODEL); any OpenAI-style endpoint
@@ -48,12 +48,13 @@ async function bridge(path: string, body: unknown) {
 }
 
 type Part = { id: number; role: string; fill?: string; box: { x: number; y: number; w: number; h: number }; text?: string };
-async function page(): Promise<{ items: Part[]; issues: string[]; settings: any; look: string | null }> {
+async function page(): Promise<{ items: Part[]; issues: string[]; settings: any; look: string | null; template: string | null }> {
   const d = (await bridge("/inspect", { app: "designcraft" })).result || {};
   const sp = d.spreads?.[0] || { items: [], pages: [] };
   // A page look draws its background, fades and rules as "Look …"/"Deco …"; they aren't parts.
   const look = (sp.items || []).map((it: any) => String(it.name || "")).find((n: string) => n.startsWith("Look "))?.slice(5) ?? null;
-  const items: Part[] = (sp.items || []).filter((it: any) => !/^(Look|Deco) /.test(String(it.name || ""))).map((it: any) => ({
+  const template = (sp.items || []).map((it: any) => String(it.name || "")).find((n: string) => n.startsWith("Template "))?.slice(9) ?? null;
+  const items: Part[] = (sp.items || []).filter((it: any) => !/^(Look|Deco|Template) /.test(String(it.name || ""))).map((it: any) => ({
     id: it.id, role: String(it.name || "").split(" · ")[0].toLowerCase() || (it.story != null ? "text" : "image"), fill: it.fill,
     box: { x: it.bounds[0], y: it.bounds[1], w: it.bounds[2] - it.bounds[0], h: it.bounds[3] - it.bounds[1] },
   })).sort((a: Part, b: Part) => a.box.y - b.box.y);
@@ -72,10 +73,10 @@ async function page(): Promise<{ items: Part[]; issues: string[]; settings: any;
   for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++) {
     const a = items[i].box, b = items[j].box;
     // Cinematic sets its type on the full-page photo, over a fade: that's the design.
-    if (look === "cinematic" && (items[i].role === "image" || items[j].role === "image")) continue;
+    if ((look === "cinematic" || template) && (items[i].role === "image" || items[j].role === "image")) continue;
     if (a.x < b.x + b.w - 1 && b.x < a.x + a.w - 1 && a.y < b.y + b.h - 1 && b.y < a.y + a.h - 1) issues.push(`${items[i].role} overlaps ${items[j].role}`);
   }
-  return { items, issues, settings: d.settings, look };
+  return { items, issues, settings: d.settings, look, template };
 }
 
 async function turn(history: any[], user: string) {
@@ -174,6 +175,19 @@ describe.skipIf(process.env.LIVE_DESIGN_EVAL !== "1")(`DesignCraft flyer session
       p = await page();
       log(`movie poster: ${r.calls.join(" ")} (${r.seconds.toFixed(0)} s) look=${p.look} issues=${p.issues.join("; ") || "none"}`);
       expect(p.look).toBe("cinematic");
+      expect(p.issues).toEqual([]);
+
+      // Templates: keep this design, then start the next document from it.
+      r = await turn(h, "save this design as a template called Movie Night");
+      log(`save template: ${r.calls.join(" ")} (${r.seconds.toFixed(0)} s) → ${r.text.slice(0, 120)}`);
+      expect(r.calls.some((c) => c.startsWith("save_template") && !c.includes("!")), "saved").toBe(true);
+      const before = p.items.find((i) => i.role === "headline")?.text;
+      r = await turn(h, "use the Movie Night template to make a poster for our book club's film night this Friday at 7pm");
+      p = await page();
+      const head = p.items.find((i) => i.role === "headline")?.text;
+      log(`use template: ${r.calls.join(" ")} (${r.seconds.toFixed(0)} s) template=${p.template} headline="${head}" issues=${p.issues.join("; ") || "none"} → ${r.text.slice(0, 120)}`);
+      expect(p.template, "a new document from the template").toBeTruthy();
+      expect(head && head !== before, "new words in the template's headline").toBe(true);
       expect(p.issues).toEqual([]);
       await bridge("/preview", { app: "designcraft", page: 0 }).then((x) => log(`preview ${x.path}`));
     }, 15 * 60_000);
