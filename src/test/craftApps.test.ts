@@ -5,7 +5,7 @@ vi.mock("@/lib/imageGen", () => ({
   storeGeneratedImage: vi.fn(async (o: any) => ({ id: "new-img", storage_path: "u/new.png", prompt: o.prompt })),
 }));
 
-import { capResult, pdfPageCount, resolveAction, runCraftTool, CRAFT_TOOL_DEFINITION } from "@/lib/craftApps";
+import { capResult, pagePartRestyle, pdfPageCount, resolveAction, runCraftTool, CRAFT_TOOL_DEFINITION } from "@/lib/craftApps";
 import { storeGeneratedImage } from "@/lib/imageGen";
 
 type Call = { url: string; method: string; body: any; headers: Record<string, string> };
@@ -148,12 +148,34 @@ describe("DesignCraft page parts", () => {
 
   it("restyles a part with no new text, and still flows a chapter over pages", async () => {
     replies["/compose"] = () => ({ json: { page: 0, items: [] } });
-    await runCraftTool({ action: "send", app: "designcraft", role: "headline", options: { at: "bottom" } }, deps);
+    await runCraftTool({ action: "send", app: "designcraft", role: "headline", options: { color: "#E63946" } }, deps);
     expect(calls[0].url).toMatch(/\/compose$/);
-    expect(calls[0].body).toMatchObject({ role: "headline", at: "bottom" });
+    expect(calls[0].body).toMatchObject({ role: "headline", color: "#E63946" });
     calls = [];
     await runCraftTool({ action: "send", app: "designcraft", chapter_id: "c1" }, deps);
     expect(calls[0].url).toMatch(/\/import$/);
+  });
+
+  it("designs the whole page in a look, alone or with a part", async () => {
+    replies["/compose"] = () => ({ json: { page: 0, look: "cinematic", items: [] } });
+    await runCraftTool({ action: "send", app: "designcraft", look: "cinematic" }, deps);
+    expect(calls[0].url).toMatch(/\/compose$/);
+    expect(calls[0].body).toMatchObject({ app: "designcraft", look: "cinematic" });
+    expect(calls[0].body.role).toBeUndefined();
+    calls = [];
+    // No action at all, just a look: still a send (small models drop the action).
+    expect(resolveAction({ app: "designcraft", look: "bold" })).toBe("send");
+    await runCraftTool({ action: "send", app: "designcraft", role: "headline", text: "Plan to Win", options: { look: "bold" } }, deps);
+    expect(calls[0].body).toMatchObject({ role: "headline", text: "Plan to Win", look: "bold" });
+  });
+
+  it("reads a run on a page part's name as restyling that part", async () => {
+    replies["/compose"] = () => ({ json: { page: 0, look: "editorial", items: [{ id: 3, role: "headline" }] } });
+    await runCraftTool({ action: "run", app: "designcraft", layer: "headline", steps: [{ id: "text.color", params: { color: "#FF0000" } }] }, deps);
+    expect(calls[0].url).toMatch(/\/compose$/);
+    expect(calls[0].body).toMatchObject({ role: "headline", color: "#FF0000" });
+    // A real command on a real layer is left alone.
+    expect(pagePartRestyle({ action: "run", app: "designcraft", steps: [{ id: "type.char", params: {} }] })).toBeNull();
   });
 
   it("reads an invented action carrying a role as a send", () => {
@@ -168,6 +190,12 @@ describe("DesignCraft new page", () => {
     expect(r.event.ok).toBe(true);
     expect(calls.find((c) => c.url.endsWith("/call"))!.body).toMatchObject({ tool: "new_document", arguments: { preset: "A4", facingPages: false } });
     expect(r.result.page).toEqual({ width_pt: 595, height_pt: 842 });
+  });
+
+  it("knows poster, square, story and book-cover sizes", async () => {
+    replies["/inspect"] = () => ({ json: { result: { settings: { pageWidth: 432, pageHeight: 648 } } } });
+    await runCraftTool({ action: "open", app: "designcraft", options: { preset: "Book" } }, deps);
+    expect(calls.find((c) => c.url.endsWith("/call"))!.body).toMatchObject({ tool: "new_document", arguments: { width: 432, height: 648 } });
   });
 });
 

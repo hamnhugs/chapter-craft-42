@@ -18,6 +18,11 @@ import type { BookDocument, Chapter } from "@/types/library";
 export const CRAFT_APPS = ["photocraft", "designcraft", "filmcraft"] as const;
 export type CraftApp = (typeof CRAFT_APPS)[number];
 const LABEL: Record<CraftApp, string> = { photocraft: "PhotoCraft", designcraft: "DesignCraft", filmcraft: "FilmCraft" };
+/** DesignCraft page looks (scripts/local-ai/design-looks.mjs LOOK_NAMES). */
+export const PAGE_LOOKS = ["bold", "cinematic", "editorial", "swiss", "classic", "minimal", "split", "pop"] as const;
+/** Page sizes beyond DesignCraft's own presets, in points: an 18×24 in
+ *  poster, a square and a 9:16 social post, a 6×9 in book cover. */
+export const EXTRA_PRESETS: Record<string, [number, number]> = { poster: [1296, 1728], square: [720, 720], story: [540, 960], book: [432, 648], "book cover": [432, 648], cover: [432, 648], instagram: [720, 900] };
 export const CRAFT_ACTIONS = ["status", "open", "find_commands", "run", "inspect", "preview", "send", "export", "transfer", "app_tools", "call"] as const;
 type CraftAction = (typeof CRAFT_ACTIONS)[number];
 
@@ -35,7 +40,7 @@ export const CRAFT_TOOL_DEFINITION = {
     // slimToolDef) with the action guide inside it: parameter descriptions are
     // clipped to 200, which cut the guide off after four actions.
     description:
-      "Edit photos (layers, text, colour), lay out flyers, posters and books (PDF, EPUB) and edit video (MP4) in the user's apps PhotoCraft (like Photoshop), DesignCraft (like InDesign) and FilmCraft (like Premiere Pro). A clear, undoable ask: just do it, writing any wording yourself from the book in context. Ask ONE short question with 2-4 choices when it's unclear which layer or item is meant or it's pure taste ('make it better'); always ask before merge, flatten or delete. Keep the user's layers. Actions: send/open puts image_id, chapter_id or text in (DesignCraft: with `role`); find_commands, then run (with `layer`); export; transfer; inspect/preview; status; app_tools/call.",
+      "Edit photos (layers, text, colour), design flyers, posters, covers and books (PDF, EPUB) and edit video (MP4) in the user's apps PhotoCraft (like Photoshop), DesignCraft (like InDesign) and FilmCraft (like Premiere Pro). A clear, undoable ask: just do it, writing any wording yourself from the book in context. Ask ONE short question with 2-4 choices when it's unclear which layer or item is meant; always ask before merge, flatten or delete. Keep the user's layers. Actions: send/open puts image_id, chapter_id or text in (DesignCraft: with `role`; `look` designs the page); find_commands, then run (with `layer`); export; transfer; inspect/preview; status; app_tools/call.",
     parameters: {
       type: "object",
       properties: {
@@ -55,6 +60,7 @@ export const CRAFT_TOOL_DEFINITION = {
         chapter_id: { type: "string", description: "send/open: a chapter id from the book's chapter list; the app reads its text itself (DesignCraft adds pages as needed) — don't open or read the chapter first." },
         text: { type: "string", description: "send/open: text to put into the app (a text frame, a type layer, or a title in the video)." },
         role: { type: "string", enum: ["headline", "subhead", "image", "body", "caption", "footer"], description: "DesignCraft send: the page part — headline (write a punchy one from the book) on top, footer at the bottom; laid out and checked for you. Same role + options restyles its text." },
+        look: { type: "string", enum: [...PAGE_LOOKS], description: "DesignCraft page design, done like a pro: bold (event flyer), cinematic (book cover, movie poster), editorial (magazine), swiss (modern), classic (elegant), minimal, split, pop (fun). Alone: restyles the page." },
         layer: { type: "string", description: "PhotoCraft run/send: the layer to act on, by name or id (e.g. the photo for a colour fix). New layers go just above it; nothing above it changes." },
         to: { type: "string", enum: [...CRAFT_APPS], description: "transfer: the app that receives `app`'s work." },
         format: { type: "string", description: "export/transfer: png, jpg, webp, psd (PhotoCraft); png, pdf, epub, html, txt, idml (DesignCraft); png (one frame), mp4, gif, wav, srt (FilmCraft). Default png." },
@@ -64,7 +70,7 @@ export const CRAFT_TOOL_DEFINITION = {
         seconds: { type: "number", description: "preview/export in FilmCraft: the moment to show, in seconds." },
         tool: { type: "string", description: "call: the app tool's name, from app_tools." },
         arguments: { type: "object", description: "call: that tool's arguments." },
-        options: { type: "object", description: "DesignCraft send with role: {color:'#hex', size, font, align, at:'top'|'bottom'}; open: {preset:'Letter'|'A4'} = new page. PhotoCraft send {new_document:true}. FilmCraft {seconds, track}." },
+        options: { type: "object", description: "DesignCraft send with role: {color:'#hex', size, font, align}; open: {preset:'Letter'|'A4'|'Tabloid'|'Poster'|'Square'|'Story'|'Book'} = new page. PhotoCraft send {new_document:true}. FilmCraft {seconds, track}." },
       },
       required: ["action"],
     },
@@ -79,7 +85,15 @@ const AFTER_EDIT =
 /** The same for a DesignCraft page, whose parts the bridge has laid out and
  *  checked (cut-off text, off the page) already. */
 const AFTER_PAGE =
-  "Done — the page is laid out. `items` lists it top first. Fix anything in `issues` now (shorter text, a smaller size). Tell the user in a line what's on the page, then offer 1-2 short next ideas (a subhead, a colour, export to PDF).";
+  "Done — the page is laid out in its `look`. `items` lists it top first. Fix anything in `issues` now (shorter text). Tell the user in a line what's on the page, then offer 1-2 short next ideas (a subhead, another look from `other_looks`, export to PDF).";
+
+/** The note after a page edit, leading with what the page still lacks: with
+ *  only the picture placed, Qwen3-4B replied about the picture and dropped the
+ *  headline the user had asked for in the same breath (2026-10-14). */
+export function pageNote(r: any): string {
+  const has = (role: string) => (r?.items || []).some((i: any) => i.role === role);
+  return `${has("headline") ? "" : "No headline on the page yet. "}${AFTER_PAGE}`;
+}
 
 /** Longer than this, text sent to DesignCraft is a story that flows across
  *  pages, not a part of one page. */
@@ -91,7 +105,7 @@ export function isPagePart(args: any): boolean {
   if (args?.app !== "designcraft" || args?.chapter_id) return false;
   const o = args?.options || {};
   if (o.x != null || o.y != null || o.frame != null) return false;
-  if (args?.role) return true;
+  if (args?.role || args?.look || o.look) return true;
   if (pageImageId(args)) return true;
   return typeof args?.text === "string" && args.text.trim().length > 0 && args.text.length <= PAGE_PART_MAX;
 }
@@ -109,12 +123,24 @@ async function composePart(args: any, deps: CraftDeps): Promise<any> {
   const imageId = pageImageId(args);
   const img = imageId ? await libraryImageToWorkspace(imageId, deps) : null;
   const o = args.options || {};
-  const style = { at: o.at, size: o.size, color: o.color, font: o.font, align: o.align, add: o.add, preset: o.preset, page: args.page };
+  const look = args.look || o.look;
+  // With a look in the call, the look sets the type; a size or font the model
+  // adds alongside ("48pt Impact") would undo it. Colour still goes through.
+  const style = { ...(look ? {} : { size: o.size, font: o.font, align: o.align }), color: o.color, add: o.add, page: args.page, look };
   const text = typeof args.text === "string" && args.text.trim() ? args.text : undefined;
+  // The part named in `layer` (PhotoCraft's word) when there's no role.
+  const layerRole = PAGE_ROLES.includes(String(args.layer || "").toLowerCase()) ? String(args.layer).toLowerCase() : undefined;
+  args = { ...args, role: args.role || layerRole };
   if (!img) return bridge("/compose", { app: "designcraft", role: args.role, text, ...style, replace: o.replace });
   // A picture is the image part. With text in the same call ("place the image
   // and add a headline"), the text goes on as its own part after it.
-  const placed = await bridge("/compose", { app: "designcraft", role: "image", path: img.path, page: args.page, replace: o.replace, preset: o.preset });
+  const placed = await bridge("/compose", { app: "designcraft", role: "image", path: img.path, page: args.page, replace: o.replace, look });
+  // A text role with a picture but no words: Qwen3-4B's way of leaving out
+  // the headline it meant to write (2 of 5 sessions, 2026-10-14). Say so as an
+  // error, which it does act on, rather than as a hint, which it reads past.
+  if (!text && args.role && args.role !== "image" && !(placed.items || []).some((i: any) => i.role === args.role)) {
+    return { ...placed, ok: false, error: `Placed the picture, but the ${args.role} had no text, so it isn't on the page. Call craft again now: action "send", app "designcraft", role "${args.role}", text = the ${args.role} itself (write it from the book).` };
+  }
   if (!text) return placed;
   return bridge("/compose", { app: "designcraft", role: args.role === "image" ? undefined : args.role, text, ...style });
 }
@@ -256,7 +282,7 @@ async function bringBack(app: CraftApp, file: any, args: any, deps: CraftDeps): 
 export function resolveAction(args: any): string {
   const action = String(args?.action || "").trim().toLowerCase();
   const hasSteps = Array.isArray(args?.steps) && args.steps.length > 0;
-  const hasContent = !!(args?.image_id || args?.chapter_id || args?.role || (typeof args?.text === "string" && args.text.trim()));
+  const hasContent = !!(args?.image_id || args?.chapter_id || args?.role || args?.look || (typeof args?.text === "string" && args.text.trim()));
   if (action === "run" && !hasSteps && args?.query) return "find_commands";
   if ((CRAFT_ACTIONS as readonly string[]).includes(action)) return action;
   // No action and a page size: "open a flyer-sized page" (Qwen3-4B, 2026-10-13).
@@ -267,8 +293,29 @@ export function resolveAction(args: any): string {
   return action;
 }
 
+/** A DesignCraft `run` aimed at a page part by name ("layer": "headline")
+ *  with a colour, size, font or alignment in its steps is a restyle of that
+ *  part. Qwen3-4B guessed eight command ids for "make the headline red" this
+ *  way (2026-10-14); the part's send does it in one call. */
+export function pagePartRestyle(args: any): any | null {
+  if (args?.app !== "designcraft" || String(args?.action || "") !== "run") return null;
+  const role = String(args?.layer || args?.role || "").toLowerCase();
+  if (!PAGE_ROLES.includes(role)) return null;
+  const p: any = Object.assign({}, ...(Array.isArray(args.steps) ? args.steps : []).map((st: any) => st?.params || {}));
+  const options = {
+    color: p.color ?? p.fill ?? p.fillColor ?? p.textColor,
+    size: p.size ?? p.fontSize ?? p.pointSize,
+    font: p.font ?? p.fontFamily,
+    align: p.align ?? p.alignment,
+  };
+  if (!Object.values(options).some((v) => v != null)) return null;
+  return { action: "send", app: "designcraft", role, options: Object.fromEntries(Object.entries(options).filter(([, v]) => v != null)) };
+}
+const PAGE_ROLES = ["headline", "subhead", "body", "caption", "footer"];
+
 export async function runCraftTool(args: any, deps: CraftDeps): Promise<Outcome> {
   const name = "craft";
+  args = pagePartRestyle(args) || args;
   const action = resolveAction(args) as CraftAction;
   const app = args?.app;
   const ok = (result: any, summary: string): Outcome => ({ result, event: { name, summary, ok: true } });
@@ -289,7 +336,9 @@ export async function runCraftTool(args: any, deps: CraftDeps): Promise<Outcome>
         const newPage = app === "designcraft" && (o.preset || (o.width && o.height));
         if (newPage) {
           await bridge("/open", { app });
-          await bridge("/call", { app, tool: "new_document", arguments: { ...(o.preset ? { preset: String(o.preset) } : { width: Number(o.width), height: Number(o.height) }), facingPages: false, ...(o.margins != null ? { margins: o.margins } : {}), ...(args.title ? { title: String(args.title) } : {}) } });
+          const extra = o.preset ? EXTRA_PRESETS[String(o.preset).toLowerCase()] : null;
+          const size = extra ? { width: extra[0], height: extra[1] } : o.preset ? { preset: String(o.preset) } : { width: Number(o.width), height: Number(o.height) };
+          await bridge("/call", { app, tool: "new_document", arguments: { ...size, facingPages: false, ...(o.margins != null ? { margins: o.margins } : {}), ...(args.title ? { title: String(args.title) } : {}) } });
           const doc = await bridge("/inspect", { app });
           const st = doc.result?.settings || {};
           if (!isPagePart({ ...args, options: {} })) {
@@ -299,7 +348,7 @@ export async function runCraftTool(args: any, deps: CraftDeps): Promise<Outcome>
         if (isPagePart(args)) {
           const r = await bridge("/open", { app });
           const part = await composePart(args, deps);
-          return ok({ ...r, ...part, note: `${L} is open on the user's screen. ${AFTER_PAGE}` }, `Opened ${L} and put it on the page`);
+          return ok({ ...r, ...part, note: `${L} is open on the user's screen. ${pageNote(part)}` }, `Opened ${L} and put it on the page`);
         }
         const img = args.image_id ? await libraryImageToWorkspace(String(args.image_id), deps) : null;
         const r = await bridge("/open", { app, path: img?.path, ...(args.options || {}), ...(args.layer != null ? { layer: args.layer } : {}) });
@@ -341,7 +390,8 @@ export async function runCraftTool(args: any, deps: CraftDeps): Promise<Outcome>
         let r: any;
         if (isPagePart(args)) {
           r = await composePart(args, deps);
-          return ok({ ok: true, ...r, note: AFTER_PAGE }, `Put ${r.items?.length ? `the ${args.role || (args.image_id ? "image" : "text")}` : "it"} on the ${L} page`);
+          if (r.ok === false) return { result: r, event: { name, summary: `Put the picture on the ${L} page; the ${args.role} had no text`, ok: false } };
+          return ok({ ok: true, ...r, note: pageNote(r) }, `Put ${r.items?.length ? `the ${args.role || (args.image_id ? "image" : "text")}` : "it"} on the ${L} page`);
         }
         if (args.image_id) {
           const img = await libraryImageToWorkspace(String(args.image_id), deps);

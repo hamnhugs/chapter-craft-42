@@ -92,4 +92,6 @@ LAUNCHER
     "$dest/ai.storyteller.$app.desktop" > "$APPS_DIR/ai.storyteller.$app.desktop"
 done
 command -v update-desktop-database >/dev/null && update-desktop-database "$APPS_DIR" 2>/dev/null || true
+# The typefaces DesignCraft's page looks use (docs/local-ai/DESIGN-LOOKS.md).
+"$(dirname "$0")/install-design-fonts.sh" || echo "design fonts not installed (offline?); page looks fall back to Source Sans" >&2
 say "crafts ready in $CRAFTS (start them with scripts/local-up.sh)"

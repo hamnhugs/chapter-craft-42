@@ -96,7 +96,7 @@ it, 2 of 3 full sessions pass. Every request finished in one reply, adjustments 
 above the cat and below the text, and nothing opened a new tab. The failed session's
 model guessed a wrong command for the font change, then said it had worked.
 
-## Flyers and posters in DesignCraft: parts, not coordinates (2026-10-13)
+## Flyers and posters in DesignCraft: parts and looks (2026-10-13, looks 2026-10-14)
 
 Why: the user's Cashflow Quadrant flyer session. "Place the image and add a headline
 to the top" needed frames, type sizes, moving the picture down, refitting it and a
@@ -105,41 +105,53 @@ browser was a 14:49 build that predated both PhotoCraft fixes. Rebuild after
 changing `src/` (`scripts/local-up.sh` does it when the code changed).
 
 - **`send` with `role`.** The roles are headline, subhead, image, body, caption and footer.
-  The bridge (`/compose`, `composeDesign` in craft-bridge.mjs) keeps the page as a stack
-  of named frames. The headline goes on top, then the subhead, the image, the body and
-  the caption, with the footer pinned to the bottom margin. Text frames are fitted
-  against DesignCraft's own line breaks: `get_story`'s `overset` is null when nothing
-  is cut off. Headings get smaller type rather than an extra line, and hyphenation is
-  off. Pictures share what's left at their own aspect ratio, and spare room goes
-  between the parts. This follows the slot-then-check shape of PosterMELD
-  (arXiv 2608.02218), PosterGen (CVPR 2026) and Any2Poster. It's done in code instead
-  of an extra model or vision pass, so a request costs 1-2 model rounds and the layout
-  itself takes milliseconds.
+  The model only says what goes in which part. The bridge (`/compose`, `composeDesign` in
+  craft-bridge.mjs) names the frames by role and lays the whole page out again after each edit.
+- **`look` designs the page** (2026-10-14). It is one of bold, cinematic, editorial (the
+  default), swiss, classic, minimal, split or pop. `send {look}` on its own restyles the
+  page. Each look is a designer's recipe: font pairing, type scale, a palette taken from
+  the picture, a background, fades, rules and attention-based crops. It lives in
+  `scripts/local-ai/design-looks.mjs`, with the research and reasoning in
+  [DESIGN-LOOKS.md](DESIGN-LOOKS.md). What a look draws is named `Look <name>` (the
+  background, which also records the look) and `Deco …`, and is redrawn on every layout.
+  Headlines are sized from the font files' own metrics, then checked against DesignCraft's
+  line breaks and re-planned until the two agree.
 - **Same role again changes that part.** New text replaces it. With no text, the options
-  restyle it or move it (`{color:'#hex', size, font, align, at:'top'|'bottom'}`). An
-  image with `{replace:true}` goes into the existing picture frame.
+  restyle it (`{color:'#hex', size, font, align}`). These hand-set values are kept in the
+  frame's name (`Headline · color #E63946`) and every later look respects them. A colour
+  is lightened or darkened just enough to read on its background. A font that isn't
+  installed is ignored, with a note. An image with `{replace:true}` goes into the
+  existing picture frame.
 - **No role.** A library picture is an image. Short text becomes the headline, then
   the subhead, then body. Text over 1,200 characters and `chapter_id` still flow
   across threaded pages, as before.
-- **Every page edit returns** `items` (role, id, box, text, top first) and `issues`:
-  cut-off text, anything off the page, or no room left for the picture.
-- **`open` with `options.preset`** ('Letter', 'A4', 'Tabloid', or `width`+`height`)
-  starts a new page in one call, without a command search.
-- The card says to write wording (headlines) from the book in context. It asks only
-  when the target is unclear or the request is pure taste.
+- **Every page edit returns** `look`, `items` (role, id, box, text, top first),
+  `other_looks` and `issues`: cut-off text, type off the page, type colliding, type on a
+  picture without a fade, and low contrast.
+- **`open` with `options.preset`** ('Letter', 'A4', 'Tabloid', 'Poster' 18×24 in,
+  'Square', 'Story' 9:16, 'Instagram' 4:5, 'Book' 6×9 in, or `width`+`height`) starts a
+  new page in one call.
+- The card says to write wording (headlines) from the book in context. "Make it look
+  better" is no longer a reason to ask: the model picks a look.
+- **Small-model slips handled** (Qwen3-4B, 2026-10-14):
+  - a headline role with a picture but no text returns an error asking for the words (it
+    acts on an error, not on a hint);
+  - `run` on `layer: "headline"` with a colour becomes a restyle of that part;
+  - a part named in `layer` instead of `role` is treated as that role;
+  - `role: "page"` with a look is a restyle;
+  - when a call carries a look, the model's own size, font and align in the same call are
+    ignored ("48pt Impact" would undo the design), but its colour still goes through.
 
 Eval (`src/test/localDesignEval.test.ts`): the session is replayed through a real model
 on a **private headless bridge** (`CC_CRAFTS_HEADLESS=1 CC_CRAFTS_PORT=8799 CC_DESIGNCRAFT_PORT=7999`),
 so the user's window is never driven. Without `CC_CRAFTS_HEADLESS=1`, a model's `open`
-starts a visible window.
-Results are in `results/2026-10-13-designcraft-flyer.txt`. The user's DeepSeek V4.1 Flash
-passed 5/5 at 1-7 s a request. Local Qwen3-4B passed 3/3 at 15-70 s once its slips were
-read for what they meant: the image id sent in `layer`, a picture and a headline in one
-send, and a page size with no action. Neither model coloured the box behind a heading
-after the bridge started rerouting `object.color` on text frames to the text. The eval only lets the model reach DesignCraft, because
-the private bridge would otherwise open the user's real PhotoCraft or FilmCraft window.
-After each request it checks the page for cut-off text, items off the page, overlaps,
-and colour put on a text frame's box instead of its text.
+starts a visible window. Six turns: page size, picture + headline on top, red headline,
+title and author at the bottom, "make it look amazing, like a pro designer made it" (must
+act, not ask), and "now try it as a movie poster" (must end up cinematic). After each
+turn it checks the page for cut-off text, items off the page, overlaps and colour on a
+text frame's box. Looks are excluded from these checks, and so is cinematic type on its
+faded photo. Results: `results/2026-10-13-designcraft-flyer.txt` (parts) and
+`results/2026-10-14-design-looks.txt` (looks: Qwen3-4B 6/6).
 
 ## Measurements (2026-10-13, Qwen3-4B Q6_K)
 

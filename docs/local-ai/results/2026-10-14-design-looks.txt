@@ -1,0 +1,37 @@
+DesignCraft page looks — 2026-10-14
+src/test/localDesignEval.test.ts on a private headless bridge (CC_CRAFTS_HEADLESS=1, :8799),
+local hf.co/unsloth/Qwen3-4B-Instruct-2507-GGUF:Q6_K, temperature 0.2.
+Turns: page size / "place the cashflow quadrant image into our flyer and then add a headline
+to the top" / "make the headline red" / "add the book title and author at the bottom" /
+"make it look amazing, like a pro designer made it" / "now try it as a movie poster".
+
+Baseline (HEAD acfb09c+069281f, first 4 turns only) ......... 3/3
+First looks build, role description reworded ................. 0/3  picture placed, headline dropped:
+   the model sent role "image" (rewording dropped "on top"), then answered in text
+   ("let me add one: **Headline:** …") without calling the tool
+Role description restored ................................... 3/5  2 sessions sent role headline + image_id, no text
++ that case returned as an error ("…had no text, call craft again") 4/6 the retry always
+   worked, but the red turn that followed guessed run commands (run:text.color, layer
+   "headline": 8 failed calls in one session)
++ run on a page part's name with a colour → restyle;
+  layer as role; role "page" + look → restyle;
+  a look in the call drops the model's size/font/align ......... 6/6
+  per request: 7-17 s; "make it look amazing" → bold 5/6, cinematic 1/6 (all acted, none asked);
+  "movie poster" → cinematic 6/6
+
+Layout engine (no model): src/test/designLooks.test.ts, 8 looks × 6 page sizes × with/without a
+picture, plus hand-set colour, a lone headline, two pictures: 104 tests. Found and fixed while
+writing it: split overflowed with a long headline, swiss overflowed on a square page, three looks
+dropped a second picture.
+
+Measuring vs DesignCraft (40 pt, 1 and 3 lines, 12 faces): DesignCraft keeps a point or two more
+under the last line than hhea/OS2 descents say for Playfair Display and DM Serif Display, so
+frames get +6% of the size. Its kerning sets some headlines on fewer lines than the estimate, so
+layoutLook re-plans from DesignCraft's own line count (up to 4 passes, usually 1). Before both
+fixes, a 3-line A4 headline grew by a whole line after placement and overlapped the picture.
+
+Cost: a layout is 20-120 ms headless (8 looks in the gallery, 0.3 s total).
+Not measured: the user's cloud model (DeepSeek V4.1 Flash). Its key lives in the app's database
+and wasn't read for this run. To run it:
+  EVAL_BASE_URL=https://openrouter.ai/api/v1 EVAL_API_KEY=… EVAL_MODEL=deepseek/deepseek-v4.1-flash \
+  DESIGN_EVAL_IMAGE=<png in crafts/workspace> LIVE_DESIGN_EVAL=1 npx vitest run src/test/localDesignEval.test.ts

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { autoRole, compactLayers, designPage, designSlot, desktopPids, docCount, findLayer, insertAt, inWorkspace, lookTarget, plainText, rankCommands, roleLines, roleSize, stackLayout, textBox } from "../../scripts/local-ai/craft-bridge.mjs";
+import { autoRole, compactLayers, designPage, designSlot, desktopPids, docCount, findLayer, inWorkspace, lookTarget, parsePartName, partName, pickLook, plainText, rankCommands, textBox } from "../../scripts/local-ai/craft-bridge.mjs";
 
 describe("rankCommands", () => {
   const list = [
@@ -149,48 +149,35 @@ describe("DesignCraft pages by role", () => {
     expect(page.items.map((i: any) => [i.id, i.role])).toEqual([[9, "headline"], [12, "body"], [8, "image"]]);
   });
 
-  it("puts a headline above a picture that is already there, and a footer last", () => {
-    const items = [{ role: "image" }, { role: "body" }];
-    expect(insertAt(items, "headline", undefined)).toBe(0);
-    expect(insertAt(items, "footer", undefined)).toBe(2);
-    expect(insertAt([{ role: "headline" }, { role: "image" }], "subhead", undefined)).toBe(1);
-    expect(insertAt(items, "body", "top")).toBe(0);
-  });
-
   it("names short text a headline, then a subhead; long text is body", () => {
     expect(autoRole([], "Your Plan to Win")).toBe("headline");
     expect(autoRole([{ role: "headline" }], "Why a plan")).toBe("subhead");
     expect(autoRole([], "x".repeat(200))).toBe("body");
   });
 
-  it("sizes a headline to fill its lines and keeps it within them", () => {
-    expect(roleLines("headline", "Your Plan to Win")).toBe(1);
-    expect(roleLines("headline", "Plan to Win: Climb the Cashflow Quadrant")).toBe(2);
-    expect(roleSize("headline", "Your Plan to Win", 511)).toBe(64);
-    expect(roleSize("body", "anything", 511)).toBe(12);
+  it("keeps what the user set by hand in the part's name", () => {
+    expect(partName("headline", { color: "#E63946", size: 60 })).toBe("Headline · color #E63946 · size 60");
+    expect(parsePartName("Headline · color #E63946 · size 60")).toEqual({ role: "headline", over: { color: "#E63946", size: 60 } });
+    expect(parsePartName("Footer 2")).toEqual({ role: "footer", over: {} });
   });
 
-  it("stacks headline, picture and footer down the page without overlap", () => {
-    const plan = stackLayout(content, [
-      { id: 9, kind: "text", role: "headline", height: 100 },
-      { id: 8, kind: "image", role: "image", aspect: 1 },
-      { id: 11, kind: "text", role: "footer", height: 15 },
-    ]);
-    expect(plan.issues).toEqual([]);
-    const [h, img, f] = plan.boxes;
-    expect(h).toMatchObject({ id: 9, x: 42, y: 42, h: 100 });
-    expect(img.y).toBeGreaterThanOrEqual(h.y + h.h);
-    expect(img.w).toBeLessThanOrEqual(511.3);
-    expect(img.y + img.h).toBeLessThanOrEqual(f.y);
-    expect(f.y + f.h).toBeCloseTo(799.9);
+  it("leaves a look's background and fades out of the parts, and reads the look", () => {
+    const page = designPage(a4([
+      { id: 1, kind: "<rectangle>", name: "Look cinematic", bounds: [0, 0, 595, 842] },
+      { id: 2, kind: "<rectangle>", name: "Deco Fade", bounds: [0, 300, 595, 842] },
+      { id: 3, kind: "<image>", asset: 7, name: "Image", bounds: [0, 0, 595, 842] },
+      { id: 4, kind: "<text frame>", story: 5, name: "Headline · color #FFFFFF", bounds: [42, 500, 553, 600] },
+    ]), undefined)!;
+    expect(page.look).toBe("cinematic");
+    expect(page.items.map((i: any) => [i.id, i.role])).toEqual([[3, "image"], [4, "headline"]]);
+    expect(page.items[1].over).toEqual({ color: "#FFFFFF" });
   });
 
-  it("shrinks a picture to make room for text, and says when there isn't any", () => {
-    const fits = stackLayout(content, [{ id: 1, kind: "text", role: "headline", height: 300 }, { id: 2, kind: "image", role: "image", aspect: 1 }]);
-    const img = fits.boxes[1];
-    expect(img.h).toBeLessThanOrEqual(799.9 - 342 - 14 + 0.1);
-    expect(img.x).toBeGreaterThan(42); // centred
-    const full = stackLayout(content, [{ id: 1, kind: "text", role: "body", height: 720 }, { id: 2, kind: "image", role: "image", aspect: 1 }]);
-    expect(full.issues[0]).toMatch(/Not enough room for the picture/);
+  it("takes a look by name or by what it's for", () => {
+    expect(pickLook("cinematic")).toBe("cinematic");
+    expect(pickLook("movie poster")).toBe("cinematic");
+    expect(pickLook("magazine")).toBe("editorial");
+    expect(pickLook("elegant")).toBe("classic");
+    expect(pickLook("nonsense")).toBeNull();
   });
 });

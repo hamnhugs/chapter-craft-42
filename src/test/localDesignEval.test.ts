@@ -23,7 +23,7 @@ vi.mock("@/lib/imageGen", () => ({
   storeGeneratedImage: async (o: any) => ({ id: "exported", storage_path: "x", prompt: o.prompt }),
 }));
 
-import { CRAFT_TOOL_DEFINITION, runCraftTool } from "@/lib/craftApps";
+import { CRAFT_TOOL_DEFINITION, resolveAction, runCraftTool } from "@/lib/craftApps";
 import { slimToolDef } from "@/lib/localRoster";
 
 const CLOUD = !!process.env.EVAL_BASE_URL;
@@ -48,11 +48,13 @@ async function bridge(path: string, body: unknown) {
 }
 
 type Part = { id: number; role: string; fill?: string; box: { x: number; y: number; w: number; h: number }; text?: string };
-async function page(): Promise<{ items: Part[]; issues: string[]; settings: any }> {
+async function page(): Promise<{ items: Part[]; issues: string[]; settings: any; look: string | null }> {
   const d = (await bridge("/inspect", { app: "designcraft" })).result || {};
   const sp = d.spreads?.[0] || { items: [], pages: [] };
-  const items: Part[] = (sp.items || []).map((it: any) => ({
-    id: it.id, role: String(it.name || "").toLowerCase() || (it.story != null ? "text" : "image"), fill: it.fill,
+  // A page look draws its background, fades and rules as "Look …"/"Deco …"; they aren't parts.
+  const look = (sp.items || []).map((it: any) => String(it.name || "")).find((n: string) => n.startsWith("Look "))?.slice(5) ?? null;
+  const items: Part[] = (sp.items || []).filter((it: any) => !/^(Look|Deco) /.test(String(it.name || ""))).map((it: any) => ({
+    id: it.id, role: String(it.name || "").split(" · ")[0].toLowerCase() || (it.story != null ? "text" : "image"), fill: it.fill,
     box: { x: it.bounds[0], y: it.bounds[1], w: it.bounds[2] - it.bounds[0], h: it.bounds[3] - it.bounds[1] },
   })).sort((a: Part, b: Part) => a.box.y - b.box.y);
   const issues: string[] = [];
@@ -69,9 +71,11 @@ async function page(): Promise<{ items: Part[]; issues: string[]; settings: any 
   }
   for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++) {
     const a = items[i].box, b = items[j].box;
+    // Cinematic sets its type on the full-page photo, over a fade: that's the design.
+    if (look === "cinematic" && (items[i].role === "image" || items[j].role === "image")) continue;
     if (a.x < b.x + b.w - 1 && b.x < a.x + a.w - 1 && a.y < b.y + b.h - 1 && b.y < a.y + a.h - 1) issues.push(`${items[i].role} overlaps ${items[j].role}`);
   }
-  return { items, issues, settings: d.settings };
+  return { items, issues, settings: d.settings, look };
 }
 
 async function turn(history: any[], user: string) {
@@ -98,7 +102,7 @@ async function turn(history: any[], user: string) {
       const out = args.app && args.app !== "designcraft"
         ? { result: { error: "Only DesignCraft is available right now." }, event: { ok: false } }
         : await runCraftTool(args, { books: [], fetchImage: async (id) => (id === IMAGE_ID ? { id, storage_path: "x" } : null) });
-      calls.push(`${args.action}${args.role ? ":" + args.role : ""}${args.steps ? ":" + args.steps.map((s: any) => s.id).join("+") : ""}${out.event.ok ? "" : `!(${String(out.result?.error ?? "").slice(0, 160)})`}`);
+      calls.push(`${resolveAction(args)}${args.look ? ":look=" + args.look : ""}${args.role ? ":" + args.role : ""}${args.steps ? ":" + args.steps.map((s: any) => s.id).join("+") : ""}${out.event.ok ? "" : `!(${String(out.result?.error ?? "").slice(0, 160)})`}`);
       const { __vision: _v, __images: _i, ...forModel } = out.result || {};
       history.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(forModel).slice(0, 8000) });
     }
@@ -141,7 +145,7 @@ describe.skipIf(process.env.LIVE_DESIGN_EVAL !== "1")(`DesignCraft flyer session
 
       r = await turn(h, "place the cashflow quadrant image into our flyer and then add a headline to the top");
       p = await page();
-      log(`image+headline: ${r.calls.join(" ")} (${r.rounds} rounds, ${r.seconds.toFixed(0)} s) ${JSON.stringify(roles(p))} "${p.items.find((i) => i.role === "headline")?.text ?? ""}" issues=${p.issues.join("; ") || "none"}`);
+      log(`image+headline: ${r.calls.join(" ")} (${r.rounds} rounds, ${r.seconds.toFixed(0)} s) ${JSON.stringify(roles(p))} "${p.items.find((i) => i.role === "headline")?.text ?? ""}" issues=${p.issues.join("; ") || "none"} → ${r.text.slice(0, process.env.DESIGN_EVAL_DEBUG ? 2000 : 160)}`);
       expect(r.rounds).toBeLessThanOrEqual(ROUNDS);
       expect(roles(p)).toContain("image");
       expect(roles(p)[0], "headline on top").toBe("headline");
@@ -157,6 +161,19 @@ describe.skipIf(process.env.LIVE_DESIGN_EVAL !== "1")(`DesignCraft flyer session
       p = await page();
       log(`footer: ${r.calls.join(" ")} (${r.seconds.toFixed(0)} s) ${JSON.stringify(roles(p))} issues=${p.issues.join("; ") || "none"} → ${r.text.slice(0, 160)}`);
       expect(roles(p).at(-1)).toMatch(/footer|caption|body|text/);
+      expect(p.issues).toEqual([]);
+
+      // Taste, said plainly: act on it with a look rather than ask.
+      r = await turn(h, "make it look amazing, like a pro designer made it");
+      p = await page();
+      log(`pro: ${r.calls.join(" ")} (${r.seconds.toFixed(0)} s) look=${p.look} issues=${p.issues.join("; ") || "none"} → ${r.text.slice(0, 160)}`);
+      expect(r.calls.some((c) => /^(send|open)/.test(c)), "acted instead of asking").toBe(true);
+      expect(p.issues).toEqual([]);
+
+      r = await turn(h, "now try it as a movie poster");
+      p = await page();
+      log(`movie poster: ${r.calls.join(" ")} (${r.seconds.toFixed(0)} s) look=${p.look} issues=${p.issues.join("; ") || "none"}`);
+      expect(p.look).toBe("cinematic");
       expect(p.issues).toEqual([]);
       await bridge("/preview", { app: "designcraft", page: 0 }).then((x) => log(`preview ${x.path}`));
     }, 15 * 60_000);

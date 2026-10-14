@@ -26,6 +26,7 @@ import { readFile } from "node:fs/promises";
 import { basename, extname, join, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { DESIGN_FAMILIES, FONT_DIR, LOOK_NAMES, autoLook, imagePalette, isDecoName, layoutLook, lookOf } from "./design-looks.mjs";
 
 const ROOT = resolve(fileURLToPath(import.meta.url), "../../..");
 const SERVICES = JSON.parse(readFileSync(join(ROOT, "local-services.json"), "utf8"));
@@ -637,23 +638,35 @@ async function designTarget(minHeight) {
 // "Place the image and put a headline at the top" is one ask, but in commands
 // it is: make a frame, size the type, move the picture down, refit it, check
 // nothing is cut off. A model doing that by coordinates took most of a reply
-// and got it wrong. So the page is a stack of named parts — Headline, Subhead,
-// Image, Body, Caption, Footer — that the bridge lays out and checks itself
-// (the slot-and-gate shape of PosterMELD / PosterGen, 2026), and the model
-// only says what goes where.
+// and got it wrong. So the page is a set of named parts — Headline, Subhead,
+// Image, Body, Caption, Footer — and the model only says what goes in which.
+// A page look (design-looks.mjs: bold, cinematic, editorial, …) then lays
+// them out the way a designer would: fonts, type scale, palette from the
+// picture, background, fades and rules — measured and checked here.
 
 export const DESIGN_ROLES = ["headline", "subhead", "image", "body", "caption", "footer"];
-const ROLE_RANK = { headline: 0, subhead: 1, image: 2, body: 3, caption: 4, footer: 9 };
 const ONE_PER_PAGE = new Set(["headline", "subhead", "caption", "footer"]);
 const roleName = (r) => r[0].toUpperCase() + r.slice(1);
-/** Average glyph width as a share of the type size, for first guesses only;
- *  the frame is then fitted against DesignCraft's own line breaks. */
-const GLYPH = 0.5;
-const LEAD = 1.2;
+/** What the user set by hand on a part ("make the headline red") rides in
+ *  its name after the role — "Headline · color #E63946 · size 60" — so it
+ *  survives saving, reopening and every later layout. */
+const OVERRIDE_KEYS = ["color", "size", "font", "align"];
+export function partName(role, over = {}) {
+  const extra = OVERRIDE_KEYS.filter((k) => over[k] != null && over[k] !== "").map((k) => `${k} ${over[k]}`);
+  return [roleName(role), ...extra].join(" · ");
+}
+export function parsePartName(name) {
+  const [head, ...rest] = String(name || "").split(" · ");
+  const over = {};
+  for (const r of rest) { const i = r.indexOf(" "); if (i > 0 && OVERRIDE_KEYS.includes(r.slice(0, i))) over[r.slice(0, i)] = r.slice(i + 1); }
+  if (over.size != null) over.size = Number(over.size) || undefined;
+  return { role: head.toLowerCase().replace(/\s*\d+$/, ""), over };
+}
 
-/** Page `index` of the document → its bounds, content box and the items on it
- *  (centre inside the page), each with a role: its name when it is one of
- *  ours, otherwise what it looks like (a picture → image, text → body). */
+/** Page `index` of the document → its bounds, content box and the parts on
+ *  it (centre inside the page), each with a role: its name when it is one of
+ *  ours, otherwise what it looks like (a picture → image, text → body). What
+ *  a page look drew (background, fades, rules) isn't a part. */
 export function designPage(doc, index) {
   const pages = [];
   (doc?.spreads || []).forEach((sp, si) => (sp.pages || []).forEach((p) => pages.push({ ...p, spread: si, items: sp.items || [] })));
@@ -665,30 +678,20 @@ export function designPage(doc, index) {
   const left = x0 + (p.side === "left" ? m.outside ?? 36 : m.inside ?? 36);
   const right = x1 - (p.side === "left" ? m.inside ?? 36 : m.outside ?? 36);
   const content = { left, right, top: y0 + (m.top ?? 36), bottom: y1 - (m.bottom ?? 36) };
-  const items = p.items
-    .filter((it) => Array.isArray(it.bounds) && !it.hidden && !it.locked)
-    .filter((it) => { const cx = (it.bounds[0] + it.bounds[2]) / 2, cy = (it.bounds[1] + it.bounds[3]) / 2; return cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1; })
+  const onPage = (it) => { const cx = (it.bounds[0] + it.bounds[2]) / 2, cy = (it.bounds[1] + it.bounds[3]) / 2; return cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1; };
+  const all = p.items.filter((it) => Array.isArray(it.bounds) && onPage(it));
+  const items = all
+    .filter((it) => !it.hidden && !it.locked && !isDecoName(it.name))
     .map((it) => {
-      const named = String(it.name || "").toLowerCase().replace(/\s*\d+$/, "");
+      const { role: named, over } = parsePartName(it.name);
       const isText = /text/.test(String(it.kind)) || it.story != null;
       const isImage = /image|graphic/.test(String(it.kind)) || it.asset != null;
       if (!isText && !isImage) return null;
-      return { id: it.id, story: it.story, kind: isText ? "text" : "image", role: DESIGN_ROLES.includes(named) ? named : isText ? "body" : "image", bounds: it.bounds };
+      return { id: it.id, story: it.story, kind: isText ? "text" : "image", role: DESIGN_ROLES.includes(named) ? named : isText ? "body" : "image", over, bounds: it.bounds };
     })
     .filter(Boolean)
     .sort((a, b) => a.bounds[1] - b.bounds[1]);
-  return { index: i, spread: p.spread, bounds: [x0, y0, x1, y1], content, items };
-}
-
-/** Where a new part goes in the stack: `at` top/bottom, else by role — a
- *  headline above everything but nothing, an image after the headings, a
- *  footer last. Existing parts keep their order. */
-export function insertAt(items, role, at) {
-  if (at === "top") return 0;
-  if (at === "bottom") return items.length;
-  const r = ROLE_RANK[role] ?? 3;
-  const i = items.findIndex((it) => (ROLE_RANK[it.role] ?? 3) > r);
-  return i < 0 ? items.length : i;
+  return { index: i, spread: p.spread, bounds: [x0, y0, x1, y1], content, items, look: lookOf(all) };
 }
 
 /** A role for text sent without one: short text heads the page (headline,
@@ -700,116 +703,82 @@ export function autoRole(items, text) {
   return "body";
 }
 
-/** Type size for a part, from its length: a headline as big as fits in one to
- *  three lines, a subhead a step down, body text readable. */
-/** How many lines a heading should take at most: short ones one, long ones
- *  two or three. Body text takes what it needs. */
-export function roleLines(role, text) {
-  const n = String(text || "").length;
-  if (role === "headline") return n <= 22 ? 1 : n <= 60 ? 2 : 3;
-  if (role === "subhead") return n <= 50 ? 1 : 2;
-  return Infinity;
+/** A look by name, or a word close to one ("cinema", "movie poster",
+ *  "magazine") — small models paraphrase. */
+export function pickLook(v) {
+  const s = String(v || "").toLowerCase();
+  if (!s) return null;
+  if (LOOK_NAMES.includes(s)) return s;
+  const words = { cinematic: /cinem|movie|film|cover|dramatic|epic|moody/, editorial: /editor|magazine|article|newsletter|journal/, swiss: /swiss|grid|modern|corporate|business|helvetica/, classic: /classic|elegant|literary|invitation|vintage|wedding|formal/, minimal: /minimal|clean|simple|calm|premium|quiet/, split: /split|half|two/, pop: /pop|fun|bright|playful|kids|colorful|colourful|vibrant/, bold: /bold|loud|strong|event|impact|flyer/ };
+  for (const [k, re] of Object.entries(words)) if (re.test(s)) return k;
+  return null;
 }
 
-export function roleSize(role, text, width) {
-  const n = Math.max(1, String(text || "").length);
-  const fit = (lines, lo, hi) => Math.round(Math.max(lo, Math.min(hi, (width * lines) / (GLYPH * n))));
-  if (role === "headline") return fit(roleLines(role, text), 24, Math.round(width / 8));
-  if (role === "subhead") return fit(roleLines(role, text), 14, 26);
-  if (role === "caption" || role === "footer") return 10;
-  return 12;
-}
-
-/** First guess at a text frame's height before it is fitted. */
-export function textHeight(text, size, width) {
-  const paras = String(text || "").split("\n");
-  const lines = paras.reduce((s, p) => s + Math.max(1, Math.ceil((p.length * GLYPH * size) / width)), 0);
-  return Math.ceil(lines * size * LEAD + size * 0.3);
-}
-
-/** The stack, top to bottom: text parts keep their fitted heights, pictures
- *  share what's left at their own aspect ratio, a footer sits on the bottom
- *  margin and spare room is spread between the parts (up to 48 pt a gap). */
-export function stackLayout(content, parts, gap = 14) {
-  const W = content.right - content.left, H = content.bottom - content.top;
-  const footer = parts.filter((p) => p.role === "footer");
-  const flow = parts.filter((p) => p.role !== "footer");
-  const textH = parts.filter((p) => p.kind === "text").reduce((s, p) => s + p.height, 0);
-  const images = flow.filter((p) => p.kind === "image");
-  const gaps = Math.max(0, parts.length - 1) * gap;
-  const room = H - textH - gaps;
-  const issues = [];
-  const out = new Map();
-  if (images.length) {
-    const share = room / images.length;
-    for (const p of images) {
-      const ar = p.aspect > 0 ? p.aspect : 1;
-      let h = Math.max(0, share), w = h * ar;
-      if (w > W) { w = W; h = w / ar; }
-      out.set(p.id, { w, h });
-    }
-    if (room < 72 * images.length) issues.push(`Not enough room for the picture (${Math.max(0, Math.round(room))} pt left): shorten the text or make it smaller.`);
-  } else if (room < 0) issues.push(`The text is ${Math.round(-room)} pt taller than the page.`);
-  const used = textH + images.reduce((s, p) => s + out.get(p.id).h, 0) + gaps;
-  const spare = Math.max(0, H - used);
-  const slots = Math.max(1, flow.length - 1 + (footer.length ? 1 : 0));
-  const extra = flow.length > 1 || footer.length ? Math.min(48, spare / slots) : 0;
-  const boxes = [];
-  let y = content.top;
-  for (const p of flow) {
-    const h = p.kind === "text" ? p.height : out.get(p.id).h;
-    const w = p.kind === "text" ? W : out.get(p.id).w;
-    boxes.push({ id: p.id, x: content.left + (W - w) / 2, y, w, h });
-    y += h + gap + extra;
-  }
-  let yb = content.bottom;
-  for (const p of footer.reverse()) { yb -= p.height; boxes.push({ id: p.id, x: content.left, y: yb, w: W, h: p.height }); yb -= gap; }
-  const r = (v) => Math.round(v * 10) / 10;
-  return { boxes: boxes.map((b) => ({ id: b.id, x: r(b.x), y: r(b.y), w: r(b.w), h: r(b.h) })), issues };
+/** The installed design-font family a name means ("Montserrat SemiBold" →
+ *  Montserrat), or null. */
+export function installedFamily(name, dir = FONT_DIR) {
+  let files = [];
+  try { files = readdirSync(dir); } catch { return null; }
+  const key = String(name || "").replace(/\s+/g, "").toLowerCase();
+  const hit = [...DESIGN_FAMILIES].sort((a, b) => b.length - a.length).find((f) => key.startsWith(f.replace(/ /g, "").toLowerCase()));
+  return hit && files.some((f) => f.startsWith(`${hit.replace(/ /g, "")}-`)) ? hit : null;
 }
 
 const dc = (command, params = {}) => mustCall("designcraft", "execute", { command, params });
+const dcJson = async (tool, args) => (await mustCall("designcraft", tool, args)).json;
 
-/** Text frame `id` grown (by lines) until DesignCraft sets all of its text —
- *  get_story's `overset` is null when nothing is cut off. */
-async function fitTextFrame(id, story, width, height, size) {
-  let h = Math.max(size * 1.5, height);
-  for (let i = 0; i < 24; i++) {
-    await dc("transform.set", { width, height: h, ref: 0, ids: [id] });
-    const s = (await mustCall("designcraft", "get_story", story != null ? { story } : { frame: id })).json || {};
-    if (s.overset == null) {
-      // Fits. Trim the guess down to the lines it set, if that still fits.
-      const tight = Math.ceil(s.lines * size * LEAD + size * 0.35);
-      if (s.lines > 0 && tight < h - 2) {
-        await dc("transform.set", { width, height: tight, ref: 0, ids: [id] });
-        const t = (await mustCall("designcraft", "get_story", story != null ? { story } : { frame: id })).json || {};
-        if (t.overset == null) return { height: tight, lines: t.lines };
-        await dc("transform.set", { width, height: h, ref: 0, ids: [id] });
-      }
-      return { height: h, lines: s.lines };
-    }
-    h += Math.ceil(size * LEAD);
-  }
-  return { height: h, overset: true };
+/** Where each picture's eye goes (sharp's attention), as a DesignCraft
+ *  reference point 0..8, so a crop keeps the face rather than the middle. */
+const focusCache = new Map();
+async function imageFocus(path) {
+  if (!path) return 4;
+  if (focusCache.has(path)) return focusCache.get(path);
+  let ref = 4;
+  try {
+    const sharp = (await import("sharp")).default;
+    const meta = await sharp(path).metadata();
+    const { info } = await sharp(path).resize(64, 64, { fit: "cover", position: sharp.strategy.attention }).toBuffer({ resolveWithObject: true });
+    const fx = info.attentionX / meta.width, fy = info.attentionY / meta.height;
+    ref = (fy < 0.36 ? 0 : fy > 0.64 ? 6 : 3) + (fx < 0.36 ? 0 : fx > 0.64 ? 2 : 1);
+  } catch { /* no sharp, or a file it can't read: centre */ }
+  focusCache.set(path, ref);
+  return ref;
 }
 
-async function styleText(id, role, opts) {
-  const attrs = { size: Number(opts.size) || opts._size };
-  if (role === "headline") attrs.fontStyle = "Bold";
-  if (role === "caption") attrs.fontStyle = "Italic";
-  if (opts.font) attrs.fontFamily = String(opts.font);
-  if (opts.color) {
-    const hex = String(opts.color).trim();
-    if (/^#?[0-9a-f]{6}$/i.test(hex)) {
-      const sw = await dc("swatch.create", { color: hex.startsWith("#") ? hex : `#${hex}`, name: `${roleName(role)} ${hex.replace("#", "").toUpperCase()}` });
-      attrs.fill = sw.json?.name;
-    } else attrs.fill = hex;
+/** Lay page `index` out in `look` (or the look it already has, or one picked
+ *  for its content). Returns the plan's issues. */
+async function layoutPage(index, lookArg) {
+  const doc = await designDoc();
+  const page = designPage(doc, index);
+  if (!page?.items.length) return { look: null, issues: [] };
+  const links = (await callTool("designcraft", "execute", { command: "links.list", params: {} })).json || [];
+  const linkOf = (id) => (Array.isArray(links) ? links : []).find((l) => (l.uses || []).some((u) => u.id === id));
+  const parts = [];
+  for (const it of page.items) {
+    if (it.kind === "image") {
+      const l = linkOf(it.id);
+      const [x0, y0, x1, y1] = it.bounds;
+      const aspect = l?.pixels?.[0] && l?.pixels?.[1] ? l.pixels[0] / l.pixels[1] : (x1 - x0) / Math.max(1, y1 - y0);
+      parts.push({ id: it.id, role: "image", kind: "image", aspect, path: l?.path, over: it.over });
+    } else {
+      const text = String((await dcJson("get_story", { frame: it.id }))?.text || "").trim();
+      if (text) parts.push({ id: it.id, role: it.role, kind: "text", text, over: it.over });
+    }
   }
-  await dc("selection.set", { ids: [id] });
-  await dc("type.char", { attrs });
-  await dc("type.align", { align: opts.align || (role === "body" ? "left" : "center") });
-  // Headings break between words ("Quad-rant" read badly).
-  if (role !== "body") await dc("type.para", { attrs: { hyphenate: false } });
+  const look = pickLook(lookArg) || page.look || autoLook(parts);
+  const hero = parts.find((p) => p.kind === "image");
+  const pal = await imagePalette(hero?.path);
+  const [x0, y0, x1, y1] = page.bounds;
+  const call = async (tool, args) => (await mustCall("designcraft", tool, args)).json;
+  const { plan, issues } = await layoutLook(call, look, { x: x0, y: y0, W: x1 - x0, H: y1 - y0 }, parts, pal);
+  // Crops keep what the eye goes to.
+  const steps = [];
+  for (const f of plan.frames.filter((g) => g.image?.fill)) {
+    const ref = await imageFocus(parts.find((p) => p.id === f.id)?.path);
+    if (ref !== 4) steps.push({ command: "object.fittingOptions", params: { fitting: "fillProportionally", align: ref, ids: [f.id] } }, { command: "object.fit", params: { mode: "fillProportionally", ids: [f.id] } });
+  }
+  if (steps.length) await mustCall("designcraft", "batch", { commands: steps });
+  return { look, issues, palette: { background: plan.bg, accent: pal.accent } };
 }
 
 /** Put a part on a DesignCraft page by role and lay the page out again. */
@@ -819,74 +788,52 @@ async function composeDesign(opts) {
   let page = designPage(doc, opts.page);
   if (!page) throw httpError(422, "DesignCraft has no page to put it on");
   const W = page.content.right - page.content.left;
-  let text = opts.text != null && String(opts.text).trim() ? plainText(String(opts.text)).trim() : null;
+  const text = opts.text != null && String(opts.text).trim() ? plainText(String(opts.text)).trim() : null;
+  const over = Object.fromEntries(OVERRIDE_KEYS.filter((k) => opts[k] != null && opts[k] !== "").map((k) => [k, opts[k]]));
+  if (over.size != null) over.size = parseFloat(over.size); // "28pt"
+  if (over.color && /^[0-9a-f]{6}$/i.test(over.color)) over.color = `#${over.color}`;
+  if (over.color) over.color = String(over.color).toUpperCase();
+  if (!/^#[0-9A-F]{6}$/.test(String(over.color || "#000000"))) delete over.color;
+  if (over.size != null && !(Number(over.size) > 0)) delete over.size;
+  // A font that isn't installed would fall back to whatever DesignCraft
+  // substitutes ("Impact", "Arial" — what models reach for): keep the look's.
+  let fontNote = null;
+  if (over.font) { const f = installedFamily(over.font); if (f) over.font = f; else { fontNote = `"${over.font}" isn't installed, so the look's fonts stay.`; delete over.font; } }
+  // Just a look ("make it look like a movie poster"): lay the page out again.
+  // Also with a role that isn't a part to restyle ("page", "image" with no picture).
+  const restylesPart = DESIGN_ROLES.includes(String(opts.role)) && opts.role !== "image" && Object.keys(over).length > 0;
+  if (!text && !opts.path && pickLook(opts.look) && !restylesPart) {
+    const lay = await layoutPage(page.index, opts.look);
+    return designSummary(page.index, lay, opts, `Restyled the page: ${lay.look}.`);
+  }
   const role = DESIGN_ROLES.includes(String(opts.role)) ? String(opts.role) : opts.path ? "image" : autoRole(page.items, text);
-  const sizes = new Map();
   let target = role !== "image" && ONE_PER_PAGE.has(role) && !opts.add ? page.items.find((it) => it.role === role) : null;
   let replaced = false;
   if (role === "image") {
     if (!opts.path) throw httpError(400, "image needs a picture");
     const into = opts.replace ? page.items.find((it) => it.kind === "image") : null;
+    await dc("selection.set", { ids: [] });
     const r = await mustCall("designcraft", "place_image", into ? { path: opts.path, frame: into.id } : { path: opts.path, spread: page.spread, x: page.content.left, y: page.content.top, width: W });
     const id = into?.id ?? r.json?.id;
     if (id == null) throw httpError(422, `DesignCraft placed the picture but didn't say where: ${r.text}`);
     if (!into) await dc("object.rename", { id, name: "Image" });
-    // A new picture in an old frame: the frame takes the picture's shape.
-    else await dc("object.fit", { mode: "fitFrameToContent", ids: [id] });
     replaced = !!into;
-    target = { id };
   } else {
-    // No text with a part that's there: restyle or move it ("make the headline red").
-    if (!text && target) text = String((await mustCall("designcraft", "get_story", { frame: target.id })).json?.text || "").trim();
-    if (!text) throw httpError(400, `text is empty${ONE_PER_PAGE.has(role) ? ` and the page has no ${role} to change` : ""}`);
-    const size = Number(opts.size) || roleSize(role, text, W);
+    // No text with a part that's there: restyle it ("make the headline red").
+    if (!text && !target) throw httpError(400, `text is empty${ONE_PER_PAGE.has(role) ? ` and the page has no ${role} to change` : ""}`);
     if (target) {
-      if (opts.text != null && String(opts.text).trim()) await mustCall("designcraft", "set_story_text", { frame: target.id, text });
+      if (text) await mustCall("designcraft", "set_story_text", { frame: target.id, text });
       replaced = true;
     } else {
-      const h = textHeight(text, size, W);
-      const r = await dc("frame.create", { spread: page.spread, rect: [page.content.left, page.content.top, page.content.right, page.content.top + h], content: "text", text });
-      target = { id: r.json?.id, story: r.json?.story };
-      await dc("object.rename", { id: target.id, name: roleName(role) });
+      const r = await dc("frame.create", { spread: page.spread, rect: [page.content.left, page.content.top, page.content.right, page.content.top + 40], content: "text", text });
+      target = { id: r.json?.id, over: {} };
     }
-    await styleText(target.id, role, { ...opts, _size: size });
-    sizes.set(target.id, size);
+    const keep = target.over || {};
+    await dc("object.rename", { id: target.id, name: partName(role, { ...keep, ...over }) });
   }
-  // Read the page again (the new part is on it now) and put it in its place.
-  page = designPage(await designDoc(), page.index);
-  const fresh = page.items.find((it) => it.id === target.id);
-  let order = page.items.filter((it) => it.id !== target.id);
-  if (fresh && (!replaced || opts.at)) order.splice(insertAt(order, role, opts.at), 0, { ...fresh, role });
-  else if (fresh) order = page.items;
-  if (opts.layout === false) return designSummary(page.index, [], opts);
-  const parts = [];
-  for (const it of order) {
-    const [x0, y0, x1, y1] = it.bounds;
-    if (it.kind === "image") { parts.push({ ...it, aspect: (x1 - x0) / Math.max(1, y1 - y0) }); continue; }
-    // The new or changed part starts from its estimate (so a shorter headline
-    // gets a shorter frame); the others keep their height unless cut off.
-    let size = sizes.get(it.id);
-    let fit = await fitTextFrame(it.id, it.story, W, size ? textHeight(text, size, W) : y1 - y0, size || 14);
-    // A heading that wraps past its lines gets smaller type rather than a
-    // third line, unless the user gave the size.
-    for (let k = 0; size && !opts.size && fit.lines > roleLines(role, text) && size > 14 && k < 6; k++) {
-      size = Math.max(14, Math.round(size * 0.9));
-      await dc("selection.set", { ids: [it.id] });
-      await dc("type.char", { attrs: { size } });
-      fit = await fitTextFrame(it.id, it.story, W, textHeight(text, size, W), size);
-    }
-    parts.push({ ...it, height: fit.height });
-  }
-  const plan = stackLayout(page.content, parts);
-  const steps = [];
-  for (const b of plan.boxes) {
-    steps.push({ command: "transform.set", params: { x: b.x, y: b.y, width: b.w, height: b.h, ref: 0, ids: [b.id] } });
-    // Frames keep their picture's shape, so this fills them without stretching.
-    if (parts.find((p) => p.id === b.id)?.kind === "image") steps.push({ command: "object.fit", params: { mode: "fitProportionally", ids: [b.id] } });
-  }
-  steps.push({ command: "selection.set", params: { ids: [] } });
-  await mustCall("designcraft", "batch", { commands: steps });
-  return designSummary(page.index, plan.issues, opts, replaced ? `Changed the ${role}.` : null);
+  if (opts.layout === false) return designSummary(page.index, { issues: [] }, opts);
+  const lay = await layoutPage(page.index, opts.look);
+  return designSummary(page.index, lay, opts, [replaced ? `Changed the ${role}.` : null, fontNote].filter(Boolean).join(" ") || null);
 }
 
 /** One page edit at a time: two composes interleaving would each lay out a
@@ -899,10 +846,12 @@ function serialCompose(b) {
   return run;
 }
 
-/** The page after an edit, compact: what's on it, top first, and anything
- *  cut off or off the page — checked here, so the model needn't look. */
-async function designSummary(index, issues, opts, note) {
+/** The page after an edit, compact: its look, what's on it, top first, and
+ *  anything cut off, off the page or hard to read — checked here, so the
+ *  model needn't look. */
+async function designSummary(index, lay, opts, note) {
   const page = designPage(await designDoc(), index);
+  const issues = [...(lay.issues || [])];
   const items = [];
   for (const it of page.items) {
     const [x0, y0, x1, y1] = it.bounds;
@@ -910,13 +859,17 @@ async function designSummary(index, issues, opts, note) {
     if (it.kind === "text") {
       const s = (await callTool("designcraft", "get_story", { frame: it.id })).json || {};
       row.text = String(s.text || "").slice(0, 80);
-      if (s.overset != null) issues.push(`${roleName(it.role)} (id ${it.id}) is cut off: its text doesn't fit.`);
+      if (s.overset != null && !issues.some((i) => i.startsWith(it.role))) issues.push(`${roleName(it.role)} (id ${it.id}) is cut off: its text doesn't fit.`);
     }
-    const [px0, py0, px1, py1] = page.bounds;
-    if (x0 < px0 - 0.5 || y0 < py0 - 0.5 || x1 > px1 + 0.5 || y1 > py1 + 0.5) issues.push(`${roleName(it.role)} (id ${it.id}) runs off the page.`);
+    if (Object.keys(it.over || {}).length) row.set_by_hand = it.over;
     items.push(row);
   }
-  return { page: page.index, items, ...(issues.length ? { issues } : {}), ...(note ? { note } : {}) };
+  const others = LOOK_NAMES.filter((l) => l !== (lay.look || page.look));
+  return {
+    page: page.index, look: lay.look || page.look, items,
+    ...(issues.length ? { issues } : {}), ...(note ? { note } : {}),
+    other_looks: others.join(", "),
+  };
 }
 
 async function ensureSequence() {
