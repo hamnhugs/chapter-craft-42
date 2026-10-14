@@ -343,6 +343,43 @@ function contextForRect(items: TextItemPos[], rect: Rect, pageH: number): string
 
 interface Candidate extends ExtractedFigure { clusterPages?: Set<number> }
 
+/** A picture on one page, as FRACTIONS of the page (0–1, top-left origin),
+ *  so the caller can crop it from a render at any scale. */
+export interface PageImageBox {
+  x0: number; y0: number; x1: number; y1: number;
+  /** Covers nearly the whole page: a scan layer or background, not a figure. */
+  fullPage: boolean;
+}
+
+/** Where the pictures are on ONE page, in reading order (top to bottom,
+ *  left to right within a row). Same operator walk, clamping and slice
+ *  merging as extraction, but without the book-wide dedup — the reader's
+ *  "screenshot the image" is about what's on screen right now. */
+export async function locatePageImages(page: PDFPageProxy, ocConfig?: unknown): Promise<PageImageBox[]> {
+  const base = page.getViewport({ scale: 1 });
+  const scale = Math.max(0.2, Math.min(2.5, RENDER_TARGET_EDGE / Math.max(base.width, base.height)));
+  const viewport = page.getViewport({ scale });
+  const pageW = viewport.width, pageH = viewport.height;
+  const opList = await page.getOperatorList();
+  const raw = collectImageRects(opList, viewport, (ocConfig as any) ?? null);
+  const clamped = raw
+    .map((r) => ({
+      x0: Math.max(0, r.x0), y0: Math.max(0, r.y0),
+      x1: Math.min(pageW, r.x1), y1: Math.min(pageH, r.y1),
+    }))
+    .filter((r) => r.x1 - r.x0 > 2 && r.y1 - r.y0 > 2);
+  const kept = mergeRects(clamped, MERGE_GAP_PX).filter((r) => {
+    const w = r.x1 - r.x0, h = r.y1 - r.y0;
+    return w >= MIN_DIM_PX && h >= MIN_DIM_PX && w * h >= pageW * pageH * MIN_PAGE_AREA_FRACTION;
+  });
+  const rowTolerance = pageH * 0.02;
+  kept.sort((a, b) => (Math.abs(a.y0 - b.y0) <= rowTolerance ? a.x0 - b.x0 : a.y0 - b.y0));
+  return kept.map((r) => ({
+    x0: r.x0 / pageW, y0: r.y0 / pageH, x1: r.x1 / pageW, y1: r.y1 / pageH,
+    fullPage: (r.x1 - r.x0) * (r.y1 - r.y0) >= pageW * pageH * FULL_PAGE_COVERAGE,
+  }));
+}
+
 export async function extractFiguresFromPdf(opts: {
   file?: File | Blob;
   fileUrl?: string;

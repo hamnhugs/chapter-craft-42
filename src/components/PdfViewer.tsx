@@ -28,6 +28,7 @@ import { useReaderFocus } from "@/hooks/useReaderFocus";
 import { loadLastPage, saveLastPage, useReaderPrefs } from "@/hooks/useReaderPrefs";
 import { useWakeLock } from "@/hooks/useWakeLock";
 import { useReaderHighlights, type HighlightHit } from "@/hooks/useReaderHighlights";
+import { useReaderVoice } from "@/hooks/useReaderVoice";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
@@ -199,7 +200,10 @@ const PdfViewer: React.FC = () => {
     return () => ro.disconnect();
   }, [scrollEl]);
 
+  /** The loaded PDF, for voice screenshots (renders pages off-screen). */
+  const pdfDocRef = useRef<PDFDocumentProxy | null>(null);
   const onDocumentLoadSuccess = useCallback((pdf: PDFDocumentProxy) => {
+    pdfDocRef.current = pdf;
     setNumPages(pdf.numPages);
     setCurrentPage((p) => Math.min(Math.max(1, p), pdf.numPages));
     // Measure a page up front so the first render is already fitted.
@@ -358,6 +362,31 @@ const PdfViewer: React.FC = () => {
     else if (pageInput) toast.error(`Enter a page from 1 to ${numPages}.`);
     setPageInput(null);
   };
+
+  // Hands-free voice: "next page", "chapter 3", "save the paragraph that
+  // says …", "screenshot the picture" (lib/voiceControl.ts).
+  useReaderVoice({
+    book: book ?? null,
+    mode: isHtmlBook ? "html" : "pdf",
+    numPages,
+    currentPage,
+    selectedChapterId,
+    focused,
+    pdfRef: pdfDocRef,
+    pageHostRef,
+    iframeRef,
+    goToPage,
+    selectChapter: handleChapterSelect,
+    zoomBy: changeZoom,
+    zoomFit: () => setZoom("fit"),
+    enterFocus,
+    exitFocus,
+    commitSelection: highlights.commitSelection,
+    openCard: (quote) => {
+      setCardSource({ quote, page: currentPage, chapterId: null });
+      setCaptureOpen(true);
+    },
+  });
 
   if (!book) {
     return (

@@ -22,6 +22,7 @@ import { useVisitTracker } from "@/hooks/useVisitTracker";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { useAutoSleepCycle } from "@/hooks/useAutoSleepCycle";
 import { localAutoSignInEnabled } from "@/lib/localAutoSignIn";
+import { registerVoiceApp } from "@/lib/voiceControl";
 
 // Admin-only surface: lazy so regular users never download it.
 const AdminPanel = React.lazy(() => import("@/components/AdminPanel"));
@@ -187,7 +188,7 @@ const TabletRail: React.FC<{
 );
 
 const Index: React.FC = () => {
-  const { activeTab, setActiveTab, getActiveBook, signOut, activeWiki, activeWikis } = useApp();
+  const { activeTab, setActiveTab, getActiveBook, signOut, activeWiki, activeWikis, books, setActiveBook } = useApp();
   const { isAdmin } = useIsAdmin();
   useAutoSleepCycle();
   const [moreOpen, setMoreOpen] = useState(false);
@@ -195,6 +196,21 @@ const Index: React.FC = () => {
   const moreTabs = visibleTabs.filter((t) => !PRIMARY_IDS.includes(t.id as any));
   const moreActive = moreTabs.some((t) => t.id === activeTab);
   const activeBook = getActiveBook();
+
+  // Hands-free voice drives tabs and books (lib/voiceControl.ts). Latest
+  // values via a ref so the registration itself never churns.
+  const voiceRef = useRef({ activeTab, setActiveTab, books, setActiveBook, hasBook: !!activeBook, isAdmin });
+  voiceRef.current = { activeTab, setActiveTab, books, setActiveBook, hasBook: !!activeBook, isAdmin };
+  useEffect(() => registerVoiceApp({
+    activeTab: () => voiceRef.current.activeTab,
+    setTab: (tab) => {
+      if (tab === "admin" && !voiceRef.current.isAdmin) return;
+      voiceRef.current.setActiveTab(tab);
+    },
+    books: () => voiceRef.current.books.map((b) => ({ id: b.id, title: b.title })),
+    openBook: (id) => voiceRef.current.setActiveBook(id),
+    hasActiveBook: () => voiceRef.current.hasBook,
+  }), []);
   const { themeId } = useTheme();
   const isFruitStripe = themeId === "fruit-stripe";
   useVisitTracker();
@@ -275,10 +291,13 @@ const Index: React.FC = () => {
             Resolves to 0 at `md` and up, where the nav is `md:hidden` and the
             tablet rail takes over. */}
         <div className="flex-1 overflow-hidden pb-[calc(5rem+env(safe-area-inset-bottom,0px))] md:pb-0">
-          {activeTab === "library" ? (
+          {/* Counsel stays mounted behind the other tabs so a hands-free
+              session keeps listening (and navigating) wherever you go. */}
+          <div className={activeTab === "chat" ? "h-full" : "hidden"}>
+            <ChatPanel visible={activeTab === "chat"} />
+          </div>
+          {activeTab === "chat" ? null : activeTab === "library" ? (
             <Library />
-          ) : activeTab === "chat" ? (
-            <ChatPanel />
           ) : activeTab === "wiki" ? (
             <WikiPanel />
           ) : activeTab === "wikis" ? (

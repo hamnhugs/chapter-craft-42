@@ -45,8 +45,10 @@ const SR: any =
 export type HandsFreeState = "idle" | "listening" | "thinking" | "speaking";
 
 interface UseHandsFreeOpts {
-  /** Send a user utterance to the model; resolves with the assistant reply. */
-  onUtterance: (text: string) => Promise<string>;
+  /** Send a user utterance to the model; resolves with the assistant reply.
+   *  `endSession` (a voice command like "bookworm go to sleep") turns
+   *  hands-free off once the reply has been spoken. */
+  onUtterance: (text: string) => Promise<string | { reply: string; endSession?: boolean }>;
   /** Speak the reply; onDone settles exactly once on every terminal path. */
   speak: (text: string, opts?: { onDone?: (r: { reason: SpeakEndReason }) => void }) => void;
   /** Stop any in-flight speech (settles its session "stopped"). */
@@ -343,8 +345,11 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeController {
     teardownRecognition();
     setFsm("thinking");
     let pendingBargeText: string | null = null;
+    let endSession = false;
     try {
-      const reply = await optsRef.current.onUtterance(text);
+      const result = await optsRef.current.onUtterance(text);
+      const reply = typeof result === "string" ? result : result.reply;
+      endSession = typeof result !== "string" && !!result.endSession;
       // activeRef alone is not enough: hands-free may have been toggled OFF
       // and ON again while the model was thinking — activeRef is true again,
       // but this turn belongs to the dead session and must not speak its
@@ -445,6 +450,8 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeController {
         busyRef.current = false;
         if (!activeRef.current) {
           setFsm("idle");
+        } else if (endSession) {
+          stopAllRef.current();
         } else if (pendingBargeText) {
           // Verified interruption — the user already spoke; treat it as the
           // next turn immediately (no cooldown: they're mid-thought).

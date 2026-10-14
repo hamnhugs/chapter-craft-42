@@ -22,6 +22,8 @@ import { usePlan } from "@/hooks/usePlan";
 import { openPricing } from "@/components/PricingDialog";
 import { useReadAloud } from "@/hooks/useReadAloud";
 import { useHandsFree } from "@/hooks/useHandsFree";
+import HandsFreeDock from "@/components/HandsFreeDock";
+import { runVoiceUtterance } from "@/lib/voiceControl";
 import { isEmbeddingModel } from "@/lib/utils";
 import { chatReady, describeModel } from "@/lib/providers/registry";
 import { useDictation } from "@/hooks/useDictation";
@@ -63,7 +65,10 @@ const VOICE_QUICK_SEARCH_KEY = "voice_quick_search";
 const SEARCH_INTENT_RE =
   /\b(search|look up|look for|find|google|what is|what are|who is|who are|tell me about|research|check online|latest|current|news about)\b/i;
 
-const ChatPanel: React.FC = () => {
+/** `visible` is false while another tab shows: the panel stays mounted (hidden)
+ *  so a hands-free session keeps listening — and driving the app by voice —
+ *  across tabs. */
+const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
   const { books, activeBookId, activeWiki, activeWikiId, activeWikis, activeWikiIds, toggleNeuronInSession, setActiveTab, shelves } = useApp();
   const { user } = useAuth();
   const {
@@ -79,13 +84,24 @@ const ChatPanel: React.FC = () => {
     progress: speakProgress, isPaused: speakPaused, togglePause: toggleSpeakPause,
     skipBack: speakSkipBack, skipForward: speakSkipForward,
   } = useReadAloud();
-  // Configured in the Settings tab; re-read here on mount (tab switches remount this panel).
-  const [bargeInEnabled] = useState(() => localStorage.getItem("hands_free_barge_in") === "true");
+  // Configured in the Settings tab; re-read whenever Counsel comes back into
+  // view (the panel stays mounted behind other tabs — see Index).
+  const bargeInEnabled = useMemo(() => localStorage.getItem("hands_free_barge_in") === "true", [visible]); // eslint-disable-line react-hooks/exhaustive-deps
   // Defaults ON: the pocket screen shipped before it was a setting, so an
   // absent key has to mean enabled or every existing user silently loses it.
-  const [pocketScreenEnabled] = useState(() => localStorage.getItem("hands_free_pocket_screen") !== "false");
+  const pocketScreenEnabled = useMemo(() => localStorage.getItem("hands_free_pocket_screen") !== "false", [visible]); // eslint-disable-line react-hooks/exhaustive-deps
   const handsFree = useHandsFree({
-    onUtterance: (text) => sendMessage(text, { voiceMode: true, modelOverride: voiceModel || undefined }),
+    // Voice commands ("go to the read tab", "next page", "bookworm go to
+    // sleep" — lib/voiceControl.ts) run first; anything else is a turn for
+    // the model.
+    onUtterance: async (text) => {
+      const cmd = await runVoiceUtterance(text);
+      if (cmd) {
+        setVoiceNote(cmd.reply);
+        return cmd;
+      }
+      return sendMessage(text, { voiceMode: true, modelOverride: voiceModel || undefined });
+    },
     // Hands-free has its own speech speed (read-aloud buttons keep ttsRate).
     speak: (text, opts) => speak(text, { ...opts, rate: handsFreeTtsRate || undefined }),
     stopSpeaking,
@@ -94,6 +110,14 @@ const ChatPanel: React.FC = () => {
     isAudioActive,
     bargeIn: bargeInEnabled,
   });
+
+  // Last voice command's confirmation, for the dock on other tabs.
+  const [voiceNote, setVoiceNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!voiceNote) return;
+    const t = window.setTimeout(() => setVoiceNote(null), 6000);
+    return () => window.clearTimeout(t);
+  }, [voiceNote]);
 
   // Draft survives tab switches (e.g. a trip to Settings unmounts this panel —
   // the old in-place settings sheet never did, so losing the draft here would
@@ -214,8 +238,8 @@ const ChatPanel: React.FC = () => {
   // ---- Voice features absorbed from the former Echo (Voice) tab ----
   const [notesPanelOpen, setNotesPanelOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
-  // Configured in the Settings tab; read-only here.
-  const [voiceQuickSearch] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_KEY) === "true");
+  // Configured in the Settings tab; read-only here (re-read when Counsel shows).
+  const voiceQuickSearch = useMemo(() => localStorage.getItem(VOICE_QUICK_SEARCH_KEY) === "true", [visible]); // eslint-disable-line react-hooks/exhaustive-deps
   const [pendingSearchCount, setPendingSearchCount] = useState(0);
   const [selectionCapture, setSelectionCapture] = useState<{ text: string; top: number; left: number } | null>(null);
   const [workspaceOpen, setWorkspaceOpen] = useState(() => localStorage.getItem("counsel_workspace_open") === "1");
@@ -297,6 +321,11 @@ const ChatPanel: React.FC = () => {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const inputBeforeDictationRef = useRef<string>("");
+  // Replies that arrived while another tab showed were laid out at zero
+  // size — land on the newest message when Counsel comes back.
+  useEffect(() => {
+    if (visible) messagesEndRef.current?.scrollIntoView({ block: "end" });
+  }, [visible]);
   // When a message is sent we stop the mic and ignore the recognizer's trailing
   // final callback, so it can't repopulate the just-cleared composer.
   const suppressDictationRef = useRef(false);
@@ -1544,6 +1573,16 @@ const ChatPanel: React.FC = () => {
             <span className="material-symbols-outlined text-xl" aria-hidden>close</span>
           </button>
         </div>
+      )}
+
+      {!visible && handsFree.active && (
+        <HandsFreeDock
+          state={handsFree.state}
+          interim={handsFree.interim}
+          note={voiceNote}
+          onStop={handsFree.stop}
+          onOpenCounsel={() => setActiveTab("chat")}
+        />
       )}
 
       {/* Pocket screen: hands-free touch guard on phones (arms after idle) */}
