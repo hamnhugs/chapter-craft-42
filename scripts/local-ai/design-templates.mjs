@@ -179,5 +179,6 @@ export function describeTemplate(t) {
   const roles = t.slots.map((s) => s.role);
   const count = (r) => roles.filter((x) => x === r).length;
   const parts = [...new Set(roles)].map((r) => (count(r) > 1 ? `${count(r)} ${r}s` : r));
-  return `${t.name}: ${Math.round(t.width)}×${Math.round(t.height)} pt; parts ${parts.join(", ")}`;
+  const pages = Array.isArray(t.pages) && t.pages.length > 1 ? `${t.two_sided ? "front and back" : `${t.pages.length} pages`}; ` : "";
+  return `${t.name}: ${Math.round(t.width)}×${Math.round(t.height)} pt; ${pages}parts ${parts.join(", ")}`;
 }

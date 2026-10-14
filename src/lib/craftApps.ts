@@ -20,10 +20,7 @@ export type CraftApp = (typeof CRAFT_APPS)[number];
 const LABEL: Record<CraftApp, string> = { photocraft: "PhotoCraft", designcraft: "DesignCraft", filmcraft: "FilmCraft" };
 /** DesignCraft page looks (scripts/local-ai/design-looks.mjs LOOK_NAMES). */
 export const PAGE_LOOKS = ["bold", "cinematic", "editorial", "swiss", "classic", "minimal", "split", "pop"] as const;
-/** Page sizes beyond DesignCraft's own presets, in points: an 18×24 in
- *  poster, a square and a 9:16 social post, a 6×9 in book cover. */
-export const EXTRA_PRESETS: Record<string, [number, number]> = { poster: [1296, 1728], square: [720, 720], story: [540, 960], book: [432, 648], "book cover": [432, 648], cover: [432, 648], instagram: [720, 900] };
-export const CRAFT_ACTIONS = ["status", "open", "find_commands", "run", "inspect", "preview", "send", "export", "transfer", "save_template", "use_template", "app_tools", "call"] as const;
+export const CRAFT_ACTIONS = ["status", "open", "find_commands", "run", "inspect", "preview", "send", "pages", "export", "transfer", "save_template", "use_template", "app_tools", "call"] as const;
 type CraftAction = (typeof CRAFT_ACTIONS)[number];
 
 const BASE = "/local/crafts";
@@ -40,7 +37,7 @@ export const CRAFT_TOOL_DEFINITION = {
     // slimToolDef) with the action guide inside it: parameter descriptions are
     // clipped to 200, which cut the guide off after four actions.
     description:
-      "Edit photos (layers, text, colour), design flyers, posters, covers and books and edit video in the user's apps PhotoCraft (like Photoshop), DesignCraft (like InDesign) and FilmCraft (like Premiere Pro). A clear, undoable ask: just do it, writing any wording yourself from the book in context. Ask ONE short question with 2-4 choices when it's unclear which layer or item is meant; always ask before merge, flatten or delete. Keep the user's layers. Actions: send/open puts image_id, chapter_id or text in (DesignCraft: `role`; `look` designs the page); save_template/use_template (title; none = list); find_commands, then run (with `layer`); export; transfer; inspect/preview; status; app_tools/call.",
+      "Edit photos (layers, text, colour), design flyers, posters, covers and books, edit video in the user's apps PhotoCraft (like Photoshop), DesignCraft (like InDesign) and FilmCraft (like Premiere Pro). A clear, undoable ask: just do it, writing any wording yourself from the book in context. Ask ONE short question with 2-4 choices when it's unclear which layer or item is meant; always ask before merge, flatten or delete. Keep the user's layers. Actions: send/open puts image_id, chapter_id or text in (DesignCraft: `role`, `page`; `look` designs it); pages (add, front+back, size); save_template/use_template; find_commands, then run; export; transfer; inspect/preview; status; app_tools/call.",
     parameters: {
       type: "object",
       properties: {
@@ -66,11 +63,11 @@ export const CRAFT_TOOL_DEFINITION = {
         format: { type: "string", description: "export/transfer: png, jpg, webp, psd (PhotoCraft); png, pdf, epub, html, txt, idml (DesignCraft); png (one frame), mp4, gif, wav, srt (FilmCraft). Default png." },
         to_library: { type: "boolean", description: "export with format pdf or epub: also add it to the user's bookshelf as a book." },
         title: { type: "string", description: "export: a name for the result. save_template/use_template: the template's name (DesignCraft)." },
-        page: { type: "integer", description: "preview/export in DesignCraft: page index, 0 = first." },
+        page: { type: "integer", description: "DesignCraft: which page, 0 = first/front, 1 = second/back (send, preview, export, pages). Leave out for the page in use." },
         seconds: { type: "number", description: "preview/export in FilmCraft: the moment to show, in seconds." },
         tool: { type: "string", description: "call: the app tool's name, from app_tools." },
         arguments: { type: "object", description: "call: that tool's arguments." },
-        options: { type: "object", description: "DesignCraft send with role: {color:'#hex', size, font, align}; open: {preset:'Letter'|'A4'|'Tabloid'|'Poster'|'Square'|'Story'|'Book'} = new page. PhotoCraft send {new_document:true}. FilmCraft {seconds, track}." },
+        options: { type: "object", description: "DesignCraft send with role: {color:'#hex', size, font, align}; open: {preset:'Letter'|'A4'|'Poster'|'Postcard'|'Book'…, pages:n, numbers:true, sides:2 only if asked to print both sides} = new document. pages: {add, delete, move:{from,to}, duplicate, sides, preset, landscape, bleed, margins, columns, numbers}. export pdf: {print (bleed + crop marks), booklet, pages}. PhotoCraft send {new_document:true}. FilmCraft {seconds, track}." },
       },
       required: ["action"],
     },
@@ -92,7 +89,49 @@ const AFTER_PAGE =
  *  headline the user had asked for in the same breath (2026-10-14). */
 export function pageNote(r: any): string {
   const has = (role: string) => (r?.items || []).some((i: any) => i.role === role);
-  return `${has("headline") ? "" : "No headline on the page yet. "}${AFTER_PAGE}`;
+  // Several pages (a two-sided flyer, a newsletter): which one this was, and
+  // which are still empty — "front and back" asked in one breath otherwise
+  // ends with the back never designed.
+  const pages: any[] = Array.isArray(r?.pages) ? r.pages : [];
+  const empty = pages.filter((p) => p.empty).map((p) => `the ${p.side} (page ${p.page})`);
+  const where = pages.length > 1
+    ? `That was the ${r.side} (page ${r.page}).${empty.length ? ` Still empty: ${empty.join(", ")}. If the user asked for it, fill it now: send with role, text and page.` : ""} `
+    : "";
+  const noHeadline = !has("headline") && !(pages.length > 1 && r?.page > 0);
+  return `${where}${noHeadline ? "No headline on the page yet. " : ""}${AFTER_PAGE}`;
+}
+
+/** A page edit that left other pages empty (the back of a two-sided flyer),
+ *  as a spelled-out call: Qwen3-4B described the back it meant to make and
+ *  stopped, reading past the note (2026-10-14). ChatContext gives a `next`
+ *  starting "Now do it" one more round when the reply stops without calling. */
+export function emptyPagesNext(r: any): string | null {
+  const pages: any[] = Array.isArray(r?.pages) ? r.pages : [];
+  if (pages.length < 2) return headlineNext(r);
+  // Not while the page just edited still lacks its headline: "the image and a
+  // headline at the top" put the headline on the empty back (Qwen3-4B,
+  // 2026-10-14). That page's own note asks for its headline first.
+  const here = (r?.items || []).map((i: any) => i.role);
+  if (r?.page === 0 && !here.includes("headline")) return headlineNext(r);
+  const empty = pages.filter((p) => p.empty);
+  // The front with no picture: "the image and a headline on the front" came
+  // back headline-only, the picture never sent (Qwen3-4B, 2026-10-14).
+  const bare = pages[0] && !pages[0].empty && !(pages[0].parts || []).includes("image");
+  if (!empty.length && !bare) return null;
+  const steps: string[] = [];
+  if (bare) steps.push(`for a picture the user asked for: send with app "designcraft", page 0, role "image", image_id = that picture's id`);
+  for (const e of empty.slice(0, 2)) steps.push(`for what the user wanted on the ${e.side}: send with app "designcraft", page ${e.page}, role "body" (or "headline"), text = that content, written from what the user said`);
+  const what = [bare ? `the ${pages[0].side} (page 0) has no picture` : null, ...empty.slice(0, 2).map((e) => `the ${e.side} (page ${e.page}) is empty`)].filter(Boolean).join(" and ");
+  return `Now do it: ${what}. Make the calls the user's request needs — ${steps.join("; ")}. If they asked for none of it, just say what's done.`;
+}
+
+/** A first page with a picture and no headline, as a spelled-out call:
+ *  "place the image and add a headline to the top" ended picture-only in 2 of
+ *  3 sessions once the card grew (2026-10-14); the plain note was read past. */
+export function headlineNext(r: any): string | null {
+  const roles = (r?.items || []).map((i: any) => i.role);
+  if ((r?.page ?? 0) !== 0 || !roles.includes("image") || roles.includes("headline")) return null;
+  return `Now do it: the page has the picture but no headline. If the user asked for a headline (or a title), call craft with action "send", app "designcraft", role "headline", text = the headline, written yourself from the book. If they didn't, just say what's done.`;
 }
 
 /** Longer than this, text sent to DesignCraft is a story that flows across
@@ -131,6 +170,11 @@ async function composePart(args: any, deps: CraftDeps): Promise<any> {
   const imageId = pageImageId(args);
   const img = imageId ? await libraryImageToWorkspace(imageId, deps) : null;
   const o = args.options || {};
+  // "Printed on both sides", or a size, in the same send: the document is set
+  // up first (only made two-sided when one is already open).
+  if (o.sides || o.two_sided || o.preset || (o.width && o.height) || o.pages > 1 || o.numbers) {
+    await bridge("/pages", { app: "designcraft", ensure: true, ...Object.fromEntries(["sides", "two_sided", "preset", "width", "height", "landscape", "orientation", "pages", "numbers", "bleed"].filter((k) => o[k] != null).map((k) => [k, o[k]])) });
+  }
   const look = args.look || o.look;
   // With a look in the call, the look sets the type; a size or font the model
   // adds alongside ("48pt Impact") would undo it. Colour still goes through.
@@ -156,6 +200,8 @@ async function composePart(args: any, deps: CraftDeps): Promise<any> {
 }
 
 export interface CraftDeps {
+  /** The user's message this turn, when known (askedOptions). */
+  userText?: string;
   books: BookDocument[];
   loadChapterText?: (chapterId: string) => Promise<string>;
   addBook?: (book: BookDocument, sourceFile?: File, opts?: any) => Promise<string>;
@@ -191,12 +237,12 @@ async function bridge(path: string, body?: unknown, init?: RequestInit): Promise
 }
 
 /** A saved DesignCraft template, as the chat's template picker shows it. */
-export interface DesignTemplate { name: string; slug: string; about: string; width: number; height: number; parts: string[]; created: string }
+export interface DesignTemplate { name: string; slug: string; about: string; width: number; height: number; parts: string[]; created: string; pages?: number; twoSided?: boolean }
 
 /** The saved templates, newest first (the template picker card). */
 export async function listDesignTemplates(): Promise<DesignTemplate[]> {
   const r = await bridge("/template/list", {});
-  const all: DesignTemplate[] = (r.templates || []).map((t: any) => ({ name: t.name, slug: t.slug, about: t.about, width: t.width, height: t.height, parts: t.parts || [], created: t.created || "" }));
+  const all: DesignTemplate[] = (r.templates || []).map((t: any) => ({ name: t.name, slug: t.slug, about: t.about, width: t.width, height: t.height, parts: t.parts || [], created: t.created || "", pages: Number(t.pages) || 1, twoSided: !!t.two_sided }));
   return all.sort((a, b) => b.created.localeCompare(a.created));
 }
 
@@ -318,6 +364,8 @@ export function resolveAction(args: any): string {
   if (action === "run" && !hasSteps && args?.query) return "find_commands";
   // "create_template", "apply template", "load_template"…
   if (/templ/.test(action)) return /save|creat|make|store|new/.test(action) ? "save_template" : "use_template";
+  // "add_page", "delete_pages", "duplicate_page", "new_page" (not preview/export of a page).
+  if (/pages?\b|pages?_|_pages?/.test(action) && /add|insert|new|delete|remove|dup|copy|move|reorder|setup|size|number|side/.test(action)) return "pages";
   if ((CRAFT_ACTIONS as readonly string[]).includes(action)) return action;
   // No action, content and a page size: the content wins. "Make it look
   // amazing" came as {look:"bold", options:{preset:"A4"}} and opened a new,
@@ -327,6 +375,8 @@ export function resolveAction(args: any): string {
   if (args?.options?.preset || (args?.options?.width && args?.options?.height)) return "open";
   if (hasSteps) return "run";
   if (hasContent) return "send";
+  // {format:"pdf"} with no action: an export (Qwen3-4B, 2026-10-14).
+  if ((args?.format || args?.options?.print || args?.options?.booklet) && !args?.to) return "export";
   if (args?.query) return "find_commands";
   return action;
 }
@@ -351,8 +401,83 @@ export function pagePartRestyle(args: any): any | null {
 }
 const PAGE_ROLES = ["headline", "subhead", "body", "caption", "footer"];
 
+/** `sides` and `numbers` count only when the user asked for them: Qwen3-4B
+ *  fills in every key the options description shows, so "open the right
+ *  page size for a flyer" came as {pages:1, sides:2, numbers:true} (3 of 3,
+ *  2026-10-14) — the same call it makes when both sides WERE asked for. With
+ *  no user text (tests, other callers) the options stand. */
+const ASKS_TWO_SIDED = /\b(both sides|two[- ]sided|double[- ]sided|duplex|front and back|front ?& ?back|front\/back|back ?side|on the back|the back|reverse side|two sides|flip ?side)\b/i;
+const ASKS_NUMBERS = /page numbers?|number(ed)? (the |its |all )?pages|numbered|paginat/i;
+export function askedOptions(o: any, userText?: string): any {
+  if (!o || typeof o !== "object" || userText == null) return o;
+  const out = { ...o };
+  if ((out.sides != null || out.two_sided != null) && !ASKS_TWO_SIDED.test(userText)) { delete out.sides; delete out.two_sided; }
+  if (out.numbers && !ASKS_NUMBERS.test(userText)) delete out.numbers;
+  return out;
+}
+
+/** After a page structure change: how the model reaches each page. */
+const PAGES_NOTE = "`pages` lists every page (0 = first). Put parts on one with send + role + page; tell the user in a line what changed.";
+
+/** The pages action's options, read loosely: `page` names the page for a
+ *  delete/duplicate given as `true` ("delete this page"), and a bare number
+ *  or word for add ("add 2 pages", "add a back"). */
+export function pagesOptions(args: any, action = ""): Record<string, unknown> {
+  const o = { ...(args?.options || {}) };
+  const ops = ["add", "delete", "duplicate", "move", "sides", "numbers", "preset", "width", "facing", "bleed", "margins", "columns"];
+  if (!ops.some((k) => o[k] != null)) {
+    if (/add|insert|new/.test(action)) o.add = 1;
+    else if (/delete|remove/.test(action)) o.delete = true;
+    else if (/dup|copy/.test(action)) o.duplicate = true;
+  }
+  if (args?.page != null) {
+    if (o.delete === true) o.delete = [args.page];
+    else if (o.duplicate === true) o.duplicate = args.page;
+    else if (o.add == null && o.move == null && o.delete == null && o.duplicate == null) o.page = args.page;
+  }
+  if (typeof o.add === "string") {
+    if (/back|side/i.test(o.add)) { o.sides = 2; delete o.add; } else o.add = parseInt(o.add, 10) || 1;
+  }
+  if (o.add === true) o.add = 1;
+  return o;
+}
+
+/** Several page parts in one call, the way Qwen3-4B planned a two-sided flyer
+ *  (2026-10-14): `pages: [{page, role, text, options:{image_id}}…]`, often
+ *  with the document's setup as `open: {preset, sides, pages}`. → the setup
+ *  as options, and one send per part. Null when the call isn't that. */
+export function partBatch(args: any): { setup: Record<string, unknown> | null; parts: any[] } | null {
+  if (args?.app !== "designcraft") return null;
+  const list = Array.isArray(args?.pages) ? args.pages : Array.isArray(args?.parts) ? args.parts : null;
+  if (!list || !list.some((e: any) => e && typeof e === "object" && (e.role || e.text || e.image_id || e.options?.image_id))) return null;
+  const setup = args.open && typeof args.open === "object" ? args.open : args.options && (args.options.sides || args.options.preset || args.options.pages) ? args.options : null;
+  const parts = list.filter((e: any) => e && typeof e === "object").map((e: any) => {
+    const { image_id, ...o } = e.options || {};
+    return { action: "send", app: "designcraft", page: e.page, role: e.role, ...(e.text ? { text: e.text } : {}), ...(e.image_id || image_id ? { image_id: e.image_id || image_id } : {}), ...(Object.keys(o).length ? { options: o } : {}) };
+  });
+  return { setup, parts };
+}
+
 export async function runCraftTool(args: any, deps: CraftDeps): Promise<Outcome> {
   const name = "craft";
+  if (args?.app === "designcraft" && args?.options) args = { ...args, options: askedOptions(args.options, deps.userText) };
+  if (args?.app === "designcraft" && args?.open && typeof args.open === "object") args = { ...args, open: askedOptions(args.open, deps.userText) };
+  const batch = partBatch(args);
+  if (batch) {
+    // The picture first, so text lays out around it; then the rest in order.
+    const order = [...batch.parts.filter((p) => p.image_id), ...batch.parts.filter((p) => !p.image_id)];
+    let last: Outcome | null = null;
+    const done: string[] = [];
+    for (let i = 0; i < order.length; i++) {
+      const part = { ...order[i], ...(i === 0 && args.look ? { look: args.look } : {}) };
+      if (i === 0 && batch.setup) part.options = { ...batch.setup, ...(part.options || {}) };
+      last = await runCraftTool(part, deps);
+      done.push(`${part.role || (part.image_id ? "image" : "text")}${part.page != null ? ` on page ${part.page}` : ""}${last.event.ok ? "" : " (failed)"}`);
+      if (!last.event.ok && /isn't running|aren't reachable|isn't installed/.test(String(last.result?.error || ""))) break;
+    }
+    if (!last) throw new Error("empty batch");
+    return { result: { ...last.result, batch: done }, event: { ...last.event, summary: `Put ${done.length} parts on the DesignCraft pages` } };
+  }
   args = pagePartRestyle(args) || args;
   const action = resolveAction(args) as CraftAction;
   const app = args?.app;
@@ -371,16 +496,13 @@ export async function runCraftTool(args: any, deps: CraftDeps): Promise<Outcome>
         // reaches for open, so open with a chapter_id does the whole job.
         // "Open a flyer-sized page": a new document in one call, not a command search.
         const o = args.options || {};
-        const newPage = app === "designcraft" && (o.preset || (o.width && o.height));
+        const newPage = app === "designcraft" && (o.preset || (o.width && o.height) || o.sides || o.pages > 1);
         if (newPage) {
           await bridge("/open", { app });
-          const extra = o.preset ? EXTRA_PRESETS[String(o.preset).toLowerCase()] : null;
-          const size = extra ? { width: extra[0], height: extra[1] } : o.preset ? { preset: String(o.preset) } : { width: Number(o.width), height: Number(o.height) };
-          await bridge("/call", { app, tool: "new_document", arguments: { ...size, facingPages: false, ...(o.margins != null ? { margins: o.margins } : {}), ...(args.title ? { title: String(args.title) } : {}) } });
-          const doc = await bridge("/inspect", { app });
-          const st = doc.result?.settings || {};
+          const r = await bridge("/pages", { app, ...o, new: true, ...(args.title ? { title: String(args.title) } : {}) });
           if (!isPagePart({ ...args, options: {} })) {
-            return ok({ ok: true, page: { width_pt: Math.round(st.pageWidth), height_pt: Math.round(st.pageHeight) }, note: `A new ${o.preset || "custom"} page is open in ${L}. Put things on it with send and a role.` }, `Opened a new ${o.preset || ""} page in ${L}`.replace("  ", " "));
+            const what = r.two_sided ? "two-sided (front and back)" : r.count > 1 ? `${r.count}-page` : o.preset || "custom";
+            return ok({ ok: true, page: { width_pt: r.size?.width_pt, height_pt: r.size?.height_pt }, pages: r.pages, bleed_pt: r.bleed_pt, note: `A new ${what} document is open in ${L}. ${r.note || "Put things on it with send and a role."}` }, `Opened a new ${what} document in ${L}`);
           }
         }
         if (isPagePart(args)) {
@@ -430,7 +552,8 @@ export async function runCraftTool(args: any, deps: CraftDeps): Promise<Outcome>
         if (isPagePart(args)) {
           r = await composePart(args, deps);
           if (r.ok === false) return { result: r, event: { name, summary: `Put the picture on the ${L} page; the ${args.role} had no text`, ok: false } };
-          return ok({ ok: true, ...r, note: pageNote(r) }, `Put ${r.items?.length ? `the ${args.role || (args.image_id ? "image" : "text")}` : "it"} on the ${L} page`);
+          const next = emptyPagesNext(r);
+          return ok({ ok: true, ...r, note: pageNote(r), ...(next ? { next } : {}) }, `Put ${r.items?.length ? `the ${args.role || (args.image_id ? "image" : "text")}` : "it"} on the ${L} ${r.side && r.pages?.length > 1 ? r.side : "page"}`);
         }
         if (args.image_id) {
           const img = await libraryImageToWorkspace(String(args.image_id), deps);
@@ -445,10 +568,17 @@ export async function runCraftTool(args: any, deps: CraftDeps): Promise<Outcome>
         }
         return ok({ ok: true, result: capResult(r), note: AFTER_EDIT }, `Sent ${args.image_id ? "an image" : args.chapter_id ? "a chapter" : "text"} to ${L}`);
       }
+      case "pages": {
+        if (app !== "designcraft") throw new CraftError("pages is for DesignCraft documents. In PhotoCraft and FilmCraft use find_commands.");
+        const r = await bridge("/pages", { app, ...pagesOptions(args, String(args.action || "")) });
+        return ok({ ok: true, ...r, note: [r.note, PAGES_NOTE].filter(Boolean).join(" ") }, r.note ? `${L}: ${String(r.note).replace(/\.$/, "")}` : `Listed the ${L} pages`);
+      }
       case "export": {
-        const file = await bridge("/export", { app, format: args.format || "png", page: args.page, seconds: args.seconds, name: args.title });
+        const o = args.options || {};
+        const print = app === "designcraft" ? { print: o.print ?? args.print, booklet: o.booklet ?? args.booklet, pages: o.pages, marks: o.marks, bleed: o.bleed } : {};
+        const file = await bridge("/export", { app, format: args.format || (print.print || print.booklet ? "pdf" : "png"), page: args.page, seconds: args.seconds, name: args.title, ...print });
         const r = await bringBack(app, file, args, deps);
-        return ok(r, `Exported ${String(args.format || "png").toUpperCase()} from ${L}`);
+        return ok({ ...r, ...(file.print_note ? { print_note: file.print_note, note: `${r.note || ""} Tell the user how to print it: ${file.print_note}`.trim() } : {}) }, `Exported ${String(args.format || (print.print || print.booklet ? "pdf" : "png")).toUpperCase()} from ${L}`);
       }
       case "save_template": {
         if (app !== "designcraft") throw new CraftError("Templates are for DesignCraft pages.");
@@ -489,10 +619,11 @@ export async function runCraftTool(args: any, deps: CraftDeps): Promise<Outcome>
         // template and left its old words in place (4/4, 2026-10-14); it
         // follows a spelled-out next call (find_commands' `next` works the same).
         const first = (r.placeholders || []).find((x: any) => x.role !== "image") || (r.placeholders || [])[0];
+        const at = (x: any) => (x.page != null ? ` on page ${x.page}` : "");
         return ok({
           ok: true,
           next: first
-            ? `Now do it: the page still shows the template's old words. Call craft with action "send", app "designcraft", role "${first.role}", text = the new ${first.role} for what the user asked. Then the same for each other part in \`placeholders\` (${(r.placeholders || []).map((x: any) => x.role).join(", ")}), with image_id for a picture if the user gave one. Write the words yourself; don't ask.`
+            ? `Now do it: the page still shows the template's old words. Call craft with action "send", app "designcraft", role "${first.role}"${first.page != null ? `, page ${first.page}` : ""}, text = the new ${first.role} for what the user asked. Then the same for each other part in \`placeholders\` (${(r.placeholders || []).map((x: any) => `${x.role}${at(x)}`).join(", ")}), with image_id for a picture if the user gave one. Write the words yourself; don't ask.`
             : "The template is open. Put the user's content in with send + role.",
           ...r,
         }, `Started a new page from the "${r.template}" template`);

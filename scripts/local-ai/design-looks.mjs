@@ -860,7 +860,9 @@ export async function applyPlan(call, plan, doc, page) {
   const exec = (command, params = {}) => call("execute", { command, params });
   // Only this page's: a look on page 2 mustn't clear page 1's.
   const onPage = (it) => !page || !Array.isArray(it.bounds) || (() => { const cx = (it.bounds[0] + it.bounds[2]) / 2, cy = (it.bounds[1] + it.bounds[3]) / 2; return cx >= page.x && cx <= page.x + page.W && cy >= page.y && cy <= page.y + page.H; })();
-  const items = (doc?.spreads || []).flatMap((sp) => sp.items || []).filter(onPage);
+  // Pages of one size share coordinates across spreads: only this page's spread.
+  const spreads = Number.isInteger(page?.spread) ? [(doc?.spreads || [])[page.spread] || {}] : doc?.spreads || [];
+  const items = spreads.flatMap((sp) => sp.items || []).filter(onPage);
   const swatches = new Set((doc?.swatches || []).map((s) => (typeof s === "string" ? s : s.name)));
   const swatch = async (hex) => {
     const name = swatchName(hex);
@@ -875,7 +877,7 @@ export async function applyPlan(call, plan, doc, page) {
   for (const s of plan.shapes) {
     const [bx, by, bw, bh] = s.box;
     const shape = s.kind === "ellipse" ? "ellipse" : s.kind === "diamond" ? "polygon" : "rectangle";
-    const r = await exec("frame.create", { rect: [bx, by, bx + bw, by + bh], shape, content: "unassigned", ...(s.kind === "diamond" ? { sides: 4 } : {}) });
+    const r = await exec("frame.create", { ...(Number.isInteger(page?.spread) ? { spread: page.spread } : {}), rect: [bx, by, bx + bw, by + bh], shape, content: "unassigned", ...(s.kind === "diamond" ? { sides: 4 } : {}) });
     const id = r?.id;
     if (id == null) continue;
     steps.push({ command: "object.rename", params: { id, name: s.name === "Background" ? `${LOOK_PREFIX}${plan.look}` : `${DECO_PREFIX}${s.name}` } });

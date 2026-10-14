@@ -5,7 +5,7 @@ vi.mock("@/lib/imageGen", () => ({
   storeGeneratedImage: vi.fn(async (o: any) => ({ id: "new-img", storage_path: "u/new.png", prompt: o.prompt })),
 }));
 
-import { capResult, pagePartRestyle, pdfPageCount, resolveAction, runCraftTool, CRAFT_TOOL_DEFINITION } from "@/lib/craftApps";
+import { askedOptions, capResult, emptyPagesNext, pageNote, partBatch, pagePartRestyle, pagesOptions, pdfPageCount, resolveAction, runCraftTool, CRAFT_TOOL_DEFINITION } from "@/lib/craftApps";
 import { storeGeneratedImage } from "@/lib/imageGen";
 
 type Call = { url: string; method: string; body: any; headers: Record<string, string> };
@@ -214,17 +214,113 @@ describe("DesignCraft templates", () => {
 
 describe("DesignCraft new page", () => {
   it("opens a page size in one call", async () => {
-    replies["/inspect"] = () => ({ json: { result: { settings: { pageWidth: 595.3, pageHeight: 841.9 } } } });
+    replies["/pages"] = () => ({ json: { pages: [{ page: 0, side: "page 1", empty: true }], count: 1, two_sided: false, size: { width_pt: 595, height_pt: 842 }, bleed_pt: 0 } });
     const r = await runCraftTool({ action: "open", app: "designcraft", options: { preset: "A4" } }, deps);
     expect(r.event.ok).toBe(true);
-    expect(calls.find((c) => c.url.endsWith("/call"))!.body).toMatchObject({ tool: "new_document", arguments: { preset: "A4", facingPages: false } });
+    expect(calls.find((c) => c.url.endsWith("/pages"))!.body).toMatchObject({ app: "designcraft", new: true, preset: "A4" });
     expect(r.result.page).toEqual({ width_pt: 595, height_pt: 842 });
   });
 
-  it("knows poster, square, story and book-cover sizes", async () => {
-    replies["/inspect"] = () => ({ json: { result: { settings: { pageWidth: 432, pageHeight: 648 } } } });
-    await runCraftTool({ action: "open", app: "designcraft", options: { preset: "Book" } }, deps);
-    expect(calls.find((c) => c.url.endsWith("/call"))!.body).toMatchObject({ tool: "new_document", arguments: { width: 432, height: 648 } });
+  it("opens a two-sided document: front and back", async () => {
+    replies["/pages"] = () => ({ json: { pages: [{ page: 0, side: "front", empty: true }, { page: 1, side: "back", empty: true }], count: 2, two_sided: true, size: { width_pt: 612, height_pt: 792 }, bleed_pt: 9, note: "Page 0 is the front, page 1 the back." } });
+    const r = await runCraftTool({ action: "open", app: "designcraft", options: { preset: "Letter", sides: 2 } }, deps);
+    expect(calls.find((c) => c.url.endsWith("/pages"))!.body).toMatchObject({ new: true, sides: 2 });
+    expect(r.event.summary).toMatch(/two-sided/);
+    expect(r.result.note).toMatch(/page 1 the back/);
+  });
+});
+
+describe("DesignCraft pages", () => {
+  it("adds, deletes and duplicates pages through the bridge", async () => {
+    replies["/pages"] = () => ({ json: { pages: [], count: 3, note: "added 1 page after page 1." } });
+    const r = await runCraftTool({ action: "pages", app: "designcraft", options: { add: 1 } }, deps);
+    expect(r.event.ok).toBe(true);
+    expect(calls.at(-1)!.body).toMatchObject({ app: "designcraft", add: 1 });
+    expect(r.result.note).toMatch(/send \+ role \+ page/);
+    await runCraftTool({ action: "pages", app: "designcraft", page: 2, options: { delete: true } }, deps);
+    expect(calls.at(-1)!.body).toMatchObject({ delete: [2] });
+  });
+
+  it("reads the options loosely", () => {
+    expect(pagesOptions({ page: 1, options: { duplicate: true } })).toEqual({ duplicate: 1 });
+    expect(pagesOptions({ options: { add: "a back side" } })).toEqual({ sides: 2 });
+    expect(pagesOptions({ options: { add: "2 pages" } })).toEqual({ add: 2 });
+    expect(pagesOptions({ page: 3 })).toEqual({ page: 3 });
+  });
+
+  it("is for DesignCraft only", async () => {
+    expect((await runCraftTool({ action: "pages", app: "photocraft", options: { add: 1 } }, deps)).result.error).toMatch(/DesignCraft/);
+  });
+
+  it("reads invented page actions", () => {
+    expect(resolveAction({ action: "add_page", app: "designcraft" })).toBe("pages");
+    expect(resolveAction({ action: "delete_pages", app: "designcraft", page: 2 })).toBe("pages");
+  });
+
+  it("exports a print PDF and says how to print it", async () => {
+    replies["/export"] = () => ({ json: { path: "/ws/out/flyer.pdf", name: "flyer.pdf", mime: "application/pdf", bytes: 10, print_note: "Print double-sided, flip on the LONG edge." } });
+    const r = await runCraftTool({ action: "export", app: "designcraft", options: { print: true } }, deps);
+    expect(calls.at(-1)!.body).toMatchObject({ format: "pdf", print: true });
+    expect(r.result.note).toMatch(/LONG edge/);
+  });
+
+  it("makes a document two-sided or numbered only when the user asked", async () => {
+    const all = { preset: "A4", pages: 1, sides: 2, numbers: true };
+    expect(askedOptions(all, "please open the appropriate page size to create a flyer")).toEqual({ preset: "A4", pages: 1 });
+    expect(askedOptions(all, "a flyer printed on both sides, details on the back")).toEqual({ preset: "A4", pages: 1, sides: 2 });
+    expect(askedOptions(all, "a 4-page newsletter with page numbers")).toEqual({ preset: "A4", pages: 1, numbers: true });
+    expect(askedOptions(all, undefined)).toEqual(all);
+    replies["/pages"] = () => ({ json: { pages: [], count: 1, size: {} } });
+    await runCraftTool({ action: "open", app: "designcraft", options: all }, { ...deps, userText: "open a flyer-sized page" });
+    expect(calls.at(-1)!.body).not.toHaveProperty("sides");
+  });
+
+  it("reads an export with no action", () => {
+    expect(resolveAction({ app: "designcraft", format: "pdf", page: 1 })).toBe("export");
+    expect(resolveAction({ app: "designcraft", options: { print: true } })).toBe("export");
+    expect(resolveAction({ app: "photocraft", format: "png", to: "filmcraft" })).not.toBe("export");
+  });
+
+  it("spells out the next call while a page is empty or the front has no picture", () => {
+    const two = (front: string[], back: string[]) => ({ pages: [{ page: 0, side: "front", ...(front.length ? { parts: front } : { empty: true }) }, { page: 1, side: "back", ...(back.length ? { parts: back } : { empty: true }) }] });
+    expect(emptyPagesNext({ ...two(["headline"], []), page: 0, items: [{ role: "headline" }] })).toMatch(/^Now do it: the front \(page 0\) has no picture and the back \(page 1\) is empty/);
+    // The front still needs its headline: that first, no talk of the back yet.
+    expect(emptyPagesNext({ ...two(["image"], []), page: 0, items: [{ role: "image" }] })).toMatch(/no headline/);
+    expect(emptyPagesNext({ ...two(["image"], []), page: 0, items: [{ role: "image" }] })).not.toMatch(/back/);
+    // One page, picture only.
+    expect(emptyPagesNext({ page: 0, items: [{ role: "image" }] })).toMatch(/role "headline"/);
+    expect(emptyPagesNext({ page: 0, items: [{ role: "image" }, { role: "headline" }] })).toBeNull();
+    expect(emptyPagesNext(two(["image", "headline"], []))).toMatch(/page 1, role "body"/);
+    expect(emptyPagesNext(two(["image", "headline"], ["body"]))).toBeNull();
+    expect(emptyPagesNext({ pages: [{ page: 0, side: "page 1", parts: ["headline"] }] })).toBeNull();
+  });
+
+  it("runs several parts sent in one call, picture first", async () => {
+    const b = partBatch({ app: "designcraft", look: "bold", open: { preset: "A4", sides: 2 }, pages: [
+      { page: 0, role: "headline", text: "Plan to Win", options: { color: "#2c3e50" } },
+      { page: 0, role: "image", text: "", options: { image_id: "img1" } },
+      { page: 1, role: "body", text: "Thursday 7pm" },
+    ] });
+    expect(b!.setup).toEqual({ preset: "A4", sides: 2 });
+    expect(b!.parts[1]).toEqual({ action: "send", app: "designcraft", page: 0, role: "image", image_id: "img1" });
+    expect(partBatch({ app: "designcraft", pages: [1, 2] })).toBeNull();
+    replies["/files"] = () => ({ json: { path: "/ws/in/image-img1.png" } });
+    replies["/compose"] = () => ({ json: { page: 0, items: [] } });
+    replies["/pages"] = () => ({ json: { pages: [] } });
+    const r = await runCraftTool({ app: "designcraft", look: "bold", open: { preset: "A4", sides: 2 }, pages: b!.parts.map(({ action: _a, app: _p, ...e }) => e) }, deps);
+    expect(r.result.batch).toEqual(["image on page 0", "headline on page 0", "body on page 1"]);
+    const sends = calls.filter((c) => c.url.endsWith("/compose")).map((c) => c.body);
+    expect(sends[0]).toMatchObject({ role: "image", page: 0, look: "bold" });
+    expect(sends.at(-1)).toMatchObject({ role: "body", page: 1, text: "Thursday 7pm" });
+    expect(calls.find((c) => c.url.endsWith("/pages"))!.body).toMatchObject({ ensure: true, preset: "A4", sides: 2 });
+  });
+
+  it("names the side it worked on and the pages still empty", () => {
+    const note = pageNote({ page: 0, side: "front", items: [{ role: "headline" }], pages: [{ page: 0, side: "front", parts: ["headline"] }, { page: 1, side: "back", empty: true }] });
+    expect(note).toMatch(/That was the front \(page 0\)/);
+    expect(note).toMatch(/Still empty: the back \(page 1\)/);
+    // The back needs no headline nudge.
+    expect(pageNote({ page: 1, side: "back", items: [{ role: "body" }], pages: [{ page: 0, side: "front" }, { page: 1, side: "back" }] })).not.toMatch(/No headline/);
   });
 });
 

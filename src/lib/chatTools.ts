@@ -139,6 +139,8 @@ import { MAX_ACTIVE_NEURONS, FREE_NEURON_LIMIT } from "@/lib/neuronAccess";
 import { OPEN_ACCESS } from "@/lib/openAccess";
 
 export interface ToolDeps {
+  /** The user's message this turn (the craft tool checks what was asked for). */
+  userText?: string;
   books: BookDocument[];
   activeBookId: string | null;
   setActiveBookId: (id: string) => void;
@@ -6218,6 +6220,7 @@ export async function executeChatTool(
       }
       case "craft":
         return runCraftTool(args, {
+          userText: deps.userText,
           books: deps.books,
           loadChapterText: deps.loadChapterText,
           addBook: deps.addBook,

@@ -2322,6 +2322,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               return last ? last.content : null;
             };
             const toolDeps = {
+              userText: text,
               books,
               activeBookId,
               setActiveBookId: setActiveBookSilent,
@@ -2462,7 +2463,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // A craft result that spells out the next call (use_template,
             // find_commands): if the model then stops without making it, it
             // hears it once more (the "not done yet" note in the round loop).
-            if (t.name === "craft") { const nx = (modelResult as any)?.next; pendingCraftNext = typeof nx === "string" && /^Now do it/.test(nx) ? nx : null; }
+            // A failed call beside it (an invented action) doesn't cancel it:
+            // the front's missing picture was lost that way (2026-10-14).
+            if (t.name === "craft" && !(modelResult as any)?.error) { const nx = (modelResult as any)?.next; pendingCraftNext = typeof nx === "string" && /^Now do it/.test(nx) ? nx : null; }
             const toolResultText = JSON.stringify(modelResult).slice(0, 24000);
             workingMessages.push({
               role: "tool",

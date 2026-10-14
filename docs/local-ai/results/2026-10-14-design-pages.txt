@@ -1,0 +1,80 @@
+DesignCraft front and back, many pages, print — model eval, 2026-10-14
+Model: hf.co/unsloth/Qwen3-4B-Instruct-2507-GGUF:Q6_K (local Ollama), slim tool card
+Bridge: private headless (CC_CRAFTS_HEADLESS=1 CC_CRAFTS_PORT=8799 CC_DESIGNCRAFT_PORT=7999)
+Test: src/test/localDesignEval.test.ts, session "DesignCraft front and back"
+Image: crafts/workspace/in/1791937985981-image-b9fe2624.png (Cashflow Quadrant)
+
+Turns
+ 1. "make a flyer for our book club's business plan workshop that's printed on both sides:
+    the cashflow quadrant image and a headline on the front, and the details on the back
+    (Thursday March 12, 7pm, Riverside Library)"
+    → 2 pages, two-sided, front has image + headline, back has the details, no issues
+ 2. "add our website riversidebooks.org at the bottom of the back"
+    → on the back, not the front, no issues
+ 3. "export it as a print-ready PDF for the print shop"
+    → a PDF, with print_note (duplex)
+ 4. "now make a 4-page A4 newsletter about the book with page numbers"
+    → 4 pages, 595 pt wide, a page number on every page
+
+How it went, fix by fix (each line = runs of turn 1 unless noted)
+- First try: no document open → designDoc threw "no document open" (pre-existing: the
+  original session always opened a page first). 0/1. Fixed: designDoc returns null.
+- The model put everything in one send: options {preset:A4, sides:2}, headline, look, and
+  `layer: "the photo for a colour fix"` (copying the layer description). Fixed: a send whose
+  options carry sides/size sets the document up first. 1 call, back never made, 0/1.
+- Hint in the note ("Still empty: the back") was read past. Fixed: a spelled-out `next`
+  ("Now do it: … send with page 1, role body …"). Back filled 2/2; picture still missing 2/2.
+- `next` also names a front with no picture. Run 1 passed all four turns; runs 2-3 lost it:
+  a failed invented action ("edit") in the same round wiped the pending next. Also: an export
+  sent with no action; the newsletter sent as a send with options {pages:4}, which on an open
+  document only made it two-sided; page numbers left out (the clipped options text dropped
+  "numbers").
+- Reworded options to put numbers first: "open = new document: {…}" → the model invented
+  {open:{…}, pages:[{page, role, text, options:{image_id}}…]} in 3/3 runs (wording-sensitive).
+  Restored "open: {…, numbers:true} = new document" and accepted that batch shape anyway
+  (partBatch: one send per part, picture first).
+- Failed calls no longer cancel a pending next (ChatContext + eval); {format:"pdf"} with no
+  action is an export; an ensure with a different page count opens a new document (new tab);
+  documents with a bleed export print-ready by default.
+
+Final: 4/4 sessions passed (527 s for 4 runs)
+[run 1] two-sided: send:look=bold:headline send:body run:add_image!() send:look=bold (2 rounds, 34 s) front=[image,headline] back=[body]
+[run 1] back footer: send:footer (8 s) back=[body,footer] issues=none
+[run 1] print pdf: one call the tool couldn't read (no action, no format), then export (10 s)
+[run 1] newsletter: send:look=editorial:headline send:body ×3 send:image (65 s) pages=4 595x842 numbered=4
+[run 2] two-sided: send:look=bold:headline (noted: next step) send:image send:body (3 rounds, 42 s)
+[run 2] back footer: send:footer (9 s) ; print pdf: export (8 s)
+[run 2] newsletter: send:look=editorial (noted: next step) send:headline send:body send:image send:headline send:body (80 s) pages=4 numbered=4
+[run 3] two-sided: send:look=bold:headline send:body edit!(invalid action) (noted: next step) send:image (3 rounds, 47 s)
+[run 3] back footer ok ; print pdf: export (10 s) ; newsletter: pages=4 numbered=4 (68 s)
+[run 4] two-sided: send:look=bold:headline send:body (noted: next step) send:image (3 rounds, 36 s)
+[run 4] back footer ok ; print pdf: export (8 s) ; newsletter: pages=4 numbered=4 (82 s)
+
+Bridge checks done by hand on the private bridge (same day)
+- Two-sided Letter flyer, bold look: front picture runs into the 9 pt bleed; the back takes
+  the front picture's palette; exported print PDF is 678×858 pt (612×792 + bleed + marks),
+  2 pages, crop marks visible.
+- Print Booklet of 4 pages: 2 sheets × 2 sides, 1224×792 pt.
+- Duplicate sheet on a two-sided doc → [front, back, front', back']; add 1 → a whole sheet.
+- Page numbers 1, 2 visible in the look's cream type over a full-page background.
+- A5 resize re-lays out the designed pages.
+- Two-sided template: saved with both sides (manifest pages [0,1], two_sided), used → both
+  sides marked, the back's placeholder filled with page 1.
+
+Original flyer session (regression after the tool card change)
+- First re-run (3 sessions): 1/3. "open the appropriate page size to create a flyer" opened
+  TWO-SIDED in 3/3: the model fills in every example key ({pages:1, sides:2, numbers:true}),
+  the same call it sends when both sides are asked for. The "back is empty" next then sent the
+  headline to the back. Fixes: sides/numbers honoured only when the user's message asks
+  (askedOptions, userText ToolDeps → CraftDeps); the back nudge waits for the front's headline;
+  options text "sides:2 only if asked to print both sides".
+- Second re-run: single-sided again; 1/3 — picture placed, headline dropped (2 runs). Fix: the
+  "no headline yet" hint became a spelled-out next (headlineNext).
+- Final (4 + 4 sessions):
+  flyer session ........... 2/4 full sessions. image+headline 4/4 (was 1/3). Failures were turns
+                            this change doesn't touch: "make this bigger and blue" (selection)
+                            left the headline unstyled once; "Ogilvy ad" → bold not direct once.
+                            Baseline before this work: 5/6 full sessions, same flaky turns.
+  front and back .......... 3/4 full sessions. two-sided 4/4, back footer 4/4, print PDF 4/4,
+                            newsletter 3/4 (one stayed on the 2-page flyer: a send with only
+                            {numbers} put numbers on the open flyer instead of a new document).

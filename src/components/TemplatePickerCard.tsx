@@ -143,6 +143,7 @@ const TemplatePickerCard: React.FC = () => {
                     <span className="text-xs font-semibold text-foreground truncate">{t.name}</span>
                     <span className="text-[10px] text-on-surface-variant truncate">
                       {t.width && t.height ? `${inches(t.width)} × ${inches(t.height)} in` : ""}
+                      {t.twoSided ? " · front & back" : (t.pages ?? 1) > 1 ? ` · ${t.pages} pages` : ""}
                       {t.parts.length ? ` · ${Array.from(new Set(t.parts)).join(", ")}` : ""}
                     </span>
                     {!picked && (

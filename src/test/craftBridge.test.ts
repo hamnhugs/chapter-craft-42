@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { autoRole, compactLayers, designPage, designSlot, desktopPids, docCount, findLayer, inWorkspace, lookTarget, parsePartName, partName, pickLook, plainText, rankCommands, textBox } from "../../scripts/local-ai/craft-bridge.mjs";
+import { autoRole, bleedSteps, compactLayers, designPage, designSlot, desktopPids, docCount, docPages, findLayer, inWorkspace, isTwoSided, lookTarget, pageLabel, pageSize, pagesOverview, parsePartName, partName, pdfParams, pickLook, plainText, printNote, rankCommands, resolvePage, textBox } from "../../scripts/local-ai/craft-bridge.mjs";
 
 describe("rankCommands", () => {
   const list = [
@@ -183,5 +183,82 @@ describe("DesignCraft pages by role", () => {
     expect(pickLook("magazine")).toBe("editorial");
     expect(pickLook("elegant")).toBe("classic");
     expect(pickLook("nonsense")).toBeNull();
+  });
+});
+
+describe("pages: front and back, many pages", () => {
+  const page = (i: number) => ({ bounds: [0, 0, 612, 792], margins: {}, side: "single", index: i });
+  const doc = (n: number, twoSided = false, items: any[][] = []) => ({
+    settings: { pageWidth: 612, pageHeight: 792 },
+    spreads: Array.from({ length: n }, (_, i) => ({ pages: [page(i)], items: [...(i === 0 && twoSided ? [{ id: 99, name: "Sides 2", bounds: [0, 0, 1, 1], hidden: true }] : []), ...(items[i] || [])] })),
+  });
+
+  it("lists every page, with the items on each", () => {
+    const d = doc(2, false, [[{ id: 1, name: "Headline", kind: "text frame", story: 3, bounds: [40, 40, 500, 120] }]]);
+    expect(docPages(d).map((p) => [p.index, p.spread, p.items.length])).toEqual([[0, 0, 1], [1, 1, 0]]);
+  });
+
+  it("calls the pages of a two-sided document front and back", () => {
+    expect(isTwoSided(doc(2, true))).toBe(true);
+    expect([0, 1].map((i) => pageLabel(doc(2, true), i))).toEqual(["front", "back"]);
+    expect([2, 3].map((i) => pageLabel(doc(4, true), i))).toEqual(["front of sheet 2", "back of sheet 2"]);
+    expect(pageLabel(doc(3), 2)).toBe("page 3");
+  });
+
+  it("reads which page a request means", () => {
+    expect(resolvePage(doc(2, true), "back", 0)).toEqual({ index: 1, add: 0 });
+    expect(resolvePage(doc(4, true), "front", 3)).toEqual({ index: 2, add: 0 });
+    expect(resolvePage(doc(3), "page 2", 0)).toEqual({ index: 1, add: 0 });
+    expect(resolvePage(doc(3), 2, 0)).toEqual({ index: 2, add: 0 });
+    expect(resolvePage(doc(3), "last", 0).index).toBe(2);
+    expect(resolvePage(doc(3), null, 1).index).toBe(1);
+  });
+
+  it("adds the page one past the end, and makes a one-page flyer two-sided for its back", () => {
+    expect(resolvePage(doc(2), "next", 0)).toEqual({ index: 2, add: 1 });
+    expect(resolvePage(doc(1), "back", 0)).toEqual({ index: 1, add: 1, twoSided: true });
+    expect(() => resolvePage(doc(2), 5, 0)).toThrow(/2 pages/);
+    expect(() => resolvePage(doc(2), "the shiny one", 0)).toThrow(/Which page/);
+  });
+
+  it("knows print and social sizes, turned on request", () => {
+    expect(pageSize({ preset: "Postcard" })).toEqual({ width: 432, height: 288 });
+    expect(pageSize({ preset: "A4" })).toEqual({ width: 595, height: 842 });
+    expect(pageSize({ preset: "letter", landscape: true })).toEqual({ width: 792, height: 612 });
+    expect(pageSize({ width: 300, height: 400 })).toEqual({ width: 300, height: 400 });
+    expect(pageSize({})).toBeNull();
+    expect(() => pageSize({ preset: "napkin" })).toThrow(/Unknown page size/);
+  });
+
+  it("runs backgrounds and edge pictures into the bleed, never text or the spine", () => {
+    const items = [
+      { id: 1, name: "Look bold", bounds: [0, 0, 612, 792] },
+      { id: 2, name: "Image", kind: "image", asset: 5, bounds: [0, 0, 612, 400] },
+      { id: 3, name: "Headline", kind: "text frame", story: 4, bounds: [0, 420, 612, 500] },
+    ];
+    const steps = bleedSteps({ bounds: [0, 0, 612, 792], side: "single" }, items, 9);
+    expect(steps.find((s) => s.params.ids[0] === 1)!.params).toMatchObject({ x: -9, y: -9, width: 630, height: 810 });
+    expect(steps.find((s) => s.params.ids[0] === 2 && s.command === "transform.set")!.params).toMatchObject({ x: -9, y: -9, width: 630, height: 409 });
+    expect(steps.some((s) => s.params.ids[0] === 3)).toBe(false);
+    // A right-hand page of a spread: its left edge is the spine.
+    const right = bleedSteps({ bounds: [0, 0, 612, 792], side: "right" }, [items[0]], 9);
+    expect(right[0].params).toMatchObject({ x: 0, width: 621 });
+    expect(bleedSteps({ bounds: [0, 0, 612, 792], side: "single" }, items, 0)).toEqual([]);
+  });
+
+  it("exports print PDFs, single pages and booklets, and says how to print", () => {
+    expect(pdfParams(doc(2, true), { print: true })).toMatchObject({ bleed: true, marks: { crop: true } });
+    expect(pdfParams(doc(2, true), { pages: ["back"] })).toEqual({ pages: [2] });
+    expect(pdfParams(doc(8), { booklet: true })).toEqual({ type: "saddleStitch" });
+    expect(printNote(doc(2, true), { print: true }).print_note).toMatch(/double-sided, flip on the LONG edge, then trim/);
+    const land = { ...doc(2, true), settings: { pageWidth: 792, pageHeight: 612 } };
+    expect(printNote(land, {}).print_note).toMatch(/SHORT edge/);
+    expect(printNote(doc(8), { booklet: true }).print_note).toMatch(/fold/);
+    expect(printNote(doc(1), {})).toEqual({});
+  });
+
+  it("gives the model an overview: side, parts, look", () => {
+    const d = doc(2, true, [[{ id: 1, name: "Headline", kind: "text frame", story: 3, bounds: [40, 40, 500, 120] }, { id: 5, name: "Look bold", bounds: [0, 0, 612, 792] }]]);
+    expect(pagesOverview(d)).toEqual([{ page: 0, side: "front", parts: ["headline"], look: "bold" }, { page: 1, side: "back", empty: true }]);
   });
 });

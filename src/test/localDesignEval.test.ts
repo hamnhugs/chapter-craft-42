@@ -49,13 +49,17 @@ async function bridge(path: string, body: unknown) {
 }
 
 type Part = { id: number; role: string; fill?: string; box: { x: number; y: number; w: number; h: number }; text?: string };
-async function page(): Promise<{ items: Part[]; issues: string[]; settings: any; look: string | null; template: string | null }> {
+async function page(index = 0): Promise<{ items: Part[]; issues: string[]; settings: any; look: string | null; template: string | null; count: number; twoSided: boolean }> {
   const d = (await bridge("/inspect", { app: "designcraft" })).result || {};
-  const sp = d.spreads?.[0] || { items: [], pages: [] };
+  const sp = d.spreads?.[index] || { items: [], pages: [] };
+  const twoSided = (d.spreads || []).some((x: any) => (x.items || []).some((it: any) => String(it.name || "").startsWith("Sides ")));
+  // Print documents bleed: pictures may run past the trim by the bleed; type may not.
+  const setup = (await bridge("/call", { app: "designcraft", tool: "execute", arguments: { command: "layout.documentSetup", params: {} } })).result || {};
+  const bleed = Math.max(0, ...[].concat(setup.bleed ?? 0).map(Number).filter(Number.isFinite));
   // A page look draws its background, fades and rules as "Look …"/"Deco …"; they aren't parts.
   const look = (sp.items || []).map((it: any) => String(it.name || "")).find((n: string) => n.startsWith("Look "))?.slice(5) ?? null;
   const template = (sp.items || []).map((it: any) => String(it.name || "")).find((n: string) => n.startsWith("Template "))?.slice(9) ?? null;
-  const items: Part[] = (sp.items || []).filter((it: any) => !/^(Look|Deco|Template) /.test(String(it.name || ""))).map((it: any) => ({
+  const items: Part[] = (sp.items || []).filter((it: any) => !/^(Look|Deco|Template|Sides) /.test(String(it.name || "")) && it.name !== "Page number").map((it: any) => ({
     id: it.id, role: String(it.name || "").split(" · ")[0].toLowerCase() || (it.story != null ? "text" : "image"), fill: it.fill,
     box: { x: it.bounds[0], y: it.bounds[1], w: it.bounds[2] - it.bounds[0], h: it.bounds[3] - it.bounds[1] },
   })).sort((a: Part, b: Part) => a.box.y - b.box.y);
@@ -69,7 +73,8 @@ async function page(): Promise<{ items: Part[]; issues: string[]; settings: any;
       // "Make the headline red" once painted the box behind it instead.
       if (it.fill && it.fill !== "[None]") issues.push(`${it.role} box filled with ${it.fill}`);
     }
-    if (it.box.x < px0 - 1 || it.box.y < py0 - 1 || it.box.x + it.box.w > px1 + 1 || it.box.y + it.box.h > py1 + 1) issues.push(`${it.role} off the page`);
+    const out = (it.role === "image" ? bleed : 0) + 1;
+    if (it.box.x < px0 - out || it.box.y < py0 - out || it.box.x + it.box.w > px1 + out || it.box.y + it.box.h > py1 + out) issues.push(`${it.role} off the page`);
   }
   for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++) {
     const a = items[i].box, b = items[j].box;
@@ -77,7 +82,7 @@ async function page(): Promise<{ items: Part[]; issues: string[]; settings: any;
     if ((look === "cinematic" || template) && (items[i].role === "image" || items[j].role === "image")) continue;
     if (a.x < b.x + b.w - 1 && b.x < a.x + a.w - 1 && a.y < b.y + b.h - 1 && b.y < a.y + a.h - 1) issues.push(`${items[i].role} overlaps ${items[j].role}`);
   }
-  return { items, issues, settings: d.settings, look, template };
+  return { items, issues, settings: d.settings, look, template, count: d.pageCount ?? (d.spreads || []).length, twoSided };
 }
 
 async function turn(history: any[], user: string) {
@@ -124,10 +129,10 @@ async function turn(history: any[], user: string) {
       // user's real PhotoCraft or FilmCraft window.
       const out = args.app && args.app !== "designcraft"
         ? { result: { error: "Only DesignCraft is available right now." }, event: { ok: false } }
-        : await runCraftTool(args, { books: [], fetchImage: async (id) => (id === IMAGE_ID ? { id, storage_path: "x" } : null) });
+        : await runCraftTool(args, { userText: user, books: [], fetchImage: async (id) => (id === IMAGE_ID ? { id, storage_path: "x" } : null) });
       calls.push(`${resolveAction(args)}${args.look ? ":look=" + args.look : ""}${args.role ? ":" + args.role : ""}${args.steps ? ":" + args.steps.map((s: any) => s.id).join("+") : ""}${out.event.ok ? "" : `!(${String(out.result?.error ?? "").slice(0, 160)})`}`);
       const { __vision: _v, __images: _i, ...forModel } = out.result || {};
-      pendingNext = typeof forModel.next === "string" && /^Now do it/.test(forModel.next) ? forModel.next : null;
+      if (!forModel.error) pendingNext = typeof forModel.next === "string" && /^Now do it/.test(forModel.next) ? forModel.next : null;
       history.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(forModel).slice(0, 8000) });
     }
   }
@@ -136,7 +141,7 @@ async function turn(history: any[], user: string) {
 
 const roles = (p: { items: Part[] }) => p.items.map((i) => i.role);
 
-describe.skipIf(process.env.LIVE_DESIGN_EVAL !== "1")(`DesignCraft flyer session, ${MODEL}`, () => {
+describe.skipIf(process.env.LIVE_DESIGN_EVAL !== "1" || process.env.DESIGN_EVAL_FLYER === "0")(`DesignCraft flyer session, ${MODEL}`, () => {
   beforeAll(() => {
     if (typeof (AbortSignal as any).timeout !== "function") (AbortSignal as any).timeout = () => new AbortController().signal;
     const real = globalThis.fetch;
@@ -246,6 +251,68 @@ describe.skipIf(process.env.LIVE_DESIGN_EVAL !== "1")(`DesignCraft flyer session
       expect(head && head !== before, "new words in the template's headline").toBe(true);
       expect(p.issues).toEqual([]);
       await bridge("/preview", { app: "designcraft", page: 0 }).then((x) => log(`preview ${x.path}`));
+    }, 15 * 60_000);
+  }
+});
+
+// Front and back, many pages (2026-10-14): "a flyer printed on both sides",
+// the details on the back, print-ready PDF, a newsletter with page numbers.
+describe.skipIf(process.env.LIVE_DESIGN_EVAL !== "1" || process.env.DESIGN_EVAL_PAGES === "0")(`DesignCraft front and back, ${MODEL}`, () => {
+  beforeAll(() => {
+    if (typeof (AbortSignal as any).timeout !== "function") (AbortSignal as any).timeout = () => new AbortController().signal;
+    const real = globalThis.fetch;
+    if ((real as any).__evalProxy) return;
+    const bytes = (b: any): Promise<ArrayBuffer> => typeof b.arrayBuffer === "function" ? b.arrayBuffer() : new Promise((res, rej) => {
+      const r = new FileReader(); r.onload = () => res(r.result as ArrayBuffer); r.onerror = () => rej(r.error); r.readAsArrayBuffer(b);
+    });
+    const proxy = (async (url: any, { signal: _s, ...init }: any = {}) => {
+      const body = init.body && typeof init.body === "object" && typeof init.body.size === "number" ? await bytes(init.body) : init.body;
+      return real(typeof url === "string" && url.startsWith("/local/crafts") ? BRIDGE + url.slice("/local/crafts".length) : url, {
+        ...init, body, headers: { ...(init?.headers || {}), "X-Chapter-Craft": "1" },
+      });
+    }) as typeof fetch;
+    (proxy as any).__evalProxy = true;
+    globalThis.fetch = proxy;
+  });
+
+  for (let run = 1; run <= RUNS; run++) {
+    it(`run ${run}`, async () => {
+      expect(IMAGE, "DESIGN_EVAL_IMAGE: a picture inside the craft workspace").toBeTruthy();
+      for (let i = 0; i < 6; i++) { const r = await bridge("/call", { app: "designcraft", tool: "execute", arguments: { command: "file.close", params: { save: false } } }); if (!r.ok) break; }
+      const h: any[] = [];
+      const log = (x: string) => console.log(`[${MODEL} pages run ${run}] ${x}`);
+
+      let r = await turn(h, "make a flyer for our book club's business plan workshop that's printed on both sides: the cashflow quadrant image and a headline on the front, and the details on the back (Thursday March 12, 7pm, Riverside Library)");
+      let front = await page(0), back = await page(1);
+      log(`two-sided: ${r.calls.join(" ")} (${r.rounds} rounds, ${r.seconds.toFixed(0)} s) pages=${front.count} twoSided=${front.twoSided} front=${JSON.stringify(roles(front))} back=${JSON.stringify(roles(back))} "${back.items.map((i) => i.text || "").join(" / ").slice(0, 120)}" issues=${[...front.issues, ...back.issues].join("; ") || "none"} → ${r.text.slice(0, 160)}`);
+      expect(r.rounds, "finished in one reply").toBeLessThanOrEqual(ROUNDS);
+      expect(front.count, "front and back").toBe(2);
+      expect(roles(front)).toContain("image");
+      expect(roles(front)).toContain("headline");
+      expect(back.items.some((i) => /12|7\s?pm|Riverside/i.test(i.text || "")), "the details on the back").toBe(true);
+      expect([...front.issues, ...back.issues]).toEqual([]);
+
+      r = await turn(h, "add our website riversidebooks.org at the bottom of the back");
+      back = await page(1); front = await page(0);
+      log(`back footer: ${r.calls.join(" ")} (${r.seconds.toFixed(0)} s) back=${JSON.stringify(roles(back))} front=${JSON.stringify(roles(front))} issues=${back.issues.join("; ") || "none"}`);
+      expect(back.items.some((i) => /riversidebooks/i.test(i.text || "")), "website on the back").toBe(true);
+      expect(front.items.some((i) => /riversidebooks/i.test(i.text || "")), "not on the front").toBe(false);
+      expect(back.issues).toEqual([]);
+
+      r = await turn(h, "export it as a print-ready PDF for the print shop");
+      log(`print pdf: ${r.calls.join(" ")} (${r.seconds.toFixed(0)} s) → ${r.text.slice(0, 200)}`);
+      const exp = h.filter((m) => m.role === "tool").map((m) => { try { return JSON.parse(m.content); } catch { return {}; } }).reverse().find((x) => /\.pdf$/.test(String(x.file || x.path || "")));
+      expect(exp, "a PDF was exported").toBeTruthy();
+      expect(String(exp.print_note || ""), "with bleed and how to print it").toMatch(/double-sided/);
+
+      r = await turn(h, "now make a 4-page A4 newsletter about the book with page numbers");
+      const p0 = await page(0);
+      const d = (await bridge("/inspect", { app: "designcraft" })).result || {};
+      const numbered = (d.spreads || []).filter((sp: any) => (sp.items || []).some((it: any) => it.name === "Page number")).length;
+      log(`newsletter: ${r.calls.join(" ")} (${r.seconds.toFixed(0)} s) pages=${p0.count} ${Math.round(p0.settings?.pageWidth)}x${Math.round(p0.settings?.pageHeight)} numbered=${numbered} page0=${JSON.stringify(roles(p0))} → ${r.text.slice(0, 160)}`);
+      expect(p0.count, "4 pages").toBe(4);
+      expect(Math.round(p0.settings?.pageWidth), "A4").toBe(595);
+      expect(numbered, "page numbers on every page").toBe(4);
     }, 15 * 60_000);
   }
 });

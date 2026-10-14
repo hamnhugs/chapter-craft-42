@@ -604,7 +604,11 @@ async function photoLayers() {
 }
 
 async function designDoc() {
-  const r = await mustCall("designcraft", "inspect_document", {});
+  const r = await callTool("designcraft", "inspect_document", {});
+  if (r.isError) {
+    if (/no document open/i.test(r.text)) return null;
+    throw httpError(422, `DesignCraft inspect_document: ${r.text}`);
+  }
   const d = r.json;
   return d && typeof d === "object" && (d.pages || d.spreads) ? d : null;
 }
@@ -692,7 +696,7 @@ export function designPage(doc, index) {
   const onPage = (it) => { const cx = (it.bounds[0] + it.bounds[2]) / 2, cy = (it.bounds[1] + it.bounds[3]) / 2; return cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1; };
   const all = p.items.filter((it) => Array.isArray(it.bounds) && onPage(it));
   const items = all
-    .filter((it) => !it.hidden && !it.locked && !isDecoName(it.name))
+    .filter((it) => !it.hidden && !it.locked && !isDecoName(it.name) && it.name !== "Page number")
     .map((it) => {
       const { role: named, over, placeholder } = parsePartName(it.name);
       const isText = /text/.test(String(it.kind)) || it.story != null;
@@ -704,7 +708,7 @@ export function designPage(doc, index) {
     .filter(Boolean)
     .sort((a, b) => a.bounds[1] - b.bounds[1]);
   const marker = all.find((it) => String(it.name || "").startsWith(TEMPLATE_PREFIX));
-  return { index: i, spread: p.spread, bounds: [x0, y0, x1, y1], content, items, look: lookOf(all), template: marker ? String(marker.name).slice(TEMPLATE_PREFIX.length).trim() : null, others: all.filter((it) => !isDecoName(it.name)) };
+  return { index: i, spread: p.spread, bounds: [x0, y0, x1, y1], content, items, look: lookOf(all), template: marker ? String(marker.name).slice(TEMPLATE_PREFIX.length).trim() : null, others: all.filter((it) => !isDecoName(it.name) && !String(it.name || "").startsWith(SIDES_PREFIX) && it.name !== "Page number") };
 }
 
 /** A role for text sent without one: short text heads the page (headline,
@@ -780,12 +784,17 @@ async function layoutPage(index, lookArg) {
       if (text) parts.push({ id: it.id, role: it.role, kind: "text", text, over: it.over });
     }
   }
-  const look = pickLook(lookArg) || page.look || autoLook(parts);
+  // A page of a document already designed (the back of a flyer, page 3)
+  // takes the look its other pages have, so the pages belong together.
+  const look = pickLook(lookArg) || page.look || docPages(doc).map((p) => designPage(doc, p.index)?.look).find(Boolean) || autoLook(parts);
   const hero = parts.find((p) => p.kind === "image");
-  const pal = await imagePalette(hero?.path);
+  // A page with no picture of its own (the back of a flyer) takes its colours
+  // from the document's picture, so both sides look like one piece.
+  const docPicture = !hero && docPages(doc).length > 1 ? (Array.isArray(links) ? links : []).find((l) => l.path && (l.uses || []).length)?.path : null;
+  const pal = await imagePalette(hero?.path || docPicture);
   const [x0, y0, x1, y1] = page.bounds;
   const call = async (tool, args) => (await mustCall("designcraft", tool, args)).json;
-  const { plan, issues } = await layoutLook(call, look, { x: x0, y: y0, W: x1 - x0, H: y1 - y0 }, parts, pal);
+  const { plan, issues } = await layoutLook(call, look, { x: x0, y: y0, W: x1 - x0, H: y1 - y0, spread: page.spread }, parts, pal);
   // Crops keep what the eye goes to.
   const steps = [];
   for (const f of plan.frames.filter((g) => g.image?.fill)) {
@@ -793,6 +802,8 @@ async function layoutPage(index, lookArg) {
     if (ref !== 4) steps.push({ command: "object.fittingOptions", params: { fitting: "fillProportionally", align: ref, ids: [f.id] } }, { command: "object.fit", params: { mode: "fillProportionally", ids: [f.id] } });
   }
   if (steps.length) await mustCall("designcraft", "batch", { commands: steps });
+  await bleedPage(page.index);
+  await colourPageNumber(page.index);
   return { look, issues, palette: { background: plan.bg, accent: pal.accent } };
 }
 
@@ -800,7 +811,12 @@ async function layoutPage(index, lookArg) {
 async function composeDesign(opts) {
   let doc = await designDoc();
   if (!doc) { await mustCall("designcraft", "new_document", { preset: opts.preset || "Letter", facingPages: false }); doc = await designDoc(); }
-  let page = designPage(doc, opts.page);
+  // Which page: the one named ("back", 1, "next"), else the one in use.
+  // Selection edits act where the selection is.
+  const selects = (Array.isArray(opts.ids) && opts.ids.length) || opts.selection === true;
+  const pageIndex = selects ? null : await targetPage(opts.page);
+  if (pageIndex != null) doc = await designDoc();
+  let page = designPage(doc, pageIndex ?? opts.page);
   if (!page) throw httpError(422, "DesignCraft has no page to put it on");
   const W = page.content.right - page.content.left;
   const text = opts.text != null && String(opts.text).trim() ? plainText(String(opts.text)).trim() : null;
@@ -1047,7 +1063,7 @@ async function editSelection(opts, over) {
   const sum = await designSummary(pageIndex ?? opts.page, lay, opts, notes.join(" ") || null);
   return { ...sum, acted_on: acted };
 }
-const templateRow = (t) => ({ name: t.name, slug: t.slug, about: describeTemplate(t), width: t.width, height: t.height, parts: t.slots.map((x) => x.role), created: t.created, thumb: join(TEMPLATES, t.slug, "thumb.png") });
+const templateRow = (t) => ({ name: t.name, slug: t.slug, about: describeTemplate(t), width: t.width, height: t.height, parts: t.slots.map((x) => x.role), pages: Array.isArray(t.pages) ? t.pages.length : 1, two_sided: !!t.two_sided, created: t.created, thumb: join(TEMPLATES, t.slug, "thumb.png") });
 
 /** Save page `page` (default: the last) of the open document as a template:
  *  DesignCraft's own file with the pictures in it, a screenshot of the page,
@@ -1057,19 +1073,28 @@ async function saveTemplate(opts) {
   if (!name) throw httpError(400, "Give the template a name (title).");
   const doc = await designDoc();
   if (!doc) throw httpError(422, "DesignCraft has no document open to save as a template.");
-  const page = designPage(doc, opts.page);
-  if (!page?.items.length && !page?.others.length) throw httpError(422, "That page is empty — design something first.");
+  // Which pages: the one named (with its other side on a two-sided
+  // document), else the sheet in use when two-sided, else every page of a
+  // short document (a 4-page newsletter is one template).
+  const n = docPages(doc).length;
+  const named = opts.page != null && opts.page !== "";
+  const at = named ? resolvePage(doc, opts.page, lastPage).index : await currentPage(doc);
+  const keep = isTwoSided(doc) ? [at - (at % 2), at - (at % 2) + 1].filter((k) => k < n)
+    : !named && n > 1 && n <= 12 ? docPages(doc).map((p) => p.index) : [at];
+  const pagesKept = keep.map((k) => designPage(doc, k));
+  const page = pagesKept[0];
+  if (!pagesKept.some((p) => p?.items.length || p?.others.length)) throw httpError(422, `That page${keep.length > 1 ? "s are" : " is"} empty — design something first.`);
   const ser = (await dc("file.serialize", {})).json;
   const buf = Buffer.from(String(ser?.base64 || ""), "base64");
   const docJson = designcraftJson(buf);
-  const slots = guessSlots(page.items, page, docJson);
+  const slots = pagesKept.flatMap((p, k) => guessSlots(p.items, p, docJson).map((sl) => (keep.length > 1 ? { ...sl, page: k } : sl)));
   const slug = slugify(name);
   const existed = !!findTemplate(TEMPLATES, slug) && findTemplate(TEMPLATES, slug).slug === slug;
   mkdirSync(join(TEMPLATES, slug), { recursive: true });
   const thumbPath = join(TEMPLATES, slug, "thumb.png");
   await mustCall("designcraft", "render_page", { page: page.index, path: thumbPath });
   const [x0, y0, x1, y1] = page.bounds;
-  const manifest = { name, slug, created: new Date().toISOString(), page: page.index, width: x1 - x0, height: y1 - y0, look: page.look, from: doc.title || null, slots };
+  const manifest = { name, slug, created: new Date().toISOString(), page: page.index, ...(keep.length > 1 ? { pages: keep, two_sided: isTwoSided(doc) } : {}), width: x1 - x0, height: y1 - y0, look: page.look, from: doc.title || null, slots };
   writeTemplate(TEMPLATES, manifest, buf, null);
   return { saved: name, replaced: existed, ...templateRow(manifest) };
 }
@@ -1122,28 +1147,34 @@ async function useTemplate(opts) {
   const buf = readFileSync(join(TEMPLATES, t.slug, "template.designcraft"));
   await dc("file.openBytes", { name: `${t.name}.designcraft`, base64: buf.toString("base64") });
   let doc = await designDoc();
-  const pages = (doc.spreads || []).flatMap((sp) => sp.pages || []);
-  const drop = pages.map((_, i) => i).filter((i) => i !== t.page);
-  if (drop.length && pages.length > 1) await dc("layout.pages.delete", { pages: drop });
+  const keep = Array.isArray(t.pages) && t.pages.length ? t.pages : [t.page];
+  const pages = docPages(doc);
+  const drop = pages.map((p) => p.index).filter((i) => !keep.includes(i));
+  if (drop.length && drop.length < pages.length) await dc("layout.pages.delete", { pages: drop });
   doc = await designDoc();
-  const page = designPage(doc, 0);
   const steps = [];
   const slotIds = new Set(t.slots.map((x) => x.id));
-  for (const sl of t.slots) {
-    const it = page.items.find((i) => i.id === sl.id);
-    if (it) steps.push({ command: "object.rename", params: { id: sl.id, name: partName(sl.role, it.over, true) } });
+  for (let k = 0; k < keep.length; k++) {
+    const page = designPage(doc, k);
+    if (!page) continue;
+    for (const sl of t.slots) {
+      const it = page.items.find((i) => i.id === sl.id);
+      if (it) steps.push({ command: "object.rename", params: { id: sl.id, name: partName(sl.role, it.over, true) } });
+    }
+    for (const it of page.others) if (!slotIds.has(it.id) && !String(it.name || "").startsWith(TEMPLATE_PREFIX)) steps.push({ command: "object.rename", params: { id: it.id, name: `Deco tpl ${String(it.name || it.kind || "").replace(/[<>]/g, "").trim()}`.trim() } });
+    const [x0, y0] = page.bounds;
+    const m = (await dc("frame.create", { spread: page.spread, rect: [x0, y0, x0 + 1, y0 + 1], content: "unassigned" })).json;
+    steps.push(
+      { command: "object.rename", params: { id: m.id, name: `${TEMPLATE_PREFIX}${t.slug}` } },
+      { command: "object.stroke", params: { swatch: "[None]", ids: [m.id] } },
+      { command: "object.setFlags", params: { ids: [m.id], hidden: true } },
+    );
   }
-  for (const it of page.others) if (!slotIds.has(it.id)) steps.push({ command: "object.rename", params: { id: it.id, name: `Deco tpl ${String(it.name || it.kind || "").replace(/[<>]/g, "").trim()}`.trim() } });
-  const [x0, y0] = page.bounds;
-  const m = (await dc("frame.create", { rect: [x0, y0, x0 + 1, y0 + 1], content: "unassigned" })).json;
-  steps.push(
-    { command: "object.rename", params: { id: m.id, name: `${TEMPLATE_PREFIX}${t.slug}` } },
-    { command: "object.stroke", params: { swatch: "[None]", ids: [m.id] } },
-    { command: "object.setFlags", params: { ids: [m.id], hidden: true } },
-    { command: "selection.set", params: { ids: [] } },
-  );
+  steps.push({ command: "selection.set", params: { ids: [] } });
   await mustCall("designcraft", "batch", { commands: steps });
-  return designSummary(0, { issues: [] }, opts, `A new document from the "${t.name}" template is open.`);
+  if (t.two_sided) await markTwoSided();
+  lastPage = 0;
+  return designSummary(0, { issues: [] }, opts, `A new document from the "${t.name}" template is open${keep.length > 1 ? ` (${t.two_sided ? "front and back" : `${keep.length} pages`})` : ""}.`);
 }
 
 /** Lay out a template page: frames stay where the template put them. Text is
@@ -1153,7 +1184,9 @@ async function useTemplate(opts) {
  *  set like the template's nearest text. */
 async function fitTemplate(page) {
   const t = findTemplate(TEMPLATES, page.template);
-  const slots = t?.slots || [];
+  // A template of several pages: the slots on this one.
+  const here = new Set([...page.items, ...page.others].map((i) => i.id));
+  const slots = (t?.slots || []).filter((sl) => sl.page == null || here.has(sl.id));
   const issues = [];
   const links = (await callTool("designcraft", "execute", { command: "links.list", params: {} })).json || [];
   const linkOf = (id) => (Array.isArray(links) ? links : []).find((l) => (l.uses || []).some((u) => u.id === id));
@@ -1272,7 +1305,11 @@ async function placeNewPart(page, it, slots) {
  *  anything cut off, off the page or hard to read — checked here, so the
  *  model needn't look. */
 async function designSummary(index, lay, opts, note) {
-  const page = designPage(await designDoc(), index);
+  const doc = await designDoc();
+  const page = designPage(doc, index);
+  await showPage(page.index);
+  // More than one page: say which this is and what the others hold.
+  const where = docPages(doc).length > 1 || isTwoSided(doc) ? { side: pageLabel(doc, page.index), pages: pagesOverview(doc) } : {};
   const issues = [...(lay.issues || [])];
   const items = [];
   for (const it of page.items) {
@@ -1288,22 +1325,400 @@ async function designSummary(index, lay, opts, note) {
   }
   if (page.template && !lay.look) {
     const t = findTemplate(TEMPLATES, page.template);
-    const placeholders = page.items.filter((it) => it.placeholder).map((it) => ({ role: it.role, id: it.id, ...(it.kind === "text" ? { text: items.find((r) => r.id === it.id)?.text } : { picture: "the template's own" }) }));
+    const tplPages = docPages(doc).map((p) => designPage(doc, p.index)).filter((dp) => dp?.template);
+    const placeholders = [];
+    for (const dp of tplPages) for (const it of dp.items.filter((x) => x.placeholder)) {
+      const text = it.kind !== "text" ? null : items.find((r) => r.id === it.id)?.text ?? String((await callTool("designcraft", "get_story", { frame: it.id })).json?.text || "").slice(0, 80);
+      placeholders.push({ ...(tplPages.length > 1 ? { page: dp.index } : {}), role: it.role, id: it.id, ...(it.kind === "text" ? { text } : { picture: "the template's own" }) });
+    }
     return {
-      page: page.index, template: t?.name || page.template, items,
+      page: page.index, ...where, template: t?.name || page.template, items,
       ...(placeholders.length ? { placeholders } : {}),
       ...(issues.length ? { issues } : {}), ...(note ? { note } : {}),
       looks: `a look (${LOOK_NAMES.join(", ")}) replaces the template's design`,
     };
   }
   return {
-    page: page.index, look: lay.look || page.look, items,
+    page: page.index, ...where, look: lay.look || page.look, items,
     ...(issues.length ? { issues } : {}), ...(note ? { note } : {}),
     // Every look and what it's for, the current one included: listing only
     // the others sent "now try it as a movie poster" on a page that was already
     // cinematic to bold (2 of 4 sessions, 2026-10-14).
     looks: LOOK_USES,
   };
+}
+
+// --- Pages: many pages, front and back, print setup (2026-10-14) -----------------
+//
+// "A flyer printed on both sides", "a four-page newsletter", "add a page",
+// "put the details on the back". DesignCraft has every page command (insert,
+// move, duplicate, parents, document setup, booklet imposition); what the chat
+// lacked was a way to say WHICH page and to set a document up for print.
+// A two-sided document carries a hidden `Sides 2` marker on its first page:
+// its pages pair into sheets, even = front, odd = back.
+
+export const SIDES_PREFIX = "Sides ";
+/** 0.125 in, the bleed print shops ask for. */
+export const PRINT_BLEED = 9;
+const PAGE_NUMBER_NAME = "Page number";
+
+/** Every page of the document in order: {index, spread, side, bounds, items on it}. */
+export function docPages(doc) {
+  const out = [];
+  (doc?.spreads || []).forEach((sp, si) => (sp.pages || []).forEach((p) => {
+    const [x0, y0, x1, y1] = p.bounds || [0, 0, 612, 792];
+    const items = (sp.items || []).filter((it) => Array.isArray(it.bounds) && (() => { const cx = (it.bounds[0] + it.bounds[2]) / 2, cy = (it.bounds[1] + it.bounds[3]) / 2; return cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1; })());
+    out.push({ index: out.length, spread: si, side: p.side || "single", bounds: [x0, y0, x1, y1], items });
+  }));
+  return out;
+}
+
+export const isTwoSided = (doc) => (doc?.spreads || []).some((sp) => (sp.items || []).some((it) => String(it.name || "").startsWith(SIDES_PREFIX)));
+
+/** What people call page `i`: "front"/"back" (of sheet n) on a two-sided
+ *  document, else "page n" — 1-based, as printed. */
+export function pageLabel(doc, i) {
+  const n = docPages(doc).length;
+  if (isTwoSided(doc)) { const side = i % 2 ? "back" : "front"; return n > 2 ? `${side} of sheet ${Math.floor(i / 2) + 1}` : side; }
+  return `page ${i + 1}`;
+}
+
+/** Which page a request means → {index, add (pages to append first), twoSided
+ *  (make the document two-sided)}. A number is a 0-based index; one past the
+ *  end adds that page. Words: front/back (of the sheet `current` is on),
+ *  first/last, next/new, "page 3" (1-based, as people count). `current` is the
+ *  page in use when nothing is named. */
+export function resolvePage(doc, ref, current) {
+  const n = docPages(doc).length;
+  const cur = Number.isInteger(current) && current >= 0 && current < n ? current : Math.max(0, n - 1);
+  const at = (i, extra = {}) => {
+    if (i > n) throw httpError(400, `The document has ${n} page${n === 1 ? "" : "s"} (page 0 to ${n - 1}). Add pages first (action "pages", options {add}), or use page ${n} to add one.`);
+    return { index: i, add: i === n ? 1 : 0, ...extra };
+  };
+  if (ref == null || ref === "") return at(cur);
+  if (typeof ref === "number") { if (!Number.isInteger(ref) || ref < 0) throw httpError(400, `page must be 0 or more (0 = the first page), not ${ref}`); return at(ref); }
+  const s = String(ref).trim().toLowerCase();
+  if (/^\d+$/.test(s)) return at(Number(s));
+  const num = s.match(/^(?:page|p\.?|pg\.?)\s*(\d+)$/);
+  if (num) return at(Math.max(1, Number(num[1])) - 1);
+  if (/^(first|cover|start)$/.test(s)) return at(0);
+  if (/^(last|end)$/.test(s)) return at(Math.max(0, n - 1));
+  if (/^(next|new|another|add|blank)( page)?$/.test(s)) return at(n);
+  if (/^(this|current|same)( page| side)?$/.test(s)) return at(cur);
+  const side = s.match(/^(front|back|reverse|outside|inside|verso|recto)\b/);
+  if (side) {
+    const back = /back|reverse|verso|inside/.test(side[1]);
+    const sheet = isTwoSided(doc) ? Math.floor(cur / 2) : 0;
+    const i = sheet * 2 + (back ? 1 : 0);
+    // "The back" of a one-page flyer: it becomes two-sided, the back added.
+    return at(i, back && !isTwoSided(doc) ? { twoSided: true } : {});
+  }
+  throw httpError(400, `Which page is "${String(ref).slice(0, 40)}"? Use a page index (0 = first), "front", "back", "last" or "next".`);
+}
+
+/** The page the user is looking at in the window, else the one the chat last
+ *  worked on — what "make the headline red" means with no page named. */
+let lastPage = null;
+async function currentPage(doc) {
+  const n = docPages(doc).length;
+  if (sessions.designcraft?.live) {
+    const ui = await callTool("designcraft", "ui_inspect", {}).catch(() => null);
+    const p = ui?.json?.currentPage;
+    if (Number.isInteger(p) && p >= 0 && p < n) return p;
+  }
+  return Number.isInteger(lastPage) && lastPage < n ? lastPage : Math.max(0, n - 1);
+}
+
+/** Show page `i` in the open window, so the user sees what the chat changes. */
+async function showPage(i) {
+  lastPage = i;
+  if (sessions.designcraft?.live) await callTool("designcraft", "ui_set", { page: i + 1 }).catch(() => {});
+}
+
+async function markTwoSided() {
+  const doc = await designDoc();
+  if (isTwoSided(doc)) return;
+  const p = docPages(doc)[0];
+  const [x0, y0] = p.bounds;
+  const m = (await dc("frame.create", { spread: p.spread, rect: [x0, y0, x0 + 1, y0 + 1], content: "unassigned" })).json;
+  await mustCall("designcraft", "batch", { commands: [
+    { command: "object.rename", params: { id: m.id, name: `${SIDES_PREFIX}2` } },
+    { command: "object.stroke", params: { swatch: "[None]", ids: [m.id] } },
+    { command: "object.setFlags", params: { ids: [m.id], hidden: true, locked: true } },
+    { command: "selection.set", params: { ids: [] } },
+  ] });
+}
+
+/** The page a page edit goes on, adding it (and making the document
+ *  two-sided) when the request names one that isn't there yet. */
+async function targetPage(ref) {
+  const doc = await designDoc();
+  const r = resolvePage(doc, ref, await currentPage(doc));
+  const n = docPages(doc).length;
+  if (r.add) await dc("layout.pages.insert", { count: r.add, after: n - 1 });
+  if (r.twoSided) await markTwoSided();
+  lastPage = r.index;
+  return r.index;
+}
+
+/** Bleed, margins and columns as Document Setup reports them. */
+async function docSetup() {
+  return (await callTool("designcraft", "execute", { command: "layout.documentSetup", params: {} })).json || {};
+}
+const bleedOf = (setup) => { const b = setup?.bleed; return Array.isArray(b) ? Math.max(...b.map(Number).filter(Number.isFinite), 0) : Number(b) || 0; };
+
+/** Print: what touches the trim edge runs into the bleed — the look's
+ *  background, its edge-to-edge bands and pictures — so a trimmed sheet has
+ *  no white sliver. Text never moves. The spine side of a facing page doesn't bleed. */
+export function bleedSteps(page, items, bleed, tol = 1) {
+  if (!(bleed > 0)) return [];
+  const [x0, y0, x1, y1] = page.bounds;
+  const spineLeft = page.side === "right", spineRight = page.side === "left";
+  const steps = [];
+  for (const it of items) {
+    const isLook = /^(Look |Deco )/.test(String(it.name || ""));
+    const isPicture = !isLook && it.story == null && (it.asset != null || /image|graphic/.test(String(it.kind)));
+    if ((!isLook && !isPicture) || !Array.isArray(it.bounds) || it.hidden) continue;
+    let [a, b, c, d] = it.bounds;
+    const touch = [a <= x0 + tol && !spineLeft, b <= y0 + tol, c >= x1 - tol && !spineRight, d >= y1 - tol];
+    if (!touch.some(Boolean)) continue;
+    if (touch[0]) a = x0 - bleed; if (touch[1]) b = y0 - bleed; if (touch[2]) c = x1 + bleed; if (touch[3]) d = y1 + bleed;
+    if ([a, b, c, d].every((v, k) => Math.abs(v - it.bounds[k]) < 0.5)) continue;
+    steps.push({ command: "transform.set", params: { x: a, y: b, width: c - a, height: d - b, rotation: 0, ref: 0, ids: [it.id] } });
+    if (isPicture) steps.push({ command: "object.fit", params: { mode: "fillProportionally", ids: [it.id] } });
+  }
+  return steps;
+}
+
+async function bleedPage(index) {
+  const bleed = bleedOf(await docSetup());
+  if (!(bleed > 0)) return;
+  const page = docPages(await designDoc())[index];
+  const steps = page ? bleedSteps(page, page.items, bleed) : [];
+  if (steps.length) await mustCall("designcraft", "batch", { commands: steps });
+}
+
+/** The document's pages, compact, for the model: which is the front, the
+ *  back, what's on each and in which look. */
+export function pagesOverview(doc) {
+  return docPages(doc).map((p) => {
+    const dp = designPage(doc, p.index);
+    const parts = (dp?.items || []).map((it) => it.role);
+    return { page: p.index, side: pageLabel(doc, p.index), ...(parts.length ? { parts } : { empty: true }), ...(dp?.look ? { look: dp.look } : {}) };
+  });
+}
+
+async function pagesSummary(note, extra = {}) {
+  const doc = await designDoc();
+  const setup = await docSetup();
+  const st = doc?.settings || {};
+  const w = Math.round(st.pageWidth), h = Math.round(st.pageHeight);
+  return {
+    pages: pagesOverview(doc),
+    count: docPages(doc).length,
+    two_sided: isTwoSided(doc),
+    facing_pages: !!st.facingPages,
+    size: { width_pt: w, height_pt: h, inches: `${+(w / 72).toFixed(2)} × ${+(h / 72).toFixed(2)}` },
+    bleed_pt: bleedOf(setup),
+    ...(lastPage != null ? { current: lastPage } : {}),
+    ...extra,
+    ...(note ? { note } : {}),
+  };
+}
+
+/** Page sizes by name, in points (DesignCraft's presets and print/social
+ *  sizes it lacks). `landscape`/`orientation` turns the page. */
+const PAGE_SIZES = { letter: [612, 792], legal: [612, 1008], tabloid: [792, 1224], ledger: [1224, 792], a3: [842, 1191], a4: [595, 842], a5: [420, 595], a6: [298, 420], "half letter": [396, 612], poster: [1296, 1728], square: [720, 720], story: [540, 960], book: [432, 648], "book cover": [432, 648], cover: [432, 648], instagram: [720, 900], postcard: [432, 288], "business card": [252, 144], card: [360, 504], "greeting card": [360, 504], "tri-fold": [792, 612], trifold: [792, 612], brochure: [792, 612] };
+export function pageSize(o = {}) {
+  const key = String(o.preset || o.size || "").trim().toLowerCase().replace(/[_-]+/g, " ").replace(/^us /, "").replace("tri fold", "tri-fold");
+  let wh = PAGE_SIZES[key] || (Number(o.width) > 0 && Number(o.height) > 0 ? [Number(o.width), Number(o.height)] : null);
+  if (!wh && key) throw httpError(400, `Unknown page size "${String(o.preset || o.size).slice(0, 30)}". Sizes: ${Object.keys(PAGE_SIZES).join(", ")}, or width + height in points (72 = 1 inch).`);
+  if (!wh) return null;
+  const land = o.landscape === true || /land|wide|horiz/i.test(String(o.orientation || ""));
+  const port = o.landscape === false || /port|tall|vert/i.test(String(o.orientation || ""));
+  if ((land && wh[0] < wh[1]) || (port && wh[0] > wh[1])) wh = [wh[1], wh[0]];
+  return { width: wh[0], height: wh[1] };
+}
+const indexList = (doc, v) => [].concat(v ?? []).map((r) => resolvePage(doc, typeof r === "string" || typeof r === "number" ? r : null, lastPage).index).filter((i, k, a) => a.indexOf(i) === k);
+
+/** Page numbers: a small frame at the foot of each page holding
+ *  DesignCraft's page-number character (U+E000), so it counts itself. On the
+ *  page, not the parent: a look's full-page background would cover a parent's.
+ *  Coloured like the page's smallest type, so it reads on any look. */
+const isPageNumber = (it) => String(it?.name || "") === PAGE_NUMBER_NAME;
+async function setPageNumbers(on) {
+  let doc = await designDoc();
+  const old = (doc.spreads || []).flatMap((sp) => sp.items || []).filter(isPageNumber).map((it) => it.id);
+  if (old.length) { await dc("object.setFlags", { ids: old, locked: false }); await dc("edit.clear", { ids: old }); }
+  if (!on) return 0;
+  doc = await designDoc();
+  let n = 0;
+  for (const p of docPages(doc)) n += await addPageNumber(doc, p.index);
+  return n;
+}
+async function addPageNumber(doc, index) {
+  const p = (doc.spreads || []).flatMap((sp) => sp.pages || [])[index];
+  const pg = docPages(doc)[index];
+  if (!p || !pg || pg.items.some(isPageNumber)) return 0;
+  const [x0, , x1, y1] = pg.bounds;
+  const m = p.margins || {};
+  const inX = p.side === "left" ? m.outside ?? 36 : m.inside ?? 36, outX = p.side === "left" ? m.inside ?? 36 : m.outside ?? 36;
+  const yc = y1 - (m.bottom ?? 36) * 0.5;
+  const r = (await dc("frame.create", { spread: pg.spread, rect: [x0 + inX, yc - 7, x1 - outX, yc + 7], content: "text", text: "\uE000" })).json;
+  if (r?.id == null) return 0;
+  await mustCall("designcraft", "batch", { commands: [
+    { command: "object.rename", params: { id: r.id, name: PAGE_NUMBER_NAME } },
+    { command: "object.textFrameOptions", params: { inset: 0, verticalJustification: "center", ids: [r.id] } },
+    { command: "selection.set", params: { ids: [r.id] } },
+    { command: "type.char", params: { attrs: { size: 9 } } },
+    { command: "type.para", params: { attrs: { align: p.side === "left" ? "left" : p.side === "right" ? "right" : "center" } } },
+    { command: "selection.set", params: { ids: [] } },
+  ] });
+  await colourPageNumber(index);
+  return 1;
+}
+async function colourPageNumber(index) {
+  const doc = await designDoc();
+  const pg = docPages(doc)[index];
+  const num = pg?.items.find(isPageNumber);
+  if (!num) return;
+  const page = designPage(doc, index);
+  const order = ["footer", "caption", "body", "subhead", "headline"];
+  const src = [...(page?.items || [])].filter((it) => it.kind === "text").sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role))[0];
+  const fill = src ? (await charAttrs(src.id)).chars?.fill : null;
+  const font = src ? (await charAttrs(src.id)).chars?.fontFamily : null;
+  await mustCall("designcraft", "batch", { commands: [
+    { command: "selection.set", params: { ids: [num.id] } },
+    { command: "type.char", params: { attrs: { ...(fill ? { fill } : {}), ...(font ? { fontFamily: font } : {}) } } },
+    // Above the look's background and pictures.
+    { command: "object.bringToFront", params: {} },
+    { command: "selection.set", params: { ids: [] } },
+  ] });
+}
+
+/** Structure: add, delete, move, duplicate pages; make the document
+ *  two-sided; size, facing pages, bleed, margins, columns, page numbers.
+ *  Several at once run in that order. No options → the overview. */
+async function pagesOp(o = {}) {
+  let doc = await designDoc();
+  const did = [];
+  // A page edit that also named a size or "both sides" (small models put it
+  // all in one send): set the document up when there is none, and with one
+  // open only make it two-sided — never a new document over the user's work.
+  // A page count that isn't this document's ("a 4-page newsletter" while a
+  // flyer is open) is a new document — a new tab; the flyer stays open.
+  if (o.ensure && doc) {
+    const want = Number(o.pages) || 0;
+    if (want > 1 && want !== docPages(doc).length) o = { ...o, new: true };
+    else o = { sides: o.sides, two_sided: o.two_sided, ...(o.numbers != null ? { numbers: o.numbers } : {}) };
+  }
+  if (o.new || !doc) {
+    const size = pageSize(o) || pageSize({ preset: "letter" });
+    const sides = Number(o.sides) === 2 || o.two_sided === true || /two|both|double|duplex|back/i.test(String(o.sides || ""));
+    const count = Math.max(Number(o.pages) || 1, sides ? 2 : 1);
+    const pages = sides && count % 2 ? count + 1 : count;
+    const bleed = o.bleed === true ? PRINT_BLEED : Number(o.bleed) >= 0 && o.bleed !== "" && o.bleed != null ? Number(o.bleed) : sides || o.print ? PRINT_BLEED : undefined;
+    await mustCall("designcraft", "new_document", { ...size, pages, facingPages: !!o.facing, ...(bleed != null ? { bleed } : {}), ...(o.margins != null ? { margins: o.margins } : {}), ...(o.columns ? { columns: Number(o.columns) } : {}), ...(o.title ? { title: String(o.title) } : {}) });
+    if (sides) await markTwoSided();
+    lastPage = 0;
+    await showPage(0);
+    did.push(`New ${sides ? "two-sided " : ""}document, ${pages} page${pages === 1 ? "" : "s"}`);
+    doc = await designDoc();
+    if (o.numbers) { await setPageNumbers(true); did.push("page numbers on"); }
+    return pagesSummary(`${did.join("; ")}.${sides ? " Page 0 is the front, page 1 the back: put parts on each with send + role + page." : " Put parts on a page with send + role + page."}`);
+  }
+  const n0 = docPages(doc).length;
+  if (o.sides != null || o.two_sided != null) {
+    const want = Number(o.sides) === 2 || o.two_sided === true || /two|both|double|duplex|back/i.test(String(o.sides));
+    if (want && !isTwoSided(doc)) {
+      if (n0 % 2) await dc("layout.pages.insert", { count: 1, after: n0 - 1 });
+      await markTwoSided();
+      did.push("now two-sided (page 0 front, page 1 back)");
+    } else if (!want && isTwoSided(doc)) {
+      const ids = (doc.spreads || []).flatMap((sp) => sp.items || []).filter((it) => String(it.name || "").startsWith(SIDES_PREFIX)).map((it) => it.id);
+      await dc("object.setFlags", { ids, locked: false });
+      await dc("edit.clear", { ids });
+      did.push("no longer two-sided");
+    }
+    doc = await designDoc();
+  }
+  const size = pageSize(o);
+  if (size || o.facing != null || o.bleed != null) {
+    await dc("layout.documentSetup", {
+      ...(size ? { width: size.width, height: size.height, adjustLayout: true } : {}),
+      ...(o.facing != null ? { facingPages: !!o.facing } : {}),
+      ...(o.bleed != null ? { bleed: o.bleed === true ? PRINT_BLEED : o.bleed === false ? 0 : Math.max(0, Number(o.bleed) || 0) } : {}),
+    });
+    if (size) did.push("page size changed (pages re-laid out)");
+    if (o.facing != null) did.push(o.facing ? "facing pages (spreads)" : "single pages");
+    if (o.bleed != null) did.push(`bleed ${o.bleed === true ? PRINT_BLEED : Number(o.bleed) || 0} pt`);
+    doc = await designDoc();
+  }
+  if (o.margins != null || o.columns != null || o.gutter != null) {
+    const pages = o.margins_pages != null ? indexList(doc, o.margins_pages) : undefined;
+    await dc("layout.marginsAndColumns", { ...(pages ? { pages } : {}), ...(o.margins != null ? { margins: o.margins } : {}), ...(o.columns != null ? { columns: Number(o.columns) } : {}), ...(o.gutter != null ? { gutter: Number(o.gutter) } : {}), adjustLayout: true });
+    did.push("margins/columns set");
+  }
+  if (o.add) {
+    const count = Math.max(1, Math.min(200, Number(o.add) === Number(o.add) && Number(o.add) > 0 ? Number(o.add) : 1)) * (isTwoSided(doc) && o.sheets !== false ? 2 : 1);
+    const n = docPages(doc).length;
+    const after = o.after != null ? resolvePage(doc, o.after, lastPage).index : n - 1;
+    // Two-sided: whole sheets, after the sheet named.
+    const at = isTwoSided(doc) && o.sheets !== false ? Math.min(n - 1, after - (after % 2) + 1) : Math.min(after, n - 1);
+    await dc("layout.pages.insert", { count, after: at });
+    lastPage = at + 1;
+    did.push(`added ${count} page${count === 1 ? "" : "s"} after page ${at}`);
+    doc = await designDoc();
+    if (docPages(doc).some((p) => p.items.some(isPageNumber))) for (let k = at + 1; k <= at + count; k++) await addPageNumber(await designDoc(), k);
+  }
+  if (o.duplicate != null && o.duplicate !== false) {
+    const i = resolvePage(doc, o.duplicate === true ? null : o.duplicate, lastPage).index;
+    const n = docPages(doc).length;
+    if (isTwoSided(doc) && n > 1 && o.sheets !== false) {
+      // The whole sheet, front and back, after it: [f, b] → [f, b, f', b'].
+      const f = i - (i % 2), b = Math.min(f + 1, n - 1);
+      await dc("layout.pages.duplicateSpread", { spread: docPages(doc)[f].spread }); // f, f', b
+      await dc("layout.pages.move", { from: f + 1, to: f + 2 }); //                  f, b, f'
+      doc = await designDoc();
+      await dc("layout.pages.duplicateSpread", { spread: docPages(doc)[b].spread }); // f, b, b', f'
+      await dc("layout.pages.move", { from: f + 2, to: f + 3 }); //                  f, b, f', b'
+      lastPage = f + 2;
+      did.push(`duplicated the sheet (pages ${f} and ${b}) as pages ${f + 2} and ${f + 3}`);
+    } else {
+      const p = docPages(doc)[i];
+      await dc("layout.pages.duplicateSpread", { spread: p.spread });
+      lastPage = docPages(doc).filter((q) => q.spread === p.spread).slice(-1)[0].index + 1;
+      did.push(`duplicated page ${i}`);
+    }
+    doc = await designDoc();
+  }
+  if (o.move != null || o.from != null) {
+    const mv = typeof o.move === "object" && o.move ? o.move : { from: o.from ?? o.move, to: o.to };
+    const from = resolvePage(doc, mv.from, lastPage).index, to = resolvePage(doc, mv.to, lastPage).index;
+    if (from !== to) { await dc("layout.pages.move", { from, to: Math.min(to, docPages(doc).length - 1) }); did.push(`moved page ${from} to ${to}`); lastPage = to; }
+    doc = await designDoc();
+  }
+  if (o.delete != null && o.delete !== false) {
+    const pages = indexList(doc, o.delete === true ? [lastPage ?? docPages(doc).length - 1] : o.delete);
+    if (pages.length >= docPages(doc).length) throw httpError(400, "That would delete every page. Keep at least one.");
+    await dc("layout.pages.delete", { pages });
+    did.push(`deleted page${pages.length === 1 ? "" : "s"} ${pages.join(", ")}`);
+    lastPage = Math.max(0, Math.min(pages[0], docPages(await designDoc()).length - 1));
+  }
+  if (o.numbers != null) {
+    const k = await setPageNumbers(!!o.numbers);
+    did.push(o.numbers ? `page numbers on${k ? "" : " (couldn't place them)"}` : "page numbers off");
+  }
+  if (o.page != null && !did.length) { lastPage = resolvePage(doc, o.page, lastPage).index; did.push(`went to ${pageLabel(doc, lastPage)}`); }
+  if (lastPage != null) await showPage(Math.min(lastPage, docPages(await designDoc()).length - 1));
+  // A new size re-flows the pages; looks are redrawn so nothing sits off the page.
+  if (size) {
+    const hadNumbers = docPages(await designDoc()).some((p) => p.items.some(isPageNumber));
+    if (hadNumbers) await setPageNumbers(false);
+    for (const p of docPages(await designDoc())) if (designPage(await designDoc(), p.index)?.items.length) await layoutPage(p.index).catch((e) => log("relayout", e.message));
+    if (hadNumbers) await setPageNumbers(true);
+  }
+  return pagesSummary(did.length ? `${did.join("; ")}.` : null);
 }
 
 async function ensureSequence() {
@@ -1444,9 +1859,17 @@ async function exportDoc(app, format, opts = {}) {
     const r = await callTool(app, "doc_export", { path });
     if (r.isError) await mustCall(app, "doc_export", { path, format: fmt });
   } else if (app === "designcraft") {
-    if (fmt === "png" || fmt === "jpg") await mustCall(app, "export_png", { page: Number(opts.page) || 0, path, scale: Number(opts.scale) || 2 });
+    const doc = await designDoc();
+    if (fmt === "png" || fmt === "jpg") await mustCall(app, "export_png", { page: opts.page == null || opts.page === "" ? await currentPage(doc) : resolvePage(doc, opts.page, await currentPage(doc)).index, path, scale: Number(opts.scale) || 2 });
     else if (fmt === "designcraft") await mustCall(app, "save_document", { path });
-    else {
+    else if (fmt === "pdf") {
+      // A document set up for print (it has a bleed: two-sided, or asked for)
+      // exports print-ready unless told otherwise.
+      if (opts.print == null && !opts.booklet && bleedOf(await docSetup()) > 0) opts = { ...opts, print: true };
+      const r = await mustCall(app, "execute", { command: opts.booklet ? "file.printBooklet" : "file.exportPdf", params: { path, ...pdfParams(doc, opts) } }, EXPORT_TIMEOUT_MS);
+      if (!existsSync(path)) throw httpError(422, "DesignCraft reported success but wrote no file");
+      return { ...fileInfo(path), ...(r.json?.warnings?.length ? { warnings: r.json.warnings.slice(0, 6) } : {}), ...printNote(doc, opts) };
+    } else {
       const cmd = { pdf: "file.exportPdf", epub: "file.exportEpub", html: "file.exportHtml", txt: "file.exportText", idml: "file.exportIdml" }[fmt];
       await mustCall(app, "execute", { command: cmd, params: { path, ...(opts.title ? { title: opts.title } : {}) } }, EXPORT_TIMEOUT_MS);
     }
@@ -1462,6 +1885,34 @@ async function exportDoc(app, format, opts = {}) {
   }
   if (!existsSync(path)) throw httpError(422, `${APPS[app].label} reported success but wrote no file`);
   return fileInfo(path);
+}
+
+/** PDF options from the chat's words: `print` (or `bleed`/`marks`) makes a
+ *  print-shop file — the bleed and crop marks; `pages` picks pages ("front",
+ *  [0, 1], "1-3" as printed); `booklet` imposes a folded booklet. */
+export function pdfParams(doc, o = {}) {
+  if (o.booklet) return { type: /two.?up|consec|cut/i.test(String(o.booklet)) ? "twoUpConsecutive" : "saddleStitch" };
+  const out = {};
+  if (o.print || o.bleed) out.bleed = true;
+  if (o.print || o.marks) out.marks = { crop: true, bleed: !!(o.print || o.marks), pageInfo: false };
+  if (o.pages != null && o.pages !== "" && o.pages !== "all") {
+    out.pages = typeof o.pages === "string" && /^[\d,\s-]+$/.test(o.pages) ? o.pages.replace(/\s+/g, "")
+      : [].concat(o.pages).map((r) => resolvePage(doc, r, 0).index + 1);
+  }
+  if (o.title) out.title = String(o.title);
+  return out;
+}
+
+/** How to print what was exported, so the user gets the back the right way up. */
+export function printNote(doc, o = {}) {
+  const st = doc?.settings || {};
+  const n = docPages(doc).length;
+  if (o.booklet) return { print_note: "Booklet: each sheet holds two pages in folding order. Print double-sided, flip on the SHORT edge, then fold the stack in half and staple the spine." };
+  if (isTwoSided(doc) && n > 1 && !(o.pages != null && [].concat(o.pages).length === 1)) {
+    const landscape = Number(st.pageWidth) > Number(st.pageHeight);
+    return { print_note: `Front and back are pages in order (front, back${n > 2 ? ", front, back…" : ""}). Print double-sided, flip on the ${landscape ? "SHORT" : "LONG"} edge${o.print ? ", then trim at the crop marks" : ""}.` };
+  }
+  return o.print ? { print_note: "Bleed and crop marks included: the print shop trims at the marks." } : {};
 }
 
 function fileInfo(path) {
@@ -1503,6 +1954,7 @@ const ROUTES = {
   "POST /open": (b) => openApp(b.app, b.path, b),
   "POST /import": (b) => (b.text != null ? importText(b.app, b.text, b) : importFile(b.app, b.path, b)),
   "POST /compose": (b) => serialCompose(b),
+  "POST /pages": (b) => serialCompose({ ...b, _do: pagesOp }),
   "POST /template/save": (b) => serialCompose({ ...b, _do: saveTemplate }),
   "POST /template/use": (b) => serialCompose({ ...b, _do: useTemplate }),
   "POST /design/selection": () => designSelection(),
