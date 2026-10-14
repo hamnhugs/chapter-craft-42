@@ -10,6 +10,7 @@ import { buildChatSystemPrompt, buildFenceNonce, fenced, sanitizeBlock, type Use
 import { lensVerdict, type MemoryImageCandidate } from "@/lib/memoryLens";
 import { findSentenceCapIndex, truncateAtSentenceCap } from "@/lib/sentenceCap";
 import { isReflexEnabled } from "@/lib/reflex";
+import { resetCopyCraftCache } from "@/lib/copyCraft";
 import { CHAT_TOOL_DEFINITIONS, executeChatTool, resetToolshedCache, ToolEvent, type ToolProposal, type ProgramProposal } from "@/lib/chatTools";
 import {
   computeToolGates, availableToolNames, groupWithheld,
@@ -47,7 +48,7 @@ import { addUsage } from "@/lib/providers/sse";
 import { studioToolsActive } from "@/lib/studioTools";
 import { highlightsForTurn } from "@/lib/highlights";
 import { TOOL_ROUNDS_PER_REPLY } from "@/lib/deepResearchPrompt";
-import { assistantImageNote, attachTurnContext, claimsUnmadeDesignEdit, expandImageTurns, fabricatedImageNote, imageReplayFor, isModelVisibleMessage, resolveUtilityModel, stripFabricatedNotes, toolTraceNote, touchedDesignCraft, unmadeDesignEditNote } from "@/lib/chatHistory";
+import { assistantImageNote, attachTurnContext, claimsUnmadeDesignEdit, deniesSaveToLibrary, findReplyByOpening, unmadeSaveNote, expandImageTurns, fabricatedImageNote, imageReplayFor, isModelVisibleMessage, resolveUtilityModel, stripFabricatedNotes, toolTraceNote, touchedDesignCraft, unmadeDesignEditNote } from "@/lib/chatHistory";
 import { namespacedNvidiaId, nvidiaModelInfo, nvidiaNoThinkingBody, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
 import { namespacedGeminiId, GEMINI_STARTER_MODEL } from "@/lib/geminiCatalog";
 import { wantsTemplatePicker } from "@/lib/templatePicker";
@@ -538,6 +539,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // network blip leaves the cache null, and without re-asking, one bad moment
   // at page load would have the panel telling the user for the rest of the
   // session that they need to run a database migration they already ran.
+  useEffect(() => { resetCopyCraftCache(); }, [user?.id]);
   useEffect(() => {
     let alive = true;
     resetToolshedCache();
@@ -1748,6 +1750,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // about to) with no craft call this turn gets one note and one more
       // round to make the call (see claimsUnmadeDesignEdit).
       let designNoteSent = false;
+      // Said it can't save to the library / Vault while save_to_library was
+      // on the roster (see deniesSaveToLibrary): one note, one more round.
+      let saveNoteSent = false;
       let pendingCraftNext: string | null = null;
       let nextNoteSent = false;
       let craftCalledThisTurn = false;
@@ -2159,6 +2164,22 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
             if (canCraft) assistantEvents.push({ name: "craft", summary: "Nothing was changed in DesignCraft — the reply described a change without making it. Ask again.", ok: false });
           }
+          if (toolCalls.length === 0 && !streamCutShort && !saveNoteSent && !finalRound && !toollessRound &&
+              // The ask can sit a message back ("…put it on the shelf" → "yes just do it").
+              deniesSaveToLibrary(iterText, [text, ...messagesRef.current.filter((m) => m.role === "user").slice(-3).map((m) => String(m.content || ""))].join("\n")) &&
+              (offeredNames.has("save_to_library") || (!!localPlan && localDefByName.has("save_to_library")))) {
+            saveNoteSent = true;
+            if (localPlan && toolDefs && !offeredNames.has("save_to_library")) {
+              offeredNames.add("save_to_library");
+              toolDefs.splice(toolDefs.length - 1, 0, slimToolDef(localDefByName.get("save_to_library")));
+            }
+            const rawText = iterText;
+            assistantText = assistantText.slice(0, capSegStart);
+            updateAssistant();
+            workingMessages.push({ role: "assistant", content: rawText });
+            workingMessages.push({ role: "user", content: unmadeSaveNote() });
+            continue;
+          }
           // The last craft result named a next call the model didn't make.
           if (toolCalls.length === 0 && !streamCutShort && pendingCraftNext && !nextNoteSent && !finalRound && !toollessRound) {
             nextNoteSent = true;
@@ -2289,12 +2310,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // re-emitted as arguments (they cap at the provider's output
             // ceiling and a cut stream drops the call silently): "this" is
             // the assistant's text so far in this reply, "last" its previous
-            // completed reply.
-            const getReplyText = (which: "this" | "last"): string | null => {
+            // completed reply — or, given its opening words, an earlier one
+            // ("turn that research into a PDF" after a turn or two of talk).
+            const getReplyText = (which: "this" | "last", startsWith?: string): string | null => {
               if (which === "this") return assistantText.trim() ? assistantText : null;
               const prior = messagesRef.current.filter((m) =>
                 m.role === "assistant" && m.id !== assistantId && !m.displayOnly &&
                 typeof m.content === "string" && m.content.trim() && !m.content.startsWith("❌"));
+              if (startsWith) return findReplyByOpening(prior.map((m) => m.content as string), startsWith);
               const last = prior[prior.length - 1];
               return last ? last.content : null;
             };

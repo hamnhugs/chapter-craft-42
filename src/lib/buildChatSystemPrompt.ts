@@ -7,6 +7,7 @@ import { listTools } from "@/lib/toolFoundry";
 import { rankToolsForQuery, FOUNDRY_ROSTER_LIMIT } from "@/lib/toolshed";
 import { leanModePromptBlock, type LeanMode } from "@/lib/leanMode";
 import { deepResearchPrompt } from "@/lib/deepResearchPrompt";
+import { loadCraftCards, rankCraftCards, renderCopyCraftSection, wantsCopyCraft } from "@/lib/copyCraft";
 import type { TurnHighlights } from "@/lib/highlights";
 
 interface BuildOpts {
@@ -532,7 +533,7 @@ export async function buildChatSystemPrompt({
     ...ifTools(["set_active_book"], "`set_active_book` opens a book in the reader; it joins what you discuss only when nothing is loaded or it is on the loaded shelf — the result says which."),
     ...ifTools(["set_loaded_books"], "To bring a shelf or books into this conversation — what the Vault's “Chat with this shelf” does — call `set_loaded_books`; it REPLACES what was loaded (the reader stays open). If the user hasn't said which neuron to read alongside, ask once, or omit wiki_ids to keep the current one. Narrate the result, nothing more."),
     ...ifTools(["manage_shelf", "list_books"], "Shelves organise the library; `list_books` shows them with ids and which books sit where. `manage_shelf` makes, renames or fills a shelf (adding and removing are deltas — say exactly what changed from the result); deleting one needs the user to say its name."),
-    ...ifTools(["save_to_library"], "When the user asks to save something you wrote as a book or PDF in their library, call `save_to_library` with source this_reply or last_reply (headings become chapters) — never re-type the document into the call. Say it's saved and where; don't paste it back."),
+    ...ifTools(["save_to_library"], "When the user asks to save something you wrote as a book or PDF in their library — or to put it in the Vault or on a shelf — call `save_to_library` with source this_reply or last_reply (headings become chapters; for an earlier reply add reply_starts_with) — never re-type the document into the call, and never tell the user you can't save to the Vault. Say it's saved and where; don't paste it back."),
     ...ifTools(["delete_book"], "`delete_book` normally moves a book to the Trash, where it can be restored for 30 days — a clear request is enough. Read the result: if it says the deletion is permanent, name the book, get a clear yes, and call again with confirm_title. Tell the user which of the two actually happened."),
     ...ifTools(["restore_book"], "If they change their mind about a delete — \"put that back\", \"undo that\" — call `restore_book` with the book's title; it comes back with its chapters, shelves and anchors."),
   ];
@@ -1043,6 +1044,21 @@ export async function buildChatSystemPrompt({
 
   if (highlights) {
     turnParts.push(...renderHighlightsSection(highlights, has, SESSION_PROMPT_NONCE, !!voiceMode));
+  }
+
+  // COPY & DESIGN CRAFT — on a copy or DesignCraft turn, the 2–3 craft cards
+  // from the "Copy & Design Masters" neuron that fit the request
+  // (lib/copyCraft.ts). Turn context only: most turns aren't copy turns, and
+  // the stable prefix must not change with them.
+  if (wantsCopyCraft(latestUserQuery, previousAssistantText)) {
+    try {
+      const cards = rankCraftCards(await loadCraftCards(), latestUserQuery || "");
+      turnParts.push(...renderCopyCraftSection(cards, {
+        nonce: SESSION_PROMPT_NONCE,
+        sanitize: (t) => sanitizeBlock(t, SESSION_PROMPT_NONCE),
+        craftOffered: has("craft"),
+      }));
+    } catch { /* the skill is an extra; a failure here never blocks the turn */ }
   }
 
   // GRAPH-AWARE RETRIEVAL — deliberately the LAST major section: it is the

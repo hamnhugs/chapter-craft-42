@@ -1,7 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { tavilySearch } from "@/lib/tavilySearch";
 import { localSearchAvailable, searxngSearch } from "@/lib/searxngSearch";
-import { localImagesAvailable } from "@/lib/localImageGen";
+import { isLocalImageModel, localImagesAvailable } from "@/lib/localImageGen";
 import { CRAFT_TOOL_DEFINITION, runCraftTool } from "@/lib/craftApps";
 import { modelProvider, providerLabel } from "@/lib/providers/registry";
 import { blockedToolResult, isToolBlocked, type LeanMode } from "@/lib/leanMode";
@@ -248,8 +248,9 @@ export interface ToolDeps {
   /** The document to save, read from the TRANSCRIPT rather than re-emitted
    *  as tool arguments (which cap at the provider's output ceiling). "this" =
    *  the assistant's text so far in the current reply; "last" = its previous
-   *  reply in full. */
-  getReplyText?: (which: "this" | "last") => string | null;
+   *  reply in full — or, with `startsWith`, the most recent earlier reply
+   *  that opens with those words (null when none does). */
+  getReplyText?: (which: "this" | "last", startsWith?: string) => string | null;
   /** Model id of this turn — recorded as the author of an assistant-written book. */
   currentModel?: string;
 }
@@ -653,12 +654,13 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "save_to_library",
       description:
-        "Save a document you wrote into the user's library as a real PDF book with chapters — when they ask to save, keep, export, or make a book or PDF of something you wrote. Pick the source: this_reply takes everything you have written so far in the current reply; last_reply takes your previous reply in full; content is for a short document passed inline (up to 20,000 characters — for anything longer, write it as a reply first, then save with this_reply). Markdown headings (# and ##) become chapters. Optionally shelve it with shelf (id or exact name). The book is labelled as written by you, so the user can always tell it from their own sources. Say it's saved and where; don't paste the text back.",
+        "Save a document you wrote into the user's library (the Vault) as a real PDF book with chapters — when they ask to save, keep, export, or make a book or PDF of something you wrote, or to put it in the Vault or on a shelf. Pick the source: this_reply takes everything you have written so far in the current reply; last_reply takes your previous reply in full — for an EARLIER reply (say, research from a few messages back), also pass reply_starts_with with that reply's first words; content is for a short document passed inline (up to 20,000 characters — for anything longer, write it as a reply first, then save with this_reply). Markdown headings (# and ##) become chapters. Optionally shelve it with shelf (id or exact name). The book is labelled as written by you, so the user can always tell it from their own sources. Say it's saved and where; don't paste the text back.",
       parameters: {
         type: "object",
         properties: {
           title: { type: "string", description: "The book's title (1–300 characters)." },
           source: { type: "string", enum: ["this_reply", "last_reply", "content"] },
+          reply_starts_with: { type: "string", description: "Only with source last_reply, when the document is not your most recent reply: the first few words of the reply to save, as written." },
           content: { type: "string", description: "Only with source content: the markdown document." },
           shelf: { type: "string", description: "Optional shelf to put the new book on: id or exact name." },
           chapters: { type: "string", enum: ["headings", "none"], description: "headings (default) = a chapter per # / ## heading; none = one chapter." },
@@ -981,7 +983,7 @@ export const CHAT_TOOL_DEFINITIONS = [
     function: {
       name: "generate_image",
       description:
-        "Generate one or more AI images with Nano Banana (Google's Gemini image model) and show them to the user inline. By default each image is also saved to the user's memory as a neuron. Use when the user asks for an image, picture, illustration, visualization, logo, scene, character art, etc. For multiple images in one turn: pass `count` (2–4) for variations of the SAME prompt, or `prompts: [...]` (2–4 entries) for a DISTINCT set in one call. Each image costs a few cents, billed to the user's OpenRouter key (or their Gemini key when only a Gemini key is configured) — match the count to what the user asked for, don't pad.",
+        "Generate one or more AI images and show them to the user inline. By default each image is also saved to the user's memory as a neuron. Use when the user asks for an image, picture, illustration, visualization, logo, scene, character art, etc. For multiple images in one turn: pass `count` (2–4) for variations of the SAME prompt, or `prompts: [...]` (2–4 entries) for a DISTINCT set in one call. By default images are made on this computer (free, about 3 minutes each); a cloud image model the user picked in Settings costs a few cents each. Match the count to what the user asked for, don't pad.",
       parameters: {
         type: "object",
         properties: {
@@ -3179,10 +3181,11 @@ export async function executeChatTool(
         const source = String(args.source || "");
         let content: string | null = null;
         if (source === "this_reply" || source === "last_reply") {
-          content = deps.getReplyText ? deps.getReplyText(source === "this_reply" ? "this" : "last") : null;
+          const startsWith = source === "last_reply" ? String(args.reply_starts_with ?? "").trim() : "";
+          content = deps.getReplyText ? deps.getReplyText(source === "this_reply" ? "this" : "last", startsWith || undefined) : null;
           if (!content || !content.trim()) {
             return {
-              result: { error: source === "this_reply" ? "Nothing has been written in this reply yet — write the document first, then save it." : "There is no previous reply to save." },
+              result: { error: source === "this_reply" ? "Nothing has been written in this reply yet — write the document first, then save it." : startsWith ? `None of your earlier replies begins with "${startsWith.slice(0, 80)}". Pass the opening words of that reply exactly as you wrote them.` : "There is no previous reply to save." },
               event: { name, summary: "Nothing to save", ok: false },
             };
           }
@@ -4638,11 +4641,11 @@ export async function executeChatTool(
             // reported, never silent.
             const ledger = await recordGeneration({
               kind: "image",
-              provider: gen.modelUsed.startsWith("gemini") ? "Gemini" : "OpenRouter",
+              provider: isLocalImageModel(gen.modelUsed) ? "Local" : gen.modelUsed.startsWith("gemini") ? "Gemini" : "OpenRouter",
               model: gen.modelUsed,
               prompt: p,
               params: { aspectRatio, references: referenceImageDataUrls.length },
-              costEstimate: 0.05, // rough per-image figure; better than a null that reads as "free"
+              costEstimate: isLocalImageModel(gen.modelUsed) ? 0 : 0.05, // rough per-image figure; better than a null that reads as "free"
               outputId: ref.id,
             });
             return { ref, entryId, neuronCreated, model: gen.modelUsed, prompt: p, ledgerId: ledger.id, ledgerNote: ledger.note };
@@ -4733,10 +4736,10 @@ export async function executeChatTool(
         });
         const editLedger = await recordGeneration({
           kind: "image",
-          provider: gen.modelUsed.startsWith("gemini") ? "Gemini" : "OpenRouter",
+          provider: isLocalImageModel(gen.modelUsed) ? "Local" : gen.modelUsed.startsWith("gemini") ? "Gemini" : "OpenRouter",
           model: gen.modelUsed,
           prompt: instruction, params: { edit_of: src.id },
-          costEstimate: 0.05, // rough per-image figure; better than a null that reads as "free"
+          costEstimate: isLocalImageModel(gen.modelUsed) ? 0 : 0.05, // rough per-image figure; better than a null that reads as "free"
           outputId: ref.id,
         });
         return {

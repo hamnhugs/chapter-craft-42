@@ -455,8 +455,10 @@ describe("the additive contract: omitting offeredTools changes nothing", () => {
   // reflex / provenance rules (they now ride with retrieved memories) or the
   // "If disabled in Settings" boilerplate; Deep Research instructions were
   // rewritten (not in this fixed input). -2,502 chars.
-  const BASELINE_LENGTH = 23103;
-  const BASELINE_DIGEST = "60b65160";
+  // Re-captured 2026-10-14: the save_to_library line names the Vault and
+  // reply_starts_with, and says never to claim saving is impossible (+140).
+  const BASELINE_LENGTH = 23243;
+  const BASELINE_DIGEST = "e2ef249d";
   const fnv1a = (s: string) => {
     let h = 0x811c9dc5;
     for (let i = 0; i < s.length; i++) {

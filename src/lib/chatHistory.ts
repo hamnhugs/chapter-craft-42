@@ -186,6 +186,47 @@ export function unmadeDesignEditNote(ids: number[] = []): string {
   );
 }
 
+// ── "I can't save that to your Vault" — when save_to_library was offered ────
+// DeepSeek V4.1 Flash, asked to "turn that research into a pdf and place it
+// into the lawn maintenance co shelf" (2026-10-14), answered three times that
+// it had no file-saving tool — with save_to_library on the roster, and an hour
+// after using it. Same shape as the design check: catch the denial, tell the
+// model once, let it act.
+
+const SAVE_REQUEST_RE = /\b(pdf|vault|shelf|library|save|export)\b/i;
+const DENIES_SAVE_RE = /\b(?:i\s+(?:do\s+not|don['’]?t|cannot|can['’]?t|am\s+(?:not\s+able|unable)|['’]m\s+(?:not\s+able|unable))|unable\s+to|not\s+(?:exposed|available)|no\s+(?:[\w-]+\s+){0,2}tool)\b[^\n]{0,160}?\b(tool|save|saving|place|placing|put|upload|write|writing|add|store|create|shelf|vault|directly)\b/i;
+
+/** True when the user asked to save / PDF / shelve something and the reply
+ *  says it can't, though no tool ran. */
+export function deniesSaveToLibrary(reply: string, request: string): boolean {
+  if (!SAVE_REQUEST_RE.test(String(request || ""))) return false;
+  // Markdown off first: "I do **not** have" must read as "I do not have".
+  const r = String(reply || "").slice(0, 1500).replace(/[*_`]/g, "");
+  return DENIES_SAVE_RE.test(r);
+}
+
+/** Sent once after such a reply. */
+export function unmadeSaveNote(): string {
+  return (
+    "[App note — you DO have save_to_library this turn: it saves a document you wrote into the user's library (the Vault) as a PDF book, and `shelf` puts it on a shelf by name. " +
+    "Call it now instead of saying you can't. The document is one of your earlier replies, so use source last_reply with reply_starts_with = that reply's first words exactly as you wrote them " +
+    "(or source this_reply after writing a new version). Report the result after it returns.]"
+  );
+}
+
+const normOpening = (s: string) => s.toLowerCase().replace(/[*_#`>|~\[\]()]/g, " ").replace(/\s+/g, " ").trim();
+
+/** The most recent reply (of `replies`, oldest first) whose opening contains
+ *  `startsWith`, ignoring case and markdown — null when none does. */
+export function findReplyByOpening(replies: string[], startsWith: string): string | null {
+  const needle = normOpening(startsWith).slice(0, 120);
+  if (!needle) return null;
+  for (let i = replies.length - 1; i >= 0; i--) {
+    if (normOpening(replies[i].slice(0, 800)).includes(needle)) return replies[i];
+  }
+  return null;
+}
+
 /** Whether a message's tool events touched DesignCraft. */
 export function touchedDesignCraft(events: { name?: string; summary?: string }[] | undefined): boolean {
   return (events || []).some((ev) => ev?.name === "craft" && /DesignCraft|template/i.test(String(ev.summary || "")));

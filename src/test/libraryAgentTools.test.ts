@@ -288,6 +288,20 @@ describe("save_to_library", () => {
     expect((result as any).catalog).toMatch(/Lean Mode/);
     expect(calls.find((c) => c[0] === "enqueueCatalog")).toBeUndefined();
   });
+  it("saves an EARLIER reply by its opening words, and says so when none matches", async () => {
+    const seen: any[] = [];
+    const { deps } = makeDeps({
+      getReplyText: (which: string, startsWith?: string) => {
+        seen.push([which, startsWith]);
+        return startsWith === "Las Vegas pricing" ? "# Research\n\nbody" : null;
+      },
+    });
+    const ok = await run("save_to_library", { title: "T", source: "last_reply", reply_starts_with: "Las Vegas pricing" }, deps);
+    expect((ok.result as any).ok).toBe(true);
+    expect(seen[0]).toEqual(["last", "Las Vegas pricing"]);
+    const miss = await run("save_to_library", { title: "T", source: "last_reply", reply_starts_with: "Nope" }, deps);
+    expect((miss.result as any).error).toMatch(/None of your earlier replies begins with "Nope"/);
+  });
   it("refuses an empty source, an over-long inline document, and a missing shelf before writing anything", async () => {
     const { deps, calls } = makeDeps({ getReplyText: () => null });
     expect(((await run("save_to_library", { title: "T", source: "this_reply" }, deps)).result as any).error).toMatch(/Nothing has been written/);
