@@ -13,8 +13,32 @@ up() { curl -fs -o /dev/null --max-time 2 "$1"; }
 
 open_app() {
   exec 9>&-   # the window must not inherit the start lock
-  if command -v omarchy-launch-or-focus-webapp >/dev/null; then
-    exec omarchy-launch-or-focus-webapp "Chapter Craft" "$APP_URL"
+  # Focus by the app window's class (Chromium names --app windows after the
+  # URL), never by title: a title match on "Chapter Craft" also hits any
+  # terminal or browser tab that mentions it, and focuses that instead.
+  # An open window keeps running the JavaScript it loaded, so after a rebuild
+  # (`npx vite build`) focusing it alone shows the OLD app — fixes that were
+  # built and served never reached the user (2026-10-14). Remember which build
+  # the window last loaded and press F5 in it when dist/ is newer.
+  local build stamp="$ROOT/.local-state/window-build" addr=""
+  build=$(stat -c %Y "$ROOT/dist/index.html" 2>/dev/null || echo 0)
+  command -v hyprctl >/dev/null && command -v jq >/dev/null &&
+    addr=$(hyprctl clients -j 2>/dev/null | jq -r '[.[] | select(.class | test("^chrome-127\\.0\\.0\\.1__-"))][0].address // empty')
+  if [ -n "$addr" ] && [ "$build" != "$(cat "$stamp" 2>/dev/null)" ]; then
+    # Lua-config Hyprland (hl.dsp.*); down/up as two calls, the way Omarchy's
+    # own clipboard bindings send keys, so F5 can't stick and repeat.
+    hyprctl dispatch "hl.dsp.focus({ window = \"address:$addr\" })" >/dev/null 2>&1 ||
+      hyprctl dispatch focuswindow "address:$addr" >/dev/null
+    sleep 0.1
+    hyprctl dispatch 'hl.dsp.send_key_state({ mods = "", key = "F5", state = "down" })' >/dev/null 2>&1
+    sleep 0.05
+    hyprctl dispatch 'hl.dsp.send_key_state({ mods = "", key = "F5", state = "up" })' >/dev/null 2>&1
+    echo "$build" >"$stamp"
+    exit 0
+  fi
+  [ -z "$addr" ] && echo "$build" >"$stamp"   # a new window loads the current build
+  if command -v omarchy-launch-or-focus >/dev/null; then
+    exec omarchy-launch-or-focus "^chrome-127\.0\.0\.1__-" "omarchy-launch-webapp $APP_URL"
   fi
   exec xdg-open "$APP_URL"
 }
