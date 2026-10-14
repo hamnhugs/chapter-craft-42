@@ -225,7 +225,7 @@ const Index: React.FC = () => {
                   ? `Loaded neurons: ${activeWikis.map((w) => w.name).join(", ")} — press ⌘K to switch`
                   : `Active neuron: ${activeWiki.name} — press ⌘K to switch`
               }
-              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent/10 hover:bg-accent/20 transition-colors text-xs font-body font-medium text-accent max-w-[200px] truncate"
+              className="hidden sm:inline-flex lg:hidden xl:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent/10 hover:bg-accent/20 transition-colors text-xs font-body font-medium text-accent max-w-[200px] truncate"
             >
               {/* One dot per loaded neuron, overlapping — primary first. */}
               <span className="flex items-center flex-shrink-0" aria-hidden>

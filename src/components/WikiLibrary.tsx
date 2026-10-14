@@ -521,10 +521,10 @@ const WikiLibrary: React.FC = () => {
 
   return (
     <div className="flex flex-col h-full overflow-auto">
-      <main className="max-w-7xl mx-auto px-6 py-12 pb-32 w-full">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-12 pb-32 w-full min-w-0">
         {/* Header */}
-        <section className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
-          <div className="space-y-2">
+        <section className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 mb-8 sm:mb-12">
+          <div className="space-y-2 min-w-0">
             <div className="flex items-center gap-3 mb-1">
               <span className="px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded text-[10px] font-bold tracking-widest uppercase">
                 Neuron Library
@@ -533,10 +533,10 @@ const WikiLibrary: React.FC = () => {
                 {wikisWithStats.length} {wikisWithStats.length === 1 ? "neuron" : "neurons"}
               </span>
             </div>
-            <h2 className="font-headline font-bold text-5xl md:text-6xl text-primary tracking-tight">
+            <h2 className="font-headline font-bold text-4xl sm:text-5xl md:text-6xl text-primary tracking-tight">
               Select a Neuron&nbsp;
             </h2>
-            <p className="text-on-surface-variant max-w-xl text-lg italic font-headline">
+            <p className="text-on-surface-variant max-w-xl text-base sm:text-lg italic font-headline">
               "Many minds, one library. Choose where to think."
             </p>
             <Link
@@ -549,7 +549,7 @@ const WikiLibrary: React.FC = () => {
             </Link>
           </div>
 
-          <div className="flex gap-3 items-center">
+          <div className="flex flex-wrap gap-2 sm:gap-3 items-center lg:justify-end">
             {/* Admin-only scope toggle: my neurons vs every account's neurons */}
             {isAdmin && (
               <div className="flex bg-surface-container-high rounded-xl p-1 border border-outline-variant/10">
@@ -644,10 +644,10 @@ const WikiLibrary: React.FC = () => {
 
 
         {/* Tab switcher: Wikis | Suggestions */}
-        <div className="mb-6 flex items-center gap-2 border-b border-outline-variant/20">
+        <div className="mb-6 flex items-center gap-2 border-b border-outline-variant/20 overflow-x-auto hide-scrollbar">
           <button
             onClick={() => setActiveView("wikis")}
-            className={`px-4 py-3 text-sm font-bold transition-colors relative ${
+            className={`shrink-0 whitespace-nowrap px-4 py-3 text-sm font-bold transition-colors relative ${
               activeView === "wikis"
                 ? "text-primary"
                 : "text-on-surface-variant hover:text-foreground"
@@ -660,7 +660,7 @@ const WikiLibrary: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveView("chains")}
-            className={`px-4 py-3 text-sm font-bold transition-colors relative flex items-center gap-2 ${
+            className={`shrink-0 whitespace-nowrap px-4 py-3 text-sm font-bold transition-colors relative flex items-center gap-2 ${
               activeView === "chains"
                 ? "text-primary"
                 : "text-on-surface-variant hover:text-foreground"
@@ -673,7 +673,7 @@ const WikiLibrary: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveView("suggestions")}
-            className={`px-4 py-3 text-sm font-bold transition-colors relative flex items-center gap-2 ${
+            className={`shrink-0 whitespace-nowrap px-4 py-3 text-sm font-bold transition-colors relative flex items-center gap-2 ${
               activeView === "suggestions"
                 ? "text-primary"
                 : "text-on-surface-variant hover:text-foreground"
@@ -716,7 +716,7 @@ const WikiLibrary: React.FC = () => {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search across all neurons (semantic — try a question or topic)…"
-                className="w-full bg-surface-container-low border-none rounded-xl py-4 pl-12 pr-12 focus:ring-1 focus:ring-primary/40 placeholder:text-on-surface-variant/50 text-foreground text-base transition-all shadow-inner"
+                className="w-full bg-surface-container-low border-none rounded-xl py-3 sm:py-4 pl-12 pr-12 focus:ring-1 focus:ring-primary/40 placeholder:text-on-surface-variant/50 text-foreground text-base transition-all shadow-inner"
               />
               {searching && (
                 <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-on-surface-variant animate-spin" />
@@ -749,10 +749,10 @@ const WikiLibrary: React.FC = () => {
 
             {/* Tag filter pills */}
             {searchResults === null && allTags.length > 0 && (
-              <div className="flex items-center gap-3 mb-6 overflow-x-auto pb-2 hide-scrollbar">
+              <div className="flex items-center gap-2 sm:gap-3 mb-6 overflow-x-auto sm:overflow-visible sm:flex-wrap pb-2 hide-scrollbar">
                 <button
                   onClick={() => setTagFilter(null)}
-                  className={`px-4 py-2 rounded-full text-xs font-bold transition-colors capitalize ${
+                  className={`shrink-0 whitespace-nowrap px-4 py-2 rounded-full text-xs font-bold transition-colors capitalize ${
                     tagFilter === null
                       ? "bg-secondary-container text-on-secondary-container ring-1 ring-primary/20"
                       : "hover:bg-surface-container-high text-on-surface-variant"
@@ -764,7 +764,7 @@ const WikiLibrary: React.FC = () => {
                   <button
                     key={tag}
                     onClick={() => setTagFilter(tag)}
-                    className={`px-4 py-2 rounded-full text-xs font-bold transition-colors ${
+                    className={`shrink-0 whitespace-nowrap px-4 py-2 rounded-full text-xs font-bold transition-colors ${
                       tagFilter === tag
                         ? "bg-secondary-container text-on-secondary-container ring-1 ring-primary/20"
                         : "hover:bg-surface-container-high text-on-surface-variant"
@@ -839,7 +839,7 @@ const WikiLibrary: React.FC = () => {
 
       {/* Info / load dialog */}
       <Dialog open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg w-[calc(100vw-2rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-lg">
           {selected && (
             <>
               <div
@@ -860,7 +860,7 @@ const WikiLibrary: React.FC = () => {
                 )}
               </DialogHeader>
 
-              <div className="grid grid-cols-3 gap-3 my-4">
+              <div className="grid grid-cols-1 min-[420px]:grid-cols-3 gap-3 my-4">
                 <Stat label="Entries" value={selected.entry_count.toString()} />
                 <Stat label="Last loaded" value={formatRelative(selected.last_loaded_at)} />
                 <Stat label="Created" value={new Date(selected.created_at).toLocaleDateString()} />
@@ -947,9 +947,9 @@ const WikiLibrary: React.FC = () => {
 
       {/* Create / edit dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="font-headline text-2xl">
+        <DialogContent className="max-w-md w-[calc(100vw-2rem)] max-h-[calc(100dvh-2rem)] flex flex-col gap-3 p-5 sm:p-6 rounded-lg">
+          <DialogHeader className="shrink-0 pr-6">
+            <DialogTitle className="font-headline text-xl sm:text-2xl">
               {editing ? "Edit neuron" : "New neuron"}
             </DialogTitle>
             <DialogDescription>
@@ -957,7 +957,8 @@ const WikiLibrary: React.FC = () => {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-2">
+          {/* Only the form scrolls, so Create/Cancel stay on screen however short the window is. */}
+          <div className="space-y-3 sm:space-y-4 py-1 -mx-1 px-1 overflow-y-auto min-h-0">
             <div>
               <label className="text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-2 block">
                 Name
@@ -977,7 +978,8 @@ const WikiLibrary: React.FC = () => {
                 value={formDesc}
                 onChange={(e) => setFormDesc(e.target.value)}
                 placeholder="What lives in this neuron?"
-                rows={3}
+                rows={2}
+                className="min-h-[60px]"
               />
             </div>
 
@@ -1023,7 +1025,7 @@ const WikiLibrary: React.FC = () => {
             </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="shrink-0 gap-2 sm:gap-0">
             <Button variant="ghost" onClick={() => setCreateOpen(false)}>
               Cancel
             </Button>
