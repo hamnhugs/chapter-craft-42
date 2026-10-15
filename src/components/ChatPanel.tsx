@@ -46,7 +46,7 @@ import { markLastPromptRouteCorrected } from "@/lib/promptRoutingApi";
 import type { Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle, useWorkspaceItems } from "@/lib/workspaceStore";
 import { focusStatesForPinned } from "@/lib/chatFocus";
-import { bookContextStore, selectContextBooks } from "@/lib/chatBooks";
+import { bookContextStore, selectContextBooks, selectionShelfIds } from "@/lib/chatBooks";
 import { focusBookId } from "@/lib/counselFocus";
 import BookContextPicker from "@/components/BookContextPicker";
 import CounselToolsSheet from "@/components/CounselToolsSheet";
@@ -790,7 +790,7 @@ const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
   const selectedBook = books.find((b) => b.id === focusId);
   const readerBook = activeBookId ? books.find((b) => b.id === activeBookId) : undefined;
   const loadedLabel = bookSelection.shelfId
-    ? (shelves.find((f) => f.id === bookSelection.shelfId)?.name ?? "the loaded shelf")
+    ? selectionShelfIds(bookSelection).map((id) => shelves.find((f) => f.id === id)?.name ?? "the loaded shelf").join(" + ")
     : bookSelection.bookIds.length > 0
       ? `${bookSelection.bookIds.length} hand-picked book${bookSelection.bookIds.length === 1 ? "" : "s"}`
       : null;

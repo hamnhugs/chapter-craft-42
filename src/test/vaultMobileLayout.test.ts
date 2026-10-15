@@ -220,7 +220,9 @@ describe("no control is reachable only by hovering", () => {
     const container = code.split("\n").find((l) => l.includes("cc-hover-reveal") && !l.includes("cc-tap-44"));
     expect(container, "the shelf card's action row lost its reveal").toBeTruthy();
     expect(container).toMatch(/opacity-0[^"]*group-hover:opacity-100/);
-    expect([...code.matchAll(/cc-tap-32/g)]).toHaveLength(3);
+    // 3 shelf actions + the "pick to open together" check + the close button
+    // on each of several open shelves.
+    expect([...code.matchAll(/cc-tap-32/g)]).toHaveLength(5);
     for (const title of ['title="Rename"', 'title="Delete"', "title={`Chat with"]) {
       expect(code, `${title} is gone — re-check which control this test guards`).toContain(title);
     }

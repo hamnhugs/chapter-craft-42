@@ -623,7 +623,12 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
           )}
           {several && unionBooks.length > 0 && (
             <button
-              onClick={() => chatWithBooks(unionBooks, openIds.map(nameOf).join(" + "))}
+              // Real shelves load as SHELVES — a live union Counsel names and
+              // the picker shows. Only the Unshelved pile (no row to keep in
+              // sync with) forces the old fixed-set snapshot.
+              onClick={() => (openIds.includes(UNSHELVED_ID)
+                ? chatWithBooks(unionBooks, openIds.map(nameOf).join(" + "))
+                : requestShelfLoad(openIds))}
               className="inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-on-primary-container text-xs font-bold"
               title="Load the books on every open shelf as chat context and open Counsel"
             >

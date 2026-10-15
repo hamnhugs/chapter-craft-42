@@ -28,7 +28,7 @@
 // callers own the async neuron write and its failure handling.
 
 import {
-  EMPTY_BOOK_SELECTION, isEmptySelection, selectContextBooks,
+  EMPTY_BOOK_SELECTION, isEmptySelection, selectContextBooks, selectionShelfIds, shelvesSelection,
   type BookContextSelection,
 } from "@/lib/chatBooks";
 import type { BookDocument } from "@/types/library";
@@ -47,7 +47,8 @@ export type NeuronChoice =
   | { kind: "chain"; ids: string[] };
 
 export type LoadAction =
-  | { kind: "shelf"; shelfId: string; neurons: NeuronChoice }
+  /** `alsoShelfIds` loads more shelves together with `shelfId` (live union). */
+  | { kind: "shelf"; shelfId: string; alsoShelfIds?: string[]; neurons: NeuronChoice }
   | { kind: "books"; bookIds: string[]; neurons: NeuronChoice }
   /** A book from the Vault. `alongside` keeps the loaded books and only
    *  opens the reader; otherwise the selection is replaced (cleared — the
@@ -79,7 +80,7 @@ function sameIds(a: string[], b: string[]): boolean {
 }
 
 function sameSelection(a: BookContextSelection, b: BookContextSelection): boolean {
-  return a.shelfId === b.shelfId && sameIds(a.bookIds, b.bookIds) && sameIds(a.excludedIds, b.excludedIds) && (a.mode ?? null) === (b.mode ?? null);
+  return a.shelfId === b.shelfId && sameIds(a.alsoShelfIds ?? [], b.alsoShelfIds ?? []) && sameIds(a.bookIds, b.bookIds) && sameIds(a.excludedIds, b.excludedIds) && (a.mode ?? null) === (b.mode ?? null);
 }
 
 function nextWikis(prev: string[], choice: NeuronChoice): string[] {
@@ -111,7 +112,7 @@ export function applyLoad(prev: FocusState, action: LoadAction): LoadOutcome {
 
   switch (action.kind) {
     case "shelf":
-      selection = withMode({ shelfId: action.shelfId, bookIds: [], excludedIds: [] }, prev.selection);
+      selection = withMode(shelvesSelection([action.shelfId, ...(action.alsoShelfIds ?? [])]), prev.selection);
       wikiIds = nextWikis(prev.wikiIds, action.neurons);
       break;
     case "books": {
@@ -222,16 +223,17 @@ export function describeLoad(
   const parts: string[] = [];
   const { next, changed } = outcome;
   if (changed.selection) {
-    const was = prev.selection.shelfId
-      ? `shelf "${names.shelf(prev.selection.shelfId)}"`
-      : prev.selection.bookIds.length > 0
-        ? `${prev.selection.bookIds.length} hand-picked book${prev.selection.bookIds.length === 1 ? "" : "s"}`
-        : null;
-    const now = next.selection.shelfId
-      ? `shelf "${names.shelf(next.selection.shelfId)}"`
-      : next.selection.bookIds.length > 0
-        ? `${next.selection.bookIds.length} hand-picked book${next.selection.bookIds.length === 1 ? "" : "s"}`
-        : null;
+    const label = (sel: BookContextSelection) => {
+      const shelfIds = selectionShelfIds(sel);
+      if (shelfIds.length > 0) {
+        return shelfIds.length === 1
+          ? `shelf "${names.shelf(shelfIds[0])}"`
+          : `shelves ${shelfIds.map((id) => `"${names.shelf(id)}"`).join(" + ")}`;
+      }
+      return sel.bookIds.length > 0 ? `${sel.bookIds.length} hand-picked book${sel.bookIds.length === 1 ? "" : "s"}` : null;
+    };
+    const was = label(prev.selection);
+    const now = label(next.selection);
     if (now && was) parts.push(`Loaded ${now}, replacing ${was}`);
     else if (now) parts.push(`Loaded ${now}`);
     else if (was) parts.push(`Unloaded ${was}`);

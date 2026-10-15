@@ -15,7 +15,7 @@ import { usePlan } from "@/hooks/usePlan";
 import { computeLockedWikiIds } from "@/lib/neuronAccess";
 import { openPricing } from "@/components/PricingDialog";
 import { useChains, touchChainUsed } from "@/lib/chainsApi";
-import { bookContextStore, isEmptySelection, selectContextBooks } from "@/lib/chatBooks";
+import { bookContextStore, isEmptySelection, selectContextBooks, selectionShelfIds, shelvesSelection } from "@/lib/chatBooks";
 import type { NeuronChoice } from "@/lib/counselFocus";
 
 /**
@@ -50,7 +50,9 @@ const LoadNeuronDialog: React.FC = () => {
 
   const open = pendingLoad !== null;
   const book = pendingLoad?.kind === "book" ? books.find((b) => b.id === pendingLoad.bookId) : undefined;
-  const shelf = pendingLoad?.kind === "shelf" ? shelves.find((f) => f.id === pendingLoad.shelfId) : undefined;
+  const shelfNames = pendingLoad?.kind === "shelf"
+    ? [pendingLoad.shelfId, ...(pendingLoad.alsoShelfIds ?? [])].map((id) => shelves.find((f) => f.id === id)?.name ?? "shelf")
+    : [];
   const pileLabel = pendingLoad?.kind === "books" ? pendingLoad.label : undefined;
 
   // What this load would replace or leave in place — read from the same
@@ -59,8 +61,9 @@ const LoadNeuronDialog: React.FC = () => {
   const loadedLabel = useMemo(() => {
     if (isEmptySelection(current)) return null;
     if (current.shelfId) {
-      const f = shelves.find((s) => s.id === current.shelfId);
-      return f ? `shelf “${f.name}”` : "the loaded shelf";
+      const names = selectionShelfIds(current).map((id) => shelves.find((s) => s.id === id)?.name);
+      if (names.length > 1) return `shelves ${names.map((n) => `“${n ?? "shelf"}”`).join(" + ")}`;
+      return names[0] ? `shelf “${names[0]}”` : "the loaded shelf";
     }
     return `${current.bookIds.length} hand-picked book${current.bookIds.length === 1 ? "" : "s"}`;
   }, [current, shelves]);
@@ -77,7 +80,7 @@ const LoadNeuronDialog: React.FC = () => {
   const readerStopsBeingDiscussed = useMemo(() => {
     if (!pendingLoad || pendingLoad.kind === "book" || !readerBook) return false;
     const nextSel = pendingLoad.kind === "shelf"
-      ? { shelfId: pendingLoad.shelfId, bookIds: [], excludedIds: [] }
+      ? shelvesSelection([pendingLoad.shelfId, ...(pendingLoad.alsoShelfIds ?? [])])
       : { shelfId: null, bookIds: pendingLoad.bookIds, excludedIds: [] };
     return !selectContextBooks(books, nextSel, readerBook.id).some((b) => b.id === readerBook.id);
   }, [pendingLoad, readerBook, books]);
@@ -157,8 +160,10 @@ const LoadNeuronDialog: React.FC = () => {
 
   const subject = book
     ? `“${book.title}”`
-    : shelf
-      ? `shelf “${shelf.name}”`
+    : shelfNames.length > 1
+      ? `shelves ${shelfNames.map((n) => `“${n}”`).join(" + ")}`
+      : shelfNames.length === 1
+      ? `shelf “${shelfNames[0]}”`
       : pileLabel
         ? pileLabel
         : "this";

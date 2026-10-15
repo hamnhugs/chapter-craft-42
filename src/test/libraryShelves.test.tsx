@@ -30,6 +30,8 @@ const state = vi.hoisted(() => ({
   shelves: [] as { id: string; user_id: string; name: string; sort_index: number; created_at: string; updated_at: string }[],
   membershipLoaded: true,
   enqueued: [] as unknown[],
+  booksLoads: [] as unknown[][],
+  shelfLoads: [] as unknown[][],
 }));
 
 // The roster arrives through AppContext now, not a component-local fetch —
@@ -48,6 +50,8 @@ vi.mock("@/context/AppContext", () => ({
     applyChapterGists: vi.fn(),
     applyBookSummary: vi.fn(),
     applyShelfDigest: vi.fn(),
+    requestShelfLoad: (...a: unknown[]) => state.shelfLoads.push(a),
+    requestBooksLoad: (...a: unknown[]) => state.booksLoads.push(a),
   }),
 }));
 
@@ -125,6 +129,8 @@ beforeEach(() => {
   state.shelves = [shelf("s1", "Sci-fi")];
   state.membershipLoaded = true;
   state.enqueued = [];
+  state.booksLoads = [];
+  state.shelfLoads = [];
   vi.clearAllMocks();
 });
 
@@ -377,5 +383,64 @@ describe("LibraryShelves catalog readiness", () => {
     const host = await mount({ books: [MIXED[0]], allBooks: MIXED, filtered: true });
     await openShelf(host);
     expect(host.textContent).toContain("2 of 3 catalogued");
+  });
+});
+
+describe("LibraryShelves opens several shelves at once", () => {
+  const BOTH = [
+    book("b1", "Dune", ["s1"]),
+    book("b2", "Neuromancer", ["s1", "s2"]),
+    book("b3", "Emma", ["s2"]),
+    book("b4", "Ubik", []),
+  ];
+  beforeEach(() => { state.shelves = [shelf("s1", "Sci-fi"), shelf("s2", "Classics")]; });
+
+  it("still opens just one shelf on a plain click", async () => {
+    const host = await mount({ books: BOTH, allBooks: BOTH });
+    await clickLabelled(host, "Open Sci-fi");
+    expect(host.querySelectorAll("section[aria-label]")).toHaveLength(1);
+    expect(host.textContent).not.toContain("shelves open");
+  });
+
+  it("opens the picked shelves together, each as its own section", async () => {
+    const host = await mount({ books: BOTH, allBooks: BOTH });
+    await clickLabelled(host, "Pick Sci-fi");
+    await clickLabelled(host, "Pick Classics");
+    expect(host.textContent).toContain("2 shelves picked");
+    await clickButton(host, "Open these 2 together");
+    const sections = Array.from(host.querySelectorAll("section[aria-label]")).map((s) => s.getAttribute("aria-label"));
+    expect(sections).toEqual(["Sci-fi", "Classics"]);
+    expect(host.textContent).toContain("2 shelves open");
+  });
+
+  it("ctrl-click picks instead of opening", async () => {
+    const host = await mount({ books: BOTH, allBooks: BOTH });
+    const btn = Array.from(host.querySelectorAll("button")).find((b) => b.getAttribute("aria-label") === "Open Classics")!;
+    await act(async () => { btn.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })); });
+    expect(host.textContent).toContain("1 shelf picked");
+    await clickLabelled(host, "Open Sci-fi");
+    expect(host.querySelectorAll("section[aria-label]")).toHaveLength(2);
+  });
+
+  it("closes one shelf and leaves the others open", async () => {
+    const host = await mount({ books: BOTH, allBooks: BOTH });
+    await clickLabelled(host, "Pick Sci-fi");
+    await clickLabelled(host, "Pick Classics");
+    await clickButton(host, "Open these 2 together");
+    await clickLabelled(host, "Close Sci-fi");
+    const sections = Array.from(host.querySelectorAll("section[aria-label]")).map((s) => s.getAttribute("aria-label"));
+    expect(sections).toEqual(["Classics"]);
+  });
+
+  it("chats with every open shelf as a SHELF load, not a fixed set", async () => {
+    const host = await mount({ books: BOTH, allBooks: BOTH });
+    await clickLabelled(host, "Pick Sci-fi");
+    await clickLabelled(host, "Pick Classics");
+    await clickButton(host, "Open these 2 together");
+    await clickButton(host, "Chat with these 2 shelves");
+    // A flattened snapshot lost the shelf names: Counsel said "N hand-picked
+    // books" and the picker showed no shelf (the reported bug).
+    expect(state.booksLoads).toHaveLength(0);
+    expect(state.shelfLoads).toEqual([[["s1", "s2"]]]);
   });
 });

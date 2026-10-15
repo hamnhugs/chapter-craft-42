@@ -3,7 +3,7 @@ import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/hooks/useAuth";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import {
-  bookContextStore, selectContextBooks, isEmptySelection, resolveBookContextMode, bookHasCatalog,
+  bookContextStore, selectContextBooks, isEmptySelection, resolveBookContextMode, bookHasCatalog, selectionShelfIds,
   BOOK_CONTEXT_MAX_BOOKS, type BookContextMode,
 } from "@/lib/chatBooks";
 import { acquireGistRun, generateBookGists, releaseGistRun } from "@/lib/chapterGists";
@@ -14,6 +14,9 @@ import { toast } from "sonner";
 // books added to the shelf later appear automatically) or hand-pick books.
 // The NotebookLM interaction contract: cheap per-conversation sub-selection
 // via checkboxes, never a reorganization of the library itself.
+
+/** The select's value while several shelves are loaded (not a shelf id). */
+const MULTI_VALUE = "__several_shelves__";
 
 const BookContextPicker: React.FC<{
   open: boolean;
@@ -39,9 +42,11 @@ const BookContextPicker: React.FC<{
     bookContextStore.init(user?.id ?? null);
   }, [user?.id]);
 
+  // Every loaded shelf, primary first — the Vault can load several at once.
+  const loadedShelfIds = useMemo(() => selectionShelfIds(selection), [selection]);
   const shelfMembers = useMemo(
-    () => (selection.shelfId ? books.filter((b) => b.folderIds.includes(selection.shelfId!)) : []),
-    [books, selection.shelfId],
+    () => (loadedShelfIds.length > 0 ? books.filter((b) => loadedShelfIds.some((id) => b.folderIds.includes(id))) : []),
+    [books, loadedShelfIds],
   );
   // One O(memberships) pass for the dropdown's per-shelf counts, not a filter
   // per option per render (store emits re-render the open dialog on every toggle).
@@ -267,6 +272,7 @@ const BookContextPicker: React.FC<{
   // dialog). Leaving shelf mode keeps the currently effective books as a
   // hand-picked FIXED set, so switching modes never silently empties context.
   const pickShelf = (shelfId: string) => {
+    if (shelfId === MULTI_VALUE) return;
     void loadFocus(
       shelfId
         ? { kind: "shelf", shelfId, neurons: { kind: "keep" } }
@@ -274,6 +280,18 @@ const BookContextPicker: React.FC<{
       { navigate: false },
     );
   };
+  // Add or drop one shelf while keeping the others loaded (a live union).
+  const loadShelves = (ids: string[]) => {
+    const [first, ...rest] = ids;
+    void loadFocus(
+      first
+        ? { kind: "shelf", shelfId: first, alsoShelfIds: rest, neurons: { kind: "keep" } }
+        : { kind: "none", neurons: { kind: "keep" } },
+      { navigate: false },
+    );
+  };
+  const shelfName = (id: string) => shelves.find((f) => f.id === id)?.name ?? "shelf";
+  const addableShelves = shelves.filter((f) => !loadedShelfIds.includes(f.id));
 
   return (
     /* A bottom sheet, not a centred dialog. This is opened FROM the composer's
@@ -394,7 +412,7 @@ const BookContextPicker: React.FC<{
           <div className="flex flex-col gap-1.5">
             <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant">Shelf</label>
             <select
-              value={selection.shelfId || ""}
+              value={loadedShelfIds.length > 1 ? MULTI_VALUE : selection.shelfId || ""}
               onChange={(e) => pickShelf(e.target.value)}
               className="w-full min-h-[44px] bg-surface-container-high border-none rounded-lg text-sm py-2 px-3"
             >
@@ -402,13 +420,51 @@ const BookContextPicker: React.FC<{
                   native picker on a phone. The caveat it carried now sits
                   under the control, where it has room. */}
               <option value="">Hand-picked books</option>
+              {loadedShelfIds.length > 1 && (
+                <option value={MULTI_VALUE}>{loadedShelfIds.length} shelves ({shelfMembers.length} book{shelfMembers.length === 1 ? "" : "s"})</option>
+              )}
               {shelves.map((f) => {
                 const n = countByShelf.get(f.id) || 0;
                 return <option key={f.id} value={f.id}>{f.name} ({n} book{n === 1 ? "" : "s"})</option>;
               })}
             </select>
+            {/* Several shelves at once: each loaded shelf is a removable chip,
+                and "Add a shelf" loads one more ALONGSIDE (the select above
+                replaces). */}
+            {loadedShelfIds.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {loadedShelfIds.length > 1 && loadedShelfIds.map((id) => (
+                  <button
+                    key={id}
+                    onClick={() => loadShelves(loadedShelfIds.filter((x) => x !== id))}
+                    className="inline-flex items-center gap-1 min-h-[32px] px-2.5 rounded-full bg-primary/15 text-primary text-xs font-semibold"
+                    aria-label={`Unload shelf ${shelfName(id)}`}
+                    title="Unload this shelf, keep the others"
+                  >
+                    {shelfName(id)}
+                    <span className="material-symbols-outlined text-sm" aria-hidden>close</span>
+                  </button>
+                ))}
+                {addableShelves.length > 0 && (
+                  <select
+                    value=""
+                    onChange={(e) => { if (e.target.value) loadShelves([...loadedShelfIds, e.target.value]); }}
+                    aria-label="Add another shelf"
+                    className="min-h-[32px] bg-surface-container-high border-none rounded-full text-xs py-1 px-2.5 text-primary font-semibold"
+                  >
+                    <option value="">+ Add a shelf</option>
+                    {addableShelves.map((f) => {
+                      const n = countByShelf.get(f.id) || 0;
+                      return <option key={f.id} value={f.id}>{f.name} ({n})</option>;
+                    })}
+                  </select>
+                )}
+              </div>
+            )}
             <p className="text-[10px] text-on-surface-variant">
-              {selection.shelfId
+              {loadedShelfIds.length > 1
+                ? "Books added to any of these shelves later join automatically."
+                : selection.shelfId
                 ? "Books added to this shelf later join automatically."
                 : "A fixed set — books added to a shelf later won't join."}
             </p>

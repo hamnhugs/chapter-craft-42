@@ -8,7 +8,7 @@ import { Wiki, fetchWikis, fetchActiveWikiIds, loadWiki as loadWikiApi, loadWiki
 import { fetchShelfMembership, applyShelfDelta, type ShelfDelta } from "@/lib/shelfMembership";
 import { listFolders, createFolder, renameFolder, deleteFolder, type BookFolder } from "@/lib/bookFolders";
 import { applyLoad, describeLoad, focusChanged, focusEpoch, type FocusState, type LoadAction, type NeuronChoice } from "@/lib/counselFocus";
-import { bookContextStore } from "@/lib/chatBooks";
+import { bookContextStore, selectionShelfIds } from "@/lib/chatBooks";
 import { ASSISTANT_TAG, mergeReservedTags } from "@/lib/bookProvenance";
 import { MAX_ACTIVE_NEURONS } from "@/lib/neuronAccess";
 
@@ -52,7 +52,8 @@ interface AppState {
   pendingLoad: PendingLoad | null;
   /** Entry points for loading from the Vault: each opens the neuron-pick dialog. */
   requestBookLoad: (bookId: string) => void;
-  requestShelfLoad: (shelfId: string) => void;
+  /** Pass several ids to load shelves together (a live union). */
+  requestShelfLoad: (shelfId: string | string[]) => void;
   requestBooksLoad: (bookIds: string[], label: string) => void;
   /** Resolves the load dialog with the neuron choice (keep = Skip). For a
    *  book, `alongside` opens it in the reader WITHOUT replacing the loaded
@@ -141,7 +142,7 @@ interface AppState {
 
 export type PendingLoad =
   | { kind: "book"; bookId: string }
-  | { kind: "shelf"; shelfId: string }
+  | { kind: "shelf"; shelfId: string; alsoShelfIds?: string[] }
   | { kind: "books"; bookIds: string[]; label: string };
 
 export interface AddBookOptions {
@@ -1243,8 +1244,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const requestBookLoad = useCallback((bookId: string) => {
     setPendingLoad({ kind: "book", bookId });
   }, []);
-  const requestShelfLoad = useCallback((shelfId: string) => {
-    setPendingLoad({ kind: "shelf", shelfId });
+  const requestShelfLoad = useCallback((shelfId: string | string[]) => {
+    const [first, ...rest] = Array.isArray(shelfId) ? Array.from(new Set(shelfId)) : [shelfId];
+    if (!first) return;
+    setPendingLoad(rest.length > 0 ? { kind: "shelf", shelfId: first, alsoShelfIds: rest } : { kind: "shelf", shelfId: first });
   }, []);
   const requestBooksLoad = useCallback((bookIds: string[], label: string) => {
     setPendingLoad({ kind: "books", bookIds, label });
@@ -1257,7 +1260,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const action: LoadAction = pending.kind === "book"
       ? { kind: "book", bookId: pending.bookId, neurons, alongside: opts?.alongside }
       : pending.kind === "shelf"
-        ? { kind: "shelf", shelfId: pending.shelfId, neurons }
+        ? { kind: "shelf", shelfId: pending.shelfId, alsoShelfIds: pending.alsoShelfIds, neurons }
         : { kind: "books", bookIds: pending.bookIds, neurons };
     try {
       await loadFocus(action);
@@ -1521,8 +1524,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // nothing; unload it through the one focus writer (silently — the shelf
     // is already gone, there is nothing to undo into).
     bookContextStore.init(user?.id ?? null);
-    if (bookContextStore.get().shelfId === id) {
-      await loadFocus({ kind: "none", neurons: { kind: "keep" } }, { toast: false, navigate: false });
+    const loadedShelves = selectionShelfIds(bookContextStore.get());
+    if (loadedShelves.includes(id)) {
+      // One of several loaded shelves: keep the others loaded.
+      const [first, ...rest] = loadedShelves.filter((x) => x !== id);
+      await loadFocus(
+        first ? { kind: "shelf", shelfId: first, alsoShelfIds: rest, neurons: { kind: "keep" } } : { kind: "none", neurons: { kind: "keep" } },
+        { toast: false, navigate: false },
+      );
     }
   }, [clearShelfLocal, loadFocus, user?.id]);
 

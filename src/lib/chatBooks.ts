@@ -142,6 +142,11 @@ export interface UsedBookContext {
 export interface BookContextSelection {
   /** When set, membership resolves fresh from books[].folderIds each turn. */
   shelfId: string | null;
+  /** More shelves loaded together with `shelfId` (the Vault's "Chat with
+   *  these N shelves"). Membership is the live union of every shelf, so the
+   *  load stays a SHELF load — named, and synced as books are added — instead
+   *  of collapsing into a hand-picked snapshot. Absent = one shelf. */
+  alsoShelfIds?: string[];
   /** Hand-picked mode (shelfId null): the explicit book ids. */
   bookIds: string[];
   /** Shelf mode: members the user unchecked for this conversation. */
@@ -158,6 +163,17 @@ export const EMPTY_BOOK_SELECTION: BookContextSelection = {
   bookIds: [],
   excludedIds: [],
 };
+
+/** Every shelf a selection loads, primary first. Empty in hand-picked mode. */
+export function selectionShelfIds(sel: BookContextSelection): string[] {
+  return sel.shelfId ? [sel.shelfId, ...(sel.alsoShelfIds ?? []).filter((id) => id !== sel.shelfId)] : [];
+}
+
+/** A shelf selection over one or more shelves, normalized (deduped, primary first). */
+export function shelvesSelection(shelfIds: string[]): Pick<BookContextSelection, "shelfId" | "alsoShelfIds" | "bookIds" | "excludedIds"> {
+  const ids = Array.from(new Set(shelfIds.filter(Boolean)));
+  return { shelfId: ids[0] ?? null, ...(ids.length > 1 ? { alsoShelfIds: ids.slice(1) } : {}), bookIds: [], excludedIds: [] };
+}
 
 export function isEmptySelection(sel: BookContextSelection): boolean {
   return !sel.shelfId && sel.bookIds.length === 0;
@@ -183,7 +199,8 @@ export function selectContextBooks(
   let members: BookDocument[];
   if (sel.shelfId) {
     const excluded = new Set(sel.excludedIds);
-    members = books.filter((b) => b.folderIds.includes(sel.shelfId!) && !excluded.has(b.id));
+    const shelfIds = selectionShelfIds(sel);
+    members = books.filter((b) => shelfIds.some((id) => b.folderIds.includes(id)) && !excluded.has(b.id));
   } else if (sel.bookIds.length > 0) {
     const wanted = new Set(sel.bookIds);
     members = books.filter((b) => wanted.has(b.id));
@@ -699,6 +716,10 @@ function sanitizeStored(raw: unknown): BookContextSelection {
   const ids = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").slice(0, 200) : []);
   return {
     shelfId: typeof o.shelfId === "string" && o.shelfId ? o.shelfId : null,
+    // Extra shelves only mean something beside a primary one.
+    ...(typeof o.shelfId === "string" && o.shelfId && ids(o.alsoShelfIds).length > 0
+      ? { alsoShelfIds: ids(o.alsoShelfIds).filter((id) => id !== o.shelfId) }
+      : {}),
     bookIds: ids(o.bookIds),
     excludedIds: ids(o.excludedIds),
     // Only the two known literals survive; junk must never invent a third
