@@ -58,6 +58,7 @@ import { fileToDownscaledDataUrl, isAcceptedImage, uploadChatImage, registerUplo
 import { extractMentions, resolveMentions, buildMentionNote, findActiveMention, mentionTokenEnd, getCachedMasters, refreshMastersCache, type ActiveMention } from "@/lib/mentions";
 import type { MasterAssetRow } from "@/lib/masterAssets";
 import { formatUsage } from "@/lib/chatHistory";
+import { stripTaskStatus } from "@/lib/autoContinue";
 
 
 const VOICE_QUICK_SEARCH_KEY = "voice_quick_search";
@@ -77,7 +78,7 @@ const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
     handsFreeTtsRate,
     setSelectedModel, setAutoReadReplies,
   } = useChatSettings();
-  const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort, loadEarlier, hasEarlier, loadingEarlier, toolGatesForTurn, approvedToolCount } = useChat();
+  const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, sendMessageAuto, autoContinue, setAutoContinue, autoLoop, injectDisplayMessage, clearChat, abort, loadEarlier, hasEarlier, loadingEarlier, toolGatesForTurn, approvedToolCount } = useChat();
   const { isPaid } = usePlan();
   const {
     speakingId, speak, stop: stopSpeaking, pause: pauseSpeaking, resume: resumeSpeaking, isAudioActive,
@@ -733,7 +734,7 @@ const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
   const handleSpeak = (msg: { id?: string; content: string }, i: number) => {
     const id = bubbleId(msg, i);
     if (speakingId === id) { stopSpeaking(); return; }
-    speak(msg.content, { id });
+    speak(stripTaskStatus(msg.content), { id });
   };
 
   // "Return" affordance (the Readwise Reader pattern): on a long reply the
@@ -891,12 +892,13 @@ const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
   const activeModes = useMemo(() => {
     const m: string[] = [];
     if (chatDeepResearch && isPaid) m.push("Deep Research");
+    if (autoContinue) m.push("Auto-continue");
     if (autoReadReplies) m.push("Read Aloud");
     if (contextBooks.length) m.push(`${contextBooks.length} book${contextBooks.length === 1 ? "" : "s"}`);
     if (focusedItems.length) m.push(`${focusedItems.length} pinned`);
     if (workspaceOpen) m.push("Files");
     return m;
-  }, [chatDeepResearch, isPaid, autoReadReplies, contextBooks.length, focusedItems.length, workspaceOpen]);
+  }, [chatDeepResearch, isPaid, autoContinue, autoReadReplies, contextBooks.length, focusedItems.length, workspaceOpen]);
   const activeModeCount = activeModes.length;
 
   const handsFreeStateLabel =
@@ -1044,7 +1046,7 @@ const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
       const selectionNote = await selectionNotePromise;
       const outgoing = [text, mentionNote, selectionNote].filter(Boolean).join("\n\n");
       try {
-        await sendMessage(outgoing || "(see attached image)", { images: imagesForModel });
+        await sendMessageAuto(outgoing || "(see attached image)", { images: imagesForModel });
       } catch { /* surfaced via toast */ }
     } finally {
       sendingRef.current = false;
@@ -1420,7 +1422,7 @@ const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
                       <div className="mt-1 text-xs text-on-surface-variant/80 whitespace-pre-wrap max-h-56 overflow-y-auto">{msg.reasoning}</div>
                     </details>
                   )}
-                  {msg.content && <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown urlTransform={safeUrlTransform} components={safeMarkdownComponents}>{msg.content}</ReactMarkdown></div>}
+                  {msg.content && <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown urlTransform={safeUrlTransform} components={safeMarkdownComponents}>{stripTaskStatus(msg.content)}</ReactMarkdown></div>}
                   {msg.blocks && msg.blocks.length > 0 && (
                     <React.Suspense fallback={null}>
                       <ResponseBlocks blocks={msg.blocks} />
@@ -1506,6 +1508,13 @@ const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
               </div>
               Consulting annotations...
             </div>
+          </div>
+        )}
+        {autoLoop && (
+          <div role="status" className="flex items-center gap-2 ml-4 text-xs text-on-surface-variant">
+            <span className="material-symbols-outlined text-sm animate-spin" aria-hidden>autorenew</span>
+            Auto-continuing · turn {autoLoop.n} of {autoLoop.max}
+            <button type="button" onClick={abort} className="underline hover:text-foreground">Stop</button>
           </div>
         )}
         <div ref={messagesEndRef} />
@@ -2032,6 +2041,8 @@ const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
           if (!isPaid) { setToolsOpen(false); openPricing("deep-research"); return; }
           setChatDeepResearch(!chatDeepResearch);
         }}
+        autoContinue={autoContinue}
+        onToggleAutoContinue={() => setAutoContinue(!autoContinue)}
         autoReadReplies={autoReadReplies}
         onToggleReadAloud={() => { if (autoReadReplies) stopSpeaking(); setAutoReadReplies(!autoReadReplies); }}
         webSearchAvailable={!!burplexityApiToken}

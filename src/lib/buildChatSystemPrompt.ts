@@ -7,6 +7,7 @@ import { listTools } from "@/lib/toolFoundry";
 import { rankToolsForQuery, FOUNDRY_ROSTER_LIMIT } from "@/lib/toolshed";
 import { leanModePromptBlock, type LeanMode } from "@/lib/leanMode";
 import { deepResearchPrompt } from "@/lib/deepResearchPrompt";
+import { autoContinuePrompt } from "@/lib/autoContinue";
 import { loadCraftCards, rankCraftCards, renderCopyCraftSection, wantsCopyCraft } from "@/lib/copyCraft";
 import type { TurnHighlights } from "@/lib/highlights";
 
@@ -14,6 +15,8 @@ interface BuildOpts {
   books: BookDocument[];
   selectedBook: BookDocument | undefined;
   deepResearch: boolean;
+  /** Auto-continue is on: the reply must end with a STATUS line (lib/autoContinue). */
+  autoContinue?: boolean;
   /** When true, prepends a brief instruction asking for spoken-friendly replies. */
   voiceMode?: boolean;
   /** Latest user message — used to retrieve graph-aware context. */
@@ -400,7 +403,7 @@ export function applyRetrievalBudget(
 //     the context best, so the retrieved memories — the most query-specific,
 //     highest-value content — go LAST, right before the conversation.
 export async function buildChatSystemPrompt({
-  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeNeurons = [], allNeurons, reflex = true, maxReplySentences = 0, foundryTools = false, programTools = false, leanMode = "full", offeredTools, previousAssistantText, booksInContext, highlights, routePrompts = null,
+  books, selectedBook, deepResearch, autoContinue = false, voiceMode, latestUserQuery, customSystemPrompt, activeNeurons = [], allNeurons, reflex = true, maxReplySentences = 0, foundryTools = false, programTools = false, leanMode = "full", offeredTools, previousAssistantText, booksInContext, highlights, routePrompts = null,
 }: BuildOpts): Promise<BuiltPrompt> {
   const parts: string[] = [];
   // Per-turn sections (see BuiltPrompt.turnContext). Never pushed into
@@ -857,6 +860,10 @@ export async function buildChatSystemPrompt({
 
   if (deepResearch) {
     parts.push("", deepResearchPrompt({ voice: voiceMode }));
+  }
+
+  if (autoContinue && !voiceMode) {
+    parts.push("", autoContinuePrompt());
   }
 
   // Library catalog (always). Titles for everything; chapter lines only for

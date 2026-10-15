@@ -52,6 +52,8 @@ export interface CounselToolsSheetProps {
   deepResearch: boolean;
   deepResearchAllowed: boolean;
   onToggleDeepResearch: () => void;
+  autoContinue: boolean;
+  onToggleAutoContinue: () => void;
   autoReadReplies: boolean;
   onToggleReadAloud: () => void;
   webSearchAvailable: boolean;
@@ -201,6 +203,14 @@ const CounselToolsSheet: React.FC<CounselToolsSheetProps> = (p) => {
             state={p.deepResearchAllowed ? (p.deepResearch ? "ON" : "OFF") : undefined}
             active={p.deepResearch && p.deepResearchAllowed}
             onClick={p.onToggleDeepResearch}
+          />
+          <Row
+            icon={sym("autorenew", p.autoContinue)}
+            label="Auto-continue"
+            detail="Keep working until the task is done"
+            state={p.autoContinue ? "ON" : "OFF"}
+            active={p.autoContinue}
+            onClick={p.onToggleAutoContinue}
           />
           <Row
             icon={sym(p.autoReadReplies ? "volume_up" : "volume_off", p.autoReadReplies)}

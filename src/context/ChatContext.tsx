@@ -48,6 +48,7 @@ import { addUsage } from "@/lib/providers/sse";
 import { studioToolsActive } from "@/lib/studioTools";
 import { highlightsForTurn } from "@/lib/highlights";
 import { TOOL_ROUNDS_PER_REPLY } from "@/lib/deepResearchPrompt";
+import { continuationMessage, decideNext, initialAutoLoopState, stopReasonLabel } from "@/lib/autoContinue";
 import { assistantImageNote, attachTurnContext, claimsUnmadeDesignEdit, deniesSaveToLibrary, findReplyByOpening, unmadeSaveNote, expandImageTurns, fabricatedImageNote, imageReplayFor, isModelVisibleMessage, resolveUtilityModel, stripFabricatedNotes, toolTraceNote, touchedDesignCraft, unmadeDesignEditNote } from "@/lib/chatHistory";
 import { namespacedNvidiaId, nvidiaModelInfo, nvidiaNoThinkingBody, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
 import { namespacedGeminiId, GEMINI_STARTER_MODEL } from "@/lib/geminiCatalog";
@@ -203,6 +204,14 @@ interface SendOpts {
    *  `undefined` = use whatever Counsel's switcher says; `null` = no prompt
    *  this turn. For programmatic sends and (later) the router. */
   promptPresetId?: string | null;
+  /** Ask for the auto-continue STATUS line (sendMessageAuto sets this). */
+  autoContinue?: boolean;
+}
+
+/** What the last finished turn did — read by the auto-continue loop. */
+interface TurnStats {
+  toolCalls: number;
+  aborted: boolean;
 }
 
 interface ChatContextValue {
@@ -217,6 +226,13 @@ interface ChatContextValue {
   voiceDeepResearch: boolean;
   setVoiceDeepResearch: (v: boolean) => void;
   sendMessage: (text: string, opts?: SendOpts) => Promise<string>;
+  /** sendMessage, then — when auto-continue is on — keep sending continuation
+   *  turns until the task is done, needs the user, or a cap is hit. */
+  sendMessageAuto: (text: string, opts?: SendOpts) => Promise<string>;
+  autoContinue: boolean;
+  setAutoContinue: (v: boolean) => void;
+  /** The running loop's progress, or null when no loop is running. */
+  autoLoop: { n: number; max: number } | null;
   injectDisplayMessage: (content: string) => void;
   clearChat: () => Promise<void>;
   abort: () => void;
@@ -619,6 +635,13 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     typeof window !== "undefined" && localStorage.getItem("voice_deep_research") === "1");
   useEffect(() => { localStorage.setItem("chat_deep_research", chatDeepResearch ? "1" : "0"); }, [chatDeepResearch]);
   useEffect(() => { localStorage.setItem("voice_deep_research", voiceDeepResearch ? "1" : "0"); }, [voiceDeepResearch]);
+  const [autoContinue, setAutoContinue] = useState<boolean>(() =>
+    typeof window !== "undefined" && localStorage.getItem("chat_auto_continue") === "1");
+  useEffect(() => { localStorage.setItem("chat_auto_continue", autoContinue ? "1" : "0"); }, [autoContinue]);
+  const [autoLoop, setAutoLoop] = useState<{ n: number; max: number } | null>(null);
+  /** Set by Stop / Clear: ends the auto-continue loop, not just the turn. */
+  const loopCancelRef = useRef(false);
+  const lastTurnRef = useRef<TurnStats>({ toolCalls: 0, aborted: false });
   // One-time seed of prompt presets from legacy customSystemPrompt.
   const migratedPromptsRef = useRef(false);
   useEffect(() => {
@@ -975,6 +998,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
 
   const clearChat = useCallback(async () => {
+    loopCancelRef.current = true;
     abortRef.current?.abort();
     setMessages([]);
     setHasEarlier(false);
@@ -991,11 +1015,15 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [user]);
 
   const abort = useCallback(() => {
+    loopCancelRef.current = true;
     abortRef.current?.abort();
   }, []);
 
   const sendMessage = useCallback(
     async (text: string, opts?: SendOpts): Promise<string> => {
+      // Any exit that does not reach the end of a turn (empty text, missing
+      // key, a stop during hydration) reads as "aborted" to the loop.
+      lastTurnRef.current = { toolCalls: 0, aborted: true };
       const trimmed = text.trim();
       if (!trimmed) return "";
       // Chat needs SOME provider configured; which key the chosen model
@@ -1279,6 +1307,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         books,
         selectedBook,
         deepResearch,
+        autoContinue: !!opts?.autoContinue && !isVoice,
         voiceMode: isVoice,
         latestUserQuery: trimmed,
         customSystemPrompt: promptToInject,
@@ -2744,12 +2773,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // or — when the model acted without narrating — the last tool
         // event's own sentence, so the spoken channel never goes dark after
         // an action (docs/library-agent.md §2.2).
+        lastTurnRef.current = { toolCalls: assistantEvents.filter((e) => e.ok !== false).length, aborted: false };
         if (!assistantText.trim() && opts?.voiceMode && assistantEvents.length > 0) {
           return assistantEvents[assistantEvents.length - 1].summary;
         }
         return assistantText;
       } catch (err: any) {
         if (err?.name === "AbortError") {
+          lastTurnRef.current = { toolCalls: assistantEvents.length, aborted: true };
           return assistantText;
         }
         // ALWAYS name the provider and model. With two providers serving
@@ -2806,6 +2837,39 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // forgeEnabled/runEnabled are no longer read here).
     [apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, studioTools, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, autoShowMemoryImages, foundryEnabled, forgeOptIn, runOptIn, foundryReady, chatToolPermissions, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, presets, burplexityApiToken, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, updateBookTitle, loadChapterText, loadChapterTextStrict, setActiveBookSilent,
       getBooks, getActiveBookId, getShelves, multiShelf, createShelf, renameShelf, deleteShelf, setBookShelfMembership, addBook, addChapters, removeBook, loadFocus, enqueueCatalog, trashAvailable, refreshTrash, restoreBook]
+  );
+
+  // Auto-continue loop (lib/autoContinue). Lives OUTSIDE sendMessage: every
+  // continuation is an ordinary turn — persisted, summarised, Stop-able —
+  // and the runtime, not the model, decides whether another one is sent.
+  const sendMessageAuto = useCallback(
+    async (text: string, opts?: SendOpts): Promise<string> => {
+      if (!autoContinue || opts?.voiceMode) return sendMessage(text, opts);
+      loopCancelRef.current = false;
+      let state = initialAutoLoopState();
+      let reply = await sendMessage(text, { ...opts, autoContinue: true });
+      try {
+        // Only the first turn carries the user's attachments; continuations
+        // are text the app writes.
+        const base: SendOpts = { modelOverride: opts?.modelOverride, promptPresetId: opts?.promptPresetId, autoContinue: true };
+        for (;;) {
+          if (loopCancelRef.current) break;
+          const d = decideNext(state, { text: reply, ...lastTurnRef.current });
+          if (d.action === "stop") {
+            const note = stopReasonLabel(d.reason, state.max);
+            if (note) toast.info(note);
+            break;
+          }
+          state = d.state;
+          setAutoLoop({ n: state.continuations, max: state.max });
+          reply = await sendMessage(continuationMessage(text, d.kind, state.continuations, state.max), base);
+        }
+      } finally {
+        setAutoLoop(null);
+      }
+      return reply;
+    },
+    [autoContinue, sendMessage]
   );
 
 
@@ -2870,6 +2934,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setDeepResearch: setChatDeepResearch,
       chatDeepResearch,
       setChatDeepResearch,
+      sendMessageAuto,
+      autoContinue,
+      setAutoContinue,
+      autoLoop,
       voiceDeepResearch,
       setVoiceDeepResearch,
       sendMessage,
@@ -2882,7 +2950,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       toolGatesForTurn,
       approvedToolCount,
     }),
-    [messages, isLoading, chatDeepResearch, voiceDeepResearch, setChatDeepResearch, setVoiceDeepResearch, sendMessage, injectDisplayMessage, clearChat, abort, loadEarlier, hasEarlier, loadingEarlier, toolGatesForTurn, approvedToolCount],
+    [messages, isLoading, chatDeepResearch, voiceDeepResearch, setChatDeepResearch, setVoiceDeepResearch, sendMessage, sendMessageAuto, autoContinue, autoLoop, injectDisplayMessage, clearChat, abort, loadEarlier, hasEarlier, loadingEarlier, toolGatesForTurn, approvedToolCount],
   );
 
   return (
