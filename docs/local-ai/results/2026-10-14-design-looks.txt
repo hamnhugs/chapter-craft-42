@@ -68,3 +68,21 @@ click does, and appends the same note the chat does). Qwen3-4B Q6_K, 6 sessions 
          and replaced the page with a blank one → content now wins over a stray page size.
   still failing: "now try it as a movie poster" → bold on an already-cinematic page, about 1 in 4.
   final run (4 sessions, all fixes): 3/4 full 10-turn sessions pass; both selection turns 4/4 (one session sent a single restyle for 'make these red' and both parts turned red via the multi-selection rule); the failure was 'movie poster' → bold.
+
+--- direct look (2026-10-14, Ogilvy-style direct-response ad; COPY-CRAFT.md) ---
+`look` enum gained "direct" (craft tool schema change), so the session gained an 11th turn:
+"turn it into an ad that sells, like an Ogilvy direct response ad" → expect look=direct, no issues.
+Qwen3-4B Q6_K, private headless bridge.
+  first run (4 sessions) ........ direct chosen 3/3 when reached. Found: a headline the user had
+                                  made bigger by hand ("Headline · size 75.5") could not shrink, so
+                                  the bold/direct headline-fitting loop never ended (bridge at 86%
+                                  CPU, turn hung). Fixed the loop; then the pinned size ran off the
+                                  page (2 failures). Fixed: a hand-set size steps down with the
+                                  look's SQUEEZE only when the page can't fit it (designLooks.test.ts).
+  final run (6 sessions) ........ 5/6 full sessions pass.
+                                  direct ad ............ 5/5 look=direct, issues none
+                                  movie poster after ... 5/5 cinematic (was ~3/4 before)
+                                  template turns ....... 5/5 saved + filled when reached
+                                  the failure: run 3 "make these red" (2 selected parts) sent
+                                  bare sends with no colour; that turn precedes any look and
+                                  passed 9/9 in the earlier runs.

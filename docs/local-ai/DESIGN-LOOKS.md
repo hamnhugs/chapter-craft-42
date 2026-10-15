@@ -18,6 +18,7 @@ places and checks everything. The model never handles coordinates.
 | `minimal` | wide margins, Inter Light, a small off-centre photo, one accent dot | calm, premium |
 | `split` | photo on one half, a colour panel on the other with DM Serif Display | announcements, launches |
 | `pop` | the picture's most vivid colour as the field, Archivo Black caps, a tilted rounded photo with a shadow, a pill tag | kids, sales, fun |
+| `direct` | Ogilvy's direct-response ad: the photo bleeds across the top, a selling caption under it, a Libre Baskerville headline *below* the picture (upper and lower case, dark on light), an italic deck, Lora body in 1–3 columns, and a ruled response box with the call to action at the foot | ads that sell, offers, book promotions, advertorials |
 
 From the chat: `craft send {app: designcraft, look: "cinematic"}` restyles the whole
 page, and a look can also ride along with any part. "Make it look amazing" is now
@@ -81,6 +82,16 @@ New page sizes besides DesignCraft's own: `Poster` (18×24 in), `Square`, `Story
   So the cat's face stays in a wide crop, not its middle.
 - **Copy that runs long** steps the type down, headlines faster than text, until it
   fits (`SQUEEZE` in `planLook`). It never lets type collide.
+
+- **The direct-response ad** (`direct`, 2026-10-14). Ogilvy put the picture first because
+  that's where the eye lands. Under it goes a caption that sells, since captions are read more than body
+  copy, then the headline *below* the picture, then body copy in a serif, then the
+  response device at the foot, where the eye ends. Ads that look like editorial pages get
+  read. Wheildon's tests (disputed, but standard in direct response) favour a serif body,
+  dark type on light, and lower-case headlines over all caps. With no picture, the type and the response box form one block
+  centred a little high. The call to action is set in Inter because Lora has no arrows.
+  Renders: `results/design-looks/plan-direct.png`, `plan-direct-nopicture.png`. Why and
+  who: [COPY-CRAFT.md](COPY-CRAFT.md).
 
 ## Fonts
 

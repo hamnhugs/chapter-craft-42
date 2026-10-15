@@ -264,6 +264,23 @@ To see the button headless, use DesignCraft's `ui_shot` example with
 `DESIGNCRAFT_TEMPLATE_INBOX` set (a hidden Hyprland window doesn't present frames, so
 `ui.screenshot` goes stale there).
 
+## Copy like the masters, and the `direct` look (2026-10-14)
+
+On a copy or DesignCraft turn, two or three cards from the user's **"Copy & Design
+Masters"** neuron ride in the turn context. They cover Whitman, Schwartz, Ogilvy, Hopkins,
+Caples, Sugarman, Halbert, Bencivenga, Vögele's dialogue method, Ogilvy's layout and
+playbooks for flyers, ads, blurbs and sales letters. A master named in the request comes first. The
+neuron is created and seeded on first use. The user can edit any card or add their own,
+and edited cards are never overwritten. How it works, who's in it and the sources:
+[COPY-CRAFT.md](COPY-CRAFT.md).
+
+DesignCraft gained a ninth look, `direct`: Ogilvy's direct-response ad (picture, selling
+caption, serif headline below the picture, body in columns, boxed call to action).
+`pickLook` maps "ogilvy", "ad", "advert", "sales", "offer", "coupon" and "response" to it. This changed
+the craft tool's `look` enum, so the design eval gained a turn ("turn it into an ad that
+sells, like an Ogilvy direct response ad" → look `direct`) and was re-run:
+`results/2026-10-14-design-looks.txt`, section "direct look".
+
 ## Front and back, many pages, print (2026-10-14)
 
 Why: the user asked for full control of DesignCraft's layout from the chat, "including a

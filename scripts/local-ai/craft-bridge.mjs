@@ -726,7 +726,7 @@ export function pickLook(v) {
   const s = String(v || "").toLowerCase();
   if (!s) return null;
   if (LOOK_NAMES.includes(s)) return s;
-  const words = { cinematic: /cinem|movie|film|cover|dramatic|epic|moody/, editorial: /editor|magazine|article|newsletter|journal/, swiss: /swiss|grid|modern|corporate|business|helvetica/, classic: /classic|elegant|literary|invitation|vintage|wedding|formal/, minimal: /minimal|clean|simple|calm|premium|quiet/, split: /split|half|two/, pop: /pop|fun|bright|playful|kids|colorful|colourful|vibrant/, bold: /bold|loud|strong|event|impact|flyer/ };
+  const words = { cinematic: /cinem|movie|film|cover|dramatic|epic|moody/, editorial: /editor|magazine|article|newsletter|journal/, swiss: /swiss|grid|modern|corporate|business|helvetica/, classic: /classic|elegant|literary|invitation|vintage|wedding|formal/, minimal: /minimal|clean|simple|calm|premium|quiet/, split: /split|half|two/, pop: /pop|fun|bright|playful|kids|colorful|colourful|vibrant/, direct: /direct|ogilvy|advert|\bads?\b|sales|offer|coupon|response|advertorial|promo/, bold: /bold|loud|strong|event|impact|flyer/ };
   for (const [k, re] of Object.entries(words)) if (re.test(s)) return k;
   return null;
 }

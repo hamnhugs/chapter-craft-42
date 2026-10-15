@@ -304,6 +304,9 @@ const T = {
   dmSans: { font: "DM Sans", style: "Regular", tracking: 0, lead: 1.5 },
   dmSansLabel: { font: "DM Sans", style: "Bold", caps: true, tracking: 200, lead: 1.3 },
   space: { font: "Space Grotesk", style: "Medium", tracking: 0, lead: 1.4 },
+  baskervilleBold: { font: "Libre Baskerville", style: "Bold", tracking: -10, lead: 1.1 },
+  baskervilleItalic: { font: "Libre Baskerville", style: "Italic", tracking: 0, lead: 1.35 },
+  lora: { font: "Lora", style: "Regular", tracking: 0, lead: 1.45 },
   spaceBold: { font: "Space Grotesk", style: "Bold", tracking: 0, lead: 1.25 },
 };
 /** Every family install-design-fonts.sh installs. */
@@ -327,6 +330,7 @@ export const LOOKS = {
   minimal: "lots of white space, light type, small photo, one accent (calm, premium)",
   split: "photo on one half, text panel on the other (announcements, launches)",
   pop: "bright colour field, heavy caps, tilted photo with shadow, tag label (kids, sales, fun)",
+  direct: "Ogilvy-style direct-response ad: big photo, selling caption, serif headline below it, body in columns, boxed call to action (ads, offers, sales pages, book promotions)",
 };
 export const LOOK_NAMES = Object.keys(LOOKS);
 
@@ -348,7 +352,10 @@ function overFont(t, font) {
 let SQUEEZE = 1;
 function setText(part, t, width, opt = {}) {
   let size = opt.size != null ? Math.max(6.5, Math.round(opt.size * Math.sqrt(SQUEEZE) * 2) / 2) : undefined;
-  if (part.over?.size) size = Number(part.over.size);
+  // A size set by hand wins, unless the look can't fit it on the page at all:
+  // then it steps down with everything else (SQUEEZE), so "bigger" never
+  // pushes the headline off the page or onto the footer.
+  if (part.over?.size) size = Math.max(6.5, Math.round(Number(part.over.size) * SQUEEZE * 2) / 2);
   // DesignCraft kerns and composes whole paragraphs, so it can break a line
   // earlier or later than the estimate; `fudge` (learned from the page, see
   // layoutLook) narrows or widens the measure the estimate uses.
@@ -461,7 +468,11 @@ const PLANS = {
     const t = face("anton");
     let hs = head && setText(head, t, cw, { fit: { min: 24, max: Math.round(H * (imgs.length ? 0.17 : 0.26)), lines: imgs.length ? 3 : 4 } });
     const minImg = imgs.length ? H * 0.4 : 0;
-    while (hs && fixed + hs.h > H - minImg && hs.size > 24) hs = setText(head, t, cw, { fit: { min: 24, max: hs.size - 2, lines: 3 } });
+    // A hand-set size (part.over.size) can't shrink: stop when a step changes nothing.
+    for (let prev = Infinity; hs && fixed + hs.h > H - minImg && hs.size > 24 && hs.size < prev;) {
+      prev = hs.size;
+      hs = setText(head, t, cw, { fit: { min: 24, max: hs.size - 2, lines: 3 } });
+    }
     const imgH = imgs.length ? Math.round(clamp(H - fixed - (hs ? hs.h + m * 0.5 : 0), H * 0.4, H * 0.6)) : 0;
     if (imgs[0]) frames.push({ id: imgs[0].id, role: "image", box: [x, y, W, imgH], image: { fill: true } });
     if (imgs.length) shapes.push({ name: "Fade", kind: "rect", box: [x, y + imgH - H * 0.12, W, H * 0.12], gradient: { angle: -90, stops: [[0, bg, 0], [100, bg, 85]] } });
@@ -805,6 +816,86 @@ const PLANS = {
     }
     stackBodies(frames, bodies, bodyT, x + m, cy, bodyW, bodySize, ink, m * 0.2);
     if (foot) frames.push({ id: foot.id, role: "footer", box: [x + m, fy, cw, fs.h], text: { ...fs, color: colourOf(foot, ink) } });
+    return { shapes, frames, bg };
+  },
+
+  // The direct-response ad, after Ogilvy: picture first (it's where the eye
+  // lands), a selling caption under it (captions out-read body copy), the
+  // headline BELOW the picture in a readable serif, upper and lower case, dark
+  // on light (Wheildon), a deck, body copy in serif columns, and a boxed
+  // response device at the foot, where the eye ends. Editorial on purpose:
+  // ads that look like editorial pages get read.
+  direct(P, parts, pal) {
+    const { x, y, W, H, m } = P;
+    const shapes = [], frames = [];
+    const imgs = allOf(parts, "image"), head = firstOf(parts, "headline"), sub = firstOf(parts, "subhead");
+    const bodies = allOf(parts, "body"), cap = firstOf(parts, "caption"), foot = firstOf(parts, "footer");
+    const bg = mix("#FCFBF7", pal.paper, 0.12), ink = mix(pal.ink, "#111111", 0.5), acc = readableOn(bg, pal.accentOnLight, 4.5);
+    shapes.push({ name: "Background", kind: "rect", box: [x, y, W, H], fill: bg });
+    const cw = W - 2 * m, gap = m * 0.3;
+    // Measure the type from the bottom up; the picture gets what's left.
+    const pad = Math.round(m * 0.45);
+    // Inter for the call to action: coupon type, and it has the arrows (→) Lora lacks.
+    const fs = foot && setText(foot, face("interBold", { tracking: 0 }), cw - 2 * pad, { size: Math.max(9, Math.round(W / 46 * 2) / 2), align: "center" });
+    const boxH = fs ? fs.h + 2 * pad : 0;
+    const bodyT = face("lora"), bodySize = Math.max(9, Math.round(W / 56 * 2) / 2);
+    const len = joinText(bodies).length;
+    const cols = len > 700 && W >= 500 ? 3 : len > 220 ? 2 : 1;
+    const bodyW = cols === 1 ? Math.min(cw, cw * 0.8) : cw;
+    const colW = (bodyW - (cols - 1) * Math.round(bodySize * 1.6)) / cols;
+    const bh = bodies.length ? bodiesHeight(bodies, bodyT, colW, bodySize, m * 0.2) / cols + bodySize * (cols > 1 ? 1.5 : 0.5) : 0;
+    const ss = sub && setText(sub, face("baskervilleItalic"), cw * 0.88, { size: Math.max(10, Math.round(W / 40)), align: "center" });
+    const cs = cap && setText(cap, face("baskervilleItalic", { lead: 1.3 }), cw * 0.9, { size: Math.max(8, Math.round(W / 66 * 2) / 2), align: "center" });
+    const t = face("baskervilleBold");
+    const rest = (cs ? cs.h + gap : 0) + (ss ? ss.h + gap : 0) + (bh ? bh + m * 0.45 : 0) + (boxH ? boxH + m * 0.45 : 0) + m * 1.4;
+    let hs = head && setText(head, t, cw, { fit: { min: 18, max: Math.round(H * (imgs.length ? 0.075 : 0.11)), lines: 3 }, align: "center" });
+    const minImg = imgs.length ? H * 0.28 : 0;
+    // Shrink the headline until the picture has room. A size set by hand
+    // (part.over.size) can't shrink, so stop when a step changes nothing.
+    for (let prev = Infinity; hs && rest + hs.h > H - minImg && hs.size > 18 && hs.size < prev;) {
+      prev = hs.size;
+      hs = setText(head, t, cw, { fit: { min: 18, max: hs.size - 2, lines: 3 }, align: "center" });
+    }
+    const imgH = imgs.length ? Math.round(clamp(H - rest - (hs ? hs.h + gap : 0), H * 0.28, H * 0.52)) : 0;
+    // No picture: the type and the box form one block, centred a little high
+    // (the optical centre), instead of a headline at the top and a box at the
+    // foot with nothing between them.
+    const stackH = rest - m * 1.4 + (hs ? hs.h + gap : 0);
+    let cy = y + (imgs.length ? 0 : Math.max(m, (H - stackH) * 0.42));
+    if (imgs[0]) {
+      frames.push({ id: imgs[0].id, role: "image", box: [x, y, W, imgH], image: { fill: true } });
+      cy = y + imgH + m * 0.35;
+    }
+    if (imgs.length > 1) {
+      imageRow(frames, imgs.slice(1), x + m, cy, cw, Math.min(imgH * 0.35, 110), m * 0.25);
+      cy += Math.min(imgH * 0.35, 110) + m * 0.3;
+    }
+    const centred = (s, w) => x + (W - w) / 2;
+    if (cap) {
+      frames.push({ id: cap.id, role: "caption", box: [centred(cs, cw * 0.9), cy, cw * 0.9, cs.h], text: { ...cs, color: colourOf(cap, mix(ink, bg, 0.3)) } });
+      cy += cs.h + gap;
+    }
+    if (head) {
+      frames.push({ id: head.id, role: "headline", box: [x + m, cy, cw, hs.h], text: { ...hs, color: colourOf(head, ink) } });
+      cy += hs.h + gap;
+    }
+    if (sub) {
+      frames.push({ id: sub.id, role: "subhead", box: [centred(ss, cw * 0.88), cy, cw * 0.88, ss.h], text: { ...ss, color: colourOf(sub, mix(ink, bg, 0.2)) } });
+      cy += ss.h + gap;
+    }
+    if (bodies.length) {
+      shapes.push({ name: "Body rule", kind: "rect", box: [x + W / 2 - m * 0.5, cy, m, 1.25], fill: acc });
+      cy += m * 0.4;
+      stackBodies(frames, bodies, bodyT, x + (W - bodyW) / 2, cy, bodyW, bodySize, mix(ink, bg, 0.08), m * 0.2, { columns: cols });
+      cy += bh;
+    }
+    if (foot) {
+      // The response device: a ruled box with a tint of the accent, at the
+      // foot under a picture (where the eye ends), right after the copy without one.
+      const by = imgs.length ? y + H - m - boxH : Math.min(y + H - m - boxH, cy + m * 0.45);
+      shapes.push({ name: "Response box", kind: "rect", box: [x + m, by, cw, boxH], fill: mix(acc, bg, 0.9), stroke: { color: ink, weight: 1.25 } });
+      frames.push({ id: foot.id, role: "footer", box: [x + m + pad, by + pad, cw - 2 * pad, fs.h], text: { ...fs, color: colourOf(foot, ink), on: mix(acc, bg, 0.9) } });
+    }
     return { shapes, frames, bg };
   },
 };

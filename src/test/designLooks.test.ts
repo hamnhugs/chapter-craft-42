@@ -96,6 +96,29 @@ describe("page looks", () => {
     expect(light.frames.find((f: any) => f.role === "headline").text.color).toBe("#E63946");
   });
 
+  it("keeps a hand-set headline size, stepping it down only when it can't fit", () => {
+    // The eval's "make this bigger" turn leaves `Headline · size 75.5`. The
+    // bold and direct looks used to loop forever shrinking a headline that
+    // setText kept pinned at that size (found 2026-10-14: the bridge spun at
+    // 86% CPU); then, with the loop fixed, a long headline at 75.5 ran off the page.
+    const page = { x: 0, y: 0, W: 595, H: 842 };
+    for (const look of LOOK_NAMES) {
+      const p = parts();
+      p.find((x) => x.role === "headline").over = { size: 30 };
+      const plan = planLook(look, page, p, pal);
+      expect(plan.frames.find((f: any) => f.role === "headline").text.size, `${look} keeps 30`).toBe(30);
+      for (const size of [75.5, 300]) {
+        const q = parts();
+        const h = q.find((x) => x.role === "headline");
+        h.text = "Why a Business Plan Is Your Secret Weapon to Financial Freedom";
+        h.over = { size };
+        const big = planLook(look, page, q, pal);
+        expect(big.frames.find((f: any) => f.role === "headline").text.size).toBeLessThanOrEqual(size);
+        if (size === 75.5) expect(planIssues(big, page), `${look} at ${size}`).toEqual([]);
+      }
+    }
+  });
+
   it("copes with only a headline, and with a second picture", () => {
     const page = { x: 0, y: 0, W: 612, H: 792 };
     for (const look of LOOK_NAMES) {

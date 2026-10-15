@@ -1,0 +1,38 @@
+Copy-craft skill A/B — Qwen3-4B-Instruct-2507 Q6_K (local), 2026-10-14
+Same request, system prompt with vs without the copy-craft section (2–3 cards + rules).
+Raw replies: results/copy-craft-ab/. Judged by reading them; no automatic score.
+
+Requests: (1) summer reading club flyer, kids 8–12, free, June 10, prizes for 10 books;
+(2) back-cover blurb for the thriller "The Storm"; (3) "ad copy like Drew Eric Whitman" for Plan to Win.
+
+Round 1 (2 samples per arm):
+  flyer   without: "Read. Discover. Win! Summer Reading Club for Kids 8–12", long paragraphs,
+                   invented website + phone number
+          with:    "Read 10 Books. Win a Prize. Free." / "For kids 8–12. Starts June 10. No cost."
+                   4 short benefit bullets, footer with the action. Better; still invented prize
+                   types (tablets, gift cards) and a sign-up deadline.
+  blurb   without: atmospheric but generic ("A storm isn't just weather. It's memory.")
+          with:    hook line, named protagonist, stakes, comps, "Read it today" — but 2/2 invented
+                   a review quote from a fake author ("NYT bestselling … Lila Monroe")
+  ad      without: decent plain copy; 2/2 SIGNED it "— Drew Eric Whitman" (false attribution)
+          with:    "AT LAST: A Business Plan That Actually Works—For First-Time Founders", Life-Force 8
+                   angles, specific CTA; 1/2 invented "Over 20,000 founders", a guarantee and a
+                   named testimonial.
+
+Fix: the honesty rule moved to its own last line (recency) and spelled out what not to invent;
+book/flyer/Whitman cards say proof only from the user.
+
+Round 2 (with cards, 2 samples each):
+  blurb   2/2 leave "[Review quote from a real reader]" — no invented quotes (was 0/2)
+  flyer   no invented contact details; still invents prize types
+  ad      slot present 2/2, but 2/2 add a sample quote under it (one with a name)
+Fix: "The slot is the whole line: no sample quote, name or number after it."
+
+Round 3 (ad only, 4 samples): slot 4/4; no invented names, statistics or guarantees;
+  2/4 still add an unattributed sample quote under the slot. The 4B model also still appends a
+  "why it works" list despite "explain only if asked".
+
+Verdict: the cards clearly improve structure and headlines (benefit-first, specific, scannable,
+proper CTA). Inventing proof is a known small-model failure the rule reduces but doesn't
+eliminate at 4B; review copy for quotes before publishing. Cloud chat models follow it better
+(not measured here — the OpenRouter key can't be read from the DB by an eval).

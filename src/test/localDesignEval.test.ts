@@ -232,6 +232,13 @@ describe.skipIf(process.env.LIVE_DESIGN_EVAL !== "1" || process.env.DESIGN_EVAL_
       expect(r.calls.some((c) => /^(send|open)/.test(c)), "acted instead of asking").toBe(true);
       expect(p.issues).toEqual([]);
 
+      // The direct-response look (2026-10-14): asked for by what it's for.
+      r = await turn(h, "turn it into an ad that sells, like an Ogilvy direct response ad");
+      p = await page();
+      log(`direct ad: ${r.calls.join(" ")} (${r.seconds.toFixed(0)} s) look=${p.look} issues=${p.issues.join("; ") || "none"}`);
+      expect(p.look).toBe("direct");
+      expect(p.issues).toEqual([]);
+
       r = await turn(h, "now try it as a movie poster");
       p = await page();
       log(`movie poster: ${r.calls.join(" ")} (${r.seconds.toFixed(0)} s) look=${p.look} issues=${p.issues.join("; ") || "none"}`);

@@ -19,7 +19,7 @@ export const CRAFT_APPS = ["photocraft", "designcraft", "filmcraft"] as const;
 export type CraftApp = (typeof CRAFT_APPS)[number];
 const LABEL: Record<CraftApp, string> = { photocraft: "PhotoCraft", designcraft: "DesignCraft", filmcraft: "FilmCraft" };
 /** DesignCraft page looks (scripts/local-ai/design-looks.mjs LOOK_NAMES). */
-export const PAGE_LOOKS = ["bold", "cinematic", "editorial", "swiss", "classic", "minimal", "split", "pop"] as const;
+export const PAGE_LOOKS = ["bold", "cinematic", "editorial", "swiss", "classic", "minimal", "split", "pop", "direct"] as const;
 export const CRAFT_ACTIONS = ["status", "open", "find_commands", "run", "inspect", "preview", "send", "pages", "export", "transfer", "save_template", "use_template", "app_tools", "call"] as const;
 type CraftAction = (typeof CRAFT_ACTIONS)[number];
 
@@ -57,7 +57,7 @@ export const CRAFT_TOOL_DEFINITION = {
         chapter_id: { type: "string", description: "send/open: a chapter id from the book's chapter list; the app reads its text itself (DesignCraft adds pages as needed) — don't open or read the chapter first." },
         text: { type: "string", description: "send/open: text to put into the app (a text frame, a type layer, or a title in the video)." },
         role: { type: "string", enum: ["headline", "subhead", "image", "body", "caption", "footer"], description: "DesignCraft send: the page part — headline (write a punchy one from the book) on top, footer at the bottom; laid out and checked for you. Same role + options restyles its text." },
-        look: { type: "string", enum: [...PAGE_LOOKS], description: "DesignCraft page design, done like a pro: bold (event flyer), cinematic (book cover, movie poster), editorial (magazine), swiss (modern), classic (elegant), minimal, split, pop (fun). Alone: restyles the page." },
+        look: { type: "string", enum: [...PAGE_LOOKS], description: "DesignCraft page design, done like a pro: bold (event flyer), cinematic (book cover, movie poster), editorial (magazine), swiss (modern), classic (elegant), minimal, split, pop (fun), direct (Ogilvy-style ad that sells). Alone: restyles the page." },
         layer: { type: "string", description: "PhotoCraft run/send: the layer to act on, by name or id (e.g. the photo for a colour fix). New layers go just above it; nothing above it changes." },
         to: { type: "string", enum: [...CRAFT_APPS], description: "transfer: the app that receives `app`'s work." },
         format: { type: "string", description: "export/transfer: png, jpg, webp, psd (PhotoCraft); png, pdf, epub, html, txt, idml (DesignCraft); png (one frame), mp4, gif, wav, srt (FilmCraft). Default png." },
