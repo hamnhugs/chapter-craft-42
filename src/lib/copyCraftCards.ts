@@ -318,7 +318,7 @@ Clarity first: a visitor should know what it is, who it's for and what to do wit
 - One big photograph (often the top two-thirds), real and with story appeal; photos beat drawings.
 - A caption under the picture that sells: captions are read more than body copy.
 - Headline BELOW the picture, in upper and lower case (all caps is harder to read), dark type on a light ground.
-- Body copy in a readable serif, 10–12 pt in print, in columns about 40 characters wide; a drop cap at the start; short first paragraph; subheads every few paragraphs; a few key lines in bold or italic.
+- Body copy in a readable serif, never under 14 pt (smaller is hard to read), in columns about 40 characters wide; a drop cap at the start; short first paragraph; subheads every few paragraphs; a few key lines in bold or italic.
 - Make it look editorial, like a page of the magazine, not like an ad; editorial layouts get more readers.
 - No reversed (white-on-black) body text and no text set over busy pictures.
 - Logo or signature and the response device at the bottom right, where the eye ends.`,

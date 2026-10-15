@@ -212,7 +212,12 @@ describe.skipIf(process.env.LIVE_DESIGN_EVAL !== "1" || process.env.DESIGN_EVAL_
       log(`select+bigger blue: ${r.calls.join(" ")} (${r.seconds.toFixed(0)} s) name="${headAfter?.name}" size ${size0}→${size1} issues=${p.issues.join("; ") || "none"} → ${r.text.slice(0, 100)}`);
       expect(String(headAfter?.name), "blue kept on the headline").toMatch(/color #/);
       expect(size1, "bigger").toBeGreaterThan(size0);
-      expect(p.issues).toEqual([]);
+      // Only the headline changes (the user's rule, 2026-10-14): a bigger
+      // headline may now run into the picture, and then the reply must say so
+      // and ask, not stay silent or move things itself.
+      const crowded = p.issues.filter((i) => /^headline overlaps/.test(i));
+      expect(p.issues.filter((i) => !crowded.includes(i))).toEqual([]);
+      if (crowded.length) expect(r.text, "tells the user about the overlap").toMatch(/overlap|runs? into|run into|make room|covers?|touch/i);
 
       const bottomRole = (await nameOf("footer")) ? "footer" : "body";
       await select("headline", bottomRole);

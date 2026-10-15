@@ -26,7 +26,7 @@ import { readFile } from "node:fs/promises";
 import { basename, extname, join, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { DESIGN_FAMILIES, FONT_DIR, LOOK_NAMES, TEMPLATE_PREFIX, autoLook, imagePalette, isDecoName, layoutLook, lookOf } from "./design-looks.mjs";
+import { DESIGN_FAMILIES, FONT_DIR, LOOK_NAMES, MIN_TYPE, TEMPLATE_PREFIX, autoLook, imagePalette, isDecoName, layoutLook, lookOf, nearestStyle } from "./design-looks.mjs";
 import { deleteTemplate, describeTemplate, designcraftJson, findTemplate, guessSlots, listTemplates, slugify, writeTemplate } from "./design-templates.mjs";
 
 const ROOT = resolve(fileURLToPath(import.meta.url), "../../..");
@@ -787,6 +787,8 @@ async function layoutPage(index, lookArg) {
   // A page of a document already designed (the back of a flyer, page 3)
   // takes the look its other pages have, so the pages belong together.
   const look = pickLook(lookArg) || page.look || docPages(doc).map((p) => designPage(doc, p.index)?.look).find(Boolean) || autoLook(parts);
+  // ...and the type sizes of the page it sits with, part for part.
+  const matched = await matchSizes(doc, page, look, parts);
   const hero = parts.find((p) => p.kind === "image");
   // A page with no picture of its own (the back of a flyer) takes its colours
   // from the document's picture, so both sides look like one piece.
@@ -794,7 +796,7 @@ async function layoutPage(index, lookArg) {
   const pal = await imagePalette(hero?.path || docPicture);
   const [x0, y0, x1, y1] = page.bounds;
   const call = async (tool, args) => (await mustCall("designcraft", tool, args)).json;
-  const { plan, issues } = await layoutLook(call, look, { x: x0, y: y0, W: x1 - x0, H: y1 - y0, spread: page.spread }, parts, pal);
+  const { plan, issues } = await layoutLook(call, look, { x: x0, y: y0, W: x1 - x0, H: y1 - y0, spread: page.spread, ...(matched?.columns ? { match: { columns: matched.columns } } : {}) }, parts, pal);
   // Crops keep what the eye goes to.
   const steps = [];
   for (const f of plan.frames.filter((g) => g.image?.fill)) {
@@ -804,7 +806,123 @@ async function layoutPage(index, lookArg) {
   if (steps.length) await mustCall("designcraft", "batch", { commands: steps });
   await bleedPage(page.index);
   await colourPageNumber(page.index);
-  return { look, issues, palette: { background: plan.bg, accent: pal.accent } };
+  return { look, issues, palette: { background: plan.bg, accent: pal.accent }, ...(matched ? { matched } : {}) };
+}
+
+/** The page page `index` should match: the page facing it on its spread when
+ *  that one comes first, else the page before it — the earlier page leads, so
+ *  page 1 sets the sizes and page 2 continues them. Only a page already
+ *  designed in the same look at the same size counts; a template page keeps
+ *  its own design. Null for the first page. */
+export function anchorPage(doc, index, look) {
+  const pages = docPages(doc), me = pages[index];
+  if (!me) return null;
+  const facing = pages.find((p) => p.spread === me.spread && p.index < index);
+  const w = (b) => b[2] - b[0], h = (b) => b[3] - b[1];
+  for (const p of [facing, pages[index - 1]].filter(Boolean)) {
+    const dp = designPage(doc, p.index);
+    if (!dp || dp.template || !dp.look || (look && dp.look !== look)) continue;
+    if (Math.abs(w(dp.bounds) - w(me.bounds)) > 1 || Math.abs(h(dp.bounds) - h(me.bounds)) > 1) continue;
+    if (!dp.items.some((it) => it.kind === "text")) continue;
+    return { page: dp, facing: p === facing };
+  }
+  return null;
+}
+
+/** Pages that sit together (a spread, a front and its back, page 2 after
+ *  page 1) share their structure: the user saw page 2 come out with its own
+ *  sizes, unlike page 1's (2026-10-14). Each part here without a size set by
+ *  hand takes the size the anchor page set its part of that role at, and the
+ *  body takes the anchor's column count. Returns what was matched. */
+async function matchSizes(doc, page, look, parts) {
+  const a = anchorPage(doc, page.index, look);
+  if (!a) return null;
+  const sizes = {};
+  let columns = null;
+  const raw = (doc.spreads || []).flatMap((sp) => sp.items || []);
+  for (const it of a.page.items.filter((x) => x.kind === "text")) {
+    if (it.role === "body" && columns == null) columns = Number(raw.find((x) => x.id === it.id)?.columns) || null;
+    if (sizes[it.role] != null) continue;
+    const z = Number((await charAttrs(it.id)).chars?.size);
+    if (z > 0) sizes[it.role] = Math.max(MIN_TYPE, z);
+  }
+  await dc("selection.set", { ids: [] }).catch(() => {});
+  const used = {};
+  for (const p of parts) if (p.kind === "text" && !p.over?.size && sizes[p.role] != null) { p.match = sizes[p.role]; used[p.role] = sizes[p.role]; }
+  const cols = columns && parts.some((p) => p.role === "body") ? columns : null;
+  return Object.keys(used).length || cols ? { page: a.page.index, sizes: used, ...(cols ? { columns: cols } : {}) } : null;
+}
+
+/** Change just what was asked on text frame `id` — the colour, size, font or
+ *  alignment named in `over` — and nothing else: no new layout, no other
+ *  part moved or resized (the user, 2026-10-14: "when it makes edits to the
+ *  text font etc it doesn't change anything it was not asked to change").
+ *  The frame only grows deeper when its text would otherwise be cut off. */
+async function restyleFrame(id, over) {
+  await dc("selection.set", { ids: [id] });
+  const a = (await dc("type.selectionAttrs", {})).json?.chars || {};
+  const attrs = {};
+  if (over.color) attrs.fill = await swatchFor(over.color);
+  if (Number(over.size) > 0) {
+    attrs.size = Math.max(MIN_TYPE, Number(over.size));
+    const cur = Number(a.size);
+    if (a.leading?.kind === "points" && cur > 0) attrs.leading = { kind: "points", value: Math.round((attrs.size * a.leading.value) / cur * 10) / 10 };
+  }
+  if (over.font) { attrs.fontFamily = over.font; attrs.fontStyle = nearestStyle(over.font, a.fontStyle); }
+  if (Object.keys(attrs).length) await dc("type.char", { attrs });
+  if (over.align) await dc("type.para", { attrs: { align: over.align } });
+  await dc("selection.set", { ids: [] });
+}
+
+/** Text frame `id` after its words or style changed: kept at its size and
+ *  place when the text fits; with new words that don't (`shrink`), its own
+ *  size steps down, never under MIN_TYPE; then, if still cut off, the frame
+ *  grows deeper. → {cut} when the text still doesn't fit. */
+async function fitInFrame(id, { shrink = false } = {}) {
+  const story = async () => (await dcJson("get_story", { frame: id })) || {};
+  let s = await story();
+  if (s.overset == null) return { cut: false };
+  if (shrink) {
+    const a = (await charAttrs(id)).chars || {};
+    let size = Number(a.size) || 0;
+    const lead = a.leading?.kind === "points" && size ? a.leading.value / size : null;
+    for (let k = 0; s.overset != null && k < 14 && size > MIN_TYPE; k++) {
+      size = Math.max(MIN_TYPE, Math.round(size * 0.92 * 2) / 2);
+      await dc("type.char", { attrs: { size, ...(lead ? { leading: { kind: "points", value: Math.round(size * lead * 10) / 10 } } : {}) } });
+      s = await story();
+    }
+    await dc("selection.set", { ids: [] });
+  }
+  const doc = await designDoc();
+  const it = (doc.spreads || []).flatMap((sp) => sp.items || []).find((x) => x.id === id);
+  let h = it?.bounds ? it.bounds[3] - it.bounds[1] : 40;
+  for (let k = 0; s.overset != null && k < 40; k++) {
+    h += 4;
+    await dc("transform.set", { height: h, ref: 0, ids: [id] });
+    s = await story();
+  }
+  return { cut: s.overset != null };
+}
+
+/** Same words, ignoring case, spacing and punctuation-level noise. */
+export const sameWords = (a, b) => { const k = (t) => String(t || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim(); return !!k(a) && k(a) === k(b); };
+const boxesTouch = (a, b) => a[0] < b[2] - 0.5 && b[0] < a[2] - 0.5 && a[1] < b[3] - 0.5 && b[1] < a[3] - 0.5;
+/** Ids of the parts on page `index` that item `id` overlaps. */
+function touching(doc, index, id) {
+  const page = designPage(doc, index);
+  const me = page?.items.find((x) => x.id === id);
+  return me ? page.items.filter((x) => x.id !== id && boxesTouch(me.bounds, x.bounds)).map((x) => x.id) : [];
+}
+/** What changed size or style ran into, said plainly — nothing else was
+ *  moved to make room, so the user decides. */
+async function crowdIssues(index, id, before) {
+  const doc = await designDoc();
+  const page = designPage(doc, index);
+  const me = page?.items.find((x) => x.id === id);
+  return touching(doc, index, id).filter((x) => !before.includes(x)).map((x) => {
+    const other = page.items.find((i) => i.id === x);
+    return `${roleName(me?.role || "item")} (id ${id}) now runs into the ${other?.role || "item"} (id ${x}); nothing else was moved. Ask the user whether to make room (a look lays the page out again) or keep it.`;
+  });
 }
 
 /** Put a part on a DesignCraft page by role and lay the page out again. */
@@ -819,7 +937,7 @@ async function composeDesign(opts) {
   let page = designPage(doc, pageIndex ?? opts.page);
   if (!page) throw httpError(422, "DesignCraft has no page to put it on");
   const W = page.content.right - page.content.left;
-  const text = opts.text != null && String(opts.text).trim() ? plainText(String(opts.text)).trim() : null;
+  let text = opts.text != null && String(opts.text).trim() ? plainText(String(opts.text)).trim() : null;
   const over = Object.fromEntries(OVERRIDE_KEYS.filter((k) => opts[k] != null && opts[k] !== "").map((k) => [k, opts[k]]));
   // "28pt" → 28; "bigger", "+20%" stay words until there's a size to scale.
   if (over.size != null && /^\s*\d+(\.\d+)?\s*(pt|px)?\s*$/i.test(String(over.size))) over.size = parseFloat(over.size);
@@ -827,6 +945,8 @@ async function composeDesign(opts) {
   if (over.color) over.color = String(over.color).toUpperCase();
   if (!/^#[0-9A-F]{6}$/.test(String(over.color || "#000000"))) delete over.color;
   if (over.size != null && !(Number(over.size) > 0) && !/^(bigger|larger|big|large|up|smaller|small|down|[+-]?\d+(\.\d+)?%?)$/i.test(String(over.size).trim())) delete over.size;
+  let sizeNote = null;
+  if (Number(over.size) > 0 && over.size < MIN_TYPE) { sizeNote = `${over.size} pt is too small to read, so it is ${MIN_TYPE} pt (the smallest size).`; over.size = MIN_TYPE; }
   // A font that isn't installed would fall back to whatever DesignCraft
   // substitutes ("Impact", "Arial" — what models reach for): keep the look's.
   let fontNote = null;
@@ -863,8 +983,10 @@ async function composeDesign(opts) {
   // first picture frame still holding the template's picture (else the main one).
   let target = role === "image" ? null
     : tpl && !opts.add ? page.items.find((it) => it.role === role && it.placeholder) || page.items.find((it) => it.role === role)
-    : ONE_PER_PAGE.has(role) && !opts.add ? page.items.find((it) => it.role === role) : null;
-  let replaced = false;
+    : ONE_PER_PAGE.has(role) && !opts.add ? page.items.find((it) => it.role === role)
+    // A style for the body ("make the body bigger") when the page has just one.
+    : !text && !opts.add && Object.keys(over).length && page.items.filter((it) => it.role === role).length === 1 ? page.items.find((it) => it.role === role) : null;
+  let replaced = false, existed = false, before = [], relaid = null;
   if (role === "image") {
     if (!opts.path) throw httpError(400, "image needs a picture");
     const imgs = page.items.filter((it) => it.kind === "image");
@@ -886,6 +1008,13 @@ async function composeDesign(opts) {
   } else {
     // No text with a part that's there: restyle it ("make the headline red").
     if (!text && !target) throw httpError(400, `text is empty${ONE_PER_PAGE.has(role) ? ` and the page has no ${role} to change` : ""}`);
+    // A part that's already there, with no look asked for: change only what
+    // was asked (below), not the whole page.
+    existed = !!target && !tpl && !pickLook(opts.look) && opts.layout !== false;
+    before = existed ? touching(doc, page.index, target.id) : [];
+    // The same words sent again with a style ("bigger", re-sending the
+    // headline): not new words, so the style isn't undone to fit them.
+    if (existed && text && sameWords(text, (await dcJson("get_story", { frame: target.id }))?.text)) text = null;
     if (target) {
       if (text) await mustCall("designcraft", "set_story_text", { frame: target.id, text });
       replaced = true;
@@ -899,11 +1028,24 @@ async function composeDesign(opts) {
       const z = resolveSize(over.size, Number((await dc("type.selectionAttrs", {})).json?.chars?.size) || null);
       if (z) over.size = z; else delete over.size;
     }
+    // Kept in the name, so a later look keeps it too.
     await dc("object.rename", { id: target.id, name: partName(role, { ...keep, ...over }, !text && !!target.placeholder) });
+    if (existed) {
+      if (Object.keys(over).length) await restyleFrame(target.id, over);
+      const fit = await fitInFrame(target.id, { shrink: !!text });
+      const crowd = await crowdIssues(page.index, target.id, before);
+      // Only new words that can't fit where the old ones were lay the page out again.
+      if (!(text && (fit.cut || crowd.length))) {
+        const what = [text ? "words" : null, ...Object.keys(over)].filter(Boolean).join(", ");
+        return designSummary(page.index, { issues: crowd }, opts, [`Changed the ${role} (${what}); nothing else on the page was touched.`, fontNote, sizeNote].filter(Boolean).join(" "));
+      }
+      relaid = `The new ${role} didn't fit where the old one was, so the page was laid out again.`;
+    }
   }
   if (opts.layout === false) return designSummary(page.index, { issues: [] }, opts);
   const lay = await layoutPage(page.index, opts.look);
-  return designSummary(page.index, lay, opts, [replaced ? `Changed the ${role}.` : null, fontNote].filter(Boolean).join(" ") || null);
+  const matchNote = lay.matched ? `Matched page ${lay.matched.page + 1}: ${[...Object.entries(lay.matched.sizes).map(([r, z]) => `${r} ${z} pt`), ...(lay.matched.columns ? [`${lay.matched.columns}-column body`] : [])].join(", ")}.` : null;
+  return designSummary(page.index, lay, opts, [relaid || (replaced ? `Changed the ${role}.` : null), matchNote, fontNote, sizeNote].filter(Boolean).join(" ") || null);
 }
 
 /** One page edit at a time: two composes interleaving would each lay out a
@@ -961,8 +1103,13 @@ export function samePicture(a, b) {
   return !!a && !!b && key(a) === key(b);
 }
 
-/** "make this bigger", "+20%", "smaller" → a size in points from `current`. */
+/** "make this bigger", "+20%", "smaller" → a size in points from `current`,
+ *  never under MIN_TYPE (14 pt: smaller type can't be read). */
 export function resolveSize(v, current) {
+  const z = rawSize(v, current);
+  return z == null ? null : Math.max(MIN_TYPE, z);
+}
+function rawSize(v, current) {
   if (v == null || v === "") return null;
   const s = String(v).trim().toLowerCase();
   const n = parseFloat(s);
@@ -991,8 +1138,14 @@ async function editSelection(opts, over) {
   if (!ids.length) throw httpError(400, "Nothing is selected in DesignCraft. Name the part (role) instead, or ask the user to click the item first.");
   const doc = await designDoc();
   const all = (doc.spreads || []).flatMap((sp) => sp.items || []);
-  const acted = [], notes = [];
+  const acted = [], notes = [], issues = [];
   let relayout = false, pageIndex = null;
+  const pageOf = (it) => {
+    const pages = (doc.spreads || []).flatMap((sp) => sp.pages || []);
+    const cx = (it.bounds[0] + it.bounds[2]) / 2, cy = (it.bounds[1] + it.bounds[3]) / 2;
+    const pi = pages.findIndex((p) => p.bounds && cx >= p.bounds[0] && cx <= p.bounds[2] && cy >= p.bounds[1] && cy <= p.bounds[3]);
+    return pi >= 0 ? pi : null;
+  };
   const text = opts.text != null && String(opts.text).trim() ? plainText(String(opts.text)).trim() : null;
   // Highlighted words only, when that's what is selected and only a style is asked for.
   if (sel?.text_range && !text && !opts.path && Object.keys(over).length) {
@@ -1018,23 +1171,23 @@ async function editSelection(opts, over) {
       const part = DESIGN_ROLES.includes(role);
       const changed = [];
       if (isText) {
-        if (text && ids.length === 1) { await mustCall("designcraft", "set_story_text", { frame: id, text }); changed.push("text"); }
+        const pi = Array.isArray(it.bounds) ? pageOf(it) : null;
+        const before = pi != null ? touching(doc, pi, id) : [];
+        const newWords = !!(text && ids.length === 1) && !sameWords(text, (await dcJson("get_story", { frame: id }))?.text);
+        if (newWords) { await mustCall("designcraft", "set_story_text", { frame: id, text }); changed.push("text"); }
         await dc("selection.set", { ids: [id] });
         const cur = Number((await dc("type.selectionAttrs", {})).json?.chars?.size) || null;
         const o = { ...over };
         if (o.size != null) { const z = resolveSize(o.size, cur); if (z) o.size = z; else delete o.size; }
-        if (part) {
-          // Kept in the name; the layout applies it (and keeps it next time).
-          await dc("object.rename", { id, name: partName(role, { ...keep, ...o }, placeholder && !text) });
-          relayout = true;
-        } else {
-          const attrs = {};
-          if (o.color) attrs.fill = await swatchFor(o.color);
-          if (o.size) attrs.size = o.size;
-          if (o.font) attrs.fontFamily = o.font;
-          if (Object.keys(attrs).length) await dc("type.char", { attrs });
-          if (o.align) await dc("type.para", { attrs: { align: o.align } });
-        }
+        // Kept in the name, so a later look keeps it; applied here to this
+        // item alone — nothing else on the page changes.
+        if (part) await dc("object.rename", { id, name: partName(role, { ...keep, ...o }, placeholder && !text) });
+        await restyleFrame(id, o);
+        const fit = await fitInFrame(id, { shrink: newWords });
+        const crowd = pi != null ? await crowdIssues(pi, id, before) : [];
+        // New words on a page part that can't fit where the old ones were: lay the page out again.
+        if (part && newWords && (fit.cut || crowd.length)) { relayout = true; notes.push(`The new ${role} didn't fit where the old one was, so the page was laid out again.`); }
+        else issues.push(...crowd);
         changed.push(...Object.keys(o));
       } else if (isImage || opts.path) {
         if (opts.path) {
@@ -1059,7 +1212,8 @@ async function editSelection(opts, over) {
     }
   }
   await dc("selection.set", { ids: [] }).catch(() => {});
-  const lay = relayout ? await layoutPage(pageIndex ?? opts.page, opts.look) : { issues: [] };
+  if (!relayout && acted.some((a) => a.changed?.length)) notes.push("Nothing else on the page was touched.");
+  const lay = relayout ? await layoutPage(pageIndex ?? opts.page, opts.look) : { issues };
   const sum = await designSummary(pageIndex ?? opts.page, lay, opts, notes.join(" ") || null);
   return { ...sum, acted_on: acted };
 }
@@ -1229,13 +1383,13 @@ async function fitTextSize(id, designed, over = {}) {
   }
   if (over.font) extra.fontFamily = over.font;
   const setSize = async (size) => { await dc("selection.set", { ids: [id] }); await dc("type.char", { attrs: { size, ...(lead ? { leading: { kind: "points", value: Math.round(size * lead * 10) / 10 } } : {}), ...extra } }); };
-  const start = Number(over.size) || designed || cur;
-  if (!start) return false;
+  const start = Math.max(MIN_TYPE, Number(over.size) || designed || cur || 0);
+  if (!(Number(over.size) || designed || cur)) return false;
   if (Object.keys(extra).length || (cur && Math.abs(cur - start) > 0.25)) await setSize(start);
   let s = await story();
   let size = start;
-  for (let k = 0; s.overset != null && k < 14 && size > Math.max(6, start * 0.4); k++) {
-    size = Math.round(size * 0.92 * 2) / 2;
+  for (let k = 0; s.overset != null && k < 14 && size > Math.max(MIN_TYPE, start * 0.4); k++) {
+    size = Math.max(MIN_TYPE, Math.round(size * 0.92 * 2) / 2);
     await setSize(size);
     s = await story();
   }
@@ -1265,11 +1419,11 @@ async function placeNewPart(page, it, slots) {
   if (ref) {
     const a = (await charAttrs(ref.id)).chars || {};
     const pick = Object.fromEntries(["fontFamily", "fontStyle", "size", "leading", "tracking", "capitalization", "fill"].filter((k) => a[k] != null).map((k) => [k, a[k]]));
-    if (["footer", "caption"].includes(it.role) && ref.role !== it.role && pick.size) pick.size = Math.max(7, Math.round(pick.size * 0.8));
+    if (["footer", "caption"].includes(it.role) && ref.role !== it.role && pick.size) pick.size = Math.max(MIN_TYPE, Math.round(pick.size * 0.8));
     // Running text borrowed from a label or heading: the family and colour,
     // but plain, readable setting.
     if (it.role === "body" && ref.role !== "body") {
-      Object.assign(pick, { capitalization: "normal", tracking: 0, size: Math.max(10, Math.round((right - left) / 46)), leading: { kind: "auto" } });
+      Object.assign(pick, { capitalization: "normal", tracking: 0, size: Math.max(MIN_TYPE, Math.round((right - left) / 46)), leading: { kind: "auto" } });
       if (!/Italic/.test(String(pick.fontStyle))) pick.fontStyle = "Regular";
       const head = page.items.find((i) => i.kind === "text" && i.role === "headline" && i.id !== it.id);
       if (head) { const f = (await charAttrs(head.id)).chars?.fill; if (f) pick.fill = f; }
@@ -1291,7 +1445,7 @@ async function placeNewPart(page, it, slots) {
   await dc("transform.set", { x: left, y: top, width: W, height: 400, ref: 0, ids: [it.id] });
   const s = (await dcJson("get_story", { frame: it.id })) || {};
   const a = (await charAttrs(it.id)).chars || {};
-  const size = Number(a.size) || 12;
+  const size = Number(a.size) || MIN_TYPE;
   const h = Math.ceil((s.lines || 1) * size * 1.3 + size * 0.4);
   const gap = it.role === "footer" ? gaps.filter((g) => g[1] - g[0] >= h).pop() || gaps[gaps.length - 1]
     : it.role === "headline" ? gaps.find((g) => g[1] - g[0] >= h) || gaps[0]
@@ -1564,13 +1718,13 @@ async function addPageNumber(doc, index) {
   const m = p.margins || {};
   const inX = p.side === "left" ? m.outside ?? 36 : m.inside ?? 36, outX = p.side === "left" ? m.inside ?? 36 : m.outside ?? 36;
   const yc = y1 - (m.bottom ?? 36) * 0.5;
-  const r = (await dc("frame.create", { spread: pg.spread, rect: [x0 + inX, yc - 7, x1 - outX, yc + 7], content: "text", text: "\uE000" })).json;
+  const r = (await dc("frame.create", { spread: pg.spread, rect: [x0 + inX, yc - 10, x1 - outX, yc + 10], content: "text", text: "\uE000" })).json;
   if (r?.id == null) return 0;
   await mustCall("designcraft", "batch", { commands: [
     { command: "object.rename", params: { id: r.id, name: PAGE_NUMBER_NAME } },
     { command: "object.textFrameOptions", params: { inset: 0, verticalJustification: "center", ids: [r.id] } },
     { command: "selection.set", params: { ids: [r.id] } },
-    { command: "type.char", params: { attrs: { size: 9 } } },
+    { command: "type.char", params: { attrs: { size: MIN_TYPE } } },
     { command: "type.para", params: { attrs: { align: p.side === "left" ? "left" : p.side === "right" ? "right" : "center" } } },
     { command: "selection.set", params: { ids: [] } },
   ] });
@@ -1798,6 +1952,36 @@ export function textBox(layers, w, h, pad) {
   return [pad, y, w - 2 * pad, h - pad - y];
 }
 
+/** A placed text comes in at DesignCraft's default 12 pt, under MIN_TYPE:
+ *  set the whole story at 14 pt and flow what no longer fits onto new pages. */
+async function storyAtMinType(story) {
+  const st = (await dcJson("get_story", { story })) || {};
+  const len = Buffer.byteLength(String(st.text || ""));
+  if (!len) return;
+  await dc("text.select", { story, anchor: 0, focus: len });
+  const cur = Number((await dc("type.selectionAttrs", {})).json?.chars?.size) || 0;
+  if (cur >= MIN_TYPE) { await dc("text.exitToFrame", {}).catch(() => {}); return; }
+  await dc("type.char", { attrs: { size: MIN_TYPE, leading: { kind: "points", value: Math.round(MIN_TYPE * 1.4 * 10) / 10 } } });
+  await dc("text.exitToFrame", {}).catch(() => {});
+  await dc("selection.set", { ids: [] });
+  const after = (await dcJson("get_story", { story })) || {};
+  const last = (after.frames || []).at(-1);
+  if (after.overset == null || last == null) return;
+  // One more page, a frame where the last one sits on its page, and autoflow
+  // adds the rest.
+  let doc = await designDoc();
+  const pages = docPages(doc), n = pages.length;
+  const it = (doc.spreads || []).flatMap((sp) => sp.items || []).find((x) => x.id === last);
+  const from = it && pages.find((p) => p.items.some((x) => x.id === last));
+  if (!from) return;
+  await dc("layout.pages.insert", { count: 1, after: n - 1 });
+  doc = await designDoc();
+  const to = docPages(doc)[n];
+  if (!to) return;
+  const [bx0, by0, bx1, by1] = it.bounds, dx = to.bounds[0] - from.bounds[0], dy = to.bounds[1] - from.bounds[1];
+  await mustCall("designcraft", "execute", { command: "text.thread", params: { from: last, spread: to.spread, rect: [bx0 + dx, by0 + dy, bx1 + dx, by1 + dy], autoflow: true } }, EXPORT_TIMEOUT_MS);
+}
+
 async function importText(app, text, opts) {
   text = String(text || "");
   if (!text.trim()) throw httpError(400, "text is empty");
@@ -1809,6 +1993,7 @@ async function importText(app, text, opts) {
     writeFileSync(file, plainText(text));
     const slot = opts.rect ? { spread: opts.spread ?? 0, rect: opts.rect } : await designTarget(72);
     const r = await mustCall(app, "execute", { command: "file.place", params: { path: file, spread: slot.spread, rect: slot.rect, autoflow: true } }, EXPORT_TIMEOUT_MS);
+    if (r.json?.story != null) await storyAtMinType(r.json.story);
     return r.json ?? r.text;
   }
   if (app === "photocraft") {

@@ -260,10 +260,17 @@ export function blockHeight(t, size, n) {
   return Math.ceil(m.capHeight * size + Math.max(0, n - 1) * lead + m.descent * size + 2 + size * 0.06);
 }
 
+/** The smallest type on any page, in points. The user's rule (2026-10-14):
+ *  people can't comfortably read printed type under 14 pt, so nothing — body,
+ *  footer, caption, label, page number — is ever set smaller. Copy that won't
+ *  fit at 14 pt is reported (shorten it, or add a page), never shrunk. */
+export const MIN_TYPE = 14;
+
 /** Largest size in [min, max] at which `text` takes at most `lines` lines in
  *  `width` without breaking a word — how a designer sizes a headline: as big
  *  as the measure allows. Steps of 1 pt (or 0.5 below 24). */
-export function fitSize(text, t, width, { min = 12, max = 200, lines = 3 } = {}) {
+export function fitSize(text, t, width, { min = MIN_TYPE, max = 200, lines = 3 } = {}) {
+  min = Math.max(MIN_TYPE, min);
   let lo = min, hi = Math.max(min, max), best = null;
   for (let k = 0; k < 24 && hi - lo > 0.5; k++) {
     const mid = (lo + hi) / 2;
@@ -349,13 +356,20 @@ function overFont(t, font) {
   const tries = [t.style, ...(heavy ? ["Black", "ExtraBold", "Bold", "SemiBold"] : []), italic ? "Italic" : null, "Regular"].filter(Boolean);
   return { ...t, font, style: tries.find((st) => hasFont(font, st)) || t.style };
 }
+/** The style of `font` nearest to `style` (a Black headline stays heavy). */
+export const nearestStyle = (font, style) => overFont({ style: style || "Regular" }, font).style;
 let SQUEEZE = 1;
 function setText(part, t, width, opt = {}) {
-  let size = opt.size != null ? Math.max(6.5, Math.round(opt.size * Math.sqrt(SQUEEZE) * 2) / 2) : undefined;
+  let size = opt.size != null ? Math.max(MIN_TYPE, Math.round(opt.size * Math.sqrt(SQUEEZE) * 2) / 2) : undefined;
   // A size set by hand wins, unless the look can't fit it on the page at all:
   // then it steps down with everything else (SQUEEZE), so "bigger" never
   // pushes the headline off the page or onto the footer.
-  if (part.over?.size) size = Math.max(6.5, Math.round(Number(part.over.size) * SQUEEZE * 2) / 2);
+  if (part.over?.size) size = Math.max(MIN_TYPE, Math.round(Number(part.over.size) * SQUEEZE * 2) / 2);
+  // The page next to this one set this part at `match` pt: pages that sit
+  // together share their type sizes (layoutPage, matchSizes), stepping down
+  // with the rest only when this page's copy can't fit at that size.
+  else if (part.match) size = Math.max(MIN_TYPE, Math.round(Number(part.match) * SQUEEZE * 2) / 2);
+  const pinned = !!(part.over?.size || part.match);
   // DesignCraft kerns and composes whole paragraphs, so it can break a line
   // earlier or later than the estimate; `fudge` (learned from the page, see
   // layoutLook) narrows or widens the measure the estimate uses.
@@ -363,7 +377,8 @@ function setText(part, t, width, opt = {}) {
   // DesignCraft's measure (within ~1% of ours, more with wide tracking) would
   // otherwise break the longest word ("SUMME / R").
   const mw = (width * 0.97) / (part.fudge || 1);
-  if (!part.over?.size && opt.fit) size = fitSize(part.text, t, mw, { ...opt.fit, max: Math.max(opt.fit.min, opt.fit.max * SQUEEZE) }).size;
+  if (!pinned && opt.fit) size = fitSize(part.text, t, mw, { ...opt.fit, max: Math.max(opt.fit.min, opt.fit.max * SQUEEZE) }).size;
+  size = Math.max(MIN_TYPE, size ?? MIN_TYPE);
   const tt = part.over?.font ? overFont(t, part.over.font) : t;
   const n = part.dcLines?.size === size && part.dcLines?.w === Math.round(width) ? part.dcLines.lines : wrap(part.text, tt, size, mw).lines.length;
   return { t: tt, size, lines: n, w: width, h: blockHeight(tt, size, n) + Math.ceil((part.extraEm || 0) * size), align: part.over?.align || opt.align || "left" };
@@ -385,13 +400,18 @@ export function planLook(look, page, parts, pal) {
   // Copy that runs long: step the type down (headlines faster than text)
   // until it fits, the way a designer would, rather than let it collide.
   let plan;
-  try {
-    for (let k = 0; k < 8; k++) {
-      SQUEEZE = 0.88 ** k;
-      plan = fn(P, parts, pal);
-      if (!planIssues(plan, page).length) break;
-    }
-  } finally { SQUEEZE = 1; }
+  const tryPlan = (PP) => {
+    try {
+      for (let k = 0; k < 8; k++) {
+        SQUEEZE = 0.88 ** k;
+        plan = fn(PP, parts, pal);
+        if (!planIssues(plan, page).length) return true;
+      }
+      return false;
+    } finally { SQUEEZE = 1; }
+  };
+  // The neighbour page's columns, unless this page's copy can't fit in them.
+  if (!tryPlan(P) && P.match) tryPlan({ ...P, match: undefined });
   // Balanced headings: the tightest measure that keeps the line count, so a
   // two-line title doesn't leave one word on its own ("Summer Book / Fair" →
   // "Summer / Book Fair"). Done by narrowing the frame (centred ones stay
@@ -458,10 +478,10 @@ const PLANS = {
     const cw = W - 2 * m;
     // Measure the type block first: the headline fills the measure, and the
     // photo takes what's left (between 40 and 60% of the page).
-    const fs = foot && setText(foot, face("interSmall"), cw, { size: Math.max(7.5, Math.round(W / 70 * 10) / 10) });
+    const fs = foot && setText(foot, face("interSmall"), cw, { size: Math.max(MIN_TYPE, Math.round(W / 70 * 10) / 10) });
     const ss = sub && setText(sub, face("interLabel"), cw * 0.8, { size: Math.round(W / 48) });
     const bodyT = face("inter", { lead: 1.45 });
-    const bodySize = Math.max(10, Math.round(W / 46 * 2) / 2);
+    const bodySize = Math.max(MIN_TYPE, Math.round(W / 46 * 2) / 2);
     const bodyW = Math.min(cw, cw * 0.86);
     const bodyH = bodiesHeight(bodies, bodyT, bodyW, bodySize, m * 0.25);
     const fixed = (ss ? ss.h + m * 0.85 : 0) + (bodies.length ? bodyH + m * 0.5 : 0) + (fs ? fs.h + m * 0.8 : 0) + m * 1.45;
@@ -512,14 +532,14 @@ const PLANS = {
     if (sub) shapes.push({ name: "Top fade", kind: "rect", box: [x, y, W, H * 0.22], gradient: { angle: 90, stops: [[0, bg, 0], [60, bg, 75], [100, bg, 92]] } });
     const cw = W - 2 * m;
     if (sub) {
-      const s = setText(sub, face("montLabel"), cw, { size: Math.max(8, Math.round(W / 56)), align: "center" });
+      const s = setText(sub, face("montLabel"), cw, { size: Math.max(MIN_TYPE, Math.round(W / 56)), align: "center" });
       frames.push({ id: sub.id, role: "subhead", box: [x + m, y + m, cw, s.h], text: { ...s, color: colourOf(sub, mix(fg, bg, 0.12)) } });
     }
-    const fs = foot && setText(foot, face("montLabel", { tracking: 300 }), cw, { size: Math.max(7, Math.round(W / 72)), align: "center" });
+    const fs = foot && setText(foot, face("montLabel", { tracking: 300 }), cw, { size: Math.max(MIN_TYPE, Math.round(W / 72)), align: "center" });
     let by = y + H - m - (fs ? fs.h : 0);
     if (foot) frames.push({ id: foot.id, role: "footer", box: [x + m, by, cw, fs.h], text: { ...fs, color: colourOf(foot, mix(fg, bg, 0.25)) } });
     by -= m * 0.9;
-    const bodyT = face("garamondItalic"), bodyW = Math.min(cw, W * 0.62), bodySize = Math.max(10, Math.round(W / 40));
+    const bodyT = face("garamondItalic"), bodyW = Math.min(cw, W * 0.62), bodySize = Math.max(MIN_TYPE, Math.round(W / 40));
     const bh = bodiesHeight(bodies, bodyT, bodyW, bodySize, m * 0.2);
     let ty = by - bh;
     stackBodies(frames, bodies, bodyT, x + (W - bodyW) / 2, ty, bodyW, bodySize, mix(fg, bg, 0.15), m * 0.2, { align: "center" });
@@ -551,16 +571,18 @@ const PLANS = {
     shapes.push({ name: "Top rule", kind: "rect", box: [x + m, cy, cw, 2.5], fill: ink });
     cy += m * 0.45;
     if (sub) {
-      const s = setText(sub, face("interLabel", { tracking: 200 }), cw, { size: Math.max(8, Math.round(W / 60)) });
+      const s = setText(sub, face("interLabel", { tracking: 200 }), cw, { size: Math.max(MIN_TYPE, Math.round(W / 60)) });
       frames.push({ id: sub.id, role: "subhead", box: [x + m, cy, cw, s.h], text: { ...s, color: colourOf(sub, acc) } });
       cy += s.h + m * 0.4;
     }
-    const fs = foot && setText(foot, face("interSmall", { tracking: 140 }), cw, { size: Math.max(7, Math.round(W / 76)) });
+    const fs = foot && setText(foot, face("interSmall", { tracking: 140 }), cw, { size: Math.max(MIN_TYPE, Math.round(W / 76)) });
     const fy = y + H - m - (fs ? fs.h : 0);
-    const bodyT = face("inter", { lead: 1.5 }), bodySize = Math.max(9.5, Math.round(W / 52 * 2) / 2);
+    const bodyT = face("inter", { lead: 1.5 }), bodySize = Math.max(MIN_TYPE, Math.round(W / 52 * 2) / 2);
     const long = joinText(bodies).length > 380;
-    const bodyCols = long ? 2 : 1;
-    const bodyW = long ? cw : cw * 0.74;
+    // Columns as on the page this one sits with (P.match), else by length.
+    const bodyCols = P.match?.columns || (long ? 2 : 1);
+    const wide = bodyCols > 1;
+    const bodyW = wide ? cw : cw * 0.74;
     const colW = (bodyW - (bodyCols - 1) * m * 0.4) / bodyCols;
     const bh = bodies.length ? bodiesHeight(bodies, bodyT, colW, bodySize, m * 0.2) / bodyCols + bodySize : 0;
     if (head) {
@@ -569,7 +591,7 @@ const PLANS = {
       frames.push({ id: head.id, role: "headline", box: [x + m, cy, cw, s.h], text: { ...s, color: colourOf(head, ink) } });
       cy += s.h + m * 0.45;
     }
-    const cs = cap && setText(cap, face("playfairItalic"), cw, { size: Math.max(8, Math.round(W / 62)) });
+    const cs = cap && setText(cap, face("playfairItalic"), cw, { size: Math.max(MIN_TYPE, Math.round(W / 62)) });
     if (imgs.length) {
       const room = fy - cy - (bodies.length ? bh + m * 0.5 : 0) - (cs ? cs.h + m * 0.25 : 0) - m * 0.6;
       const a = imgs[0].aspect || 1.5;
@@ -605,7 +627,7 @@ const PLANS = {
     let cy = y + m;
     shapes.push({ name: "Accent block", kind: "rect", box: [x + m, cy, col * 0.55, col * 0.55], fill: acc });
     cy += col * 0.55 + m * 0.5;
-    const fs = foot && setText(foot, face("interBold", { tracking: 0 }), cw, { size: Math.max(8, Math.round(W / 64)) });
+    const fs = foot && setText(foot, face("interBold", { tracking: 0 }), cw, { size: Math.max(MIN_TYPE, Math.round(W / 64)) });
     const fy = y + H - m - (fs ? fs.h : 0);
     if (head) {
       const t = face("interTightBlack");
@@ -616,11 +638,11 @@ const PLANS = {
     const leftW = 2 * col + g;
     const top = cy;
     if (sub) {
-      const s = setText(sub, face("interBold"), leftW, { size: Math.max(10, Math.round(W / 40)) });
+      const s = setText(sub, face("interBold"), leftW, { size: Math.max(MIN_TYPE, Math.round(W / 40)) });
       frames.push({ id: sub.id, role: "subhead", box: [cx(0), cy, leftW, s.h], text: { ...s, color: colourOf(sub, acc) } });
       cy += s.h + m * 0.35;
     }
-    const bodyT = face("inter", { lead: 1.45 }), bodySize = Math.max(9, Math.round(W / 58 * 2) / 2);
+    const bodyT = face("inter", { lead: 1.45 }), bodySize = Math.max(MIN_TYPE, Math.round(W / 58 * 2) / 2);
     if (imgs.length) {
       const iw = 4 * col + 3 * g;
       const ih = Math.max(80, Math.min(fy - top - m * 0.9, iw / clamp(imgs[0].aspect || 1, 0.7, 1.6)));
@@ -653,7 +675,7 @@ const PLANS = {
     const cw = W - 2 * m;
     let cy = y + m;
     if (sub) {
-      const s = setText(sub, face("cinzelSmall"), cw, { size: Math.max(8, Math.round(W / 58)), align: "center" });
+      const s = setText(sub, face("cinzelSmall"), cw, { size: Math.max(MIN_TYPE, Math.round(W / 58)), align: "center" });
       frames.push({ id: sub.id, role: "subhead", box: [x + m, cy, cw, s.h], text: { ...s, color: colourOf(sub, gold) } });
       cy += s.h + m * 0.35;
     }
@@ -669,9 +691,9 @@ const PLANS = {
     shapes.push({ name: "Ornament right", kind: "rect", box: [x + W / 2 + 9, oy, ow / 2 - 9, 0.75], fill: gold });
     shapes.push({ name: "Ornament", kind: "diamond", box: [x + W / 2 - 4, oy - 3.6, 8, 8], fill: gold });
     cy += m * 0.55;
-    const fs = foot && setText(foot, face("cinzelSmall", { tracking: 200 }), cw, { size: Math.max(7, Math.round(W / 70)), align: "center" });
+    const fs = foot && setText(foot, face("cinzelSmall", { tracking: 200 }), cw, { size: Math.max(MIN_TYPE, Math.round(W / 70)), align: "center" });
     const fy = y + H - m - (fs ? fs.h : 0);
-    const bodyT = face("garamond"), bodySize = Math.max(9.5, Math.round(W / 46 * 2) / 2), bodyW = Math.min(cw, W * 0.6);
+    const bodyT = face("garamond"), bodySize = Math.max(MIN_TYPE, Math.round(W / 46 * 2) / 2), bodyW = Math.min(cw, W * 0.6);
     const bh = bodiesHeight(bodies, bodyT, bodyW, bodySize, m * 0.2);
     const cs = cap && setText(cap, face("garamondItalic"), bodyW, { size: bodySize * 0.85, align: "center" });
     if (imgs.length) {
@@ -703,7 +725,7 @@ const PLANS = {
     const cw = W - 2 * m;
     let cy = y + m;
     if (sub) {
-      const s = setText(sub, face("interSmall", { tracking: 200 }), cw, { size: Math.max(7.5, Math.round(W / 68)) });
+      const s = setText(sub, face("interSmall", { tracking: 200 }), cw, { size: Math.max(MIN_TYPE, Math.round(W / 68)) });
       shapes.push({ name: "Accent dot", kind: "ellipse", box: [x + m, cy + s.size * 0.12, s.size * 0.7, s.size * 0.7], fill: acc });
       frames.push({ id: sub.id, role: "subhead", box: [x + m + s.size * 1.4, cy, cw - s.size * 1.4, s.h], text: { ...s, color: colourOf(sub, mix(ink, bg, 0.35)) } });
       cy += s.h + m * 0.5;
@@ -714,9 +736,9 @@ const PLANS = {
       frames.push({ id: head.id, role: "headline", box: [x + m, cy, cw * 0.88, s.h], text: { ...s, color: colourOf(head, ink) } });
       cy += s.h + m * 0.6;
     }
-    const fs = foot && setText(foot, face("inter", { lead: 1.4 }), cw, { size: Math.max(7, Math.round(W / 80)) });
+    const fs = foot && setText(foot, face("inter", { lead: 1.4 }), cw, { size: Math.max(MIN_TYPE, Math.round(W / 80)) });
     const fy = y + H - m - (fs ? fs.h : 0);
-    const bodyT = face("inter", { lead: 1.6 }), bodySize = Math.max(9, Math.round(W / 60 * 2) / 2), bodyW = cw * 0.6;
+    const bodyT = face("inter", { lead: 1.6 }), bodySize = Math.max(MIN_TYPE, Math.round(W / 60 * 2) / 2), bodyW = cw * 0.6;
     const bh = bodiesHeight(bodies, bodyT, bodyW, bodySize, m * 0.2);
     if (imgs.length) {
       const full = fy - cy - (bodies.length ? bh + m * 0.5 : 0) - m * 0.3;
@@ -751,14 +773,14 @@ const PLANS = {
     shapes.push({ name: "Accent bar", kind: "rect", box: portrait ? [x, y + H * 0.5 - 3, W, 6] : [x + W * 0.5 - 3, y, 6, H], fill: pal.accentOnDark });
     const [ax, ay, aw, ah] = area;
     const items = [];
-    if (sub) items.push(["subhead", sub, setText(sub, face("dmSansLabel"), aw, { size: Math.max(8, Math.round(W / 60)) }), pal.accentOnDark, m * 0.4]);
+    if (sub) items.push(["subhead", sub, setText(sub, face("dmSansLabel"), aw, { size: Math.max(MIN_TYPE, Math.round(W / 60)) }), pal.accentOnDark, m * 0.4]);
     if (head) {
       const t = face("dmSerif");
       items.push(["headline", head, setText(head, t, aw, { fit: { min: 20, max: Math.round(Math.min(aw / 3.2, ah / 3)), lines: 4 } }), fg, m * 0.45]);
     }
-    const bodyT = face("dmSans"), bodySize = Math.max(8.5, Math.round(W / 60 * 2) / 2);
+    const bodyT = face("dmSans"), bodySize = Math.max(MIN_TYPE, Math.round(W / 60 * 2) / 2);
     for (const p of bodies) items.push([p.role, p, setText(p, bodyT, aw, { size: bodySize }), mix(fg, panel, 0.2), m * 0.2]);
-    const fs = foot && setText(foot, face("dmSansLabel", { tracking: 120 }), aw, { size: Math.max(7, Math.round(W / 80)) });
+    const fs = foot && setText(foot, face("dmSansLabel", { tracking: 120 }), aw, { size: Math.max(MIN_TYPE, Math.round(W / 80)) });
     const total = items.reduce((s, it) => s + it[2].h + it[4], 0) - (items.length ? items[items.length - 1][4] : 0);
     let cy = ay + Math.max(0, (ah - (fs ? fs.h + m : 0) - total) / 2);
     for (const [role, p, s, c, gap] of items) {
@@ -784,7 +806,7 @@ const PLANS = {
     let cy = y + m;
     if (sub) {
       const t = face("spaceBold", { caps: true, tracking: 80 });
-      const size = Math.max(8, Math.round(W / 50));
+      const size = Math.max(MIN_TYPE, Math.round(W / 50));
       const s = setText(sub, t, cw - 24, { size });
       const tw = Math.min(cw, textWidth(sub.text, t, size) + size * 1.6);
       shapes.push({ name: "Tag", kind: "rect", box: [x + m, cy, tw, s.h + size * 0.9], fill: ink, corner: (s.h + size * 0.9) / 2 });
@@ -797,9 +819,9 @@ const PLANS = {
       frames.push({ id: head.id, role: "headline", box: [x + m, cy, cw, s.h], text: { ...s, color: colourOf(head, ink) } });
       cy += s.h + m * 0.6;
     }
-    const fs = foot && setText(foot, face("spaceBold"), cw, { size: Math.max(8, Math.round(W / 60)) });
+    const fs = foot && setText(foot, face("spaceBold"), cw, { size: Math.max(MIN_TYPE, Math.round(W / 60)) });
     const fy = y + H - m - (fs ? fs.h : 0);
-    const bodyT = face("space", { lead: 1.4 }), bodySize = Math.max(9, Math.round(W / 50 * 2) / 2), bodyW = cw * 0.8;
+    const bodyT = face("space", { lead: 1.4 }), bodySize = Math.max(MIN_TYPE, Math.round(W / 50 * 2) / 2), bodyW = cw * 0.8;
     const bh = bodiesHeight(bodies, bodyT, bodyW, bodySize, m * 0.2);
     if (imgs.length) {
       const full = fy - cy - (bodies.length ? bh + m * 0.6 : 0) - m * 0.6;
@@ -836,16 +858,16 @@ const PLANS = {
     // Measure the type from the bottom up; the picture gets what's left.
     const pad = Math.round(m * 0.45);
     // Inter for the call to action: coupon type, and it has the arrows (→) Lora lacks.
-    const fs = foot && setText(foot, face("interBold", { tracking: 0 }), cw - 2 * pad, { size: Math.max(9, Math.round(W / 46 * 2) / 2), align: "center" });
+    const fs = foot && setText(foot, face("interBold", { tracking: 0 }), cw - 2 * pad, { size: Math.max(MIN_TYPE, Math.round(W / 46 * 2) / 2), align: "center" });
     const boxH = fs ? fs.h + 2 * pad : 0;
-    const bodyT = face("lora"), bodySize = Math.max(9, Math.round(W / 56 * 2) / 2);
+    const bodyT = face("lora"), bodySize = Math.max(MIN_TYPE, Math.round(W / 56 * 2) / 2);
     const len = joinText(bodies).length;
-    const cols = len > 700 && W >= 500 ? 3 : len > 220 ? 2 : 1;
+    const cols = P.match?.columns || (len > 700 && W >= 500 ? 3 : len > 220 ? 2 : 1);
     const bodyW = cols === 1 ? Math.min(cw, cw * 0.8) : cw;
     const colW = (bodyW - (cols - 1) * Math.round(bodySize * 1.6)) / cols;
     const bh = bodies.length ? bodiesHeight(bodies, bodyT, colW, bodySize, m * 0.2) / cols + bodySize * (cols > 1 ? 1.5 : 0.5) : 0;
-    const ss = sub && setText(sub, face("baskervilleItalic"), cw * 0.88, { size: Math.max(10, Math.round(W / 40)), align: "center" });
-    const cs = cap && setText(cap, face("baskervilleItalic", { lead: 1.3 }), cw * 0.9, { size: Math.max(8, Math.round(W / 66 * 2) / 2), align: "center" });
+    const ss = sub && setText(sub, face("baskervilleItalic"), cw * 0.88, { size: Math.max(MIN_TYPE, Math.round(W / 40)), align: "center" });
+    const cs = cap && setText(cap, face("baskervilleItalic", { lead: 1.3 }), cw * 0.9, { size: Math.max(MIN_TYPE, Math.round(W / 66 * 2) / 2), align: "center" });
     const t = face("baskervilleBold");
     const rest = (cs ? cs.h + gap : 0) + (ss ? ss.h + gap : 0) + (bh ? bh + m * 0.45 : 0) + (boxH ? boxH + m * 0.45 : 0) + m * 1.4;
     let hs = head && setText(head, t, cw, { fit: { min: 18, max: Math.round(H * (imgs.length ? 0.075 : 0.11)), lines: 3 }, align: "center" });
@@ -910,7 +932,7 @@ export function planIssues(plan, page) {
   for (const f of plan.frames) {
     const [fx, fy, fw, fh] = f.box;
     if (fx < x - 0.5 || fy < y - 0.5 || fx + fw > x + W + 0.5 || fy + fh > y + H + 0.5) issues.push(`${f.role} runs off the page`);
-    if (f.text && f.text.size < 6.5) issues.push(`${f.role} text is too small to read (${f.text.size} pt): shorten it`);
+    if (f.text && f.text.size < MIN_TYPE) issues.push(`${f.role} text is under ${MIN_TYPE} pt (${f.text.size} pt), too small to read: shorten it or add a page`);
     if (f.text && plan.bg && !plan.frames.some((g) => g.image && overlaps(g.box, f.box)) && contrast(f.text.on || plan.bg, f.text.color) < 3) issues.push(`${f.role} colour ${f.text.color} is hard to read on ${f.text.on || plan.bg}`);
   }
   const texts = plan.frames.filter((f) => f.text);

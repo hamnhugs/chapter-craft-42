@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { claimsUnmadeDesignEdit, touchedDesignCraft, unmadeDesignEditNote } from "@/lib/chatHistory";
 import { selectionNote } from "@/lib/craftApps";
-import { resolveSize, samePicture } from "../../scripts/local-ai/craft-bridge.mjs";
+import { resolveSize, sameWords, samePicture } from "../../scripts/local-ai/craft-bridge.mjs";
 
 describe("what the user selected in DesignCraft", () => {
   it("becomes a note naming each item and the ids to act on", () => {
@@ -25,6 +25,14 @@ describe("what the user selected in DesignCraft", () => {
     expect(resolveSize("-4", 40)).toBe(36);
     expect(resolveSize("28", 40)).toBe(28);
     expect(resolveSize("huge-ish", 40)).toBeNull();
+    // Never under 14 pt, however it's asked.
+    expect(resolveSize("smaller", 16)).toBe(14);
+    expect(resolveSize("10", 40)).toBe(14);
+    expect(resolveSize("-50%", 20)).toBe(14);
+    // The headline re-sent with "make it bigger" isn't new words.
+    expect(sameWords("PLAN TO WIN: From Side Hustle", "Plan to Win — from side hustle")).toBe(true);
+    expect(sameWords("Plan to Win", "Plan to Lose")).toBe(false);
+    expect(sameWords("", "")).toBe(false);
     expect(samePicture("/ws/in/1791-image-b9fe2624.png", "/ws/in/1802-image-b9fe2624.png")).toBe(true);
     expect(samePicture("/ws/in/1791-image-b9fe2624.png", "/ws/in/1791-image-d45cdea5.png")).toBe(false);
   });

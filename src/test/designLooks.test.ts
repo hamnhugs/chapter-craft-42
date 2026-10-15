@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  LOOK_NAMES, autoLook, clusterColours, contrast, defaultPalette, fitSize, fromOklch, oklch, paletteFrom, planIssues, planLook, readableOn, wrap,
+  LOOK_NAMES, MIN_TYPE, autoLook, clusterColours, contrast, defaultPalette, fitSize, fromOklch, oklch, paletteFrom, planIssues, planLook, readableOn, wrap,
 } from "../../scripts/local-ai/design-looks.mjs";
 
 // The looks are judged by eye (scripts/local-ai/design-looks-gallery.mjs);
@@ -75,7 +75,7 @@ describe("page looks", () => {
           expect(planIssues(plan, page)).toEqual([]);
           const roles = plan.frames.map((f: any) => f.role).sort();
           expect(roles).toEqual(["body", "footer", "headline", "subhead", ...(img ? ["image"] : [])].sort());
-          for (const f of plan.frames) if (f.text) expect(f.text.size).toBeGreaterThanOrEqual(f.role === "headline" ? 18 : 6.5);
+          for (const f of plan.frames) if (f.text) expect(f.text.size, `${f.role}`).toBeGreaterThanOrEqual(f.role === "headline" ? 18 : MIN_TYPE);
           // The headline is the biggest type on the page.
           const head = plan.frames.find((f: any) => f.role === "headline").text.size;
           for (const f of plan.frames) if (f.text && f.role !== "headline") expect(f.text.size).toBeLessThan(head);
@@ -131,6 +131,37 @@ describe("page looks", () => {
         expect(x >= -0.5 && y >= -0.5 && x + w <= 612.5 && y + h <= 792.5).toBe(true);
       }
     }
+  });
+
+  it("never sets type under 14 pt, even on a small page or with long copy", () => {
+    // The user's rule (2026-10-14): type under 14 pt can't be read.
+    expect(MIN_TYPE).toBe(14);
+    const long = { ...CONTENT, body: CONTENT.body.repeat(3), footer: "Out now at every good bookshop · chaptercraft.app · @chaptercraft" };
+    for (const look of LOOK_NAMES) for (const [W, H] of [[432, 648], [360, 504], [612, 792]]) {
+      const plan = planLook(look, { x: 0, y: 0, W, H }, parts(true, long), pal);
+      for (const f of plan.frames) if (f.text) expect(f.text.size, `${look} ${W}×${H} ${f.role}`).toBeGreaterThanOrEqual(MIN_TYPE);
+    }
+    const p = parts();
+    p.find((x) => x.role === "footer").over = { size: 8 };
+    expect(planLook("editorial", { x: 0, y: 0, W: 612, H: 792 }, p, pal).frames.find((f: any) => f.role === "footer").text.size).toBe(MIN_TYPE);
+  });
+
+  it("sets a page at the sizes and columns of the page it sits with", () => {
+    // Page 2 after page 1: the user saw page 2 sized on its own.
+    const page = { x: 0, y: 0, W: 612, H: 792 };
+    for (const look of LOOK_NAMES) {
+      const first = planLook(look, page, parts(), pal);
+      const size = (pl: any, r: string) => pl.frames.find((f: any) => f.role === r)?.text?.size;
+      const next = parts(false, { headline: "Chapter Two", body: CONTENT.body.repeat(2), footer: "chaptercraft.app" });
+      for (const q of next) if (q.kind === "text") q.match = size(first, q.role);
+      const second = planLook(look, page, next, pal);
+      for (const r of ["headline", "body", "footer"]) expect(size(second, r), `${look} ${r}`).toBe(size(first, r));
+    }
+    // Long copy that would get two columns on its own keeps the first page's one.
+    const body = parts(false, { body: CONTENT.body.repeat(4) });
+    const cols = (pl: any) => pl.frames.find((f: any) => f.role === "body").text.columns;
+    expect(cols(planLook("editorial", page, body, pal))).toBe(2);
+    expect(cols(planLook("editorial", { ...page, match: { columns: 1 } } as any, body, pal))).toBe(1);
   });
 
   it("starts a page in editorial, headline on top", () => {

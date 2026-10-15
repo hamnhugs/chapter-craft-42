@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { autoRole, bleedSteps, compactLayers, designPage, designSlot, desktopPids, docCount, docPages, findLayer, inWorkspace, isTwoSided, lookTarget, pageLabel, pageSize, pagesOverview, parsePartName, partName, pdfParams, pickLook, plainText, printNote, rankCommands, resolvePage, textBox } from "../../scripts/local-ai/craft-bridge.mjs";
+import { anchorPage, autoRole, bleedSteps, compactLayers, designPage, designSlot, desktopPids, docCount, docPages, findLayer, inWorkspace, isTwoSided, lookTarget, pageLabel, pageSize, pagesOverview, parsePartName, partName, pdfParams, pickLook, plainText, printNote, rankCommands, resolvePage, textBox } from "../../scripts/local-ai/craft-bridge.mjs";
 
 describe("rankCommands", () => {
   const list = [
@@ -191,6 +191,20 @@ describe("pages: front and back, many pages", () => {
   const doc = (n: number, twoSided = false, items: any[][] = []) => ({
     settings: { pageWidth: 612, pageHeight: 792 },
     spreads: Array.from({ length: n }, (_, i) => ({ pages: [page(i)], items: [...(i === 0 && twoSided ? [{ id: 99, name: "Sides 2", bounds: [0, 0, 1, 1], hidden: true }] : []), ...(items[i] || [])] })),
+  });
+
+  it("matches a page to the page before it, in the same look and size", () => {
+    const designed = (id: number, look = "editorial") => [
+      { id, name: `Look ${look}`, kind: "rectangle", bounds: [0, 0, 612, 792] },
+      { id: id + 1, name: "Body", kind: "text frame", story: id + 2, bounds: [48, 300, 560, 400] },
+    ];
+    const d = doc(3, false, [designed(10), designed(20), []]);
+    expect(anchorPage(d, 0, "editorial")).toBeNull();
+    expect(anchorPage(d, 1, "editorial")?.page.index).toBe(0);
+    expect(anchorPage(d, 2, "editorial")?.page.index).toBe(1);
+    // Another look, or an empty page before it: no match.
+    expect(anchorPage(d, 1, "bold")).toBeNull();
+    expect(anchorPage(doc(3, false, [designed(10), [], []]), 2, "editorial")).toBeNull();
   });
 
   it("lists every page, with the items on each", () => {

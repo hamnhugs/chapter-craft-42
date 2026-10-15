@@ -106,7 +106,9 @@ changing `src/` (`scripts/local-up.sh` does it when the code changed).
 
 - **`send` with `role`.** The roles are headline, subhead, image, body, caption and footer.
   The model only says what goes in which part. The bridge (`/compose`, `composeDesign` in
-  craft-bridge.mjs) names the frames by role and lays the whole page out again after each edit.
+  craft-bridge.mjs) names the frames by role and lays the whole page out again when a part is
+  added or a look is asked for. Changing a part that's already there touches only that part
+  (see "Type size, matching pages…" below).
 - **`look` designs the page** (2026-10-14). It is one of bold, cinematic, editorial (the
   default), swiss, classic, minimal, split or pop. `send {look}` on its own restyles the
   page. Each look is a designer's recipe: font pairing, type scale, a palette taken from
@@ -360,6 +362,60 @@ numbers. `DESIGN_EVAL_FLYER=0` runs only this session and `DESIGN_EVAL_PAGES=0` 
 original one. Results are in `results/2026-10-14-design-pages.txt`. Final run on Qwen3-4B:
 front and back passed 3/4 full sessions, and the original flyer session 2/4. Picture + headline
 was 4/4; the failures were the selection and Ogilvy turns, which were already flaky.
+
+## Type size, matching pages, and edits that change only what was asked (2026-10-14)
+
+Why: the user's three complaints. Type kept going under 14 pt, which they find
+unreadable. Page 2 didn't continue page 1's sizes. And changing a font re-laid out
+the whole page.
+
+- **Nothing under 14 pt** (`MIN_TYPE` in design-looks.mjs). Every size a look picks,
+  `fitSize`, a hand-set size, "smaller"/"-50%" (`resolveSize`), template fitting
+  (`fitTextSize`, `placeNewPart`), page numbers and placed chapter text (`storyAtMinType`:
+  DesignCraft places text at 12 pt; the story is set to 14 pt and the overflow threaded onto a
+  new page with autoflow) all stop at 14. A size asked under 14 becomes 14, with a note. Copy
+  that won't fit at 14 is reported ("shorten it or add a page"), never shrunk. Before this,
+  the looks set footers, labels and captions at 7–10 pt and body text at 9–13 pt.
+- **Pages that sit together match** (`anchorPage`, `matchSizes` in craft-bridge.mjs). The
+  anchor for a page is the page facing it on its spread when that one comes first, else the
+  page before it, when that page has the same look and size. So the earlier page leads and the
+  first page leads the document. Each part here without a hand-set size takes the anchor's size
+  for that role (`part.match` in `setText`), headline included, and the body takes the anchor's
+  column count (`P.match.columns`, editorial and direct). If the copy can't fit in those columns,
+  the page picks its own. Both step down with the rest (SQUEEZE) when the copy won't fit. The
+  result's note says what was matched ("Matched page 1: headline 59 pt, body 14 pt, 1-column
+  body").
+- **Edits change only what was asked** (`restyleFrame`, `fitInFrame`, `crowdIssues`). A
+  colour, size, font or alignment on a part that's already there (by role, by `ids` or by
+  selection) goes onto that frame alone. There's no new layout, and the colour is exactly the
+  one asked for, not lightened for contrast. The change is still kept in the frame's name, so a
+  later look keeps it. A frame only grows deeper so its text isn't cut off. If it then runs into
+  another part, the result says so and asks the model to check with the user. It never moves the
+  other part. New words for an existing part keep its size, stepping that part alone down (to
+  14 pt at least) to fit its frame. Only when they still don't fit is the page laid out again,
+  and the note says so. "Make the body bigger" by role now works when the page has one body
+  (before: "text is empty").
+- The model is told the same rules in the copy & design section of the prompt
+  (`renderCopyCraftSection`), and the Ogilvy layout card no longer says "10–12 pt".
+
+Checked on a private headless bridge (two Letter pages; font, colour, bigger, 10 pt, new words,
+`ids`; a 3,000-word chapter): only the asked item changed each time. Page 2 came out at page 1's
+59 pt headline, 14 pt body and column width. The chapter landed at 14 pt with nothing cut off.
+Unit tests: designLooks (14 pt on every look and size, matching), designSelection
+(resolveSize floor, sameWords), craftBridge (anchorPage), craftApps (pageNote).
+
+- **An overlap your change caused is said, not fixed.** When the result carries one, `pageNote`
+  leads with it ("Only what the user asked was changed, but now: … Say this plainly … ask
+  whether to make room"), in place of "Fix anything in `issues`". Qwen3-4B otherwise replied
+  "now larger and blue" and said nothing. The same words re-sent with a style (`sameWords`) don't
+  count as new words, so "bigger" isn't shrunk back to fit the old frame (run 2 went 54→55 pt
+  before this, 54→65 after).
+
+Eval (`results/2026-10-14-design-type-rules.txt`, 3 runs): front and back passed 3/3. The flyer
+session passed 0/3, each run stopped by an already-flaky turn (no headline sent; Ogilvy → minimal;
+an invented save action). Every "bigger and blue" turn kept the asked size, and when the headline
+then ran into the picture, the reply said so (the eval now accepts an overlap only when the reply
+mentions it).
 
 ## Measurements (2026-10-13, Qwen3-4B Q6_K)
 

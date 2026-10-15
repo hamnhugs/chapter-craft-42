@@ -321,6 +321,10 @@ describe("DesignCraft pages", () => {
     expect(note).toMatch(/Still empty: the back \(page 1\)/);
     // The back needs no headline nudge.
     expect(pageNote({ page: 1, side: "back", items: [{ role: "body" }], pages: [{ page: 0, side: "front" }, { page: 1, side: "back" }] })).not.toMatch(/No headline/);
+    // An edit that ran into another part: tell the user and ask, don't fix it by moving things.
+    const crowd = pageNote({ page: 0, items: [{ role: "headline" }, { role: "image" }], issues: ["Headline (id 12) now runs into the image (id 9); nothing else was moved. Ask the user whether to make room (a look lays the page out again) or keep it."] });
+    expect(crowd).toMatch(/^Only what the user asked was changed, but now: Headline \(id 12\) now runs into the image \(id 9\)\. Say this plainly/);
+    expect(crowd).not.toMatch(/Fix anything/);
   });
 });
 

@@ -98,6 +98,15 @@ export function pageNote(r: any): string {
     ? `That was the ${r.side} (page ${r.page}).${empty.length ? ` Still empty: ${empty.join(", ")}. If the user asked for it, fill it now: send with role, text and page.` : ""} `
     : "";
   const noHeadline = !has("headline") && !(pages.length > 1 && r?.page > 0);
+  // The user's change (bigger, another font) ran a part into another one. The
+  // bridge changed only what was asked and moved nothing else (the user's rule,
+  // 2026-10-14), so the reply must say so and ask, never "fix" it by moving
+  // things: Qwen3-4B answered "now larger and blue" and left the overlap unsaid.
+  const crowd: string[] = (r?.issues || []).filter((i: string) => /nothing else was moved/.test(i));
+  if (crowd.length) {
+    const what = crowd.map((i) => i.replace(/; nothing else was moved\..*$/, ".")).join(" ");
+    return `${where}Only what the user asked was changed, but now: ${what} Say this plainly in your reply and ask whether to make room (laying the page out again) or leave it. Don't move or resize anything else yourself.`;
+  }
   return `${where}${noHeadline ? "No headline on the page yet. " : ""}${AFTER_PAGE}`;
 }
 
