@@ -8,12 +8,12 @@
 #   1. Docker: enable the service and add you to the `docker` group
 #      (local Supabase and SearXNG run in containers).
 #   2. Ollama: a systemd override with the settings the app was measured with.
-#   3. GPU: while Chapter Craft runs, keep the RX 5600M awake with the COMPUTE
-#      power profile. Measured: under the default "auto" policy VRAM sat at
+#   3. GPU: while Local AI is switched on in the app, keep the RX 5600M awake
+#      with the COMPUTE power profile. Measured: under the default "auto" policy VRAM sat at
 #      500 MHz and prompts ran ~80 tok/s; COMPUTE gives ~415 tok/s. But with
 #      the profile, the card hung ("device lost") 4 times out of 4 on the
 #      first request after waking from runtime suspend — so it stays awake
-#      while the app runs and goes back to stock when it stops
+#      while Local AI is on and goes back to stock when it's off
 #      (docs/local-ai/results/2026-10-12-gpu-profile.txt).
 #   4. Nothing else. No packages are installed.
 set -euo pipefail
@@ -51,12 +51,12 @@ Environment="OLLAMA_KV_CACHE_TYPE=q8_0"
 EOF
 # (Ollama is restarted at the end of step 3, once the helper it calls exists.)
 
-# 3. GPU: awake + COMPUTE while the app runs -----------------------------------
-# One root-owned helper with exactly two verbs, called by scripts/local-up.sh
-# (hold) and scripts/local-down.sh (release):
+# 3. GPU: awake + COMPUTE while Local AI is on ---------------------------------
+# One root-owned helper with exactly two verbs, called by scripts/local-ai/control.mjs
+# when Local AI is switched on (hold) or off (release), and by local-down.sh (release):
 #   hold     power/control=on (no runtime suspend) + manual level + COMPUTE profile
 #   release  power/control=auto + level auto — stock behaviour
-# Nothing applies it at boot: outside Chapter Craft the card behaves as shipped.
+# Nothing applies it at boot: outside Local AI the card behaves as shipped.
 say "gpu: helper for the app's power settings"
 sudo tee /usr/local/bin/cc-amdgpu-compute >/dev/null <<'EOF'
 #!/bin/sh
@@ -93,7 +93,7 @@ SUDOERS=/etc/sudoers.d/cc-amdgpu-compute
 printf '%s\n' "$USER ALL=(root) NOPASSWD: /usr/local/bin/cc-amdgpu-compute hold, /usr/local/bin/cc-amdgpu-compute release" | sudo tee "$SUDOERS.tmp" >/dev/null
 sudo chmod 440 "$SUDOERS.tmp"
 if sudo visudo -cf "$SUDOERS.tmp" >/dev/null; then sudo mv "$SUDOERS.tmp" "$SUDOERS"; else sudo rm -f "$SUDOERS.tmp"; echo "  (sudoers rule rejected by visudo; skipped)"; fi
-sudo /usr/local/bin/cc-amdgpu-compute release   # stock until the app starts
+sudo /usr/local/bin/cc-amdgpu-compute release   # stock until Local AI is switched on
 say "ollama: restart with the new settings"
 sudo systemctl daemon-reload
 sudo systemctl restart ollama

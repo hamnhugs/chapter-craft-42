@@ -119,6 +119,15 @@ export function chatReady(
   return !!(keys.apiKey || keys.nvidiaKeyLast4 || keys.geminiApiKey) || (!!model && isOllamaModel(model));
 }
 
+/** A side-role model (images, deep research) as it applies right now. A
+ *  local one only runs while Local AI is on — i.e. while the chat model is
+ *  local too; otherwise the role falls back to the chat model ("") so
+ *  switching to a cloud model never quietly loads Ollama onto the GPU. */
+export function activeRoleModel(role: string | null | undefined, chatModel: string): string {
+  if (!role) return "";
+  return isOllamaModel(role) && !isOllamaModel(chatModel) ? "" : role;
+}
+
 export function isGeminiModel(id: string): boolean {
   return modelProvider(id) === "gemini";
 }

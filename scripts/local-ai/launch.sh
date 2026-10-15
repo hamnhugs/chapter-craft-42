@@ -48,10 +48,8 @@ exec 9>"$ROOT/.local-state/launch.lock"
 if ! flock -n 9; then notify "Already starting…"; exit 0; fi
 
 # Fast path: everything the window needs is already answering.
-if up "$APP_URL" && up "http://127.0.0.1:54321/auth/v1/health"; then
-  # Re-assert the GPU setting local-up.sh applies (awake + COMPUTE); cheap, and it
-  # may have been released (local-down, setup-once) while the app kept running.
-  sudo -n /usr/local/bin/cc-amdgpu-compute hold 2>/dev/null || true
+# (The GPU control answers 403 without the app's header — any answer means up.)
+if up "$APP_URL" && up "http://127.0.0.1:54321/auth/v1/health" && curl -s -o /dev/null --max-time 2 "http://127.0.0.1:8774/gpu"; then
   open_app
 fi
 
@@ -63,7 +61,8 @@ RC="$ROOT/.local-state/launch.rc"; rm -f "$RC"
 ( "$ROOT/scripts/local-up.sh" >"$LOG" 2>&1; echo $? >"$RC" ) 9>&- &
 starter=$!
 for _ in $(seq 1 600); do   # 5 min ceiling (first run builds the app)
-  if up "$APP_URL" && up "http://127.0.0.1:54321/auth/v1/health"; then
+  # (The GPU control answers 403 without the app's header — any answer means up.)
+if up "$APP_URL" && up "http://127.0.0.1:54321/auth/v1/health" && curl -s -o /dev/null --max-time 2 "http://127.0.0.1:8774/gpu"; then
     # Report a later failure (e.g. voice) without holding the window back.
     ( while kill -0 "$starter" 2>/dev/null; do sleep 1; done
       [ "$(cat "$RC" 2>/dev/null)" = 0 ] || notify -u critical "Part of Chapter Craft didn't start" "See .local-state/logs/launch.log" ) 9>&- &

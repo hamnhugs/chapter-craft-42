@@ -68,24 +68,13 @@ for m in "$LOCAL_LLM_MODEL" "$LOCAL_EMBED_MODEL"; do
 done
 [ -x "$CC_HOME/src/whisper.cpp/build/bin/whisper-server" ] || fail "Services not installed. Run: scripts/local-ai/install-services.sh"
 
-# GPU COMPUTE profile (see setup-once.sh). Best effort: needs its sudoers rule.
-# GPU awake + COMPUTE profile while the app runs; local-down.sh releases it.
-# (setup-once.sh step 3: the profile alone hung the card on wake-from-suspend.)
-dgpu() { # the AMD card with the most VRAM, as the helper picks it
-  local best="" bestv=0 d v
-  for d in /sys/class/drm/card[0-9]*/device; do
-    [ "$(cat "$d/vendor" 2>/dev/null)" = "0x1002" ] || continue
-    v=$(cat "$d/mem_info_vram_total" 2>/dev/null || echo 0)
-    [ "$v" -gt "$bestv" ] && { best="$d"; bestv="$v"; }
-  done
-  echo "$best"
-}
-if sudo -n /usr/local/bin/cc-amdgpu-compute hold 2>/dev/null \
-   && [ "$(cat "$(dgpu)/power/control" 2>/dev/null)" = on ]; then
-  say "gpu: held awake with the COMPUTE profile"
-else
-  say "gpu: not fully tuned — re-run: bash scripts/local-ai/setup-once.sh"
-fi
+# GPU: stock power management until Local AI is switched on in the app, which
+# holds the card awake with the COMPUTE profile through scripts/local-ai/control.mjs
+# (setup-once.sh step 3). Ollama stays up for the CPU embedder behind search;
+# with Local AI off no chat model is loaded and the card can sleep. Only check
+# the helper here: releasing would undo the hold of an app window already open.
+sudo -n -l /usr/local/bin/cc-amdgpu-compute hold >/dev/null 2>&1 \
+  || say "gpu: power helper missing — Local AI will read prompts slowly. Run once: bash scripts/local-ai/setup-once.sh"
 
 # --- containers: SearXNG + the Ollama bridge ----------------------------------
 if [ ! -f "$STATE/searxng/settings.yml" ]; then
@@ -144,7 +133,9 @@ VITE_SUPABASE_PUBLISHABLE_KEY=\"$ANON\"
 VITE_SUPABASE_PROJECT_ID=\"local\"
 VITE_LOCAL_AUTO_EMAIL=\"$OWNER_EMAIL\"
 VITE_LOCAL_AUTO_PASSWORD=\"$OWNER_PASSWORD\"
-VITE_LOCAL_EMBED_MODEL=\"$LOCAL_EMBED_MODEL\""
+VITE_LOCAL_EMBED_MODEL=\"$LOCAL_EMBED_MODEL\"
+VITE_LOCAL_LLM_MODEL=\"$LOCAL_LLM_MODEL\"
+VITE_LOCAL_VISION_MODEL=\"$LOCAL_VISION_MODEL\""
 [ "$(cat .env.local 2>/dev/null)" = "$NEW_ENV" ] || { printf '%s\n' "$NEW_ENV" >.env.local; say "wrote .env.local"; }
 
 # Edge-function env. LOVABLE_API_KEY=local satisfies the functions' existing
@@ -202,6 +193,9 @@ elif [ -s "$IM/TwinFlow_Z_Image_Turbo_exp-Q4_K.gguf" ] && [ -s "$IM/ae.safetenso
 else
   say "images: models not downloaded — skipping (install-services.sh fetches them)"
 fi
+
+# GPU power switch for Local AI (the browser can't run sudo).
+start_bg control node scripts/local-ai/control.mjs
 
 # --- ArtCraft apps (PhotoCraft, DesignCraft, FilmCraft) ------------------------------
 # The bridge Counsel drives them through. Only when they're installed

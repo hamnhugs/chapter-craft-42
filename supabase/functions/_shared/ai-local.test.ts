@@ -70,7 +70,7 @@ Deno.test("fitDims: zero-pad keeps cosine exact; truncate when longer", () => {
 });
 
 Deno.test("Ollama only when a local chat model is selected", () => {
-  assertEquals(routeFor(null), { local: true });
+  assertEquals(routeFor(null), { local: false, selected: "google/gemini-2.5-flash", utility: "", openrouterKey: "" });
   assertEquals(routeFor({ selected_model: "ollama:qwen3:8b" }), { local: true });
   const r = routeFor({ selected_model: "google/gemini-4-argon", openrouter_api_key: " k " });
   assertEquals(r, { local: false, selected: "google/gemini-4-argon", utility: "", openrouterKey: "k" });

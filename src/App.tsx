@@ -8,6 +8,7 @@ import { AppProvider } from "@/context/AppContext";
 import { ChatProvider } from "@/context/ChatContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { useAuth } from "@/hooks/useAuth";
+import { LocalAiPower } from "@/hooks/useLocalAiPower";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
@@ -72,6 +73,7 @@ const App = () => (
         <HashRouter>
           <AppProvider>
             <ChatProvider>
+              <LocalAiPower />
               {/* Fallback mirrors the ProtectedRoute loading state so chunk loads look identical */}
               <Suspense fallback={<div className="flex items-center justify-center h-screen text-muted-foreground">Loading…</div>}>
               <Routes>

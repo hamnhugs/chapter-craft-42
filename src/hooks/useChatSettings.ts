@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { isEmbeddingModel } from "@/lib/utils";
-import { modelProvider, providerConfigured, providerLabel } from "@/lib/providers/registry";
+import { isOllamaModel, modelProvider, providerConfigured, providerLabel } from "@/lib/providers/registry";
 
 export type LeanMode = "full" | "lean" | "chat_only";
 
@@ -17,8 +17,14 @@ export type LeanMode = "full" | "lean" | "chat_only";
 //   vision    qwen3.5:4b — 13/14 and sees images, but its hybrid layers can't
 //             rewind the cache, so it re-reads the whole chat every turn.
 //   research  qwen3:8b — 14/14 at ~3x the latency, which Deep Research affords.
-const DEFAULT_MODEL = "ollama:hf.co/unsloth/Qwen3-4B-Instruct-2507-GGUF:Q6_K";
-const DEFAULT_VISION_MODEL = "ollama:qwen3.5:4b";
+// Local AI is off until the user switches it on (Settings → Models on this
+// computer): chat starts on a cloud model and Ollama loads nothing onto the GPU.
+const DEFAULT_MODEL = "google/gemini-2.5-flash";
+/** The chat model Local AI switches to the first time. scripts/local-up.sh
+ *  passes the one it installed. */
+export const DEFAULT_LOCAL_MODEL = `ollama:${(import.meta.env.VITE_LOCAL_LLM_MODEL as string | undefined) || "hf.co/unsloth/Qwen3-4B-Instruct-2507-GGUF:Q6_K"}`;
+// Local role models only apply while Local AI is on (activeRoleModel).
+const DEFAULT_VISION_MODEL = `ollama:${(import.meta.env.VITE_LOCAL_VISION_MODEL as string | undefined) || "qwen3.5:4b"}`;
 const DEFAULT_DEEP_RESEARCH_MODEL = "ollama:qwen3:8b";
 const DEFAULT_TTS_RATE = 1.05;
 const DEFAULT_HANDS_FREE_TTS_RATE = 1.0;
@@ -135,7 +141,7 @@ const defaults: ChatSettings = {
   geminiApiKey: "",
   tavilyApiKey: "",
   leanMode: "full",
-  savedModels: [DEFAULT_MODEL, DEFAULT_VISION_MODEL, DEFAULT_DEEP_RESEARCH_MODEL],
+  savedModels: [DEFAULT_MODEL, DEFAULT_LOCAL_MODEL, DEFAULT_VISION_MODEL, DEFAULT_DEEP_RESEARCH_MODEL],
   selectedModel: DEFAULT_MODEL,
   deepResearchModel: DEFAULT_DEEP_RESEARCH_MODEL,
   voiceModel: "",
@@ -575,6 +581,17 @@ function updateStore(userId: string | undefined, partial: Partial<ChatSettings>)
   if (userId) persistSettings(userId, next, Object.keys(partial) as Array<keyof ChatSettings>);
 }
 
+/** The chat model last used with Local AI on, and with it off — this
+ *  browser's memory (like ollamaConfig), so the switch returns to them. */
+const LAST_CHAT_KEY = { local: "localAi.lastLocalChat", cloud: "localAi.lastCloudChat" };
+function lastChatModel(local: boolean): string {
+  try { return localStorage.getItem(local ? LAST_CHAT_KEY.local : LAST_CHAT_KEY.cloud) || ""; } catch { return ""; }
+}
+export function rememberChatModel(model: string): void {
+  if (!model) return;
+  try { localStorage.setItem(isOllamaModel(model) ? LAST_CHAT_KEY.local : LAST_CHAT_KEY.cloud, model); } catch { /* storage off */ }
+}
+
 export function useChatSettings() {
   const { user } = useAuth();
   const snap = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
@@ -745,9 +762,30 @@ export function useChatSettings() {
     update({ savedModels: next, selectedModel: sel });
   }, [update]);
 
+  /** Local AI on = a local chat model is selected (the edge functions route
+   *  background jobs by the same rule). Switches to the chat model last used
+   *  on that side, so on → off → on lands where the user was. */
+  const setLocalAi = useCallback((on: boolean) => {
+    const cur = getSnapshot().settings;
+    if (isOllamaModel(cur.selectedModel) === on) return;
+    rememberChatModel(cur.selectedModel);
+    const side = cur.savedModels.filter((m) => isOllamaModel(m) === on && !isEmbeddingModel(m));
+    const last = lastChatModel(on);
+    const next = (last && side.includes(last) ? last : "")
+      || (on ? (side.includes(DEFAULT_LOCAL_MODEL) ? DEFAULT_LOCAL_MODEL : side[0]) : side[0])
+      || (on ? DEFAULT_LOCAL_MODEL : DEFAULT_MODEL);
+    update({
+      selectedModel: next,
+      ...(cur.savedModels.includes(next) ? {} : { savedModels: [...cur.savedModels, next] }),
+    });
+  }, [update]);
+
   return {
     ...settings,
     loaded: snap.loaded,
+    /** Derived: chat runs on this computer, so Ollama holds the GPU. */
+    localAi: isOllamaModel(settings.selectedModel),
+    setLocalAi,
     /** Derived: a VPS runner is connected when a URL is stored. Drives the
      *  Program Foundry roster gate and the run/verify seam. */
     programRunnerConfigured: !!settings.programRunnerUrl,

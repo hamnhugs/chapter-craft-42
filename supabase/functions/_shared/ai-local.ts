@@ -167,11 +167,16 @@ const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 export type ChatRoute = { local: true } | { local: false; selected: string; utility: string; openrouterKey: string };
 
-/** Pure part of chatRoute: which way the user's settings point. No settings,
- *  or an `ollama:` chat model, is local — the edition's default. */
+/** The app's default chat model (DEFAULT_MODEL in src/hooks/useChatSettings.ts):
+ *  Local AI is off until the user switches it on. */
+const DEFAULT_CHAT_MODEL = "google/gemini-2.5-flash";
+
+/** Pure part of chatRoute: which way the user's settings point. Local only
+ *  when Local AI is on — an `ollama:` chat model selected. No settings is the
+ *  app's default, a cloud model. */
 export function routeFor(s: { selected_model?: string | null; utility_model?: string | null; openrouter_api_key?: string | null } | null): ChatRoute {
-  const selected = (s?.selected_model || "").trim();
-  if (!selected || selected.startsWith("ollama:")) return { local: true };
+  const selected = (s?.selected_model || "").trim() || DEFAULT_CHAT_MODEL;
+  if (selected.startsWith("ollama:")) return { local: true };
   return { local: false, selected, utility: (s?.utility_model || "").trim(), openrouterKey: (s?.openrouter_api_key || "").trim() };
 }
 
@@ -184,14 +189,14 @@ async function chatRoute(): Promise<ChatRoute> {
   if (routeCache && Date.now() - routeCache.at < 10_000) return routeCache.route;
   const base = Deno.env.get("SUPABASE_URL");
   const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  let route: ChatRoute = { local: true };
+  let route: ChatRoute = routeFor(null);
   if (base && key) {
     try {
       const r = await fetch(`${base}/rest/v1/user_settings?select=selected_model,utility_model,openrouter_api_key&order=updated_at.desc&limit=1`, {
         headers: { apikey: key, Authorization: `Bearer ${key}` },
       });
       if (r.ok) route = routeFor(((await r.json()) as any[])[0] ?? null);
-    } catch { /* settings unreadable: keep the local default */ }
+    } catch { /* settings unreadable: keep the default (cloud, Local AI off) */ }
   }
   routeCache = { at: Date.now(), route };
   return route;
@@ -222,7 +227,7 @@ export function cloudRequest(url: string, init: RequestInit, body: Json, route: 
 async function cloudFetch(url: string, init: RequestInit, body: Json, route: Extract<ChatRoute, { local: false }>): Promise<Response> {
   const req = cloudRequest(url, init, body, route);
   if (!req) {
-    return json(503, { error: { message: `Cloud model ${route.selected} is selected but there is no OpenRouter key, so this background job did not run (Ollama is only used when a local model is selected).` } });
+    return json(503, { error: { message: `Cloud model ${route.selected} is selected but there is no OpenRouter key, so this background job did not run (it runs on this computer only while Local AI is on).` } });
   }
   return fetch(req.url, req.init);
 }

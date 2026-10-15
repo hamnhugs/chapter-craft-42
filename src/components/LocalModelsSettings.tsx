@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { useChatSettings } from "@/hooks/useChatSettings";
@@ -30,7 +31,7 @@ const Chip: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 
 /** Settings card for models running on this computer through Ollama. */
 const LocalModelsSettings: React.FC = () => {
-  const { savedModels, selectedModel, visionModel, addModel, setSelectedModel, setVisionModel } = useChatSettings();
+  const { savedModels, selectedModel, visionModel, addModel, setSelectedModel, setVisionModel, localAi, setLocalAi } = useChatSettings();
   const [status, setStatus] = useState<{ ok: boolean; version?: string; error?: string } | null>(null);
   const [models, setModels] = useState<OllamaModelInfo[]>([]);
   const [loading, setLoading] = useState(false);
@@ -74,6 +75,18 @@ const LocalModelsSettings: React.FC = () => {
 
   return (
     <div className="space-y-3 p-3 rounded-xl bg-surface-container-high">
+      <label className="flex items-center justify-between gap-3 cursor-pointer">
+        <div className="text-sm">
+          <div className="font-semibold text-foreground">Local AI</div>
+          <div className="text-xs text-on-surface-variant">
+            {localAi
+              ? "On — chat and background jobs run on this computer. The graphics card stays awake for speed."
+              : "Off — chat and background jobs use your cloud model, and the graphics card is left alone. Search still runs here."}
+          </div>
+        </div>
+        <Switch checked={localAi} onCheckedChange={setLocalAi} aria-label="Local AI" />
+      </label>
+
       <div className="flex items-center justify-between gap-2">
         <div className="text-sm">
           <div className="font-semibold text-foreground">Models on this computer</div>

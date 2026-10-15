@@ -12,6 +12,8 @@ export interface LocalServices {
   images: string;
   /** The craft bridge (scripts/local-ai/craft-bridge.mjs). */
   crafts: string;
+  /** GPU power for Local AI (scripts/local-ai/control.mjs). */
+  control: string;
 }
 
 export const LOCAL_SERVICES: LocalServices = services as unknown as LocalServices;
