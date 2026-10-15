@@ -1,4 +1,5 @@
 import React from "react";
+import { AUTO_CONTINUE_MAX_LIMIT } from "@/lib/autoContinue";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Loader2 } from "lucide-react";
 import PromptSwitcher from "@/components/PromptSwitcher";
@@ -54,6 +55,11 @@ export interface CounselToolsSheetProps {
   onToggleDeepResearch: () => void;
   autoContinue: boolean;
   onToggleAutoContinue: () => void;
+  /** Most runs per auto-continue loop, and compact-every-N-runs (0 = off). */
+  autoContinueMax: number;
+  onAutoContinueMax: (n: number) => void;
+  autoCompactEvery: number;
+  onAutoCompactEvery: (n: number) => void;
   autoReadReplies: boolean;
   onToggleReadAloud: () => void;
   webSearchAvailable: boolean;
@@ -113,6 +119,36 @@ const Row: React.FC<{
     )}
   </button>
 );
+
+/** A − value + control under a switch, same 48px row. Buttons, not a typed
+ *  field: no soft keyboard pops over the sheet on Android. */
+const Stepper: React.FC<{
+  label: string;
+  detail: string;
+  value: number;
+  min: number;
+  max: number;
+  /** Text for the value; defaults to the number. */
+  display?: string;
+  onChange: (n: number) => void;
+}> = ({ label, detail, value, min, max, display, onChange }) => {
+  const btn = "shrink-0 w-10 h-10 flex items-center justify-center rounded-full text-foreground hover:bg-surface-container-high active:bg-surface-container-highest disabled:opacity-30";
+  return (
+    <div className="w-full min-h-[48px] flex items-center gap-3 pl-14 pr-2" role="group" aria-label={label}>
+      <span className="flex-1 min-w-0">
+        <span className="block text-sm text-foreground truncate">{label}</span>
+        <span className="block text-xs text-on-surface-variant truncate">{detail}</span>
+      </span>
+      <button type="button" className={btn} aria-label={`Fewer — ${label}`} disabled={value <= min} onClick={() => onChange(value - 1)} style={{ touchAction: "manipulation" }}>
+        <span className="material-symbols-outlined text-xl" aria-hidden>remove</span>
+      </button>
+      <span className="w-10 text-center text-sm font-bold tabular-nums text-primary-container" aria-live="polite">{display ?? value}</span>
+      <button type="button" className={btn} aria-label={`More — ${label}`} disabled={value >= max} onClick={() => onChange(value + 1)} style={{ touchAction: "manipulation" }}>
+        <span className="material-symbols-outlined text-xl" aria-hidden>add</span>
+      </button>
+    </div>
+  );
+};
 
 const Group: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
   <div className="py-2">
@@ -212,6 +248,29 @@ const CounselToolsSheet: React.FC<CounselToolsSheetProps> = (p) => {
             active={p.autoContinue}
             onClick={p.onToggleAutoContinue}
           />
+          {p.autoContinue && (
+            <>
+              <Stepper
+                label="Runs"
+                detail="Most extra turns before it pauses"
+                value={p.autoContinueMax}
+                min={1}
+                max={AUTO_CONTINUE_MAX_LIMIT}
+                onChange={p.onAutoContinueMax}
+              />
+              <Stepper
+                label="Compact every"
+                detail={p.autoCompactEvery > 0
+                  ? `Summarise the chat every ${p.autoCompactEvery} run${p.autoCompactEvery === 1 ? "" : "s"} to save cost`
+                  : "Off — the full recent chat is resent each run"}
+                value={p.autoCompactEvery}
+                display={p.autoCompactEvery > 0 ? String(p.autoCompactEvery) : "Off"}
+                min={0}
+                max={p.autoContinueMax}
+                onChange={p.onAutoCompactEvery}
+              />
+            </>
+          )}
           <Row
             icon={sym(p.autoReadReplies ? "volume_up" : "volume_off", p.autoReadReplies)}
             label="Read Aloud"

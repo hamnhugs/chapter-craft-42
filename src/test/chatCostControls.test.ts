@@ -46,6 +46,7 @@ describe("utility model", () => {
     expect(resolveUtilityModel("", "gemini:gemini-2.5-pro")).toBe("gemini:gemini-2.5-flash-lite");
     expect(resolveUtilityModel("", "nvidia:meta/llama-3.3-70b-instruct")).toBe("nvidia:meta/llama-3.3-70b-instruct");
     expect(resolveUtilityModel("", "deepseek/deepseek-chat:free")).toBe("deepseek/deepseek-chat:free");
+    expect(resolveUtilityModel("", "ollama:qwen3:4b")).toBe("ollama:qwen3:4b");
   });
 
   it("formats usage compactly", () => {

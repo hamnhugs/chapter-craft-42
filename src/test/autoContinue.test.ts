@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  AUTO_COMPACT_EVERY,
+  AUTO_CONTINUE_MAX,
+  AUTO_CONTINUE_MAX_LIMIT,
+  clampCompactEvery,
+  clampRuns,
+  loopCompactionInstructions,
+  shouldCompact,
   AUTO_CONTINUE_STALL_LIMIT,
   continuationMessage,
   decideNext,
@@ -81,5 +88,44 @@ describe("continuationMessage", () => {
   });
   it("truncates a very long goal", () => {
     expect(continuationMessage("x".repeat(2000), "verify", 1, 8).length).toBeLessThan(1100);
+  });
+});
+
+describe("user-set runs and compaction", () => {
+  it("clamps run counts to 1..limit and falls back on junk", () => {
+    expect(clampRuns("12")).toBe(12);
+    expect(clampRuns(0)).toBe(1);
+    expect(clampRuns(999)).toBe(AUTO_CONTINUE_MAX_LIMIT);
+    expect(clampRuns(undefined)).toBe(AUTO_CONTINUE_MAX);
+    expect(clampRuns("abc")).toBe(AUTO_CONTINUE_MAX);
+  });
+
+  it("clamps the compaction interval, 0 meaning off", () => {
+    expect(clampCompactEvery("0")).toBe(0);
+    expect(clampCompactEvery(-3)).toBe(0);
+    expect(clampCompactEvery(undefined)).toBe(AUTO_COMPACT_EVERY);
+  });
+
+  it("compacts after every N completed runs, never before the first", () => {
+    const hits = [0, 1, 2, 3, 4, 5, 6, 7].filter((n) => shouldCompact(n, 3));
+    expect(hits).toEqual([3, 6]);
+    expect(shouldCompact(4, 0)).toBe(false);
+  });
+
+  it("a user-set max is the loop's limit", () => {
+    let s = initialAutoLoopState(clampRuns(2));
+    const work = { text: "step\nSTATUS: CONTINUE", toolCalls: 1, aborted: false };
+    for (const _ of [1, 2]) {
+      const d = decideNext(s, work);
+      expect(d.action).toBe("continue");
+      if (d.action === "continue") s = d.state;
+    }
+    expect(decideNext(s, work)).toEqual({ action: "stop", reason: "limit" });
+  });
+
+  it("the compaction summary keeps the user's rules in their own verbatim section", () => {
+    const p = loopCompactionInstructions();
+    expect(p).toMatch(/USER RULES[^\n]*word for word/);
+    for (const h of ["GOAL", "DONE", "STILL TO DO", "FACTS"]) expect(p).toContain(h);
   });
 });

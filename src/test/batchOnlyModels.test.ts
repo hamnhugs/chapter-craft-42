@@ -48,7 +48,7 @@ describe("the gates exist at both choke points", () => {
   });
 
   it("the rolling summarizer skips batch-only models — it would otherwise 404 silently forever", () => {
-    expect(CTX).toContain("if (!model || isEmbeddingModel(model) || isBatchOnlyModel(model)) return;");
+    expect(CTX).toContain("if (!model || isEmbeddingModel(model) || isBatchOnlyModel(model)) return false;");
   });
 
   it("the gate never rewrites the model on the wire — refusal, not silent substitution", () => {

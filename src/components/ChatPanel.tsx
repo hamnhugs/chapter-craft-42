@@ -78,7 +78,7 @@ const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
     handsFreeTtsRate,
     setSelectedModel, setAutoReadReplies,
   } = useChatSettings();
-  const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, sendMessageAuto, autoContinue, setAutoContinue, autoLoop, injectDisplayMessage, clearChat, abort, loadEarlier, hasEarlier, loadingEarlier, toolGatesForTurn, approvedToolCount } = useChat();
+  const { messages, isLoading, chatDeepResearch, setChatDeepResearch, sendMessage, sendMessageAuto, autoContinue, setAutoContinue, autoContinueMax, setAutoContinueMax, autoCompactEvery, setAutoCompactEvery, autoLoop, injectDisplayMessage, clearChat, abort, loadEarlier, hasEarlier, loadingEarlier, toolGatesForTurn, approvedToolCount } = useChat();
   const { isPaid } = usePlan();
   const {
     speakingId, speak, stop: stopSpeaking, pause: pauseSpeaking, resume: resumeSpeaking, isAudioActive,
@@ -1513,7 +1513,9 @@ const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
         {autoLoop && (
           <div role="status" className="flex items-center gap-2 ml-4 text-xs text-on-surface-variant">
             <span className="material-symbols-outlined text-sm animate-spin" aria-hidden>autorenew</span>
-            Auto-continuing · turn {autoLoop.n} of {autoLoop.max}
+            {autoLoop.compacting
+              ? `Compacting the chat to save cost · after turn ${autoLoop.n} of ${autoLoop.max}`
+              : `Auto-continuing · turn ${autoLoop.n} of ${autoLoop.max}`}
             <button type="button" onClick={abort} className="underline hover:text-foreground">Stop</button>
           </div>
         )}
@@ -2043,6 +2045,10 @@ const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
         }}
         autoContinue={autoContinue}
         onToggleAutoContinue={() => setAutoContinue(!autoContinue)}
+        autoContinueMax={autoContinueMax}
+        onAutoContinueMax={setAutoContinueMax}
+        autoCompactEvery={autoCompactEvery}
+        onAutoCompactEvery={setAutoCompactEvery}
         autoReadReplies={autoReadReplies}
         onToggleReadAloud={() => { if (autoReadReplies) stopSpeaking(); setAutoReadReplies(!autoReadReplies); }}
         webSearchAvailable={!!burplexityApiToken}

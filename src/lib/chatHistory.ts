@@ -2,7 +2,7 @@
 // Kept out of ChatContext so they can be unit-tested without the app.
 
 import type { ToolEvent } from "@/lib/chatTools";
-import { GEMINI_PREFIX, NVIDIA_PREFIX } from "@/lib/providers/registry";
+import { GEMINI_PREFIX, NVIDIA_PREFIX, OLLAMA_PREFIX } from "@/lib/providers/registry";
 
 /** Bubbles the APP wrote into the assistant's slot — error cards and empty-reply
  *  placeholders. Sent back as history, the model reads provider error text as
@@ -267,6 +267,10 @@ export function resolveUtilityModel(explicit: string | undefined, chatModel: str
   if (explicit && explicit.trim()) return explicit.trim();
   if (!chatModel) return chatModel;
   if (chatModel.startsWith(NVIDIA_PREFIX)) return chatModel;
+  // A local chat stays local: the summary holds the whole conversation, and
+  // it must not go to a cloud model the user did not pick (it costs nothing
+  // on Ollama anyway).
+  if (chatModel.startsWith(OLLAMA_PREFIX)) return chatModel;
   if (/:free$/i.test(chatModel)) return chatModel;
   const provider = chatModel.startsWith(GEMINI_PREFIX) ? "gemini" : "openrouter";
   return UTILITY_DEFAULTS[provider] ?? chatModel;

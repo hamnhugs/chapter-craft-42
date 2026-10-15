@@ -17,6 +17,53 @@
  */
 
 export const AUTO_CONTINUE_MAX = 8;
+/** Most runs a user can ask for. Each run is a full request; past this a
+ *  task wants splitting, not more runs. */
+export const AUTO_CONTINUE_MAX_LIMIT = 50;
+/** Compact the conversation after this many runs by default (0 = never). */
+export const AUTO_COMPACT_EVERY = 3;
+/** Messages kept word for word when a loop compacts: the last two exchanges.
+ *  Everything older becomes the summary. */
+export const LOOP_KEEP_RECENT = 4;
+
+/** A user-entered run count, made safe: whole, 1..AUTO_CONTINUE_MAX_LIMIT. */
+export function clampRuns(n: unknown): number {
+  const v = Math.round(Number(n));
+  if (!Number.isFinite(v)) return AUTO_CONTINUE_MAX;
+  return Math.min(AUTO_CONTINUE_MAX_LIMIT, Math.max(1, v));
+}
+
+/** A user-entered compaction interval: 0 (off) .. AUTO_CONTINUE_MAX_LIMIT. */
+export function clampCompactEvery(n: unknown): number {
+  const v = Math.round(Number(n));
+  if (!Number.isFinite(v)) return AUTO_COMPACT_EVERY;
+  return Math.min(AUTO_CONTINUE_MAX_LIMIT, Math.max(0, v));
+}
+
+/** Compact before the next run? True after every `every` completed runs, and
+ *  never before the first continuation (nothing has piled up yet). */
+export function shouldCompact(completedRuns: number, every: number): boolean {
+  return every > 0 && completedRuns > 0 && completedRuns % every === 0;
+}
+
+/** Instructions for the summary written mid-loop. Structured as a hand-off
+ *  so the next run can pick up the work, and with the user's rules in their
+ *  own section, copied word for word: summaries written for "task
+ *  continuity" drop standing constraints (compactors kept 17% of them in
+ *  "Lost in Compaction", arXiv 2608.11242; a separate, verbatim constraint
+ *  list brought that above 90%). */
+export function loopCompactionInstructions(): string {
+  return [
+    "You compact the working history of an assistant that is part-way through a multi-step task for a user, so the next step can continue from your notes alone. Merge the existing summary (if any) with the new messages.",
+    "Write these sections, in this order, under these exact headings:",
+    "USER RULES — every instruction, limit, preference or \"don't\" the user gave, copied word for word. Never paraphrase or drop one, even if it looks old.",
+    "GOAL — what the user asked for, in one or two sentences.",
+    "DONE — what has been finished, with the names, ids, numbers and file/page names involved. Mark anything the assistant claimed but did not check as (unchecked).",
+    "STILL TO DO — the remaining steps, in order.",
+    "FACTS — anything else the next step needs: decisions made, errors hit and what fixed them, open questions.",
+    "At most ~400 words. Plain text. Output ONLY the summary; do not call tools.",
+  ].join("\n");
+}
 /** Consecutive continuation turns with no tool calls before the loop gives up. */
 export const AUTO_CONTINUE_STALL_LIMIT = 2;
 

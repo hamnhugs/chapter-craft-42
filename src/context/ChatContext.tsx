@@ -41,14 +41,14 @@ import {
 } from "@/lib/chatBooks";
 import { toast } from "sonner";
 import { isEmbeddingModel, isBatchOnlyModel } from "@/lib/utils";
-import { chatReady, describeModel, freeChatProviders, localModelId, modelProvider, providerConfigured, providerKey, providerKeyUrl, providerLabel, resolveModel } from "@/lib/providers/registry";
+import { activeRoleModel, chatReady, describeModel, freeChatProviders, localModelId, modelProvider, providerConfigured, providerKey, providerKeyUrl, providerLabel, resolveModel } from "@/lib/providers/registry";
 import type { CacheBreakpoint, ProviderId, TokenUsage } from "@/lib/providers/types";
 import { FIND_TOOLS_DEFINITION, FIND_TOOLS_NAME, findTools, planLocalRoster, resetRoster, slimToolDef } from "@/lib/localRoster";
 import { addUsage } from "@/lib/providers/sse";
 import { studioToolsActive } from "@/lib/studioTools";
 import { highlightsForTurn } from "@/lib/highlights";
 import { TOOL_ROUNDS_PER_REPLY } from "@/lib/deepResearchPrompt";
-import { continuationMessage, decideNext, initialAutoLoopState, stopReasonLabel } from "@/lib/autoContinue";
+import { clampCompactEvery, clampRuns, continuationMessage, decideNext, initialAutoLoopState, LOOP_KEEP_RECENT, loopCompactionInstructions, shouldCompact, stopReasonLabel } from "@/lib/autoContinue";
 import { assistantImageNote, attachTurnContext, claimsUnmadeDesignEdit, deniesSaveToLibrary, findReplyByOpening, unmadeSaveNote, expandImageTurns, fabricatedImageNote, imageReplayFor, isModelVisibleMessage, resolveUtilityModel, stripFabricatedNotes, toolTraceNote, touchedDesignCraft, unmadeDesignEditNote } from "@/lib/chatHistory";
 import { namespacedNvidiaId, nvidiaModelInfo, nvidiaNoThinkingBody, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
 import { namespacedGeminiId, GEMINI_STARTER_MODEL } from "@/lib/geminiCatalog";
@@ -231,8 +231,14 @@ interface ChatContextValue {
   sendMessageAuto: (text: string, opts?: SendOpts) => Promise<string>;
   autoContinue: boolean;
   setAutoContinue: (v: boolean) => void;
+  /** Most continuation runs one auto-continue loop may send. */
+  autoContinueMax: number;
+  setAutoContinueMax: (n: number) => void;
+  /** Compact the conversation after every N runs of a loop (0 = never). */
+  autoCompactEvery: number;
+  setAutoCompactEvery: (n: number) => void;
   /** The running loop's progress, or null when no loop is running. */
-  autoLoop: { n: number; max: number } | null;
+  autoLoop: { n: number; max: number; compacting?: boolean } | null;
   injectDisplayMessage: (content: string) => void;
   clearChat: () => Promise<void>;
   abort: () => void;
@@ -442,6 +448,26 @@ const rowsToMessages = (m: any, restored: boolean): ChatMessage[] => {
   return out;
 };
 
+/** A message as the summarizer reads it. `tools` is the app-authored list of
+ *  what the reply's tool calls did (event summaries, never result text): in
+ *  a working loop the actions ARE the progress, and the reply text alone
+ *  often just says "done". */
+interface SummaryInputMessage {
+  id?: string;
+  role: string;
+  content: string;
+  tools?: string;
+}
+
+const SUMMARY_SYSTEM_PROMPT =
+  "You maintain a running summary of a conversation between a user and a reading assistant. Merge the existing summary (if any) with the new messages into ONE concise summary of at most ~250 words. Preserve concrete facts, names, numbers, decisions, books/chapters discussed, and open questions. Output ONLY the summary text.";
+
+function toolsLine(events: ToolEvent[] | undefined): string | undefined {
+  if (!events?.length) return undefined;
+  const line = events.map((e) => `${e.ok === false ? "FAILED " : ""}${e.summary || e.name}`).join("; ");
+  return line.slice(0, 400);
+}
+
 interface RollingSummary {
   summary: string;
   /** How many leading messages of the conversation the summary covers. */
@@ -638,7 +664,22 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [autoContinue, setAutoContinue] = useState<boolean>(() =>
     typeof window !== "undefined" && localStorage.getItem("chat_auto_continue") === "1");
   useEffect(() => { localStorage.setItem("chat_auto_continue", autoContinue ? "1" : "0"); }, [autoContinue]);
-  const [autoLoop, setAutoLoop] = useState<{ n: number; max: number } | null>(null);
+  const [autoContinueMax, setAutoContinueMaxState] = useState<number>(() =>
+    clampRuns(typeof window !== "undefined" ? localStorage.getItem("chat_auto_continue_max") ?? undefined : undefined));
+  const setAutoContinueMax = useCallback((n: number) => setAutoContinueMaxState(clampRuns(n)), []);
+  useEffect(() => { localStorage.setItem("chat_auto_continue_max", String(autoContinueMax)); }, [autoContinueMax]);
+  const [autoCompactEvery, setAutoCompactEveryState] = useState<number>(() =>
+    clampCompactEvery(typeof window !== "undefined" ? localStorage.getItem("chat_auto_compact_every") ?? undefined : undefined));
+  const setAutoCompactEvery = useCallback((n: number) => setAutoCompactEveryState(clampCompactEvery(n)), []);
+  useEffect(() => { localStorage.setItem("chat_auto_compact_every", String(autoCompactEvery)); }, [autoCompactEvery]);
+  const [autoLoop, setAutoLoop] = useState<{ n: number; max: number; compacting?: boolean } | null>(null);
+  /** While a loop that compacts is running: how many recent messages the
+   *  request keeps word for word (the summary stands in for the rest).
+   *  null = the normal HISTORY_WINDOW. */
+  const loopKeepRef = useRef<number | null>(null);
+  /** What the last turn handed the summarizer — the loop compacts from this
+   *  exact list rather than messagesRef, which trails a render behind. */
+  const lastSummaryInputRef = useRef<{ msgs: SummaryInputMessage[]; anchorId: string | undefined } | null>(null);
   /** Set by Stop / Clear: ends the auto-continue loop, not just the turn. */
   const loopCancelRef = useRef(false);
   const lastTurnRef = useRef<TurnStats>({ toolCalls: 0, aborted: false });
@@ -680,11 +721,16 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   /** Background refresh of the rolling summary — never on the critical path
    *  of a send. Merges messages that fell out of the window into the stored
-   *  summary so the NEXT turn can drop them from the request. */
+   *  summary so the NEXT turn can drop them from the request.
+   *
+   *  `compact` is the on-demand form an auto-continue loop uses between runs:
+   *  it keeps only the last `keep` messages word for word, skips the batching
+   *  and failure back-off, and writes a structured hand-off summary
+   *  (loopCompactionInstructions). Resolves true when a new summary landed. */
   const updateRollingSummary = useCallback(
-    async (allMsgs: { id?: string; role: string; content: string }[], anchorId: string | undefined) => {
-      if (!user || summarizingRef.current) return;
-      const target = allMsgs.length - HISTORY_WINDOW;
+    async (allMsgs: SummaryInputMessage[], anchorId: string | undefined, compact?: { keep: number }): Promise<boolean> => {
+      if (!user || summarizingRef.current) return false;
+      const target = allMsgs.length - (compact ? compact.keep : HISTORY_WINDOW);
       let cur = summaryRef.current;
       // How many leading messages of THIS array the summary already covers.
       // The id form survives window shifts; the legacy count form is only
@@ -699,24 +745,24 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         coveredCount = cur.covered;
       }
-      if (target <= 0 || target <= coveredCount) return;
+      if (target <= 0 || target <= coveredCount) return false;
       // Batch: don't pay an LLM call every turn for 2 messages.
-      if (coveredCount > 0 && target - coveredCount < SUMMARY_MIN_BATCH) return;
+      if (!compact && coveredCount > 0 && target - coveredCount < SUMMARY_MIN_BATCH) return false;
       // Back off after failures instead of retrying on every turn — each
       // retry re-sends up to 30k characters of transcript.
       const backoff = summaryBackoffRef.current;
-      if (backoff.failures > 0 && allMsgs.length < backoff.retryAtLength) return;
+      if (!compact && backoff.failures > 0 && allMsgs.length < backoff.retryAtLength) return false;
       const model = resolveUtilityModel(utilityModel, selectedModel);
-      if (!model || isEmbeddingModel(model) || isBatchOnlyModel(model)) return;
+      if (!model || isEmbeddingModel(model) || isBatchOnlyModel(model)) return false;
       // Summaries follow the selected model through the same provider seam
       // as chat — with only the OTHER provider's key saved, they'd silently
       // 404 forever otherwise. No key for this provider → skip quietly.
       const { adapter, provider, localId } = resolveModel(model);
-      if (!providerConfigured(provider, providerKeys)) return;
+      if (!providerConfigured(provider, providerKeys)) return false;
       const batch = allMsgs.slice(coveredCount, target);
-      if (batch.length === 0) return;
+      if (batch.length === 0) return false;
       let transcript = batch
-        .map((m) => `${m.role}: ${(typeof m.content === "string" ? m.content : "").slice(0, 600)}`)
+        .map((m) => `${m.role}: ${(typeof m.content === "string" ? m.content : "").slice(0, 600)}${m.tools ? `\n[tools run: ${m.tools}]` : ""}`)
         .join("\n\n");
       if (transcript.length > 30000) transcript = transcript.slice(-30000);
       summarizingRef.current = true;
@@ -737,11 +783,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           extraBody: provider === "nvidia" ? nvidiaNoThinkingBody(localId) : undefined,
           onMeta: (meta) => { finish = meta.finish; },
           messages: [
-            {
-              role: "system",
-              content:
-                "You maintain a running summary of a conversation between a user and a reading assistant. Merge the existing summary (if any) with the new messages into ONE concise summary of at most ~250 words. Preserve concrete facts, names, numbers, decisions, books/chapters discussed, and open questions. Output ONLY the summary text.",
-            },
+            { role: "system", content: compact ? loopCompactionInstructions() : SUMMARY_SYSTEM_PROMPT },
             {
               role: "user",
               content: `${cur.summary ? `EXISTING SUMMARY:\n${cur.summary}\n\n` : ""}NEW MESSAGES:\n${transcript}`,
@@ -750,18 +792,19 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         })).trim();
         // A length-cut summary silently loses whatever it was about to say;
         // keep the previous one and try again later.
-        if (!text || finish === "length") { fail(); return; }
+        if (!text || finish === "length") { if (!compact) fail(); return false; }
         summaryBackoffRef.current = { failures: 0, retryAtLength: 0 };
         const lastCovered = allMsgs[target - 1];
         const next: RollingSummary = {
-          summary: text.slice(0, 4000),
+          summary: text.slice(0, compact ? 6000 : 4000),
           covered: target,
           anchorId,
           coveredThroughId: lastCovered?.id,
         };
         summaryRef.current = next;
         try { localStorage.setItem(SUMMARY_STORE_KEY(user.id), JSON.stringify(next)); } catch { /* storage full */ }
-      } catch { fail(); /* background — never surface */ } finally {
+        return true;
+      } catch { if (!compact) fail(); /* background — never surface */ return false; } finally {
         summarizingRef.current = false;
       }
     },
@@ -1183,7 +1226,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // providers (Gemini) and confuses the rest — the "context-dangling tool"
       // failure. Decided from the turn's opening state, then held.
       const model = opts?.modelOverride
-        || (hasUploads && visionModel ? visionModel : (deepResearch ? deepResearchModel : selectedModel));
+        || (hasUploads && activeRoleModel(visionModel, selectedModel)
+          ? activeRoleModel(visionModel, selectedModel)
+          : (deepResearch ? activeRoleModel(deepResearchModel, selectedModel) || selectedModel : selectedModel));
       const { provider: turnProviderId, localId: turnLocalId } = resolveModel(model);
       const nvInfo = turnProviderId === "nvidia" ? nvidiaModelInfo(turnLocalId) : null;
       // Voice replies are one to three spoken sentences; a reasoning model
@@ -1409,8 +1454,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const coveredCount = rolling.coveredThroughId
         ? historySource.findIndex((m) => m.id === rolling.coveredThroughId) + 1
         : anchored ? rolling.covered : 0;
-      if (baseHistory.length > HISTORY_WINDOW && rolling.summary && coveredCount > 0) {
-        const cut = Math.min(coveredCount, baseHistory.length - HISTORY_WINDOW);
+      // A compacting auto-continue loop shrinks the verbatim window to its
+      // last few messages; everything the summary covers goes.
+      const historyWindow = loopKeepRef.current ?? HISTORY_WINDOW;
+      if (baseHistory.length > historyWindow && rolling.summary && coveredCount > 0) {
+        const cut = Math.min(coveredCount, baseHistory.length - historyWindow);
         if (cut > 0) {
           historyForModel = baseHistory.slice(cut);
           summaryNote = `## Earlier conversation summary\nThe first ${cut} messages of this conversation were replaced by this summary to save context:\n\n${rolling.summary}`;
@@ -2763,10 +2811,13 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Refresh the rolling summary in the background so the NEXT turn can
         // drop old messages from the request. Fire-and-forget by design.
         if (assistantText && !placeholderReply) {
-          void updateRollingSummary(
-            [...historySource.map((m) => ({ id: m.id, role: m.role, content: m.content })), { id: assistantId, role: "assistant", content: assistantText }],
-            firstHistoryId,
-          );
+          const summaryInput: SummaryInputMessage[] = [
+            ...historySource.map((m) => ({ id: m.id, role: m.role, content: m.content, tools: toolsLine(m.toolEvents) })),
+            { id: assistantId, role: "assistant", content: assistantText, tools: toolsLine(assistantEvents) },
+          ];
+          lastSummaryInputRef.current = { msgs: summaryInput, anchorId: firstHistoryId };
+          // Inside a compacting loop the loop owns summarising, between runs.
+          if (loopKeepRef.current === null) void updateRollingSummary(summaryInput, firstHistoryId);
         }
 
         // What the caller SPEAKS (hands-free reads this return): the reply,
@@ -2846,9 +2897,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     async (text: string, opts?: SendOpts): Promise<string> => {
       if (!autoContinue || opts?.voiceMode) return sendMessage(text, opts);
       loopCancelRef.current = false;
-      let state = initialAutoLoopState();
-      let reply = await sendMessage(text, { ...opts, autoContinue: true });
+      let state = initialAutoLoopState(autoContinueMax);
+      const compactEvery = autoCompactEvery;
+      // A compacting loop sends only the summary + its last few messages
+      // from the first continuation on, and summarises between runs itself.
+      if (compactEvery > 0) loopKeepRef.current = LOOP_KEEP_RECENT;
+      let reply = "";
       try {
+        reply = await sendMessage(text, { ...opts, autoContinue: true });
         // Only the first turn carries the user's attachments; continuations
         // are text the app writes.
         const base: SendOpts = { modelOverride: opts?.modelOverride, promptPresetId: opts?.promptPresetId, autoContinue: true };
@@ -2860,16 +2916,34 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (note) toast.info(note);
             break;
           }
+          // Compact on demand at the run boundary, before the next request:
+          // the summary replaces everything but the last LOOP_KEEP_RECENT
+          // messages, so request size stops growing with every run. Runs on
+          // the cheap utility model; a failed compaction just sends the
+          // uncovered messages verbatim this run and tries again next time.
+          const input = lastSummaryInputRef.current;
+          if (input && shouldCompact(state.continuations, compactEvery)) {
+            setAutoLoop({ n: state.continuations, max: state.max, compacting: true });
+            // A background summary may still be writing; wait for it rather
+            // than skip (bounded — never stall the loop on it).
+            for (let i = 0; i < 60 && summarizingRef.current && !loopCancelRef.current; i++) {
+              await new Promise((r) => setTimeout(r, 250));
+            }
+            if (loopCancelRef.current) break;
+            await updateRollingSummary(input.msgs, input.anchorId, { keep: LOOP_KEEP_RECENT });
+            if (loopCancelRef.current) break;
+          }
           state = d.state;
           setAutoLoop({ n: state.continuations, max: state.max });
           reply = await sendMessage(continuationMessage(text, d.kind, state.continuations, state.max), base);
         }
       } finally {
+        loopKeepRef.current = null;
         setAutoLoop(null);
       }
       return reply;
     },
-    [autoContinue, sendMessage]
+    [autoContinue, autoContinueMax, autoCompactEvery, sendMessage, updateRollingSummary]
   );
 
 
@@ -2886,9 +2960,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
    *  re-render, and a chip that stayed stale after a toggle would send the
    *  user back to a switch they had already flipped. */
   const toolGatesForTurn = useCallback((hasImages: boolean): Map<string, ToolGate> => {
-    const model = hasImages && visionModel
-      ? visionModel
-      : ((chatDeepResearch && isPaid) ? deepResearchModel : selectedModel);
+    const vision = activeRoleModel(visionModel, selectedModel);
+    const model = hasImages && vision
+      ? vision
+      : ((chatDeepResearch && isPaid) ? activeRoleModel(deepResearchModel, selectedModel) || selectedModel : selectedModel);
     const { provider, localId } = resolveModel(model);
     const nv = provider === "nvidia" ? nvidiaModelInfo(localId) : null;
     return computeToolGates({
@@ -2937,6 +3012,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       sendMessageAuto,
       autoContinue,
       setAutoContinue,
+      autoContinueMax,
+      setAutoContinueMax,
+      autoCompactEvery,
+      setAutoCompactEvery,
       autoLoop,
       voiceDeepResearch,
       setVoiceDeepResearch,
@@ -2950,7 +3029,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       toolGatesForTurn,
       approvedToolCount,
     }),
-    [messages, isLoading, chatDeepResearch, voiceDeepResearch, setChatDeepResearch, setVoiceDeepResearch, sendMessage, sendMessageAuto, autoContinue, autoLoop, injectDisplayMessage, clearChat, abort, loadEarlier, hasEarlier, loadingEarlier, toolGatesForTurn, approvedToolCount],
+    [messages, isLoading, chatDeepResearch, voiceDeepResearch, setChatDeepResearch, setVoiceDeepResearch, sendMessage, sendMessageAuto, autoContinue, autoContinueMax, setAutoContinueMax, autoCompactEvery, setAutoCompactEvery, autoLoop, injectDisplayMessage, clearChat, abort, loadEarlier, hasEarlier, loadingEarlier, toolGatesForTurn, approvedToolCount],
   );
 
   return (
