@@ -48,7 +48,7 @@ import { addUsage } from "@/lib/providers/sse";
 import { studioToolsActive } from "@/lib/studioTools";
 import { highlightsForTurn } from "@/lib/highlights";
 import { TOOL_ROUNDS_PER_REPLY } from "@/lib/deepResearchPrompt";
-import { clampCompactEvery, clampRuns, continuationMessage, decideNext, initialAutoLoopState, LOOP_KEEP_RECENT, loopCompactionInstructions, shouldCompact, stopReasonLabel } from "@/lib/autoContinue";
+import { clampCompactEvery, clampRuns, continuationMessage, decideNext, FINISH_TASK_DEFINITION, FINISH_TASK_NAME, finishTaskOutcome, initialAutoLoopState, isChangeEvent, LOOP_KEEP_RECENT, loopCompactionInstructions, shouldCompact, stopReasonLabel } from "@/lib/autoContinue";
 import { assistantImageNote, attachTurnContext, claimsUnmadeDesignEdit, deniesSaveToLibrary, findReplyByOpening, unmadeSaveNote, expandImageTurns, fabricatedImageNote, imageReplayFor, isModelVisibleMessage, resolveUtilityModel, stripFabricatedNotes, toolTraceNote, touchedDesignCraft, unmadeDesignEditNote } from "@/lib/chatHistory";
 import { namespacedNvidiaId, nvidiaModelInfo, nvidiaNoThinkingBody, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
 import { namespacedGeminiId, GEMINI_STARTER_MODEL } from "@/lib/geminiCatalog";
@@ -204,14 +204,21 @@ interface SendOpts {
    *  `undefined` = use whatever Counsel's switcher says; `null` = no prompt
    *  this turn. For programmatic sends and (later) the router. */
   promptPresetId?: string | null;
-  /** Ask for the auto-continue STATUS line (sendMessageAuto sets this). */
+  /** An auto-continue turn: the loop prompt and finish_task are on
+   *  (sendMessageAuto sets this). */
   autoContinue?: boolean;
+  /** A continuation run (1, 2, …) — earlier runs' work is protected. */
+  loopRun?: number;
 }
 
 /** What the last finished turn did — read by the auto-continue loop. */
 interface TurnStats {
   toolCalls: number;
   aborted: boolean;
+  /** What a finish_task call said. */
+  finish?: "done" | "needs_user" | null;
+  /** Summaries of the tool events that made or changed something. */
+  changes?: string[];
 }
 
 interface ChatContextValue {
@@ -1333,6 +1340,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         : localPlan
           ? [...localPlan.names.map((n) => slimToolDef(localDefByName.get(n))), FIND_TOOLS_DEFINITION]
           : CHAT_TOOL_DEFINITIONS.filter((t: any) => offeredNames.has(t.function.name));
+      // Auto-continue hands the model the loop's stop (lib/autoContinue).
+      // Added after the prompt's roster is drawn: the auto-continue prompt
+      // section names it itself.
+      const finishOffered = !!opts?.autoContinue && !isVoice && !!toolDefs;
+      if (finishOffered) toolDefs!.push(FINISH_TASK_DEFINITION);
 
       // A send the pre-flight gates below will refuse must not pay for the
       // prompt build (retrieval embedding + half a dozen queries) first.
@@ -1873,6 +1885,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const turnVisionPayloads: string[] = [];
         // Grows to CRAFT_TOOL_ITERATIONS the first round the model calls craft.
         let toolBudget = MAX_TOOL_ITERATIONS;
+        // finish_task was called: the next round is the answer round.
+        let turnFinish: "done" | "needs_user" | null = null;
+        if (finishOffered) offeredNames.add(FINISH_TASK_NAME);
         for (let iteration = 0; iteration <= toolBudget + 1; iteration++) {
           const finalRound = iteration === toolBudget;
           const toollessRound = iteration === toolBudget + 1;
@@ -1883,8 +1898,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // — every tool result so far — and bill all of it uncached.
             workingMessages.push({
               role: "user",
-              content:
-                "[Tool budget for this reply is spent — no further tool calls will execute this turn. Answer the user's message now from what has already been read and returned above; say plainly if something needed could not be read in time.]",
+              content: turnFinish
+                ? "[finish_task recorded — no further tool calls will execute this turn. Write the short final reply now.]"
+                : "[Tool budget for this reply is spent — no further tool calls will execute this turn. Answer the user's message now from what has already been read and returned above; say plainly if something needed could not be read in time.]",
             });
           }
           capSegStart = assistantText.length;
@@ -2455,8 +2471,13 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               splatAutoFallback,
               permissionsSnapshot: permissionsRef.current,
               programRunnerConfigured: programRunnerConfigured === true,
+              protectWork: !!opts?.loopRun,
             };
-            const { result, event } = t.name === FIND_TOOLS_NAME && localPlan && toolDefs
+            const finished = t.name === FINISH_TASK_NAME && finishOffered ? finishTaskOutcome(t.args || "{}") : null;
+            if (finished) turnFinish = finished.finish;
+            const { result, event } = finished
+              ? finished
+              : t.name === FIND_TOOLS_NAME && localPlan && toolDefs
               ? await (async () => {
                   let need = "";
                   try { need = String(JSON.parse(t.args || "{}")?.need || ""); } catch { /* bad args */ }
@@ -2617,6 +2638,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // to answer blind about images it had "read").
             turnVisionPayloads.push(...visionPayloads);
           }
+          // finish_task ends the work: the next round is the answer round
+          // (tool_choice none), so the reply closes with prose, not more calls.
+          if (turnFinish && iteration < toolBudget - 1) toolBudget = iteration + 1;
         }
 
         // A reasoning model can spend its whole budget inside a thought block
@@ -2824,7 +2848,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // or — when the model acted without narrating — the last tool
         // event's own sentence, so the spoken channel never goes dark after
         // an action (docs/library-agent.md §2.2).
-        lastTurnRef.current = { toolCalls: assistantEvents.filter((e) => e.ok !== false).length, aborted: false };
+        lastTurnRef.current = {
+          toolCalls: assistantEvents.filter((e) => e.ok !== false).length,
+          aborted: false,
+          finish: turnFinish,
+          changes: assistantEvents.filter(isChangeEvent).map((e) => e.summary),
+        };
         if (!assistantText.trim() && opts?.voiceMode && assistantEvents.length > 0) {
           return assistantEvents[assistantEvents.length - 1].summary;
         }
@@ -2935,7 +2964,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
           state = d.state;
           setAutoLoop({ n: state.continuations, max: state.max });
-          reply = await sendMessage(continuationMessage(text, d.kind, state.continuations, state.max), base);
+          reply = await sendMessage(continuationMessage(text, state), { ...base, loopRun: state.continuations });
         }
       } finally {
         loopKeepRef.current = null;

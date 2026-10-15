@@ -216,6 +216,38 @@ export interface CraftDeps {
   addBook?: (book: BookDocument, sourceFile?: File, opts?: any) => Promise<string>;
   currentModel?: string;
   fetchImage?: (imageId: string) => Promise<{ id: string; storage_path: string; prompt?: string } | null>;
+  /** An auto-continue continuation run: refuse calls that throw away earlier
+   *  runs' work (destructiveCraftCall). */
+  protectWork?: boolean;
+}
+
+// Command ids that throw work away whatever they're given, and ones that do
+// when they reach more than one item.
+const WIPES = /(?:pages?\.delete|delete_?pages?|new_?document|(?:file|document)\.(?:new|close|revert)|flatten|merge)/i;
+const REMOVES = /(?:delete|clear|remove|erase)/i;
+const manyIds = (p: any) => !Array.isArray(p?.ids) || p.ids.length !== 1;
+
+/** What a craft call would throw away, said plainly, or null when it keeps
+ *  the work. On 2026-10-15 an auto-continue run inspected a back page it had
+ *  built over three runs, disliked it, and deleted the page; the next run
+ *  rebuilt it. Continuation runs must change parts in place instead. */
+export function destructiveCraftCall(args: any, action: string): string | null {
+  const o = args?.options || {};
+  if (action === "pages" && pagesOptions(args, String(args?.action || "")).delete != null && pagesOptions(args, String(args?.action || "")).delete !== false) return "delete pages";
+  if ((action === "open" || action === "send") && (o.new_document || (args?.app === "designcraft" && action === "open" && (o.preset || (o.width && o.height) || o.sides || o.pages > 1)))) return "start a new document";
+  if (action === "run") {
+    for (const st of Array.isArray(args?.steps) ? args.steps : []) {
+      const id = String(st?.id || "");
+      if (WIPES.test(id)) return `run ${id}`;
+      if (REMOVES.test(id) && manyIds(st?.params)) return `run ${id} on more than one item`;
+    }
+  }
+  if (action === "call") {
+    const tool = String(args?.tool || "");
+    if (WIPES.test(tool)) return `call ${tool}`;
+    if (REMOVES.test(tool) && manyIds(args?.arguments)) return `call ${tool} on more than one item`;
+  }
+  return null;
 }
 
 type Outcome = { result: any; event: { name: string; summary: string; ok: boolean } };
@@ -491,6 +523,13 @@ export async function runCraftTool(args: any, deps: CraftDeps): Promise<Outcome>
   const action = resolveAction(args) as CraftAction;
   const app = args?.app;
   const ok = (result: any, summary: string): Outcome => ({ result, event: { name, summary, ok: true } });
+  const wipe = deps.protectWork ? destructiveCraftCall(args, action) : null;
+  if (wipe) {
+    return {
+      result: { ok: false, error: `Not run: auto-continue keeps what earlier runs made, so this run can't ${wipe}. Fix the part that's wrong in place — send the same role again to replace it, or change one item. If starting over is really needed, call finish_task with status needs_user and ask the user.` },
+      event: { name, summary: `Kept earlier work: didn't ${wipe}`, ok: false },
+    };
+  }
   try {
     if (!(CRAFT_ACTIONS as readonly string[]).includes(action)) throw new CraftError(`action must be one of: ${CRAFT_ACTIONS.join(", ")}`);
     if (action === "status") {

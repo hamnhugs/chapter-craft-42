@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { anchorPage, autoRole, bleedSteps, compactLayers, designPage, designSlot, desktopPids, docCount, docPages, findLayer, inWorkspace, isTwoSided, lookTarget, pageLabel, pageSize, pagesOverview, parsePartName, partName, pdfParams, pickLook, plainText, printNote, rankCommands, resolvePage, textBox } from "../../scripts/local-ai/craft-bridge.mjs";
+import { anchorPage, autoRole, bleedSteps, compactLayers, designPage, designSlot, desktopPids, docCount, docPages, findLayer, inWorkspace, isTwoSided, lookTarget, pageLabel, pageSize, pagesOverview, parsePartName, partName, pdfParams, pickLook, plainText, printNote, rankCommands, resolvePage, textBox, wordOverlap, REVISED_BODY_OVERLAP } from "../../scripts/local-ai/craft-bridge.mjs";
 
 describe("rankCommands", () => {
   const list = [
@@ -274,5 +274,16 @@ describe("pages: front and back, many pages", () => {
   it("gives the model an overview: side, parts, look", () => {
     const d = doc(2, true, [[{ id: 1, name: "Headline", kind: "text frame", story: 3, bounds: [40, 40, 500, 120] }, { id: 5, name: "Look bold", bounds: [0, 0, 612, 792] }]]);
     expect(pagesOverview(d)).toEqual([{ page: 0, side: "front", parts: ["headline"], look: "bold" }, { page: 1, side: "back", empty: true }]);
+  });
+});
+
+describe("wordOverlap (a re-sent body replaces the one it rewrites)", () => {
+  const old = "Show up on time. No hidden charges. We haul every leaf and latch every pet gate.";
+  it("a reworked body is the same body", () => {
+    expect(wordOverlap("We show up on time, with no hidden charges — and we haul every leaf and latch every gate.", old)).toBeGreaterThanOrEqual(REVISED_BODY_OVERLAP);
+  });
+  it("different copy is a new body", () => {
+    expect(wordOverlap("Choose your exact level of cleanup: Basic, Standard or Premium tier.", old)).toBeLessThan(REVISED_BODY_OVERLAP);
+    expect(wordOverlap("", old)).toBe(0);
   });
 });

@@ -2,18 +2,18 @@
  *  user typing "keep going" between replies (the "Ralph loop" pattern).
  *
  *  Each reply is still bounded by TOOL_ROUNDS_PER_REPLY. When a reply ends,
- *  the RUNTIME — not the model — decides whether to send another turn:
+ *  the runtime reads it and decides whether to send another turn:
  *
- *  - The model ends every reply with one status line (`STATUS: DONE`,
- *    `STATUS: NEEDS_USER`, `STATUS: CONTINUE`). It reports; it does not own
- *    the loop. Model-declared completion is the most common false-finish
- *    failure, so the first DONE after real multi-turn work earns one
- *    verification turn before the loop accepts it.
+ *  - The model calls the stop: `finish_task` (done / needs_user), else its
+ *    last-line `STATUS:`, else a reply that plainly says it finished. A done
+ *    is accepted at once; the check belongs in the finishing reply.
  *  - Hard caps the model cannot talk its way past: a continuation limit, a
- *    stall guard (turns that call no tools and make no claim), errors and the
- *    Stop button all end the loop.
- *  - Every continuation restates the original request, so the goal survives
- *    the rolling summary dropping old history.
+ *    stall guard (runs that change nothing), errors and the Stop button all
+ *    end the loop.
+ *  - Every continuation restates the original request and lists what earlier
+ *    runs made, so the goal survives compaction and later runs build on the
+ *    work instead of redoing or deleting it. Continuation runs also can't
+ *    delete pages or start a new document (craftApps protectWork).
  */
 
 export const AUTO_CONTINUE_MAX = 8;
@@ -64,7 +64,7 @@ export function loopCompactionInstructions(): string {
     "At most ~400 words. Plain text. Output ONLY the summary; do not call tools.",
   ].join("\n");
 }
-/** Consecutive continuation turns with no tool calls before the loop gives up. */
+/** Consecutive continuation turns that changed nothing before the loop gives up. */
 export const AUTO_CONTINUE_STALL_LIMIT = 2;
 
 export type TaskStatus = "done" | "needs_user" | "continue";
@@ -84,16 +84,78 @@ export function stripTaskStatus(text: string): string {
   return text.trimEnd().replace(STATUS_RE, "").trimEnd();
 }
 
+// A reply that says it finished, with nothing said about more to do. DeepSeek
+// dropped the STATUS line on 3 of 5 loop replies (2026-10-15), including "I
+// have completed the new double-sided sales flyer…" — and the loop, reading
+// no status, sent two more runs that only re-saved and re-described it.
+const FINISH_CLAIM = /\b(?:I(?:'ve| have)\s+(?:now\s+)?(?:completed|finished)\b|(?:is|are|has been|have been)\s+(?:now\s+)?(?:fully\s+)?(?:complete|completed|finished)\b|all (?:done|set|finished)\b)/i;
+const MORE_TO_DO = /\b(?:next turn|on the next|next,? I(?:'ll| will)|I(?:'ll| will) (?:now|then|next)\b|still (?:need|to do|remaining)|remaining (?:steps|work|parts)|not (?:yet )?(?:done|finished|complete))/i;
+
+/** Does a reply WITHOUT a status line read as "the task is finished"? */
+export function soundsFinished(text: string): boolean {
+  return FINISH_CLAIM.test(text) && !MORE_TO_DO.test(text);
+}
+
+/** The loop's stop button, handed to the model (the OpenHands `finish`
+ *  pattern): a tool call is a structured signal it can't forget to format,
+ *  unlike the last-line STATUS it often left off. Offered only on
+ *  auto-continue turns; the app handles it itself (ChatContext). */
+export const FINISH_TASK_NAME = "finish_task";
+export const FINISH_TASK_DEFINITION = {
+  type: "function",
+  function: {
+    name: FINISH_TASK_NAME,
+    description:
+      "End the auto-continue loop. status done: the WHOLE request is finished and you have looked at the result with your tools in this reply (inspect/preview) — say what you checked. status needs_user: you can't go on without the user — say what you need. Afterwards write a short final reply; no more tool calls run. Don't call it while work remains.",
+    parameters: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["done", "needs_user"] },
+        checked: { type: "string", description: "done: what you looked at to confirm it, e.g. 'previewed both pages'." },
+        question: { type: "string", description: "needs_user: what you need from the user." },
+      },
+      required: ["status"],
+    },
+  },
+} as const;
+
+/** What a finish_task call does: the status the loop reads, the tool result
+ *  the model sees, and the event the user sees. */
+export function finishTaskOutcome(rawArgs: string): {
+  finish: Exclude<TaskStatus, "continue">;
+  result: { ok: true; note: string };
+  event: { name: string; summary: string; ok: true };
+} {
+  let a: any = {};
+  try { a = JSON.parse(rawArgs || "{}") || {}; } catch { /* bad args read as done */ }
+  const finish = a.status === "needs_user" ? "needs_user" : "done";
+  const said = String((finish === "done" ? a.checked : a.question) || "").trim().slice(0, 160);
+  return {
+    finish,
+    result: { ok: true, note: finish === "done"
+      ? "Recorded: the task is finished and the loop stops. Now write the user a short final reply — what was made and how you checked it. No more tool calls run."
+      : "Recorded: the loop stops for the user. Now ask them, in one short reply, exactly what you need. No more tool calls run." },
+    event: { name: FINISH_TASK_NAME, summary: finish === "done" ? `Finished the task${said ? ` (checked: ${said})` : ""}` : `Stopped to ask you${said ? `: ${said}` : ""}`, ok: true },
+  };
+}
+
+// Tool events that only look (inspect, preview, search, list): no work made.
+const LOOK_EVENT = /^(?:Inspected|Looked at|Checked|Searched|Listed|Read|Showed|Found|Viewed|Previewed|Finished the task|Stopped to ask|No more tools)/i;
+
+/** Did this tool event make or change something? */
+export function isChangeEvent(e: { name?: string; summary?: string; ok?: boolean }): boolean {
+  return e.ok !== false && e.name !== FINISH_TASK_NAME && !LOOK_EVENT.test(String(e.summary || "").trim());
+}
+
 /** System-prompt section, present only while auto-continue is on. */
 export function autoContinuePrompt(): string {
   return [
     "## Auto-continue mode",
     "The user turned on auto-continue: when your reply ends, the app may send you a continuation turn so you can finish a multi-step task without the user typing \"keep going\". Work through the task yourself — do not stop to offer the next step (\"say 'finish' and I will…\"); just do it on this or the next turn.",
-    "End EVERY reply with exactly one status line, as the last line:",
-    "- `STATUS: CONTINUE` — work remains and you can do it without the user.",
-    "- `STATUS: NEEDS_USER` — you cannot proceed without something only the user can give (missing information, a choice between options they must make, approval for something destructive or costly). Say exactly what you need.",
-    "- `STATUS: DONE` — every part of the request is finished AND you checked it with your tools (not from memory). Name the check.",
-    "Simple questions and conversation end with `STATUS: DONE`.",
+    "Stopping is yours to call: the moment every part of the request is finished and you have looked at the result with your tools, call `finish_task` with status done (name the check), then write a short final reply. If you can't go on without the user (missing information, a choice only they can make, approval for something destructive or costly), call `finish_task` with status needs_user and ask. Don't invent extra work to fill runs — re-saving, re-linking or re-describing finished work is not progress.",
+    "Each run builds on the last. Keep what earlier runs made: change the part that is wrong in place (send the same role again to replace it). Don't delete pages, start a new document or clear earlier work — continuation runs refuse those. If you truly think starting over is needed, call `finish_task` with needs_user and ask.",
+    "If you didn't call `finish_task`, end the reply with the line `STATUS: CONTINUE`.",
+    "Simple questions and conversation: just answer and call `finish_task` with status done.",
   ].join("\n");
 }
 
@@ -103,56 +165,72 @@ export interface AutoTurn {
   toolCalls: number;
   /** The Stop button ended the turn. */
   aborted: boolean;
+  /** What a finish_task call said, if the reply made one. */
+  finish?: Exclude<TaskStatus, "continue"> | null;
+  /** The reply's tool events that made or changed something (isChangeEvent). */
+  changes?: string[];
 }
 
 export interface AutoLoopState {
   /** Continuation turns sent so far (the user's own message is not one). */
   continuations: number;
-  /** Consecutive continuation turns that made no tool calls. */
+  /** Consecutive continuation turns that changed nothing. */
   stalls: number;
-  /** A verification turn has already been spent on a DONE claim. */
-  verified: boolean;
+  /** The last reply said nothing about being finished or not. */
+  unreported: boolean;
+  /** What earlier runs made — handed to every continuation so the next run
+   *  builds on it instead of redoing or deleting it. */
+  ledger: string[];
   max: number;
 }
 
 export function initialAutoLoopState(max = AUTO_CONTINUE_MAX): AutoLoopState {
-  return { continuations: 0, stalls: 0, verified: false, max };
+  return { continuations: 0, stalls: 0, unreported: false, ledger: [], max };
 }
 
 export type AutoDecision =
   | { action: "stop"; reason: "done" | "needs_user" | "aborted" | "limit" | "stalled" | "no_status" }
-  | { action: "continue"; kind: "continue" | "verify"; state: AutoLoopState };
+  | { action: "continue"; state: AutoLoopState };
+
+const LEDGER_MAX = 30;
+
+/** Add a run's changes to the ledger: repeats of one line collapse to "×n",
+ *  and the oldest lines go first when it grows long. */
+export function addToLedger(ledger: string[], run: number, changes: string[]): string[] {
+  const counts = new Map<string, number>();
+  for (const c of changes) counts.set(c, (counts.get(c) || 0) + 1);
+  const lines = [...counts].map(([c, k]) => `run ${run}: ${c}${k > 1 ? ` (×${k})` : ""}`);
+  return [...ledger, ...lines].slice(-LEDGER_MAX);
+}
 
 export function decideNext(state: AutoLoopState, turn: AutoTurn): AutoDecision {
   if (turn.aborted) return { action: "stop", reason: "aborted" };
-  const status = parseTaskStatus(turn.text);
+  // The model owns "finished": a finish_task call, else its STATUS line, else
+  // a reply that plainly says it's done. Accepted at once — a forced extra
+  // "check it again" run after a checked DONE did nothing visible for ~50 s
+  // and the user stopped it (2026-10-15); the check now belongs in the
+  // finishing reply (finish_task asks what was looked at).
+  const status = turn.finish ?? parseTaskStatus(turn.text) ?? (soundsFinished(turn.text) ? "done" : null);
   if (status === "needs_user") return { action: "stop", reason: "needs_user" };
+  if (status === "done") return { action: "stop", reason: "done" };
+  // No claim and no work: a plain reply, or a model ignoring the protocol.
+  // Either way another turn would only produce more of the same.
+  if (status === null && turn.toolCalls === 0) return { action: "stop", reason: "no_status" };
 
-  const stalls = state.continuations > 0 && turn.toolCalls === 0 ? state.stalls + 1 : 0;
-
-  if (status === "done") {
-    // Accept DONE outright when there is nothing to re-check: a first reply
-    // that used no tools (a plain answer), or a claim re-made after the
-    // verification turn. Anything that changed state gets checked once.
-    if (state.verified || (state.continuations === 0 && turn.toolCalls === 0)) return { action: "stop", reason: "done" };
-  } else if (status === null && turn.toolCalls === 0) {
-    // No claim and no work: a plain reply, or a model ignoring the protocol.
-    // Either way another turn would only produce more of the same.
-    return { action: "stop", reason: "no_status" };
-  }
-
+  const changes = turn.changes ?? Array.from({ length: turn.toolCalls }, () => "work");
+  // A run that only looked (inspect, preview, search) made no progress either.
+  const stalls = state.continuations > 0 && changes.length === 0 ? state.stalls + 1 : 0;
   if (stalls >= AUTO_CONTINUE_STALL_LIMIT) return { action: "stop", reason: "stalled" };
   if (state.continuations >= state.max) return { action: "stop", reason: "limit" };
 
-  const kind = status === "done" ? "verify" : "continue";
   return {
     action: "continue",
-    kind,
     state: {
       ...state,
       continuations: state.continuations + 1,
       stalls,
-      verified: state.verified || kind === "verify",
+      unreported: status === null,
+      ledger: turn.changes ? addToLedger(state.ledger, state.continuations, turn.changes) : state.ledger,
     },
   };
 }
@@ -160,16 +238,21 @@ export function decideNext(state: AutoLoopState, turn: AutoTurn): AutoDecision {
 const GOAL_CHARS = 600;
 
 /** The continuation message sent as the user's turn. Visible in the
- *  transcript — it is exactly what the model saw. */
-export function continuationMessage(goal: string, kind: "continue" | "verify", n: number, max: number): string {
+ *  transcript — it is exactly what the model saw. Carries the original
+ *  request (the goal survives compaction) and what earlier runs made (the
+ *  progress log of Anthropic's long-running-agent harness): without it a run
+ *  re-inspected the page, disliked what it saw and deleted three runs of work
+ *  (2026-10-15). */
+export function continuationMessage(goal: string, state: Pick<AutoLoopState, "continuations" | "max" | "unreported" | "ledger">): string {
   const g = goal.trim();
   const quoted = g.length > GOAL_CHARS ? `${g.slice(0, GOAL_CHARS)}…` : g;
-  const head = `↻ Auto-continue ${n}/${max}.`;
-  const body =
-    kind === "verify"
-      ? "Before this counts as done: check the original request item by item with your tools (inspect the actual result — do not rely on what you remember doing). Fix anything missing or wrong. End with STATUS: DONE only if the check passes."
-      : "Keep going with the next part of the task. Don't repeat finished work or ask me to confirm routine steps.";
-  return `${head} ${body}\n\nOriginal request:\n> ${quoted.replace(/\n/g, "\n> ")}`;
+  const parts = [`↻ Auto-continue ${state.continuations}/${state.max}. Keep going with the next part of the task. Don't repeat finished work or ask me to confirm routine steps.`];
+  if (state.unreported) parts.push("Your last reply didn't say whether the task is finished. If it is, call finish_task now (status done, after looking at the result) instead of doing more.");
+  if (state.ledger.length) {
+    parts.push(`Made so far — keep it and build on it; fix a wrong part in place, don't delete it or start over:\n${state.ledger.map((l) => `- ${l}`).join("\n")}`);
+  }
+  parts.push(`Original request:\n> ${quoted.replace(/\n/g, "\n> ")}`);
+  return parts.join("\n\n");
 }
 
 export function stopReasonLabel(reason: Extract<AutoDecision, { action: "stop" }>["reason"], max: number): string | null {

@@ -139,6 +139,9 @@ import { MAX_ACTIVE_NEURONS, FREE_NEURON_LIMIT } from "@/lib/neuronAccess";
 import { OPEN_ACCESS } from "@/lib/openAccess";
 
 export interface ToolDeps {
+  /** An auto-continue continuation run: craft refuses to delete pages or
+   *  start over on earlier runs' work (craftApps protectWork). */
+  protectWork?: boolean;
   /** The user's message this turn (the craft tool checks what was asked for). */
   userText?: string;
   books: BookDocument[];
@@ -6249,6 +6252,7 @@ export async function executeChatTool(
           addBook: deps.addBook,
           currentModel: deps.currentModel,
           fetchImage: fetchImageById,
+          protectWork: deps.protectWork,
         });
       case "save_file": {
         // Deliberately ungated: writing a text file into the user's own

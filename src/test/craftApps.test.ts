@@ -5,7 +5,7 @@ vi.mock("@/lib/imageGen", () => ({
   storeGeneratedImage: vi.fn(async (o: any) => ({ id: "new-img", storage_path: "u/new.png", prompt: o.prompt })),
 }));
 
-import { askedOptions, capResult, emptyPagesNext, pageNote, partBatch, pagePartRestyle, pagesOptions, pdfPageCount, resolveAction, runCraftTool, CRAFT_TOOL_DEFINITION } from "@/lib/craftApps";
+import { askedOptions, capResult, emptyPagesNext, pageNote, partBatch, pagePartRestyle, pagesOptions, pdfPageCount, resolveAction, runCraftTool, CRAFT_TOOL_DEFINITION, destructiveCraftCall } from "@/lib/craftApps";
 import { storeGeneratedImage } from "@/lib/imageGen";
 
 type Call = { url: string; method: string; body: any; headers: Record<string, string> };
@@ -349,5 +349,34 @@ describe("a picture and a headline in one call", () => {
     await runCraftTool({ action: "send", app: "designcraft", layer: id, role: "headline", text: "Plan to Win" }, { ...deps, fetchImage: async (x: string) => (x === id ? { id, storage_path: "u/q.png" } : null) });
     const composes = calls.filter((c) => c.url.endsWith("/compose")).map((c) => c.body);
     expect(composes).toMatchObject([{ role: "image", path: "/ws/in/image-img1.png" }, { role: "headline", text: "Plan to Win" }]);
+  });
+});
+
+describe("destructiveCraftCall (auto-continue keeps earlier runs' work)", () => {
+  const dc = (args: any) => destructiveCraftCall({ app: "designcraft", ...args }, args.action);
+  it("names the calls that throw work away", () => {
+    // The call that deleted three runs of work on 2026-10-15.
+    expect(dc({ action: "pages", options: { delete: [1] } })).toBe("delete pages");
+    expect(dc({ action: "pages", page: 1, options: { delete: true } })).toBe("delete pages");
+    expect(dc({ action: "open", options: { preset: "Letter", sides: 2 } })).toBe("start a new document");
+    expect(destructiveCraftCall({ app: "photocraft", action: "send", options: { new_document: true } }, "send")).toBe("start a new document");
+    expect(dc({ action: "run", steps: [{ id: "layout.pages.delete", params: { pages: [1] } }] })).toBe("run layout.pages.delete");
+    expect(dc({ action: "run", steps: [{ id: "edit.clear", params: { ids: [4, 5, 6] } }] })).toBe("run edit.clear on more than one item");
+    expect(dc({ action: "call", tool: "new_document", arguments: {} })).toBe("call new_document");
+  });
+  it("lets edits, additions and single-item removals through", () => {
+    expect(dc({ action: "send", role: "body", text: "New words" })).toBeNull();
+    expect(dc({ action: "pages", options: { add: 1 } })).toBeNull();
+    expect(dc({ action: "open" })).toBeNull();
+    expect(dc({ action: "run", steps: [{ id: "edit.clear", params: { ids: [7] } }] })).toBeNull();
+    expect(dc({ action: "inspect" })).toBeNull();
+  });
+  it("runCraftTool refuses them on a continuation run, before touching the app", async () => {
+    const spy = vi.spyOn(globalThis, "fetch");
+    const out = await runCraftTool({ app: "designcraft", action: "pages", options: { delete: [1] } }, { books: [], protectWork: true });
+    expect(out.event).toMatchObject({ ok: false, summary: "Kept earlier work: didn't delete pages" });
+    expect(String(out.result.error)).toContain("finish_task");
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 });

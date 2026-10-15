@@ -996,6 +996,30 @@ async function fitInFrame(id, { shrink = false } = {}) {
 }
 
 /** Same words, ignoring case, spacing and punctuation-level noise. */
+/** Share of `next`'s words (3+ letters, each counted once) already in
+ *  `prev`: how much of a new text is the old one reworked. */
+export function wordOverlap(next, prev) {
+  const w = (t) => new Set(String(t || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").split(" ").filter((x) => x.length > 2));
+  const a = w(next), b = w(prev);
+  if (!a.size || !b.size) return 0;
+  let k = 0;
+  for (const x of a) if (b.has(x)) k++;
+  return k / a.size;
+}
+/** A body sent again with its words reworked ("tighten the bullets") is the
+ *  body already there, not a second one stacked on it. Bodies aren't one per
+ *  page, so each re-send used to ADD a frame; on 2026-10-15 an auto-continue
+ *  run found the stacked copies, called them clutter and deleted the page.
+ *  Half the new words already in a body on the page makes it that body. */
+export const REVISED_BODY_OVERLAP = 0.5;
+async function revisedBody(page, text) {
+  let best = null, bestScore = REVISED_BODY_OVERLAP;
+  for (const it of page.items.filter((x) => x.role === "body" && x.kind === "text").slice(0, 8)) {
+    const score = wordOverlap(text, (await dcJson("get_story", { frame: it.id }).catch(() => null))?.text);
+    if (score >= bestScore) { best = it; bestScore = score; }
+  }
+  return best;
+}
 export const sameWords = (a, b) => { const k = (t) => String(t || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim(); return !!k(a) && k(a) === k(b); };
 const boxesTouch = (a, b) => a[0] < b[2] - 0.5 && b[0] < a[2] - 0.5 && a[1] < b[3] - 0.5 && b[1] < a[3] - 0.5;
 /** Ids of the parts on page `index` that item `id` overlaps. */
@@ -1077,6 +1101,7 @@ async function composeDesign(opts) {
     : ONE_PER_PAGE.has(role) && !opts.add ? page.items.find((it) => it.role === role)
     // A style for the body ("make the body bigger") when the page has just one.
     : !text && !opts.add && Object.keys(over).length && page.items.filter((it) => it.role === role).length === 1 ? page.items.find((it) => it.role === role) : null;
+  if (!target && role === "body" && text && !opts.add && !tpl) target = await revisedBody(page, text);
   let replaced = false, existed = false, before = [], relaid = null;
   if (role === "image") {
     if (!opts.path) throw httpError(400, "image needs a picture");
@@ -1947,7 +1972,9 @@ async function pagesOp(o = {}) {
     const pages = indexList(doc, o.delete === true ? [lastPage ?? docPages(doc).length - 1] : o.delete);
     if (pages.length >= docPages(doc).length) throw httpError(400, "That would delete every page. Keep at least one.");
     await dc("layout.pages.delete", { pages });
-    did.push(`deleted page${pages.length === 1 ? "" : "s"} ${pages.join(", ")}`);
+    // Named as people count ("the back", "page 2"): the 0-based "deleted
+    // page 1" read as the front being deleted.
+    did.push(`deleted ${pages.map((i) => pageLabel(doc, i)).join(", ")}`);
     lastPage = Math.max(0, Math.min(pages[0], docPages(await designDoc()).length - 1));
   }
   if (o.numbers != null) {
