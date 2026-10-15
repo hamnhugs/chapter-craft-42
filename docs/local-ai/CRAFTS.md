@@ -455,3 +455,46 @@ CRAFT_EVAL_IMAGE=<a png in crafts/workspace/in> LIVE_CRAFT_EVAL=1 npx vitest run
 | Two PhotoCraft windows | Close both and open it once from the menu (or let Counsel open it). The launcher and the bridge reuse an open window from then on. |
 | "already open, but not in a way Chapter Craft can drive" | That window was started without the control port (an old AppImage or a stale menu entry). Close it and re-run `scripts/local-ai/install-crafts.sh` to rewrite the launchers. |
 | Files dropped on PhotoCraft don't open | Wayland has no drag-and-drop in these apps yet. Use File › Open, or send it from the chat. |
+
+## Moving things by hand: page size, proportion guides, nothing cut off (2026-10-14)
+
+Why: the user's lawn-flyer session. "Space the bullet points out more", "make sure both
+pages are aligned" and "double check that text is not being cut off" were all answered by
+the chat model writing raw DesignCraft batches ("Ran 22 DesignCraft commands") with
+coordinates it made up. Nothing checked those batches. Text ran past the page, frames came
+out at DesignCraft's 12 pt default, and placement looked arbitrary.
+
+- **Guides** (`scripts/local-ai/design-proportion.mjs`). Each page gets its margins and
+  centre line, golden-section lines (0.382 / 0.618 of the safe box), rule-of-thirds lines, a
+  Fibonacci spacing scale (8, 13, 21, 34, 55, 89 pt) and a golden type scale from 14 pt
+  (14, 23, 37, 59, 96). `inspect` (and `call inspect_document`) returns them as
+  `page_guides`: size in pt and inches, top-left in spread coordinates, `safe_box`, golden,
+  thirds, centre, `type_scale_pt`, `spacing_pt`. `layout_rules` says how to use them.
+  craftApps.ts puts `page_guides` ahead of the document, so cutting a long document to fit
+  never cuts them.
+- **After every `run`, and every `call` to `execute`/`batch` that edits** (`tidyDesign` in
+  craft-bridge.mjs, serialised with compose):
+  - each part the commands moved, resized or made is snapped (`placeBox`), within 2% of the
+    page width, onto the nearest guide. Guides include the edges of the other parts, the
+    same part on the other pages of that size (so a spread matches) and a spacing-scale gap
+    below the part above. Margins hold only their own edge. A text frame with its other
+    edge near a guide takes that width too;
+  - text stays inside the safe box; pictures may run to the trim and into the bleed;
+  - text the commands touched that's under 14 pt is raised to 14 (leading with it);
+  - a text frame whose story is cut off (only the story's last frame) grows down 4 pt at a
+    time until the text fits, as far as the bottom margin or the part below allows. If it
+    still doesn't fit, `issues` says so, with the options. Type is never shrunk;
+  - parts the commands didn't touch never move. Uneven gaps next to a moved part, and
+    parts off the page, are reported.
+  - The result carries `layout`: `placed` (what snapped where, `kept_on_page`),
+    `raised_to_14pt`, `grown_to_fit`, `issues`.
+- `fitInFrame` (role restyles) also stops growing at the bottom margin. Before, it could
+  grow a frame 160 pt past the page.
+- The copy & design prompt (`renderCopyCraftSection`) tells the model to inspect first, work
+  inside `safe_box`, put the focal part on a golden or thirds line, use the spacing and
+  type scales, and read `layout` before saying it's done. The craft tool definition is
+  unchanged, so localDesignEval's tool-schema sensitivity doesn't apply.
+
+Tests: `src/test/designProportion.test.ts`. Checked live on a private headless bridge
+(12 pt hand-made frame → 14 pt, snapped to the margin with a 13 pt gap under the headline,
+grown to fit; a footer dropped past the bottom → pulled onto the page).

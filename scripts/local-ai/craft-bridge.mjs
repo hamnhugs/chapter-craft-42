@@ -26,6 +26,7 @@ import { readFile } from "node:fs/promises";
 import { basename, extname, join, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { SPACING, guideSummary, placeBox, unevenGaps } from "./design-proportion.mjs";
 import { DESIGN_FAMILIES, FONT_DIR, LOOK_NAMES, MIN_TYPE, TEMPLATE_PREFIX, autoLook, imagePalette, isDecoName, layoutLook, lookOf, nearestStyle } from "./design-looks.mjs";
 import { deleteTemplate, describeTemplate, designcraftJson, findTemplate, guessSlots, listTemplates, slugify, writeTemplate } from "./design-templates.mjs";
 
@@ -347,6 +348,7 @@ async function run(app, steps, stopOnError = true, opts = {}) {
     }
   }
   const long = norm.some((s) => /export|render/i.test(s.id));
+  const before = app === "designcraft" && designEdits(norm.map((s) => s.id)) ? await designDoc().catch(() => null) : null;
   const args = app === "designcraft"
     ? { commands: norm.map((s) => ({ command: s.id, params: s.params })) }
     : { steps: norm, stop_on_error: stopOnError };
@@ -361,8 +363,10 @@ async function run(app, steps, stopOnError = true, opts = {}) {
     const list = await catalog(app).catch(() => []);
     didYouMean = Object.fromEntries(unknown.map((id) => [id, rankCommands(list, idWords(id), 3)]));
   }
+  const layout = before && !r.isError ? await tidyDesign(before, norm.map((st) => st.id)).catch((e) => (log("tidy", e.message), null)) : null;
   return {
     ok: !r.isError && !failed, result: r.json ?? r.text,
+    ...(layout ? { layout, layout_rules: LAYOUT_RULES } : {}),
     ...(didYouMean ? { did_you_mean: didYouMean, hint: "Those ids don't exist. Run the closest one below with its params." } : {}),
     ...(targeted ? { targeted_layer: targeted } : {}),
     ...(nonDestructive ? { as_adjustment_layers: nonDestructive, note: "Made as adjustment layers, so the photo itself is unchanged (bake:true changes its pixels instead)." } : {}),
@@ -373,8 +377,97 @@ async function run(app, steps, stopOnError = true, opts = {}) {
 
 async function inspect(app) {
   const r = await mustCall(app, APPS[app].tools.inspect, {});
-  return { result: r.json ?? r.text };
+  if (app !== "designcraft" || !r.json?.spreads) return { result: r.json ?? r.text };
+  // Moving things by hand: the page size, its safe box and the guides to
+  // place parts on, before the model invents coordinates.
+  return { result: r.json, page_guides: pageGuidesOf(r.json), layout_rules: LAYOUT_RULES };
 }
+const pageGuidesOf = (doc) => docPages(doc).map((p) => ({ page: p.index, side: pageLabel(doc, p.index), ...guideSummary(designPage(doc, p.index), MIN_TYPE) }));
+
+const LAYOUT_RULES = "Coordinates are points in spread coordinates (page_guides gives each page's top-left and size). Keep text inside safe_box. Put the focal part (headline, picture) on a golden or thirds line, not dead centre; line parts up on shared edges; gaps between parts from spacing_pt; type sizes from type_scale_pt, never under 14 pt. Whatever you move is snapped to the nearest guide and kept on the page, and cut-off text frames grow to fit: read `layout` in the result.";
+
+/** After the chat's own DesignCraft commands (`run`, or `call` execute/batch):
+ *  each part they moved, resized or made is snapped to its page's guides
+ *  (design-proportion.mjs) and kept on the page; a text frame whose text is
+ *  cut off grows down to fit, as far as the safe box and the part below
+ *  allow; and the result says what's still wrong. Parts the commands didn't
+ *  touch stay where they are (the user: edits change only what was asked). */
+async function tidyDesign(before, ids = []) {
+  const doc = await designDoc();
+  if (!doc) return null;
+  const prev = new Map((before?.spreads || []).flatMap((sp) => sp.items || []).filter((it) => Array.isArray(it.bounds)).map((it) => [it.id, it.bounds]));
+  const differs = (a, b) => !b || a.some((v, k) => Math.abs(v - b[k]) > 0.5);
+  const bleed = isTwoSided(doc) ? PRINT_BLEED : bleedOf(await docSetup().catch(() => ({})));
+  const pages = docPages(doc).map((p) => designPage(doc, p.index));
+  const placed = [], steps = [];
+  for (const page of pages) {
+    const moved = page.items.filter((it) => differs(it.bounds, prev.get(it.id)));
+    for (const it of moved) {
+      // The same part on the pages of the same size: its box, in this page's coordinates.
+      const matches = pages.filter((o) => o !== page && Math.abs(o.bounds[2] - o.bounds[0] - (page.bounds[2] - page.bounds[0])) < 1)
+        .flatMap((o) => o.items.filter((x) => x.named && x.role === it.role && !moved.includes(x)).map((x) => [0, 1, 2, 3].map((k) => x.bounds[k] - o.bounds[k % 2] + page.bounds[k % 2])));
+      const others = page.items.filter((x) => x.id !== it.id && !boxesTouch(x.bounds, it.bounds));
+      const r = placeBox(it.bounds, page, { others, matches, isText: it.kind === "text", bleed });
+      if (!differs(r.box, it.bounds)) continue;
+      const [x0, y0, x1, y1] = r.box;
+      steps.push({ command: "transform.set", params: { x: x0, y: y0, width: x1 - x0, height: y1 - y0, ref: 0, ids: [it.id] } });
+      placed.push({ id: it.id, role: it.role, box: { x: x0, y: y0, w: Math.round(x1 - x0), h: Math.round(y1 - y0) }, ...(r.snapped.length ? { snapped: r.snapped } : {}), ...(r.clamped ? { kept_on_page: true } : {}) });
+    }
+  }
+  if (steps.length) await mustCall("designcraft", "batch", { commands: steps });
+  // Nothing under 14 pt (the user's rule): a frame made by hand starts at
+  // DesignCraft's 12 pt, and a model sets 10 pt for "fine print". Checked on
+  // what moved, and on every text part when the commands set type.
+  const typeSet = ids.some((id) => /^(type\.|text\.|style\.)/.test(id));
+  const raised = [];
+  for (const page of pages) for (const it of page.items) {
+    if (it.kind !== "text" || !(typeSet || differs(it.bounds, prev.get(it.id)))) continue;
+    const a = (await charAttrs(it.id)).chars || {};
+    const size = Number(a.size);
+    if (!(size > 0 && size < MIN_TYPE)) continue;
+    const lead = a.leading?.kind === "points" ? { leading: { kind: "points", value: Math.round((a.leading.value * MIN_TYPE) / size * 10) / 10 } } : {};
+    await dc("type.char", { attrs: { size: MIN_TYPE, ...lead } });
+    raised.push({ id: it.id, role: it.role, from: size, to: MIN_TYPE });
+  }
+  if (raised.length) await dc("selection.set", { ids: [] });
+  const after = steps.length || raised.length ? await designDoc() : doc;
+  const issues = [], grown = [];
+  for (const page of docPages(after).map((p) => designPage(after, p.index))) {
+    const label = ((l) => (/^page /.test(l) ? l : `the ${l}`))(pageLabel(after, page.index));
+    for (const it of page.items) {
+      const [x0, y0, x1, y1] = it.bounds;
+      if (x1 < page.bounds[0] || x0 > page.bounds[2] || y1 > page.bounds[3] + 1 || y0 < page.bounds[1] - 1) issues.push(`${roleName(it.role)} (id ${it.id}) on ${label} runs off the page.`);
+      const story = (after.stories || []).find((s) => s.id === it.story);
+      // Only the story's last frame can take more of its text.
+      if (it.kind !== "text" || !story?.overset || story.frames?.[story.frames.length - 1] !== it.id) continue;
+      const below = page.items.filter((x) => x.id !== it.id && x.bounds[0] < x1 && x.bounds[2] > x0 && x.bounds[1] >= y1 - 0.5).reduce((m, x) => Math.min(m, x.bounds[1] - SPACING[0]), page.content.bottom);
+      const r = await growToFit(it.id, y0, y1, below);
+      if (r.fits) grown.push({ id: it.id, role: it.role, height: Math.round(r.height) });
+      else issues.push(`${roleName(it.role)} (id ${it.id}) on ${label} is cut off: its text doesn't fit even at ${Math.round(r.height)} pt tall (room ends at y ${Math.round(below)}${below < page.content.bottom ? `, where the part below starts` : ", the bottom margin"}). Shorten it, widen the frame, move what's below down, or continue it on another page; don't make type smaller than 14 pt.`);
+    }
+    for (const g of unevenGaps(page.items)) if (placed.some((p) => p.id === g.above || p.id === g.below)) issues.push(`On ${label}, the gap between id ${g.above} and id ${g.below} is ${g.gap} pt while the others are about ${g.usual} pt: make it ${g.usual} (or ${g.scale}) so the spacing is even.`);
+  }
+  if (!placed.length && !grown.length && !issues.length && !raised.length) return null;
+  return { ...(placed.length ? { placed } : {}), ...(raised.length ? { raised_to_14pt: raised } : {}), ...(grown.length ? { grown_to_fit: grown } : {}), ...(issues.length ? { issues } : {}) };
+}
+
+/** Text frame `id` deeper, 4 pt at a time, until its text fits or it would
+ *  pass `limit` (the safe box, or the part below). */
+async function growToFit(id, y0, y1, limit) {
+  const fits = async () => !(await dcJson("get_story", { frame: id }))?.overset;
+  let h = y1 - y0;
+  if (await fits()) return { fits: true, height: h };
+  const max = Math.max(h, limit - y0);
+  while (h < max) {
+    h = Math.min(max, h + 4);
+    await dc("transform.set", { height: h, ref: 0, ids: [id] });
+    if (await fits()) return { fits: true, height: h };
+  }
+  return { fits: false, height: h };
+}
+
+/** Commands that change a DesignCraft document (not reads, renders or exports). */
+const designEdits = (ids) => ids.some((id) => !/^(view|file\.(export|save|print)|render|inspect|get|list|find|select|selection|ui\.|type\.selectionAttrs)/.test(id));
 
 async function preview(app, opts = {}) {
   const args = app === "designcraft"
@@ -895,13 +988,11 @@ async function fitInFrame(id, { shrink = false } = {}) {
   }
   const doc = await designDoc();
   const it = (doc.spreads || []).flatMap((sp) => sp.items || []).find((x) => x.id === id);
-  let h = it?.bounds ? it.bounds[3] - it.bounds[1] : 40;
-  for (let k = 0; s.overset != null && k < 40; k++) {
-    h += 4;
-    await dc("transform.set", { height: h, ref: 0, ids: [id] });
-    s = await story();
-  }
-  return { cut: s.overset != null };
+  if (!it?.bounds) return { cut: true };
+  // Deeper, but never past the bottom margin of its page.
+  const page = docPages(doc).find((p) => p.items.some((x) => x.id === id));
+  const bottom = page ? designPage(doc, page.index).content.bottom : it.bounds[3] + 160;
+  return { cut: !(await growToFit(id, it.bounds[1], it.bounds[3], Math.max(it.bounds[3], bottom))).fits };
 }
 
 /** Same words, ignoring case, spacing and punctuation-level noise. */
@@ -2127,13 +2218,27 @@ async function body(req, limit = 512 * 1024 * 1024) {
   return Buffer.concat(chunks);
 }
 
+/** A raw MCP tool call. On DesignCraft, an `execute` or `batch` that edits
+ *  the page gets the same tidying as `run`. */
+async function callDesign(b) {
+  const tool = String(b.tool || ""), a = b.arguments || {};
+  const ids = tool === "execute" ? [String(a.command || "")] : tool === "batch" ? (a.commands || []).map((c) => String(c?.command || "")) : [];
+  const before = b.app === "designcraft" && ids.length && designEdits(ids) ? await designDoc().catch(() => null) : null;
+  const r = await callTool(b.app, tool, a, b.timeout_s ? Number(b.timeout_s) * 1000 : undefined);
+  const layout = before && !r.isError ? await tidyDesign(before, ids).catch((e) => (log("tidy", e.message), null)) : null;
+  return {
+    ok: !r.isError, result: r.json ?? r.text, ...(layout ? { layout, layout_rules: LAYOUT_RULES } : {}),
+    ...(b.app === "designcraft" && tool === "inspect_document" && r.json?.spreads ? { page_guides: pageGuidesOf(r.json), layout_rules: LAYOUT_RULES } : {}),
+    images: r.images.map((im) => { const path = join(WS, "out", `${b.app}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.png`); writeFileSync(path, Buffer.from(im.base64, "base64")); return { path, mime: im.mime }; }),
+  };
+}
+
 const ROUTES = {
   "GET /status": () => status(),
   "POST /tools": (b) => listTools(b.app),
-  "POST /call": (b) => callTool(b.app, String(b.tool || ""), b.arguments || {}, b.timeout_s ? Number(b.timeout_s) * 1000 : undefined)
-    .then((r) => ({ ok: !r.isError, result: r.json ?? r.text, images: r.images.map((im) => { const path = join(WS, "out", `${b.app}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.png`); writeFileSync(path, Buffer.from(im.base64, "base64")); return { path, mime: im.mime }; }) })),
+  "POST /call": (b) => (b.app === "designcraft" ? serialCompose({ _do: () => callDesign(b) }) : callDesign(b)),
   "POST /commands": (b) => commands(b.app, b.query, b.limit),
-  "POST /run": (b) => run(b.app, b.steps, b.stop_on_error !== false, b),
+  "POST /run": (b) => (b.app === "designcraft" ? serialCompose({ _do: () => run(b.app, b.steps, b.stop_on_error !== false, b) }) : run(b.app, b.steps, b.stop_on_error !== false, b)),
   "POST /inspect": (b) => inspect(b.app),
   "POST /preview": (b) => preview(b.app, b),
   "POST /open": (b) => openApp(b.app, b.path, b),

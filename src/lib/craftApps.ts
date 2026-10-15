@@ -549,7 +549,8 @@ export async function runCraftTool(args: any, deps: CraftDeps): Promise<Outcome>
       }
       case "inspect": {
         const r = await bridge("/inspect", { app });
-        return ok({ document: capResult(r.result) }, `Inspected the ${L} document`);
+        // Guides first: a long document is cut to fit, the page sizes mustn't be.
+        return ok({ ...(r.page_guides ? { page_guides: r.page_guides, layout_rules: r.layout_rules } : {}), document: capResult(r.result) }, `Inspected the ${L} document`);
       }
       case "preview": {
         const r = await bridge("/preview", { app, page: args.page, seconds: args.seconds });
@@ -652,7 +653,7 @@ export async function runCraftTool(args: any, deps: CraftDeps): Promise<Outcome>
         const r = await bridge("/call", { app, tool, arguments: args.arguments || {} });
         const vision = r.images?.[0] ? await blobToDataUrl(await fileBlob(r.images[0].path)) : undefined;
         return {
-          result: { ok: r.ok, result: capResult(r.result), ...(vision ? { note: "A picture came back; it is attached as vision input in the next message.", __vision: vision } : {}) },
+          result: { ok: r.ok, ...(r.page_guides ? { page_guides: r.page_guides } : {}), ...(r.layout ? { layout: r.layout } : {}), ...(r.layout_rules ? { layout_rules: r.layout_rules } : {}), result: capResult(r.result), ...(vision ? { note: "A picture came back; it is attached as vision input in the next message.", __vision: vision } : {}) },
           event: { name, summary: r.ok ? `${L}: ${tool}` : `${L}: ${tool} failed`, ok: !!r.ok },
         };
       }
