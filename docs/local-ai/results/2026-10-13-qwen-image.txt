@@ -1,0 +1,47 @@
+# Qwen Image 2.1 on this machine — stable-diffusion.cpp @ 1d0a58a (Vulkan), Renoir iGPU (Vulkan0, UMA)
+# Text encoder Qwen3VL-8B-Instruct Q4_K_M (+ mmproj F16 for edits), VAE qwen_image_2.1_vae_bf16.
+# Turbo schedule: --sigmas qwen-image-2.1-turbo --steps 8 --cfg-scale 1.0 --sampling-method euler. 512x512.
+# Prompt: "a lighthouse in a storm at night, watercolor painting, crashing waves, a wooden sign reading 'Chapter Craft'"
+
+Comfy-Org qwen_image_2.1_turbo_int8_convrot.safetensors : ~220 s/step (stopped at 2/8; ~30 min/image)
+   => Renoir reports "int dot: 0": no packed-INT8 dot product, so sd.cpp's INT8
+      matmuls fall back to the CPU (docs/int8_convrot.md "Backend support"). 730% CPU.
+leejet qwen_image_2.1-Q4_K.gguf + Turbo LoRA (rank 178), apply immediately : abort in apply_loras_to_params
+leejet qwen_image_2.1-Q4_K.gguf + Turbo LoRA, at_runtime                    : 21.7 s/step, 198 s total, good image
+   => but sd-server ignores <lora:> tags by design (examples/server/api.md, "Global LoRA rule").
+unsloth qwen-image-2.1-turbo-Q4_K_M.gguf (Turbo merged)                     : 18.6 s/step, ~200 s total   <= chosen
+
+Breakdown (merged Turbo, t2i): text encode ~4 s, sampling ~150 s, VAE decode ~17 s, load ~10 s.
+Peak memory: ~9 GB of params (TE 4.3 + DiT 4.0 + VAE 0.6) in shared system RAM.
+
+Editing (merged Turbo, "EDIT mode", ~205 s):
+  sd-cli -r:  "Change the red stripe on the lighthouse to bright green."        -> done; everything else preserved
+  sd-cli -r and sd-server /v1/images/edits (same output):
+              "Make it a calm sunny day ... Keep the lighthouse ... unchanged." -> near-copy of the input, still stormy
+   => local, concrete edits work; a global restyle phrased with "keep X unchanged" didn't take.
+sd-server's edit endpoint also sets the first image as the img2img init image (default
+strength 0.75, which skipped a step). The server runs with --strength 1.0 so the input only
+conditions as a reference, matching the CLI's -r path.
+
+Images: 2026-10-13-qwen-t2i-512.png (the edit input), 2026-10-13-qwen-edit-green-512.png. Z-Image baseline: 2026-10-12-images.txt.
+
+## In the app (headless Chromium, production build, Counsel chat)
+"Generate an image: a cozy reading nook ..." -> generate_image -> sd-server, 160 s, shown inline. No console errors.
+"Edit that image: make the cat orange ..." (history held an aborted turn) -> the chat model wrote
+  "The cat ... has been updated to orange" with NO tool call. Nothing reached sd-server.
+
+## Does a follow-up edit reach edit_image? (src/test/localEditEval.test.ts, LIVE_OLLAMA=1,
+## hf.co/unsloth/Qwen3-4B-Instruct-2507-GGUF:Q6_K, clean generate -> edit history)
+Before (roster from embeddings only):
+  "Edit that image: make the cat orange ..."                 3/3 edit_image
+  "Now make the cat orange."                                 0/3 (edit_image not offered -> generate_image)
+  "Can you add a steaming mug ... in that picture?"          0/3 (edit_image not offered -> generate_image)
+After (edit_image joins the roster with generate_image, LOCAL_COMPANION_TOOLS):
+  all three phrasings                                        12/12 edit_image (4 trials each)
+
+## After the roster fix, in the app (same conversation, now holding two fake "updated" replies)
+"Now make the cat in the reading nook picture orange." -> again a text-only claim, no tool call:
+  the model copies its own earlier fake replies. A clean conversation wasn't tried in the app
+  (the only account's history would have to be cleared); the live eval above is the clean case.
+Edit path without the chat: POST /local/images/v1/images/edits (app proxy), image[] form field,
+  "Change the red stripe ... to bright green." -> EDIT mode, 198 s, correct edit.

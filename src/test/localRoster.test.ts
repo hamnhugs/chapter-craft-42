@@ -115,6 +115,21 @@ describe("planLocalRoster", () => {
     expect(plan.names.length).toBeLessThanOrEqual(ROSTER_CAP);
   });
 
+  it("edit_image joins with generate_image, so 'now make it orange' can edit", async () => {
+    const first = await planLocalRoster({ userId: "u", query: "make an image of a lighthouse", pool: ALL });
+    expect(first.names).toContain("generate_image");
+    expect(first.names.indexOf("edit_image")).toBeGreaterThan(first.names.indexOf("generate_image"));
+    const second = await planLocalRoster({ userId: "u", query: "now make the stripe green", pool: ALL });
+    expect(second.names.slice(0, first.names.length)).toEqual(first.names);
+  });
+
+  it("a companion the gates withheld stays out", async () => {
+    const pool = ALL.filter((d) => d.function.name !== "edit_image");
+    const plan = await planLocalRoster({ userId: "u", query: "make an image of a lighthouse", pool });
+    expect(plan.names).toContain("generate_image");
+    expect(plan.names).not.toContain("edit_image");
+  });
+
   it("resetRoster starts the next conversation from core", async () => {
     await planLocalRoster({ userId: "u", query: "make an image", pool: ALL });
     resetRoster("u");

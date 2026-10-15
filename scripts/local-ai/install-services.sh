@@ -5,7 +5,7 @@
 #   Ollama models   chat, vision, research, embeddings
 #   Piper           text-to-speech (+3 voices)                -> venv
 #   whisper.cpp     speech-to-text, Vulkan build (+base.en)   -> built from source
-#   sd.cpp          image generation, Vulkan build (+Z-Image-Turbo) -> built from source
+#   sd.cpp          image generation, Vulkan build (+Qwen Image 2.1 Turbo, Z-Image-Turbo) -> built from source
 #
 # Everything lands in ~/.local/share/chapter-craft-local (override: CC_HOME).
 # Sizes: ~9 GB of models on top of what Ollama already has.
@@ -64,6 +64,12 @@ fi
 
 # --- stable-diffusion.cpp (images) -------------------------------------------
 clone https://github.com/leejet/stable-diffusion.cpp.git stable-diffusion.cpp "--recursive --shallow-submodules"
+# Qwen Image 2.1 needs a 2026-10-12+ build (its turbo sigma preset): update an older checkout.
+if [ -x "$SRC/stable-diffusion.cpp/build/bin/sd-server" ] && ! "$SRC/stable-diffusion.cpp/build/bin/sd-server" --help 2>&1 | grep -q qwen-image-2.1-turbo; then
+  say "updating stable-diffusion.cpp for Qwen Image 2.1"
+  git -C "$SRC/stable-diffusion.cpp" pull -q --recurse-submodules && git -C "$SRC/stable-diffusion.cpp" submodule update -q --init --recursive
+  rm -f "$SRC/stable-diffusion.cpp/build/bin/sd-server"
+fi
 if [ ! -x "$SRC/stable-diffusion.cpp/build/bin/sd-server" ]; then
   say "building stable-diffusion.cpp (Vulkan)"
   "$CMAKE" -S "$SRC/stable-diffusion.cpp" -B "$SRC/stable-diffusion.cpp/build" -DSD_VULKAN=ON "${VK_FLAGS[@]}" >/dev/null
@@ -82,5 +88,15 @@ if [ ! -s "$TE" ]; then
   if [ -n "$BLOB" ] && [ -r "$BLOB" ]; then ln -sf "$BLOB" "$TE"; say "text encoder linked from Ollama"
   else rm -f "$TE"; dl Qwen3-4B-Instruct-2507-Q4_K_M.gguf https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf; fi
 fi
+
+# Qwen Image 2.1 Turbo (the default image model: generates and edits; ~11 GB).
+# Unsloth's merged Turbo GGUF — the int8_convrot file runs on the CPU here
+# (no packed-INT8 dot on Renoir), and the server can't take a LoRA from the
+# OpenAI-style endpoints. Vision tower (mmproj) is what lets it edit.
+mkdir -p "$IM/qwen2.1"
+dl qwen2.1/qwen-image-2.1-turbo-Q4_K_M.gguf https://huggingface.co/unsloth/Qwen-Image-2.1-Turbo-GGUF/resolve/main/qwen-image-2.1-turbo-Q4_K_M.gguf
+dl qwen2.1/qwen_image_2.1_vae_bf16.safetensors https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/vae/qwen_image_2.1_vae_bf16.safetensors
+dl qwen2.1/Qwen3VL-8B-Instruct-Q4_K_M.gguf https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3VL-8B-Instruct-Q4_K_M.gguf
+dl qwen2.1/mmproj-Qwen3VL-8B-Instruct-F16.gguf https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-8B-Instruct-F16.gguf
 
 say "done. Start everything with: scripts/local-up.sh"

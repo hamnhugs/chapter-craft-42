@@ -45,7 +45,7 @@ scripts/local-down.sh      # stop everything (your data stays)
 | Embeddings | CPU (keeps the GPU for chat) | `embeddinggemma:300m` (768-d; `LOCAL_EMBED_MODEL` overrides, `results/2026-10-13-embedders.txt`) |
 | Speech-to-text | Integrated Radeon | whisper.cpp `base.en` |
 | Text-to-speech | CPU | Piper (`lessac`, `amy`, `alan`) |
-| Images | Integrated Radeon | sd.cpp Z-Image-Turbo (TwinFlow, Q4_K) |
+| Images (generate + edit) | Integrated Radeon | sd.cpp Qwen Image 2.1 Turbo (Unsloth Q4_K_M) + Qwen3-VL-8B encoder (`results/2026-10-13-qwen-image.txt`). `CC_IMAGE_MODEL=zimage` → Z-Image-Turbo: faster, no editing |
 | Web search | Docker | SearXNG |
 | Database, auth, storage, edge functions | Docker | Supabase local |
 | Video, 3D splats | — | Cloud only (needs keys). Not feasible on 6 GB. |
@@ -63,7 +63,7 @@ The measurements behind every choice are in `results/`. The design is in `PLAN.m
 - **Edge functions unchanged in shape** (`supabase/functions/_shared/ai-local.ts`): the
   same OpenAI-style requests, answered locally; forced tool calls become schema-constrained output.
 - **Images and speech on the iGPU**: keeps the discrete card's 6 GB for the chat model,
-  and Z-Image hangs the Navi 10 driver (`results/2026-10-12-images.txt`).
+  and diffusion models hang the Navi 10 driver (`results/2026-10-12-images.txt`).
 
 ## Troubleshooting
 
@@ -73,6 +73,6 @@ The measurements behind every choice are in `results/`. The design is in `PLAN.m
 | First reply slow, later fast | Normal: the first turn fills the prompt cache. If *every* turn is slow, the GPU profile isn't applied: `sudo /usr/local/bin/cc-amdgpu-compute` |
 | Voice input does nothing | `curl 127.0.0.1:8771/` and `.local-state/logs/stt.log` |
 | Search errors | `docker compose -f docker-compose.local.yml ps` |
-| Image fails | `.local-state/logs/images.log`; ~75 s per image is expected |
+| Image fails | `.local-state/logs/images.log`; ~3.5 min per image or edit is expected (Qwen; Z-Image ~75 s) |
 | Launcher says "Couldn't start" | `.local-state/logs/launch.log` |
 | Background jobs fail ("local embedder unavailable") | ufw blocks containers → Ollama. One rule: `sudo ufw allow proto tcp from 172.16.0.0/12 to 172.17.0.1 port 11434 comment chapter-craft-ollama`. Logs: `.local-state/logs/functions.log` |

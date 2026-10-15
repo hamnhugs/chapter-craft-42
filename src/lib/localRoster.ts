@@ -39,6 +39,22 @@ export const LOCAL_CORE_TOOLS = [
   "save_file",
 ] as const;
 
+/** Tools whose follow-up is phrased so plainly the embedder can't place it:
+ *  after an image, "now make the cat orange" matches generate_image, not
+ *  edit_image, and the model redraws from scratch. A companion joins in the
+ *  same turn as its tool, so it costs no extra cache break. */
+export const LOCAL_COMPANION_TOOLS: Record<string, readonly string[]> = {
+  generate_image: ["edit_image"],
+};
+
+function withCompanions(names: string[], allowed: Set<string>): string[] {
+  const out = [...names];
+  for (const n of names) {
+    for (const c of LOCAL_COMPANION_TOOLS[n] || []) if (allowed.has(c) && !out.includes(c)) out.push(c);
+  }
+  return out;
+}
+
 /** A tool the user named outright joins the roster on any turn, whatever the
  *  embedder scores it: "open the fox in Photoshop" scored craft 0.20 against
  *  a 0.45 floor (eval 2026-10-13), and a request that names the app leaves
@@ -212,7 +228,7 @@ export async function planLocalRoster(input: {
     names = [...core];
     rebuilt = true;
   }
-  names = [...names, ...added.filter((n) => !names.includes(n))];
+  names = withCompanions([...names, ...added.filter((n) => !names.includes(n))], allowed);
   writeRoster(input.userId, names);
   return { names, added, rebuilt };
 }
@@ -252,11 +268,12 @@ export async function findTools(input: {
     return { result: already ?? { found: [], note: "Every tool you can use is already available to you." }, added: [] };
   }
   const roster = readRoster(input.userId);
-  const added = top.map((t) => t.name);
+  const allowed = new Set(input.pool.map((d) => d.function.name));
+  const added = withCompanions(top.map((t) => t.name), allowed).filter((n) => !input.offered.has(n));
   writeRoster(input.userId, [...roster, ...added.filter((n) => !roster.includes(n))]);
   return {
     result: {
-      found: top.map((t) => ({ name: t.name, does: (byName.get(t.name)?.function.description || "").slice(0, 200) })),
+      found: added.map((name) => ({ name, does: (byName.get(name)?.function.description || "").slice(0, 200) })),
       note: "These tools are now available. Call the one that fits.",
     },
     added,

@@ -176,11 +176,24 @@ W="$CC_HOME/src/whisper.cpp"
 start_bg stt env LD_LIBRARY_PATH="$W/build/bin" GGML_VK_VISIBLE_DEVICES="${CC_STT_GPU:-0}" \
   "$W/build/bin/whisper-server" -m "$W/models/ggml-base.en.bin" --host 127.0.0.1 --port "$(port stt)" -t 6
 
-SD="$CC_HOME/src/stable-diffusion.cpp/build/bin"; IM="$CC_HOME/image-models"
-if [ -s "$IM/TwinFlow_Z_Image_Turbo_exp-Q4_K.gguf" ] && [ -s "$IM/ae.safetensors" ]; then
-  # Integrated Radeon (Vulkan0): on the RX 5600M Z-Image trips the driver's
-  # lockup timeout ("device lost"); on the iGPU 512x512 takes ~74 s and the
-  # chat model keeps the discrete card (docs/local-ai/results/2026-10-12-images.txt).
+SD="$CC_HOME/src/stable-diffusion.cpp/build/bin"; IM="$CC_HOME/image-models"; QI="$IM/qwen2.1"
+# All on the integrated Radeon (Vulkan0): on the RX 5600M a diffusion dispatch
+# trips the driver's lockup timeout ("device lost"), and the chat model keeps
+# the discrete card (docs/local-ai/results/2026-10-12-images.txt).
+if [ "${CC_IMAGE_MODEL:-qwen}" = qwen ] && [ -s "$QI/qwen-image-2.1-turbo-Q4_K_M.gguf" ] && [ -s "$QI/qwen_image_2.1_vae_bf16.safetensors" ] \
+   && [ -s "$QI/Qwen3VL-8B-Instruct-Q4_K_M.gguf" ] && [ -s "$QI/mmproj-Qwen3VL-8B-Instruct-F16.gguf" ]; then
+  # Qwen Image 2.1 Turbo: generates and edits (the vision tower reads the
+  # input image). ~200 s per 512x512 (docs/local-ai/results/2026-10-13-qwen-image.txt).
+  # GGUF, not int8_convrot: Renoir has no packed-INT8 dot, so int8 runs on the
+  # CPU at ~220 s/step. --strength 1.0: the edit endpoint also passes the input
+  # as an img2img start; Qwen edits by reference, so sample from pure noise.
+  start_bg images env LD_LIBRARY_PATH="$SD" GGML_VK_VISIBLE_DEVICES="${CC_IMAGES_GPU:-0}" "$SD/sd-server" \
+    --listen-ip 127.0.0.1 --listen-port "$(port images)" \
+    --diffusion-model "$QI/qwen-image-2.1-turbo-Q4_K_M.gguf" --vae "$QI/qwen_image_2.1_vae_bf16.safetensors" \
+    --llm "$QI/Qwen3VL-8B-Instruct-Q4_K_M.gguf" --llm_vision "$QI/mmproj-Qwen3VL-8B-Instruct-F16.gguf" \
+    --sigmas qwen-image-2.1-turbo --steps 8 --cfg-scale 1.0 --sampling-method euler --strength 1.0
+elif [ -s "$IM/TwinFlow_Z_Image_Turbo_exp-Q4_K.gguf" ] && [ -s "$IM/ae.safetensors" ]; then
+  # Z-Image-Turbo: ~74 s per 512x512, but it can't really edit. CC_IMAGE_MODEL=zimage picks it.
   start_bg images env LD_LIBRARY_PATH="$SD" GGML_VK_VISIBLE_DEVICES="${CC_IMAGES_GPU:-0}" "$SD/sd-server" \
     --listen-ip 127.0.0.1 --listen-port "$(port images)" \
     --diffusion-model "$IM/TwinFlow_Z_Image_Turbo_exp-Q4_K.gguf" --vae "$IM/ae.safetensors" \

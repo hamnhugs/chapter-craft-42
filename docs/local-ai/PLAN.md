@@ -306,3 +306,25 @@ Still open:
 - The main remaining accuracy loss is the chat model answering in text where a tool call was
   wanted (~1 in 3 long-tail requests, both quants) — a prompt/roster task, next.
 - import-hosted.mjs still never run (needs a hosted token).
+
+## Status — 2026-10-13 (images: Qwen Image 2.1)
+
+Images moved from Z-Image-Turbo to **Qwen Image 2.1 Turbo**, which also edits (evidence:
+`results/2026-10-13-qwen-image.txt`).
+- Unsloth's merged Turbo Q4_K_M GGUF + Qwen3-VL-8B Q4_K_M encoder + mmproj (vision, for edits),
+  8 steps, on the iGPU: ~160-200 s per 512x512 image or edit (Z-Image was ~75 s).
+- Not the int8_convrot weights (Renoir has no packed-INT8 dot → CPU, ~30 min/image), and not
+  base + Turbo LoRA (sd-server ignores `<lora:>` tags by design).
+- sd-server runs with `--strength 1.0`: its edit endpoint also passes the input as an img2img
+  init image, while Qwen edits by reference.
+- Client: edits keep the input's aspect ratio (`sizeForDimensions`), up to 3 images go to an edit
+  (input + references), the label is the loaded model's stem, the ledger records local images as
+  free under "Local".
+- Roster: `edit_image` joins with `generate_image` (`LOCAL_COMPANION_TOOLS`). Before, "now make
+  the cat orange" was never offered edit_image and the model redrew from scratch (0/6 → 12/12).
+- `CC_IMAGE_MODEL=zimage` keeps the old, faster model (no real editing).
+
+Still open:
+- With a messy history (an aborted turn) the chat model once claimed an edit without calling the
+  tool — the same "answers in text" failure as above.
+- Small text in images (signs) is garbled at 512 px; larger sizes cost time roughly linearly.

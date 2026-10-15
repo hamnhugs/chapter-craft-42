@@ -151,11 +151,14 @@ async function generateViaGemini(
  *  direct-to-Gemini with the Gemini key. Tries each candidate in order. */
 export async function generateImage({ apiKey, geminiApiKey, prompt, aspectRatio, inputImageDataUrl, referenceImageDataUrls, primaryModel, fallbackModel }: GenerateArgs): Promise<GenerateResult> {
   let lastError = "";
-  // Local edition: the generator on this machine when it's chosen, or when
-  // there is no cloud key at all. Reference images beyond the first can't be
-  // honoured by a single-image edit, so only the input image goes along.
-  if (isLocalImageModel(primaryModel) || (!apiKey && !geminiApiKey && localImagesAvailable())) {
-    return generateViaLocal({ prompt, aspectRatio, inputImageDataUrl: inputImageDataUrl || referenceImageDataUrls?.find((u) => u?.startsWith("data:")) });
+  // Local edition: the generator on this machine when it's chosen, and for
+  // Auto whenever it's being served (the local build). Auto used to go to the
+  // cloud whenever an OpenRouter key was saved, so picking a cloud CHAT model
+  // quietly moved images off this machine too. A cloud image model still runs
+  // when the user picks one. Qwen Image 2.1 edits from several images, input
+  // first; generateViaLocal caps how many go along.
+  if (isLocalImageModel(primaryModel) || (!primaryModel && localImagesAvailable())) {
+    return generateViaLocal({ prompt, aspectRatio, inputImageDataUrl, referenceImageDataUrls });
   }
   // No OpenRouter key: the Gemini path is the whole show.
   if (!apiKey && geminiApiKey) {

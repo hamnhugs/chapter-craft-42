@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { IMAGE_MODELS, IMAGE_ASPECT_RATIOS } from "@/lib/imageGen";
+import { LOCAL_IMAGE_MODEL, localImagesAvailable } from "@/lib/localImageGen";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 
@@ -13,7 +14,8 @@ const ImageModelsSettings: React.FC = () => {
     setImageQuality, setImageSize,
   } = useChatSettings();
   const [newModel, setNewModel] = useState("");
-  const allModels = Array.from(new Set([...savedImageModels, ...IMAGE_MODELS]));
+  const local = localImagesAvailable();
+  const allModels = Array.from(new Set([...(local ? [LOCAL_IMAGE_MODEL] : []), ...savedImageModels, ...IMAGE_MODELS]));
 
   return (
     <section className="p-3 md:p-4 rounded-xl bg-surface-container-low flex flex-col gap-4">
@@ -33,7 +35,7 @@ const ImageModelsSettings: React.FC = () => {
             onChange={(e) => setImageModelPrimary(e.target.value)}
             className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40"
           >
-            <option value="">Auto (use built-in default)</option>
+            <option value="">{local ? "Auto (this computer)" : "Auto (use built-in default)"}</option>
             {allModels.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
         </div>

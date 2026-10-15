@@ -1,22 +1,25 @@
 // Local image generation — stable-diffusion.cpp's sd-server on this machine
 // (Vulkan), reached through the same-origin /local/images proxy.
 //
-// Model: Z-Image-Turbo (TwinFlow few-step distillation, Q4_K GGUF) with the
-// Qwen3-4B text encoder — the established low-VRAM choice for sd.cpp on
-// Vulkan (stable-diffusion.cpp docs/z_image.md). Measured on this machine
-// (docs/local-ai/results/2026-10-12-images.txt): on the RX 5600M a Z-Image
-// dispatch outlives the driver's lockup timeout ("device lost"); on the
-// integrated Radeon, which uses system RAM, 512x512 takes ~74 s. So sd-server
-// runs on the iGPU (scripts/local-up.sh), and the chat model on the discrete
-// card is never evicted for an image.
+// Model: Qwen Image 2.1 Turbo (Unsloth's merged Q4_K_M GGUF, 8 steps) with the
+// Qwen3-VL-8B text encoder and its vision tower, so it both generates and
+// edits. ~200 s per 512x512 on this machine
+// (docs/local-ai/results/2026-10-13-qwen-image.txt). Z-Image-Turbo is the
+// fallback (CC_IMAGE_MODEL=zimage): ~74 s, but no real editing. Either way
+// sd-server runs on the integrated Radeon — on the RX 5600M a diffusion
+// dispatch outlives the driver's lockup timeout ("device lost") — so the chat
+// model on the discrete card is never evicted for an image.
 
 import type { GenerateResult } from "@/lib/imageGen";
 import { ollamaBaseUrl } from "@/lib/providers/ollamaConfig";
 
 export const LOCAL_IMAGE_PREFIX = "local:";
-export const LOCAL_IMAGE_MODEL = "local:z-image-turbo";
+export const LOCAL_IMAGE_MODEL = "local:qwen-image-2.1-turbo";
 const SD = "/local/images";
-const TIMEOUT_MS = 600_000;
+const TIMEOUT_MS = 900_000;
+/** Images sent to an edit, input first. Each one adds conditioning tokens
+ *  (time) — and Qwen Image 2.1's own examples stop at a few. */
+const MAX_EDIT_IMAGES = 3;
 
 export function isLocalImageModel(id: string | undefined): boolean {
   return String(id || "").startsWith(LOCAL_IMAGE_PREFIX);
@@ -28,7 +31,7 @@ export function localImagesAvailable(): boolean {
 }
 
 /** Aspect ratio → a size near 512x512's pixel count (multiples of 32). Time
- *  scales with pixels; ~0.26 MP is ~75 s on the iGPU. */
+ *  scales with pixels; ~0.26 MP is ~200 s on the iGPU. */
 export function sizeFor(aspect?: string): string {
   switch (aspect) {
     case "16:9": return "704x384";
@@ -40,6 +43,27 @@ export function sizeFor(aspect?: string): string {
     case "2:3": return "416x640";
     default: return "512x512";
   }
+}
+
+/** A width x height with the input's aspect ratio and ~512x512's pixel count,
+ *  in multiples of 32 — so an edit isn't squashed square or rendered at the
+ *  input's full size (time scales with pixels). */
+export function sizeForDimensions(w: number, h: number): string {
+  if (!(w > 0 && h > 0)) return sizeFor();
+  const scale = Math.sqrt((512 * 512) / (w * h));
+  const snap = (v: number) => Math.min(1024, Math.max(256, Math.round((v * scale) / 32) * 32));
+  return `${snap(w)}x${snap(h)}`;
+}
+
+/** The loaded model's file stem as a `local:` id, e.g.
+ *  "local:qwen-image-2.1-turbo-Q4_K_M". Cached; never throws. */
+let loadedModel: Promise<string> | null = null;
+function localModelId(): Promise<string> {
+  loadedModel ??= fetch(`${SD}/sdcpp/v1/capabilities`, { signal: AbortSignal.timeout(5_000) })
+    .then((r) => r.json())
+    .then((c) => (c?.model?.stem ? `${LOCAL_IMAGE_PREFIX}${c.model.stem}` : LOCAL_IMAGE_MODEL))
+    .catch(() => { loadedModel = null; return LOCAL_IMAGE_MODEL; });
+  return loadedModel;
 }
 
 /** Ask Ollama to drop every resident model so the GPU is free. Never throws.
@@ -64,25 +88,41 @@ function dataUrlToBlob(url: string): Blob {
   return new Blob([bytes], { type: mime });
 }
 
+async function imageSize(blob: Blob): Promise<{ w: number; h: number } | null> {
+  try {
+    const bmp = await createImageBitmap(blob);
+    const dims = { w: bmp.width, h: bmp.height };
+    bmp.close();
+    return dims;
+  } catch { return null; }
+}
+
 export async function generateViaLocal(opts: {
   prompt: string;
   aspectRatio?: string;
+  /** Edit this image (or, with no instruction-able input, use it as the reference). */
   inputImageDataUrl?: string;
+  /** More images the edit may draw on ("put the character from image 2 …"), in order. */
+  referenceImageDataUrls?: string[];
 }): Promise<GenerateResult> {
-  const size = sizeFor(opts.aspectRatio);
+  const images = [opts.inputImageDataUrl, ...(opts.referenceImageDataUrls || [])]
+    .filter((u): u is string => typeof u === "string" && u.startsWith("data:"))
+    .slice(0, MAX_EDIT_IMAGES)
+    .map(dataUrlToBlob);
   let res: Response;
   try {
-    if (opts.inputImageDataUrl) {
+    if (images.length) {
+      const dims = opts.aspectRatio ? null : await imageSize(images[0]);
       const form = new FormData();
       form.append("prompt", opts.prompt);
-      form.append("size", size);
-      form.append("image", dataUrlToBlob(opts.inputImageDataUrl), "input.png");
+      form.append("size", dims ? sizeForDimensions(dims.w, dims.h) : sizeFor(opts.aspectRatio));
+      images.forEach((b, i) => form.append("image[]", b, `input-${i}.png`));
       res = await fetch(`${SD}/v1/images/edits`, { method: "POST", body: form, signal: AbortSignal.timeout(TIMEOUT_MS) });
     } else {
       res = await fetch(`${SD}/v1/images/generations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: opts.prompt, n: 1, size, output_format: "png" }),
+        body: JSON.stringify({ prompt: opts.prompt, n: 1, size: sizeFor(opts.aspectRatio), output_format: "png" }),
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
     }
@@ -95,5 +135,5 @@ export async function generateViaLocal(opts: {
   const b64 = data?.data?.[0]?.b64_json;
   if (!b64) throw new Error("Local images: no image in response");
   const mime = `image/${data?.output_format || "png"}`;
-  return { dataUrl: `data:${mime};base64,${b64}`, mime, text: "", modelUsed: LOCAL_IMAGE_MODEL };
+  return { dataUrl: `data:${mime};base64,${b64}`, mime, text: "", modelUsed: await localModelId() };
 }
