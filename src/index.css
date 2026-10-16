@@ -1312,3 +1312,11 @@ html.cc-media-overlay-open .message-bubble-user {
   .cc-rail .cc-rail-split { margin-top: 0.25rem; margin-bottom: 0.25rem; }
   .cc-app-bar.cc-app-bar { padding-top: 0.25rem; padding-bottom: 0.25rem; }
 }
+
+/* Settings search: the row a result jumps to glows once so the eye lands on it. */
+@keyframes cc-set-flash {
+  0%, 30% { background-color: hsl(var(--primary) / 0.16); }
+  100% { background-color: transparent; }
+}
+.cc-set-flash { animation: cc-set-flash 1.6s ease-out; }
+@media (prefers-reduced-motion: reduce) { .cc-set-flash { animation: none; outline: 2px solid hsl(var(--primary) / 0.5); } }

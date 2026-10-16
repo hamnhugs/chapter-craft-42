@@ -15,6 +15,7 @@ import {
   setOllamaNumCtx,
 } from "@/lib/providers/ollamaConfig";
 import { namespacedId } from "@/lib/providers/registry";
+import { Disclosure, Group, Pill, Row } from "@/components/settings/SettingsUI";
 
 /** Models known to work for chat on a 6 GiB card, in preference order.
  *  Evidence: docs/local-ai/results/. Shown as a pull hint when nothing usable
@@ -29,7 +30,7 @@ const Chip: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   </span>
 );
 
-/** Settings card for models running on this computer through Ollama. */
+/** Settings group for models running on this computer through Ollama. */
 const LocalModelsSettings: React.FC = () => {
   const { savedModels, selectedModel, visionModel, addModel, setSelectedModel, setVisionModel, localAi, setLocalAi } = useChatSettings();
   const [status, setStatus] = useState<{ ok: boolean; version?: string; error?: string } | null>(null);
@@ -74,87 +75,93 @@ const LocalModelsSettings: React.FC = () => {
   };
 
   return (
-    <div className="space-y-3 p-3 rounded-xl bg-surface-container-high">
-      <label className="flex items-center justify-between gap-3 cursor-pointer">
-        <div className="text-sm">
-          <div className="font-semibold text-foreground">Local AI</div>
-          <div className="text-xs text-on-surface-variant">
-            {localAi
-              ? "On — chat and background jobs run on this computer. The graphics card stays awake for speed."
-              : "Off — chat and background jobs use your cloud model, and the graphics card is left alone. Search still runs here."}
-          </div>
-        </div>
+    <Group title="On this computer">
+      <Row
+        id="local-ai"
+        label="Local AI"
+        description={localAi
+          ? "On — chat and background jobs run here. The graphics card stays awake for speed."
+          : "Off — your cloud model answers and the graphics card is left alone. Search still runs here."}
+      >
         <Switch checked={localAi} onCheckedChange={setLocalAi} aria-label="Local AI" />
-      </label>
+      </Row>
 
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-sm">
-          <div className="font-semibold text-foreground">Models on this computer</div>
+      <Disclosure
+        icon="memory"
+        label={`Installed models${chatModels.length ? ` (${chatModels.length})` : ""}`}
+        summary={status === null
+          ? "Checking for Ollama…"
+          : status.ok
+            ? `Ollama ${status.version || ""} · free, private, works offline`
+            : "Ollama isn't reachable. Start it with: systemctl start ollama"}
+        defaultOpen={localAi}
+      >
+        <div className="flex justify-end -mt-1 mb-1">
+          <Button size="sm" variant="ghost" data-no-sticker className="h-7 text-xs gap-1" onClick={() => void refresh()} disabled={loading}>
+            {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <span className="material-symbols-outlined text-base">refresh</span>}
+            Refresh
+          </Button>
+        </div>
+        {status?.ok && chatModels.length === 0 && (
           <div className="text-xs text-on-surface-variant">
-            {status === null
-              ? "Checking for Ollama…"
-              : status.ok
-                ? `Ollama ${status.version || ""} is running · free, private, works offline`
-                : "Ollama isn't reachable. Start it with: systemctl start ollama"}
+            No chat models installed. In a terminal: <code className="font-mono">ollama pull {SUGGESTED[0]}</code>
           </div>
-        </div>
-        <Button size="sm" variant="outline" onClick={() => void refresh()} disabled={loading}>
-          {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : "Refresh"}
-        </Button>
-      </div>
+        )}
+        {chatModels.length > 0 && (
+          <ul className="-mx-2">
+            {chatModels.map((m) => {
+              const id = namespacedId("ollama", m.name);
+              const isChat = selectedModel === id;
+              const isVision = visionModel === id;
+              const vision = m.capabilities.includes("vision");
+              return (
+                <li key={m.name} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-surface-container-high/50">
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-mono text-xs text-foreground truncate" title={m.name}>{m.name}</span>
+                    <span className="flex items-center gap-1 mt-0.5">
+                      <span className="text-[10px] text-on-surface-variant mr-0.5">{gib(m.sizeBytes)}</span>
+                      {m.capabilities.includes("tools") && <Chip>tools</Chip>}
+                      {vision && <Chip>vision</Chip>}
+                      {m.capabilities.includes("thinking") && <Chip>thinking</Chip>}
+                    </span>
+                  </span>
+                  {isChat ? (
+                    <Pill tone="ok">Chat</Pill>
+                  ) : (
+                    <button data-no-sticker className="text-xs font-medium text-primary hover:underline px-1.5" onClick={() => use(m, "chat")}>Use for chat</button>
+                  )}
+                  {vision && (isVision ? (
+                    <Pill tone="ok">Images</Pill>
+                  ) : (
+                    <button data-no-sticker className="text-xs font-medium text-primary hover:underline px-1.5" onClick={() => use(m, "vision")}>Use for images</button>
+                  ))}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Disclosure>
 
-      {status?.ok && chatModels.length === 0 && (
-        <div className="text-xs text-on-surface-variant">
-          No chat models installed. In a terminal: <code className="font-mono">ollama pull {SUGGESTED[0]}</code>
-        </div>
-      )}
-
-      {chatModels.map((m) => {
-        const id = namespacedId("ollama", m.name);
-        const isChat = selectedModel === id;
-        const isVision = visionModel === id;
-        const vision = m.capabilities.includes("vision");
-        return (
-          <div key={m.name} className="flex items-center gap-2 flex-wrap">
-            <span className="font-mono text-xs text-foreground">{m.name}</span>
-            <span className="text-[10px] text-on-surface-variant">{gib(m.sizeBytes)}</span>
-            {m.capabilities.includes("tools") && <Chip>tools</Chip>}
-            {vision && <Chip>vision</Chip>}
-            {m.capabilities.includes("thinking") && <Chip>thinking</Chip>}
-            <span className="flex-1" />
-            <Button size="sm" variant={isChat ? "default" : "outline"} disabled={isChat} onClick={() => use(m, "chat")}>
-              {isChat ? "Chat ✓" : "Use for chat"}
-            </Button>
-            {vision && (
-              <Button size="sm" variant={isVision ? "default" : "outline"} disabled={isVision} onClick={() => use(m, "vision")}>
-                {isVision ? "Images ✓" : "Use for images"}
-              </Button>
-            )}
-          </div>
-        );
-      })}
-
-      <details className="text-xs">
-        <summary className="cursor-pointer text-on-surface-variant">Connection & memory</summary>
-        <div className="mt-2 space-y-2">
+      <Disclosure icon="settings_ethernet" label="Connection & memory" summary={`${ollamaBaseUrl()} · ${ollamaNumCtx().toLocaleString()} tokens of context`}>
+        <div className="space-y-2 text-xs">
           <div className="flex gap-2 items-center">
             <span className="w-28 shrink-0 text-on-surface-variant">Server address</span>
             <Input value={baseDraft} onChange={(e) => setBaseDraft(e.target.value)} placeholder={OLLAMA_DEFAULT_BASE}
-              className="text-xs font-mono bg-surface-container border-none h-8" />
+              className="text-xs font-mono bg-surface-container-high border-outline-variant/15 h-8" />
             <Button size="sm" onClick={saveBase}>Save</Button>
           </div>
           <div className="flex gap-2 items-center">
             <span className="w-28 shrink-0 text-on-surface-variant">Context (tokens)</span>
             <Input value={ctxDraft} onChange={(e) => setCtxDraft(e.target.value)} placeholder={String(OLLAMA_DEFAULT_NUM_CTX)}
-              inputMode="numeric" className="text-xs font-mono bg-surface-container border-none h-8" />
+              inputMode="numeric" className="text-xs font-mono bg-surface-container-high border-outline-variant/15 h-8" />
             <Button size="sm" onClick={saveCtx}>Save</Button>
           </div>
           <p className="text-on-surface-variant">
             Bigger contexts remember more of the conversation but use more graphics memory. 16,384 suits a 6 GB card with a 4B model.
           </p>
         </div>
-      </details>
-    </div>
+      </Disclosure>
+    </Group>
   );
 };
 

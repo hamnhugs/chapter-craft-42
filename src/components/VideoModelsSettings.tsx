@@ -73,9 +73,8 @@ const VideoModelsSettings: React.FC = () => {
   const labelCls = "text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1";
 
   return (
-    <section className="p-3 md:p-4 rounded-xl bg-surface-container-low flex flex-col gap-4">
+    <section className="flex flex-col gap-4">
       <header className="flex flex-col gap-1">
-        <h3 className="text-sm font-bold text-foreground">Video Generation</h3>
         <p className="text-xs text-on-surface-variant">
           Pick which model the AI uses for <code className="text-[11px]">generate_video</code>. Video is billed per
           second to your OpenRouter key and costs far more than an image — set defaults and a confirm threshold below.

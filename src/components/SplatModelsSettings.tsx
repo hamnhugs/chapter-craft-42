@@ -35,9 +35,8 @@ const SplatModelsSettings: React.FC = () => {
   const labelCls = "text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1";
 
   return (
-    <section className="p-3 md:p-4 rounded-xl bg-surface-container-low flex flex-col gap-4">
+    <section className="flex flex-col gap-4">
       <header className="flex flex-col gap-1">
-        <h3 className="text-sm font-bold text-foreground">3D Models</h3>
         <p className="text-xs text-on-surface-variant">
           Turn an image into an interactive 3D Gaussian splat with <code className="text-[11px]">generate_splat</code>.
           There's no text-to-3D — the AI generates an image first, then lifts it into 3D. Billed per generation to your
