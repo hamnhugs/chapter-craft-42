@@ -1,3 +1,5 @@
+import { SegmentedControl } from "@/components/ui/segmented-control";
+import VaultDropzone from "@/components/VaultDropzone";
 import React, { useRef, useState, useMemo, useEffect, useCallback, lazy, Suspense } from "react";
 import { useApp, TRASH_RETENTION_DAYS } from "@/context/AppContext";
 import { BookDocument } from "@/types/library";
@@ -911,44 +913,18 @@ const Library: React.FC = () => {
                 Trash{trashedBooks.length > 0 ? ` (${trashedBooks.length})` : ""}
               </button>
             )}
-            {/* View switcher — segmented control, icons + label on wide screens */}
-            <div
-              role="group"
-              aria-label="Library view"
-              className="flex items-center rounded-xl border border-outline-variant/10 bg-surface-container-high p-1"
-            >
-              {VIEW_OPTIONS.map((opt) => (
-                <button
-                  key={opt.id}
-                  onClick={() => setView(opt.id)}
-                  onMouseEnter={
-                    opt.id === "graph"
-                      ? () => {
-                          // Warm the three.js chunk on hover so the switch feels instant.
-                          void import("@/components/LibraryGraph");
-                        }
-                      : undefined
-                  }
-                  title={opt.label}
-                  aria-label={opt.label}
-                  aria-pressed={view === opt.id}
-                  className={`cc-tap-44 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-all ${
-                    view === opt.id
-                      ? "bg-primary/15 text-primary font-semibold"
-                      : "text-on-surface-variant hover:text-primary"
-                  }`}
-                >
-                  <span
-                    className="material-symbols-outlined text-base"
-                    style={view === opt.id ? { fontVariationSettings: "'FILL' 1" } : undefined}
-                    aria-hidden
-                  >
-                    {opt.icon}
-                  </span>
-                  <span className="hidden xl:inline">{opt.label}</span>
-                </button>
-              ))}
-            </div>
+            {/* View switcher — sliding segmented control, icons + label on wide screens */}
+            <SegmentedControl<ViewMode>
+              ariaLabel="Library view"
+              options={VIEW_OPTIONS}
+              value={view}
+              onChange={setView}
+              labelClassName="hidden xl:inline"
+              onOptionHover={(id) => {
+                // Warm the three.js chunk on hover so the switch feels instant.
+                if (id === "graph") void import("@/components/LibraryGraph");
+              }}
+            />
           </div>
         </section>
 
@@ -1193,40 +1169,16 @@ const Library: React.FC = () => {
             to it: a foot-tall dashed dropzone above a book's profile made the
             view read as an upload form with something underneath. */}
         {view !== "graph" && view !== "showcase" && (
-        <div
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={handleDrop}
-          className="cc-vault-dropzone group relative bg-surface-container-low border-2 border-dashed border-outline-variant/30 rounded-2xl p-12 flex flex-col items-center justify-center text-center transition-all hover:border-primary/40 hover:bg-surface-container-high cursor-pointer"
-          onClick={() => fileInputRef.current?.click()}
-        >
-          <div className="cc-dropzone-icon mb-4 w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center group-hover:scale-110 transition-transform">
-            <span className="material-symbols-outlined text-primary text-3xl">cloud_upload</span>
-          </div>
-          <h3 className="cc-dropzone-title text-xl font-headline font-bold text-primary mb-1">
-            {isUploading ? "Uploading…" : "Drop PDF or EPUB"}
-          </h3>
-          <p className="cc-dropzone-hint text-on-surface-variant text-sm mb-6">Max file size 50MB. Supports PDF, EPUB, HTML, DOC, TXT.</p>
-          <div className="cc-dropzone-actions flex items-center gap-3 flex-wrap justify-center">
-            <button
-              className="px-8 py-3 bg-primary-container text-on-primary-container font-bold rounded-xl active:scale-95 transition-transform"
-              onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
-              disabled={isUploading}
-            >
-              Browse files
-            </button>
-            <button
-              className="flex items-center gap-2 px-8 py-3 bg-surface-container-high text-foreground font-bold rounded-xl border border-outline-variant/20 hover:bg-surface-container-highest active:scale-95 transition-all"
-              onClick={(e) => { e.stopPropagation(); openYoutube(); }}
-              onMouseEnter={() => {
-                // Warm the chunk on hover so the dialog opens instantly.
-                void import("@/components/VideoTranscript");
-              }}
-            >
-              <span className="material-symbols-outlined text-xl" aria-hidden>smart_display</span>
-              From YouTube
-            </button>
-          </div>
-        </div>
+          <VaultDropzone
+            isUploading={isUploading}
+            onBrowse={() => fileInputRef.current?.click()}
+            onDrop={handleDrop}
+            onYoutube={() => openYoutube()}
+            onYoutubeHover={() => {
+              // Warm the chunk on hover so the dialog opens instantly.
+              void import("@/components/VideoTranscript");
+            }}
+          />
         )}
         {/* Where the dropzone is hidden, keep compact entry points so adding a
             book never requires leaving the view first. */}
