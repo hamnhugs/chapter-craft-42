@@ -1,5 +1,5 @@
 import { SegmentedControl } from "@/components/ui/segmented-control";
-import VaultDropzone from "@/components/VaultDropzone";
+import VaultDropzone, { VaultDropOverlay, dragCarriesBooks } from "@/components/VaultDropzone";
 import React, { useRef, useState, useMemo, useEffect, useCallback, lazy, Suspense } from "react";
 import { useApp, TRASH_RETENTION_DAYS } from "@/context/AppContext";
 import { BookDocument } from "@/types/library";
@@ -21,7 +21,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import {
-  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import LibraryShelves from "@/components/LibraryShelves";
 import { bookHaystack, chapterMatch, matchesAll, normalizeText, tokenize } from "@/lib/librarySearch";
@@ -30,6 +30,7 @@ import { seekLibrary, SEEK_FETCH_CAP, type SeekOutcome } from "@/lib/librarySeek
 import LibraryList from "@/components/LibraryList";
 import LibraryShowcase from "@/components/LibraryShowcase";
 import { seedOf } from "@/lib/bookProfile";
+import { jacketLayout, titleDate } from "@/lib/bookJacket";
 import { marksForBook, markStripes, useShelfMarks, type ShelfMark } from "@/lib/shelfMarks";
 import type { BookFolder } from "@/lib/bookFolders";
 import { isLocalBackend } from "@/lib/localServices";
@@ -323,6 +324,18 @@ const Library: React.FC = () => {
   // permanent delete, which then earns the confirmation the list view never
   // had.
   const softDelete = trashAvailable !== false;
+  const [dragOver, setDragOver] = useState(false);
+  const closeDragOver = useCallback(() => setDragOver(false), []);
+  /** The line under the title: what is here, at a glance. */
+  const librarySummary = booksLoading && books.length === 0
+    ? "Opening your library…"
+    : books.length === 0
+      ? "Nothing on the shelves yet"
+      : [
+          `${books.length} book${books.length === 1 ? "" : "s"}`,
+          shelves.length > 0 ? `${shelves.length} shel${shelves.length === 1 ? "f" : "ves"}` : null,
+          tagProgress ? `tagging ${tagProgress.done}/${tagProgress.total}…` : null,
+        ].filter(Boolean).join(" · ");
   const [trashOpen, setTrashOpen] = useState(false);
   const [busyTrashId, setBusyTrashId] = useState<string | null>(null);
 
@@ -869,102 +882,170 @@ const Library: React.FC = () => {
   };
 
   return (
-    <div ref={scrollRef} onScroll={rememberScroll} className="h-full flex flex-col overflow-auto">
-      <main className="cc-vault-main max-w-7xl mx-auto px-6 py-12 flex flex-col gap-12 w-full">
-        {/* Header Section */}
-        <section className="flex flex-col md:flex-row md:items-end justify-between gap-6">
-          <div className="space-y-2">
-            <h1 className="cc-vault-title font-headline text-5xl md:text-7xl font-bold tracking-tighter text-primary italic">
+    <div
+      ref={scrollRef}
+      onScroll={rememberScroll}
+      onDragEnter={(e) => {
+        // Only a populated Vault needs the overlay — the empty one IS a dropzone.
+        if (books.length > 0 && !dragOver && dragCarriesBooks(e)) setDragOver(true);
+      }}
+      onDragOver={(e) => { if (dragCarriesBooks(e)) e.preventDefault(); }}
+      className="h-full flex flex-col overflow-auto"
+    >
+      <main className="cc-vault-main max-w-7xl mx-auto px-6 py-10 flex flex-col gap-6 w-full">
+        {/* Masthead. What this is and how much is in it on the left; how you
+            are looking at it on the right. The tagline that used to sit under
+            the title said nothing a reader could use — the count does. */}
+        <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
+          <div className="min-w-0">
+            <h1 className="cc-vault-title font-headline text-4xl md:text-5xl font-bold tracking-tighter text-primary italic">
               My Library
             </h1>
-            <p className="text-on-surface-variant font-body max-w-md">
-              Your curated sanctuary of knowledge and thought.
+            <p className="mt-1.5 text-sm text-on-surface-variant" aria-live="polite">
+              {librarySummary}
             </p>
           </div>
-          <div className="flex items-center gap-4 flex-wrap">
-            <button
-              onClick={() => setSortBy((v) => (v === "date" ? "name" : "date"))}
-              className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all"
-            >
-              <span className="material-symbols-outlined text-xs">sort</span>
-              {sortBy === "date" ? "Recently Added" : "By Name"}
-              <span className="material-symbols-outlined text-xs">expand_more</span>
-            </button>
-            <button
-              onClick={handleAutoTag}
-              disabled={!!tagProgress || books.length === 0}
-              title={
-                tagProgress
-                  ? "Tagging in progress…"
-                  : "Assign categories and tags to your books with AI (powers the mind map)"
-              }
-              className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <span className={`material-symbols-outlined text-xs ${tagProgress ? "animate-spin" : ""}`}>
-                {tagProgress ? "progress_activity" : "sell"}
-              </span>
-              {tagProgress ? `Tagging ${tagProgress.done}/${tagProgress.total}…` : "Auto-tag"}
-            </button>
-            {softDelete && (
-              <button
-                onClick={openTrash}
-                title="Deleted books, restorable for 30 days"
-                className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all"
-              >
-                <span className="material-symbols-outlined text-xs" aria-hidden>delete</span>
-                Trash{trashedBooks.length > 0 ? ` (${trashedBooks.length})` : ""}
-              </button>
-            )}
-            {/* View switcher — sliding segmented control, icons + label on wide screens */}
-            <SegmentedControl<ViewMode>
-              ariaLabel="Library view"
-              options={VIEW_OPTIONS}
-              value={view}
-              onChange={setView}
-              labelClassName="hidden xl:inline"
-              onOptionHover={(id) => {
-                // Warm the three.js chunk on hover so the switch feels instant.
-                if (id === "graph") void import("@/components/LibraryGraph");
-              }}
-            />
-          </div>
-        </section>
+          <SegmentedControl<ViewMode>
+            ariaLabel="Library view"
+            options={VIEW_OPTIONS}
+            value={view}
+            onChange={setView}
+            labelClassName="hidden lg:inline"
+            onOptionHover={(id) => {
+              // Warm the three.js chunk on hover so the switch feels instant.
+              if (id === "graph") void import("@/components/LibraryGraph");
+            }}
+          />
+        </header>
 
-        {/* Search */}
-        {books.length > 0 && (
-          <div className="relative">
-            <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant text-xl pointer-events-none">
-              search
-            </span>
-            <input
-              ref={searchRef}
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") {
-                  setQuery("");
-                  (e.target as HTMLInputElement).blur();
-                }
-              }}
-              placeholder="Search titles, chapters, summaries…  ( / )"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-              aria-label="Search your library by title, category, tag, chapter name, or summary"
-              className="w-full pl-12 pr-12 py-3.5 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 focus:outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-on-surface-variant/60 [&::-webkit-search-cancel-button]:hidden"
-            />
-            {query && (
+        {/* Tools, one row: find, order, add, and the rare things behind "more".
+            Sort, Auto-tag and Trash used to be three equal-weight buttons on a
+            row of their own above the view switcher, which wrapped the header
+            into two ragged rows. */}
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            {books.length > 0 ? (
+              <div className="relative flex-1 min-w-0">
+                <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant text-xl pointer-events-none">
+                  search
+                </span>
+                <input
+                ref={searchRef}
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    setQuery("");
+                    (e.target as HTMLInputElement).blur();
+                  }
+                }}
+                placeholder="Search titles, chapters, summaries…  ( / )"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                aria-label="Search your library by title, category, tag, chapter name, or summary"
+                className="w-full pl-12 pr-12 py-3.5 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 focus:outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-on-surface-variant/60 [&::-webkit-search-cancel-button]:hidden"
+              />
+                {query && (
+                  <button
+                    onClick={() => setQuery("")}
+                    aria-label="Clear search"
+                    className="cc-tap-44 absolute right-3 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-highest transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-lg">close</span>
+                  </button>
+                )}
+              </div>
+            ) : (
+              <span className="flex-1" />
+            )}
+            {books.length > 1 && (
               <button
-                onClick={() => setQuery("")}
-                aria-label="Clear search"
-                className="cc-tap-44 absolute right-3 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-highest transition-colors"
+                onClick={() => setSortBy((v) => (v === "date" ? "name" : "date"))}
+                title={sortBy === "date" ? "Sorted by date added — switch to A–Z" : "Sorted A–Z — switch to date added"}
+                aria-label={sortBy === "date" ? "Sort: recently added. Switch to by name" : "Sort: by name. Switch to recently added"}
+                className="cc-tap-44 shrink-0 flex items-center gap-1.5 px-3 py-3 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all"
               >
-                <span className="material-symbols-outlined text-lg">close</span>
+                <span className="material-symbols-outlined text-lg leading-none" aria-hidden>
+                  {sortBy === "date" ? "schedule" : "sort_by_alpha"}
+                </span>
+                <span className="hidden md:inline">{sortBy === "date" ? "Recent" : "A–Z"}</span>
               </button>
             )}
+            {/* Add: one click to the file picker, the arrow for YouTube. */}
+            <div className="shrink-0 flex items-stretch rounded-xl">
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading}
+                className="flex items-center gap-1.5 pl-4 pr-3 py-3 rounded-l-xl bg-primary-container text-on-primary-container text-sm font-bold active:scale-95 transition-transform disabled:opacity-60"
+              >
+                <span className={`material-symbols-outlined text-lg leading-none ${isUploading ? "animate-spin" : ""}`} aria-hidden>
+                  {isUploading ? "progress_activity" : "add"}
+                </span>
+                <span className="hidden sm:inline">{isUploading ? "Uploading…" : "Add books"}</span>
+                <span className="sr-only sm:hidden">Add books</span>
+              </button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    aria-label="More ways to add"
+                    onMouseEnter={() => void import("@/components/VideoTranscript")}
+                    className="flex items-center px-2 rounded-r-xl bg-primary-container text-on-primary-container border-l border-on-primary-container/20"
+                  >
+                    <span className="material-symbols-outlined text-lg leading-none" aria-hidden>expand_more</span>
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-56">
+                  <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
+                    <span className="material-symbols-outlined text-base mr-2" aria-hidden>upload_file</span>
+                    Upload files…
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => openYoutube()}>
+                    <span className="material-symbols-outlined text-base mr-2" aria-hidden>smart_display</span>
+                    From YouTube…
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <p className="px-2 py-1.5 text-[11px] leading-snug text-on-surface-variant">
+                    Or drop files anywhere on the Vault, or paste a YouTube link.
+                  </p>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  aria-label="More library actions"
+                  title="More"
+                  className="cc-tap-44 shrink-0 relative flex items-center justify-center w-11 h-11 bg-surface-container-high rounded-xl text-foreground border border-outline-variant/10 hover:bg-surface-container-highest transition-all"
+                >
+                  <span className={`material-symbols-outlined text-xl leading-none ${tagProgress ? "animate-spin" : ""}`} aria-hidden>
+                    {tagProgress ? "progress_activity" : "more_horiz"}
+                  </span>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-60">
+                <DropdownMenuItem onSelect={handleAutoTag} disabled={!!tagProgress || books.length === 0}>
+                  <span className="material-symbols-outlined text-base mr-2" aria-hidden>sell</span>
+                  <span className="flex flex-col">
+                    <span>{tagProgress ? `Tagging ${tagProgress.done}/${tagProgress.total}…` : "Auto-tag books"}</span>
+                    <span className="text-[11px] text-on-surface-variant">Categories and tags with AI — powers the mind map</span>
+                  </span>
+                </DropdownMenuItem>
+                {softDelete && (
+                  <DropdownMenuItem onSelect={openTrash}>
+                    <span className="material-symbols-outlined text-base mr-2" aria-hidden>delete</span>
+                    <span className="flex flex-col">
+                      <span>Trash{trashedBooks.length > 0 ? ` (${trashedBooks.length})` : ""}</span>
+                      <span className="text-[11px] text-on-surface-variant">Deleted books, restorable for {TRASH_RETENTION_DAYS} days</span>
+                    </span>
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
             {query && (
-              <div className="mt-2 flex items-center gap-3 flex-wrap">
+              <div className=" flex items-center gap-3 flex-wrap">
                 <p className="text-xs text-on-surface-variant" role="status">
                   {filteredBooks.length} of {books.length} book{books.length === 1 ? "" : "s"}
                 </p>
@@ -981,29 +1062,29 @@ const Library: React.FC = () => {
                 </button>
               </div>
             )}
-          </div>
-        )}
+        </div>
 
-        {/* A line from something already on the shelves. */}
+        {/* A line from something already on the shelves. One line, in the
+            reader's case — it is a quotation, not a control label, so it opts
+            out of the themes that capitalise every button. */}
         {resurfaced && view !== "graph" && (
-          <div className="flex items-start gap-3 rounded-xl px-5 py-3 bg-surface-container-low/60 border border-outline-variant/10">
-            <span className="material-symbols-outlined text-on-surface-variant/70 text-lg mt-0.5" aria-hidden>
+          <div className="flex items-center gap-3 rounded-xl pl-4 pr-1.5 py-1.5 bg-surface-container-low/60 border border-outline-variant/10">
+            <span className="material-symbols-outlined text-on-surface-variant/70 text-lg" aria-hidden>
               auto_stories
             </span>
-            <div className="flex-1 min-w-0">
-              <p className="text-[11px] uppercase tracking-widest text-on-surface-variant/70">
-                From your library
-              </p>
-              <button
-                onClick={() => requestBookLoad(resurfaced.book.id)}
-                className="text-left mt-0.5 group/res"
-              >
-                <span className="text-sm font-headline font-bold text-primary group-hover/res:underline underline-offset-2">
-                  {resurfaced.book.title}
-                </span>
-                <span className="text-sm text-on-surface-variant"> — {resurfaced.line}</span>
-              </button>
-            </div>
+            <button
+              data-no-sticker
+              onClick={() => requestBookLoad(resurfaced.book.id)}
+              title={`${resurfaced.book.title} — ${resurfaced.line}`}
+              style={{ textTransform: "none", letterSpacing: "normal", fontWeight: 400 }}
+              className="group/res min-w-0 flex-1 truncate text-left text-sm py-1"
+            >
+              <span className="text-[11px] uppercase tracking-widest text-on-surface-variant/70 mr-2">From your library</span>
+              <span className="font-semibold text-primary group-hover/res:underline underline-offset-2">
+                {resurfaced.book.title}
+              </span>
+              <span className="text-on-surface-variant"> — {resurfaced.line}</span>
+            </button>
             <button
               onClick={dismissResurfaced}
               aria-label="Hide this for today"
@@ -1166,46 +1247,10 @@ const Library: React.FC = () => {
           </div>
         )}
 
-        {/* Upload Area. Hidden in the mind map, to give the graph room, and in
-            the Showcase, which is for looking at the library and not for adding
-            to it: a foot-tall dashed dropzone above a book's profile made the
-            view read as an upload form with something underneath. */}
-        {view !== "graph" && view !== "showcase" && (
-          <VaultDropzone
-            isUploading={isUploading}
-            onBrowse={() => fileInputRef.current?.click()}
-            onDrop={handleDrop}
-            onYoutube={() => openYoutube()}
-            onYoutubeHover={() => {
-              // Warm the chunk on hover so the dialog opens instantly.
-              void import("@/components/VideoTranscript");
-            }}
-          />
-        )}
-        {/* Where the dropzone is hidden, keep compact entry points so adding a
-            book never requires leaving the view first. */}
-        {(view === "graph" || view === "showcase") && (
-          <div className="self-start flex items-center gap-2 flex-wrap">
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isUploading}
-            className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all disabled:opacity-50"
-          >
-            <span className="material-symbols-outlined text-base" aria-hidden>add</span>
-            {isUploading ? "Uploading…" : "Add books"}
-          </button>
-          <button
-            onClick={() => openYoutube()}
-            onMouseEnter={() => {
-              void import("@/components/VideoTranscript");
-            }}
-            className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all"
-          >
-            <span className="material-symbols-outlined text-base" aria-hidden>smart_display</span>
-            From YouTube
-          </button>
-          </div>
-        )}
+        {/* Adding books. With books on the shelves, adding is the Add button
+            and the whole-window overlay a drag raises — the old foot-tall
+            dropzone above the shelves is only the empty Vault's welcome now. */}
+        {dragOver && <VaultDropOverlay onDrop={handleDrop} onClose={closeDragOver} />}
         <input
           ref={fileInputRef}
           type="file"
@@ -1247,11 +1292,14 @@ const Library: React.FC = () => {
             ))}
           </div>
         ) : books.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant">
-            <span className="material-symbols-outlined text-6xl mb-4 opacity-25">library_books</span>
-            <p className="text-lg font-headline">Your library is empty</p>
-            <p className="text-sm mt-1">Upload documents to get started</p>
-          </div>
+          <VaultDropzone
+            title="Your library is empty — add your first book"
+            isUploading={isUploading}
+            onBrowse={() => fileInputRef.current?.click()}
+            onDrop={handleDrop}
+            onYoutube={() => openYoutube()}
+            onYoutubeHover={() => void import("@/components/VideoTranscript")}
+          />
         ) : filteredBooks.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant">
             <span className="material-symbols-outlined text-6xl mb-4 opacity-25">search_off</span>
@@ -1437,6 +1485,16 @@ const Library: React.FC = () => {
   );
 };
 
+/**
+ * A card's secondary actions (detect chapters, extract figures, delete) rest
+ * invisible and appear on hover or keyboard focus. Twenty-five cards each
+ * showing three icon buttons put ~75 identical controls on the page, which
+ * is what made the grid read as noise; Open stays, always. The space stays
+ * reserved (opacity, not display), so nothing shifts when they appear, and
+ * `.cc-hover-reveal` shows them for good where there is no hover.
+ */
+const quietUntilHover = "cc-hover-reveal opacity-0 group-hover:opacity-100 focus-visible:opacity-100 group-focus-within:opacity-100";
+
 const BookCardImpl: React.FC<{
   book: BookDocument;
   query?: string;
@@ -1523,6 +1581,8 @@ const BookCardImpl: React.FC<{
   // first shelf's color, so a shelf's books read as a set across the grid.
   const onShelves = shelfMarks ? marksForBook(book.folderIds, shelves, shelfMarks) : [];
   const jacket = !book.coverImageUrl && onShelves.length > 0 ? onShelves[0] : null;
+  const jacketLook = jacket ? jacketLayout(seedOf(book.id), jacket.mark.color) : null;
+  const dated = jacket ? titleDate(book.title) : null;
 
   return (
     <div
@@ -1533,7 +1593,7 @@ const BookCardImpl: React.FC<{
          back in — every card flashed, on every search keystroke. It was also
          not covered by the reduced-motion block. Removing it fixes the flash,
          the stagger cost, and a standing request for less motion at once. */
-      className="group relative bg-surface-container-high rounded-xl overflow-hidden flex flex-col transition-all hover:-translate-y-1 hover:shadow-2xl hover:shadow-black/40"
+      className="group relative h-full bg-surface-container-high rounded-xl overflow-hidden flex flex-col transition-all hover:-translate-y-1 hover:shadow-2xl hover:shadow-black/40"
     >
       {/* The spine: one stripe per shelf, full height of the card. */}
       {onShelves.length > 0 && (
@@ -1547,7 +1607,7 @@ const BookCardImpl: React.FC<{
       {/* Cover */}
       <div
         data-book-cover-placeholder={book.coverImageUrl || jacket ? undefined : ""}
-        className="cc-book-cover aspect-[2/1] relative overflow-hidden bg-surface-container-highest flex items-center justify-center"
+        className="cc-book-cover aspect-[5/2] relative overflow-hidden bg-surface-container-highest flex items-center justify-center"
         style={{
           background: book.coverImageUrl
             ? undefined
@@ -1559,22 +1619,28 @@ const BookCardImpl: React.FC<{
         ) : jacket ? (
           // Its own layer, not the placeholder's background: themes restyle
           // the placeholder with !important, and the jacket must win.
+          // Composition varies per book (src/lib/bookJacket.ts) so a shelf of
+          // jackets reads as a series, not one picture repeated.
           <div
             data-shelf-jacket
-            className="absolute inset-0 flex items-center justify-center"
-            style={{
-              background: `radial-gradient(120% 90% at 85% 15%, ${jacket.mark.color}d9, ${jacket.mark.color}59 55%, transparent 100%), repeating-linear-gradient(90deg, rgba(255,255,255,0.05) 0 2px, transparent 2px 14px), #0b0812`,
-            }}
+            className="absolute inset-0"
+            style={{ background: jacketLook!.background }}
           >
             <span
-              className="material-symbols-outlined text-[3.5rem] opacity-90 transition-transform duration-500 group-hover:scale-110"
-              style={{ color: jacket.mark.color, fontVariationSettings: "'FILL' 1", filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.5)) brightness(1.25)" }}
+              className="material-symbols-outlined absolute leading-none transition-transform duration-500 group-hover:scale-110"
+              style={{
+                ...jacketLook!.glyph,
+                color: jacket.mark.color,
+                fontVariationSettings: "'FILL' 1",
+                filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.5)) brightness(1.25)",
+              }}
               aria-hidden
             >
               {jacket.mark.glyph}
             </span>
-            <span className="absolute bottom-1.5 left-3 right-3 truncate text-[10px] font-bold uppercase tracking-widest text-white/85 drop-shadow">
-              {jacket.name}
+            <span className="absolute bottom-1.5 left-3 right-3 flex items-baseline gap-2 text-[10px] font-bold uppercase tracking-widest text-white/85 drop-shadow">
+              <span className="truncate">{jacket.name}</span>
+              {dated && <span className="ml-auto shrink-0 text-white/70">{dated}</span>}
             </span>
           </div>
         ) : (
@@ -1766,9 +1832,10 @@ const BookCardImpl: React.FC<{
         <div className="cc-book-actions mt-auto flex items-center gap-2">
           <button
             onClick={() => onRead(book)}
-            className="cc-book-open flex-1 min-w-0 py-2 text-sm bg-primary/10 text-primary font-bold rounded-lg hover:bg-primary hover:text-on-primary-container transition-all active:scale-95"
+            className="cc-book-open mr-auto flex items-center gap-1 pl-4 pr-3 py-2 text-sm bg-primary/10 text-primary font-bold rounded-lg hover:bg-primary hover:text-on-primary-container transition-all active:scale-95"
           >
             Open
+            <span className="material-symbols-outlined text-base leading-none" aria-hidden>arrow_forward</span>
           </button>
           {isPdf && (
             <button
@@ -1777,7 +1844,7 @@ const BookCardImpl: React.FC<{
               disabled={detecting}
               title={detectLabel}
               aria-label={detectLabel}
-              className="p-2 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              className={`${detecting ? "" : quietUntilHover} p-2 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed`}
             >
               <span className={`material-symbols-outlined text-lg leading-none ${detecting ? "animate-spin" : ""}`}>
                 {detecting ? "progress_activity" : "auto_awesome"}
@@ -1791,7 +1858,7 @@ const BookCardImpl: React.FC<{
               disabled={extracting}
               title={extractLabel}
               aria-label={extractLabel}
-              className="p-2 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              className={`${extracting ? "" : quietUntilHover} p-2 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed`}
             >
               <span className={`material-symbols-outlined text-lg leading-none ${extracting ? "animate-spin" : ""}`}>
                 {extracting ? "progress_activity" : "image_search"}
@@ -1803,7 +1870,7 @@ const BookCardImpl: React.FC<{
             onClick={(e) => { e.stopPropagation(); onRemove(book); }}
             title={removeLabel}
             aria-label={removeLabel}
-            className="p-2 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-error-container/20 hover:text-destructive transition-all"
+            className={`${quietUntilHover} p-2 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-error-container/20 hover:text-destructive transition-all`}
           >
             <span className="material-symbols-outlined text-lg leading-none">delete</span>
           </button>

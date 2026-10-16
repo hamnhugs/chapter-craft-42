@@ -949,6 +949,10 @@
  */
 @media (hover: none) {
   .cc-hover-reveal { opacity: 1; }
+  /* Always-shown shelf actions drop to their own strip along the tile's
+     bottom; floating mid-row they covered the shelf's name. */
+  .cc-shelf-tile { padding-bottom: 3.25rem; }
+  .cc-shelf-actions { top: auto; bottom: 0.5rem; transform: none; }
   /* A touch TABLET has wide cards (no container reveal) and a tall viewport
      (no height reveal), so without this the overflow menu — the only touch
      route to Rename — existed on no tablet. Revealing it everywhere hover
