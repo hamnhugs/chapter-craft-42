@@ -1,6 +1,8 @@
 import React from "react";
+import { Switch } from "@/components/ui/switch";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { PERMISSION_GROUPS } from "@/lib/toolPermissions";
+import { Disclosure, Group, Row } from "@/components/settings/SettingsUI";
 
 // Per-tool toggles for the AI's chat capabilities. The user is fully in
 // control — every tool defaults to ON, but they can disable any combination.
@@ -8,50 +10,73 @@ import { PERMISSION_GROUPS } from "@/lib/toolPermissions";
 // executeChatTool blocks any mapped tool whose permission is explicitly
 // `false` at one choke point, and permissionCoverage.test.ts fails when a
 // toggle and its enforcement drift apart. This component only renders.
+//
+// ~50 switches is too many to show at once, so the page leads with the one
+// question most people actually have — "may the AI delete things?" — as a
+// single control, and folds each group behind a row that says how many of
+// its tools are on.
 
 const GROUPS = PERMISSION_GROUPS;
+const DELETE_IDS = GROUPS.flatMap((g) => g.items.filter((it) => it.danger).map((it) => it.id));
 
 const AiPermissionsSettings: React.FC = () => {
-  const { chatToolPermissions, setChatToolPermission } = useChatSettings();
+  const { chatToolPermissions, setChatToolPermission, setChatToolPermissions } = useChatSettings();
   const isAllowed = (id: string) => chatToolPermissions[id] !== false;
+  const deletesOn = DELETE_IDS.filter(isAllowed).length;
+  const setAllDeletes = (allowed: boolean) => {
+    const next = { ...chatToolPermissions };
+    for (const id of DELETE_IDS) next[id] = allowed;
+    setChatToolPermissions(next);
+  };
+
   return (
-    <section className="p-3 md:p-4 rounded-xl bg-surface-container-low flex flex-col gap-4">
-      <header className="flex flex-col gap-1">
-        <h3 className="text-sm font-bold text-foreground">AI Tool Permissions</h3>
-        <p className="text-xs text-on-surface-variant">
-          Decide exactly which actions the AI is allowed to take on your behalf. Disabled tools
-          will be refused at runtime and the AI will be told to ask you instead.
-        </p>
-      </header>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {GROUPS.map((g) => (
-          <div key={g.group} className="rounded-lg border border-outline-variant/15 p-3 bg-surface-container-high/40">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-on-surface-variant mb-2">{g.group}</p>
-            <ul className="flex flex-col gap-2">
-              {g.items.map((it) => {
-                const on = isAllowed(it.id);
-                return (
-                  <li key={it.id} className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className={`text-sm font-medium ${it.danger ? "text-red-300" : "text-foreground"}`}>{it.label}</p>
-                      <p className="text-[11px] text-on-surface-variant leading-snug">{it.description}</p>
-                    </div>
-                    <button
-                      role="switch"
-                      aria-checked={on}
-                      onClick={() => setChatToolPermission(it.id, !on)}
-                      className={`shrink-0 mt-0.5 w-9 h-5 rounded-full transition-colors ${on ? (it.danger ? "bg-red-500/70" : "bg-primary") : "bg-surface-container-highest"}`}
-                    >
-                      <span className={`block w-4 h-4 m-0.5 rounded-full bg-white transition-transform ${on ? "translate-x-4" : ""}`} />
-                    </button>
+    <div className="space-y-6">
+      <Group footer="Turned-off tools are refused when the AI tries them, and it's told to ask you instead.">
+        <Row
+          label="Deleting things"
+          description={
+            deletesOn === DELETE_IDS.length
+              ? "Allowed — the AI can delete after you confirm."
+              : deletesOn === 0
+                ? "Blocked everywhere — the AI can't delete anything."
+                : `${deletesOn} of ${DELETE_IDS.length} delete actions allowed.`
+          }
+        >
+          <Switch
+            checked={deletesOn > 0}
+            onCheckedChange={(v) => setAllDeletes(v)}
+            aria-label="Allow the AI to delete things"
+          />
+        </Row>
+      </Group>
+
+      <Group title="Tools by area">
+        {GROUPS.map((g) => {
+          const on = g.items.filter((it) => isAllowed(it.id)).length;
+          return (
+            <Disclosure
+              key={g.group}
+              label={g.group}
+              summary={on === g.items.length ? `All ${g.items.length} on` : `${on} of ${g.items.length} on`}
+            >
+              <ul className="-mx-4 divide-y divide-outline-variant/10">
+                {g.items.map((it) => (
+                  <li key={it.id}>
+                    <Row label={it.label} description={it.description} danger={it.danger}>
+                      <Switch
+                        checked={isAllowed(it.id)}
+                        onCheckedChange={(v) => setChatToolPermission(it.id, v)}
+                        aria-label={it.label}
+                      />
+                    </Row>
                   </li>
-                );
-              })}
-            </ul>
-          </div>
-        ))}
-      </div>
-    </section>
+                ))}
+              </ul>
+            </Disclosure>
+          );
+        })}
+      </Group>
+    </div>
   );
 };
 

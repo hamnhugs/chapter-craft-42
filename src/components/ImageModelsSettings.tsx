@@ -34,22 +34,22 @@ const ImageModelsSettings: React.FC = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="flex flex-col gap-1.5">
-          <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Primary Image Model</label>
+          <label className="text-xs font-medium text-on-surface-variant px-1">Primary Image Model</label>
           <select
             value={imageModelPrimary}
             onChange={(e) => setImageModelPrimary(e.target.value)}
-            className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40"
+            className="w-full bg-surface-container-high border border-outline-variant/15 rounded-lg text-sm text-foreground py-2 px-3 focus:ring-1 focus:ring-primary/40"
           >
             <option value="">Auto (use built-in default)</option>
             {allModels.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
         </div>
         <div className="flex flex-col gap-1.5">
-          <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Fallback Image Model</label>
+          <label className="text-xs font-medium text-on-surface-variant px-1">Fallback Image Model</label>
           <select
             value={imageModelFallback}
             onChange={(e) => setImageModelFallback(e.target.value)}
-            className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40"
+            className="w-full bg-surface-container-high border border-outline-variant/15 rounded-lg text-sm text-foreground py-2 px-3 focus:ring-1 focus:ring-primary/40"
           >
             <option value="">None</option>
             {allModels.map((m) => <option key={m} value={m}>{m}</option>)}
@@ -59,11 +59,11 @@ const ImageModelsSettings: React.FC = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="flex flex-col gap-1.5">
-          <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Quality</label>
+          <label className="text-xs font-medium text-on-surface-variant px-1">Quality</label>
           <select
             value={imageQuality}
             onChange={(e) => setImageQuality(e.target.value)}
-            className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40"
+            className="w-full bg-surface-container-high border border-outline-variant/15 rounded-lg text-sm text-foreground py-2 px-3 focus:ring-1 focus:ring-primary/40"
           >
             <option value="">Auto</option>
             <option value="standard">Standard</option>
@@ -71,11 +71,11 @@ const ImageModelsSettings: React.FC = () => {
           </select>
         </div>
         <div className="flex flex-col gap-1.5">
-          <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Default Aspect</label>
+          <label className="text-xs font-medium text-on-surface-variant px-1">Default Aspect</label>
           <select
             value={imageSize}
             onChange={(e) => setImageSize(e.target.value)}
-            className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40"
+            className="w-full bg-surface-container-high border border-outline-variant/15 rounded-lg text-sm text-foreground py-2 px-3 focus:ring-1 focus:ring-primary/40"
           >
             <option value="">Auto (1:1)</option>
             {IMAGE_ASPECT_RATIOS.map((r) => <option key={r} value={r}>{r}</option>)}
@@ -84,7 +84,7 @@ const ImageModelsSettings: React.FC = () => {
       </div>
 
       <div className="flex flex-col gap-2">
-        <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Saved Image Models</label>
+        <label className="text-xs font-medium text-on-surface-variant px-1">Saved Image Models</label>
         <div className="flex flex-wrap gap-1.5">
           {savedImageModels.length === 0 && (
             <span className="text-xs text-on-surface-variant italic">No custom image models saved yet.</span>
