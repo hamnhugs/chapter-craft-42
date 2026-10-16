@@ -891,10 +891,47 @@
      and the same reason, as `.cc-measure.cc-measure`. */
   .cc-vault-title.cc-vault-title { font-size: 2.25rem; line-height: 2.5rem; }
   .cc-vault-dropzone { padding: 1.25rem; }
-  .cc-vault-dropzone .cc-dropzone-icon { width: 3rem; height: 3rem; margin-bottom: 0.5rem; }
+  .cc-vault-dropzone .cc-dropzone-icon { width: 8rem; height: 3rem; margin-bottom: 0.5rem; }
+  .cc-vault-dropzone .cc-dropzone-icon > div { width: 2.75rem; height: 2.75rem; }
   .cc-vault-dropzone .cc-dropzone-title { font-size: 1.125rem; line-height: 1.5rem; }
   .cc-vault-dropzone .cc-dropzone-hint { margin-bottom: 0.75rem; font-size: 0.75rem; }
   .cc-vault-dropzone .cc-dropzone-actions button { padding-left: 1.25rem; padding-right: 1.25rem; }
+}
+
+/* ── Vault dropzone border beam ───────────────────────────────────────────
+ * A bright arc that runs round the dropzone while a file is dragged over it
+ * (VaultDropzone sets data-dragging). Pure CSS stand-in for the border-beam
+ * package the 21st.dev original used: a conic gradient whose start angle is
+ * an animatable @property, masked down to a 2px ring.
+ */
+@property --cc-beam-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes cc-beam-spin { to { --cc-beam-angle: 360deg; } }
+.cc-drop-beam[data-dragging]::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  padding: 2px;
+  pointer-events: none;
+  background: conic-gradient(
+    from var(--cc-beam-angle),
+    hsl(var(--primary) / 0.15) 0deg,
+    hsl(var(--primary) / 0.15) 240deg,
+    hsl(var(--primary)) 320deg,
+    hsl(var(--primary-container)) 345deg,
+    hsl(var(--primary) / 0.15) 360deg
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  animation: cc-beam-spin 2.4s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cc-drop-beam[data-dragging]::before { animation: none; background: hsl(var(--primary) / 0.6); }
 }
 
 /* ── Hover-only affordances on a touch screen ─────────────────────────────

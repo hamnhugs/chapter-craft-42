@@ -47,6 +47,7 @@ const src = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
 const CSS = src("src/index.css");
 const LIBRARY = src("src/components/Library.tsx");
 const SHELVES = src("src/components/LibraryShelves.tsx");
+const DROPZONE = src("src/components/VaultDropzone.tsx");
 
 /** Strip CSS comments so an ABSENCE scan asserts on rules, not on the prose
  *  that explains them — every rule below documents the bug it prevents, and a
@@ -330,7 +331,7 @@ describe("the marker classes are wired to something at both ends", () => {
     "cc-tap-32",
   ] as const;
 
-  const TSX = tsxCode(LIBRARY) + "\n" + tsxCode(SHELVES);
+  const TSX = tsxCode(LIBRARY) + "\n" + tsxCode(SHELVES) + "\n" + tsxCode(DROPZONE);
 
   for (const marker of MARKERS) {
     it(`${marker} is both styled in index.css and applied in the Vault`, () => {
