@@ -31,8 +31,8 @@ const SplatModelsSettings: React.FC = () => {
   const effectiveModel = splatModelPrimary || DEFAULT_SPLAT_MODEL;
   const modelInfo = getSplatModel(effectiveModel);
 
-  const selectCls = "w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40";
-  const labelCls = "text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1";
+  const selectCls = "w-full bg-surface-container-high border border-outline-variant/15 rounded-lg text-sm text-foreground py-2 px-3 focus:ring-1 focus:ring-primary/40";
+  const labelCls = "text-xs font-medium text-on-surface-variant px-1";
 
   return (
     <section className="flex flex-col gap-4">
@@ -156,7 +156,7 @@ const SplatModelsSettings: React.FC = () => {
       {/* toggles */}
       <div className="flex flex-col gap-3">
         <button
-          type="button" role="switch" aria-checked={splatClickToActivate}
+          type="button" data-no-sticker role="switch" aria-checked={splatClickToActivate}
           onClick={() => setSplatClickToActivate(!splatClickToActivate)}
           className="flex items-center gap-2.5 text-left"
         >
@@ -173,7 +173,7 @@ const SplatModelsSettings: React.FC = () => {
         </button>
 
         <button
-          type="button" role="switch" aria-checked={splatAutoFallback}
+          type="button" data-no-sticker role="switch" aria-checked={splatAutoFallback}
           onClick={() => setSplatAutoFallback(!splatAutoFallback)}
           className="flex items-center gap-2.5 text-left"
         >

@@ -156,19 +156,16 @@ const PromptLibrary: React.FC<Props> = ({ scopeHint }) => {
   };
 
   return (
-    <section className="p-3 md:p-4 rounded-xl bg-surface-container-low space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <div>
-          <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center gap-1">
-            <span className="material-symbols-outlined text-xs align-middle">psychology</span>Prompt Library
-          </label>
-          <p className="text-[10px] text-on-surface-variant px-1 mt-1">
-            Save multiple system prompts. The active one is prepended to {scopeHint === "voice" ? "Voice" : scopeHint === "chat" ? "Chat" : "every"} reply.
-            Switch between them from Counsel, or with ⌘K.
+    <section className="space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-foreground">Saved prompts</p>
+          <p className="text-xs text-on-surface-variant mt-0.5">
+            The active one shapes every {scopeHint === "voice" ? "voice " : scopeHint === "chat" ? "chat " : ""}reply. Switch from Counsel or with ⌘K.
           </p>
         </div>
         {editingId === null && (
-          <Button size="sm" onClick={beginNew} className="shrink-0">
+          <Button size="sm" variant="outline" onClick={beginNew} className="shrink-0">
             <Plus className="w-4 h-4" /> New
           </Button>
         )}
@@ -227,24 +224,22 @@ const PromptLibrary: React.FC<Props> = ({ scopeHint }) => {
 
       {/* ── Routing ── */}
       {routingSchemaReady && (
-        <div className="rounded-lg bg-surface-container-high p-3 space-y-2.5 border border-outline-variant/15">
-          <div className="flex items-start justify-between gap-3">
+        <div className="space-y-3 pt-3 border-t border-outline-variant/10">
+          <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="text-sm font-medium text-foreground">Let the AI pick the prompt</p>
-              <p className="text-[11px] text-on-surface-variant">
-                Matches each message against the “use this when…” description on your prompts and switches when
-                something clearly fits better. It tells you every time, under the reply, with an undo.
+              <p className="text-xs text-on-surface-variant mt-0.5">
+                Switches when a prompt's “use this when…” clearly fits — and tells you, with an undo.
               </p>
             </div>
             <Switch checked={routingEnabled} onCheckedChange={setRoutingEnabled} aria-label="Let the AI pick the prompt" />
           </div>
           {routingEnabled && (
-            <div className="flex items-start justify-between gap-3 pt-1 border-t border-outline-variant/10">
+            <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-sm font-medium text-foreground">Plain voice for factual questions</p>
-                <p className="text-[11px] text-on-surface-variant">
-                  Don’t apply a persona when a message is mostly recalling what you’ve saved. Personas measurably
-                  cost accuracy on recall, and help on writing and formatting — this keeps both.
+                <p className="text-xs text-on-surface-variant mt-0.5">
+                  No persona when recalling what you've saved — personas cost accuracy on recall.
                 </p>
               </div>
               <Switch checked={plainOnRecall} onCheckedChange={setPlainOnRecall} aria-label="Plain voice for factual questions" />

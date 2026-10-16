@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Switch } from "@/components/ui/switch";
+import { Group, Row } from "@/components/settings/SettingsUI";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useChatSettings } from "@/hooks/useChatSettings";
@@ -87,7 +88,7 @@ const CheckRows: React.FC<{ title: string; checks: ConformanceCheck[] }> = ({ ti
   if (!checks || checks.length === 0) return null;
   return (
     <div className="mt-2 min-w-0">
-      <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">{title}</p>
+      <p className="text-xs font-medium text-on-surface-variant">{title}</p>
       <ul className="mt-1 flex flex-col gap-1">
         {checks.map((c, i) => (
           <li key={`${c.name}-${i}`} className="flex items-start gap-1.5 min-w-0">
@@ -526,7 +527,7 @@ const ToolFoundrySettings: React.FC<ToolFoundrySettingsProps> = ({ onCapability 
 
         {open === "run" && (
           <div className="mt-2 flex flex-col gap-2 min-w-0">
-            <label className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant" htmlFor={`args-${t.id}`}>
+            <label className="text-xs font-medium text-on-surface-variant" htmlFor={`args-${t.id}`}>
               Arguments (JSON)
             </label>
             <textarea
@@ -556,7 +557,7 @@ const ToolFoundrySettings: React.FC<ToolFoundrySettingsProps> = ({ onCapability 
             </div>
             {run && (
               <div className="rounded-lg bg-surface-container-low p-2 min-w-0">
-                <p className={`text-[10px] font-bold uppercase tracking-widest ${run.ok ? "text-on-surface-variant" : "text-destructive"}`}>
+                <p className={`text-xs font-medium ${run.ok ? "text-on-surface-variant" : "text-destructive"}`}>
                   {run.ok ? "Result" : "Failed"}
                   {typeof run.ms === "number" ? ` · ${run.ms}ms` : ""}
                   {run.ok && caps.length > 0 ? (run.live ? " · live data" : " · fixture data") : ""}
@@ -602,7 +603,7 @@ const ToolFoundrySettings: React.FC<ToolFoundrySettingsProps> = ({ onCapability 
                 <CheckRows title="Properties" checks={report.properties} />
                 <button
                   onClick={() => setReports((r) => { const next = { ...r }; delete next[t.id]; return next; })}
-                  className="mt-2 text-[10px] font-bold uppercase tracking-widest text-primary hover:underline"
+                  className="mt-2 text-xs font-medium text-primary hover:underline"
                 >
                   Run again
                 </button>
@@ -636,27 +637,25 @@ const ToolFoundrySettings: React.FC<ToolFoundrySettingsProps> = ({ onCapability 
         </div>
       )}
 
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-foreground">Forge new tools</p>
-          <p className="text-xs text-on-surface-variant">Let the AI write new tools for itself. Every new tool waits for your approval before it can ever run.</p>
-        </div>
-        <Switch checked={forgeOn} onCheckedChange={(v) => setChatToolPermission("forge_tool", v)} aria-label="Allow forging tools" />
-      </div>
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-foreground">Run approved tools</p>
-          <p className="text-xs text-on-surface-variant">Master switch (read at run time — flipping it off stops everything immediately). Tools run sandboxed: no internet, read-only access.</p>
-        </div>
-        <Switch checked={runOn} onCheckedChange={(v) => setChatToolPermission("run_tool", v)} aria-label="Allow running tools" />
-      </div>
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-foreground">Auto-approve safe updates</p>
-          <p className="text-xs text-on-surface-variant">Updates that gain no new powers (same capabilities, tests pass) apply without asking. New tools and anything gaining powers always ask.</p>
-        </div>
-        <Switch checked={autoApproveToolUpdates} onCheckedChange={setAutoApproveToolUpdates} aria-label="Auto-approve safe tool updates" />
-      </div>
+      <Group>
+        <Row label="Forge new tools" description="The AI may write tools for itself. Each waits for your approval.">
+          <Switch checked={forgeOn} onCheckedChange={(v) => setChatToolPermission("forge_tool", v)} aria-label="Allow forging tools" />
+        </Row>
+        <Row
+          label="Run approved tools"
+          description="Sandboxed: no internet, read-only."
+          more="This is the master switch, read at run time — flipping it off stops everything immediately."
+        >
+          <Switch checked={runOn} onCheckedChange={(v) => setChatToolPermission("run_tool", v)} aria-label="Allow running tools" />
+        </Row>
+        <Row
+          label="Auto-approve safe updates"
+          description="Updates that gain no new powers apply without asking."
+          more="An update counts as safe when it keeps the same capabilities and its tests pass. New tools, and anything gaining powers, always ask."
+        >
+          <Switch checked={autoApproveToolUpdates} onCheckedChange={setAutoApproveToolUpdates} aria-label="Auto-approve safe tool updates" />
+        </Row>
+      </Group>
 
       {tampered.length > 0 && (
         <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3">
@@ -667,8 +666,8 @@ const ToolFoundrySettings: React.FC<ToolFoundrySettingsProps> = ({ onCapability 
           <ul className="flex flex-col gap-2">
             {tampered.map((t) => renderRow(t, (
               <div className="flex items-center gap-2">
-                <button onClick={() => void setStatus(t, "disabled")} className="text-[10px] font-bold uppercase tracking-widest text-destructive hover:underline">Disable</button>
-                <button onClick={() => void remove(t)} className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant hover:text-destructive">Delete</button>
+                <button onClick={() => void setStatus(t, "disabled")} className="text-xs font-medium text-destructive hover:underline">Disable</button>
+                <button onClick={() => void remove(t)} className="text-xs font-medium text-on-surface-variant hover:text-destructive">Delete</button>
               </div>
             )))}
           </ul>
@@ -686,7 +685,7 @@ const ToolFoundrySettings: React.FC<ToolFoundrySettingsProps> = ({ onCapability 
               <button
                 onClick={() => void pinAndReapprove(t)}
                 disabled={busy === t.id}
-                className="text-[10px] font-bold uppercase tracking-widest text-primary hover:underline disabled:opacity-50"
+                className="text-xs font-medium text-primary hover:underline disabled:opacity-50"
               >
                 {busy === t.id ? "Working…" : "Re-approve"}
               </button>
@@ -704,11 +703,11 @@ const ToolFoundrySettings: React.FC<ToolFoundrySettingsProps> = ({ onCapability 
                 <button
                   onClick={() => void approve(t)}
                   disabled={busy === t.id}
-                  className="text-[10px] font-bold uppercase tracking-widest text-primary hover:underline disabled:opacity-50"
+                  className="text-xs font-medium text-primary hover:underline disabled:opacity-50"
                 >
                   {busy === t.id ? "…" : "Approve"}
                 </button>
-                <button onClick={() => void discard(t)} className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant hover:text-destructive">Discard</button>
+                <button onClick={() => void discard(t)} className="text-xs font-medium text-on-surface-variant hover:text-destructive">Discard</button>
               </div>
             )))}
           </ul>
@@ -721,8 +720,8 @@ const ToolFoundrySettings: React.FC<ToolFoundrySettingsProps> = ({ onCapability 
           <ul className="flex flex-col gap-2">
             {activeClean.map((t) => renderRow(t, (
               <div className="flex items-center gap-2">
-                <button onClick={() => void setStatus(t, "disabled")} className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant hover:text-destructive">Disable</button>
-                <button onClick={() => void remove(t)} className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant hover:text-destructive">Delete</button>
+                <button onClick={() => void setStatus(t, "disabled")} className="text-xs font-medium text-on-surface-variant hover:text-destructive">Disable</button>
+                <button onClick={() => void remove(t)} className="text-xs font-medium text-on-surface-variant hover:text-destructive">Delete</button>
               </div>
             ), { runnable: true }))}
           </ul>
@@ -735,8 +734,8 @@ const ToolFoundrySettings: React.FC<ToolFoundrySettingsProps> = ({ onCapability 
           <ul className="flex flex-col gap-2">
             {disabled.map((t) => renderRow(t, (
               <div className="flex items-center gap-2">
-                <button onClick={() => void setStatus(t, "draft")} className="text-[10px] font-bold uppercase tracking-widest text-primary hover:underline">Re-enable</button>
-                <button onClick={() => void remove(t)} className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant hover:text-destructive">Delete</button>
+                <button onClick={() => void setStatus(t, "draft")} className="text-xs font-medium text-primary hover:underline">Re-enable</button>
+                <button onClick={() => void remove(t)} className="text-xs font-medium text-on-surface-variant hover:text-destructive">Delete</button>
               </div>
             )))}
           </ul>
