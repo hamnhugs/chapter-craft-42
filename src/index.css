@@ -1281,3 +1281,34 @@ html.cc-media-overlay-open .message-bubble-user {
   }
 }
 
+
+/* ── Fluid page chrome ─────────────────────────────────────────────────────
+ *
+ * The app lives in tiled windows that are resized all the time: on a 2x-scaled
+ * 1080p laptop the WHOLE screen is 960x540 CSS px, and half of it is 476 wide.
+ * Stepped breakpoints sized the page titles for a big monitor (48–60px) and
+ * the short-window rules start at 480px tall — 26px under that screen — so a
+ * full-screen window spent ~45% of its height on bar, title and padding.
+ *
+ * clamp() instead of more steps: each size is a function of BOTH axes (vw and
+ * vh), so it shrinks as a window is squashed in either direction and needs no
+ * new breakpoint per window size. Doubled selectors, (0,2,0), win over the
+ * Tailwind responsive variants on the same elements (see `.cc-vault-title`).
+ */
+.cc-page-title.cc-page-title {
+  /* ≈30px at 956x506, ≈25px at 476x506, capped at 56px on a big monitor. */
+  font-size: clamp(1.5rem, 0.5rem + 1.5vw + 2vh, 3.5rem);
+  line-height: 1.1;
+}
+.cc-page-main.cc-page-main { padding-top: clamp(0.75rem, 4vh, 2.5rem); }
+.cc-page-head.cc-page-head { margin-bottom: clamp(1rem, 4vh, 3rem); gap: clamp(0.75rem, 2.5vh, 1.5rem); }
+
+/* Short windows: the rail holds 7 destinations (~460px at full size), more
+   than a 506px-tall window has under the bar. Tighter items fit all of them;
+   the rail still scrolls if a window gets shorter still. */
+@media (max-height: 640px) {
+  .cc-rail { padding-top: 0.375rem; padding-bottom: 0.375rem; gap: 0; }
+  .cc-rail .cc-rail-item { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+  .cc-rail .cc-rail-split { margin-top: 0.25rem; margin-bottom: 0.25rem; }
+  .cc-app-bar.cc-app-bar { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+}

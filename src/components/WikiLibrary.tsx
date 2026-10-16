@@ -521,9 +521,9 @@ const WikiLibrary: React.FC = () => {
 
   return (
     <div className="flex flex-col h-full overflow-auto">
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-12 pb-32 w-full min-w-0">
+      <main className="cc-page-main max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-12 pb-32 w-full min-w-0">
         {/* Header */}
-        <section className="flex flex-col lg:flex-row lg:items-end justify-between gap-6 mb-8 sm:mb-12">
+        <section className="cc-page-head flex flex-col lg:flex-row lg:items-end justify-between gap-6 mb-8 sm:mb-12">
           <div className="space-y-2 min-w-0">
             <div className="flex items-center gap-3 mb-1">
               <span className="px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded text-[10px] font-bold tracking-widest uppercase">
@@ -533,7 +533,7 @@ const WikiLibrary: React.FC = () => {
                 {wikisWithStats.length} {wikisWithStats.length === 1 ? "neuron" : "neurons"}
               </span>
             </div>
-            <h2 className="font-headline font-bold text-4xl sm:text-5xl md:text-6xl text-primary tracking-tight">
+            <h2 className="cc-page-title font-headline font-bold text-4xl sm:text-5xl md:text-6xl text-primary tracking-tight">
               Select a Neuron&nbsp;
             </h2>
             <p className="text-on-surface-variant max-w-xl text-base sm:text-lg italic font-headline">

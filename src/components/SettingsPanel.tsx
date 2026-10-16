@@ -504,9 +504,9 @@ const SettingsPanel: React.FC = () => {
 
       {/* Content */}
       <div ref={mainRef} className="flex-1 overflow-y-auto">
-        <main className="max-w-3xl mx-auto px-4 sm:px-6 py-10 pb-32 w-full space-y-4">
+        <main className="cc-page-main max-w-3xl mx-auto px-4 sm:px-6 py-10 pb-32 w-full space-y-4">
           <header className="mb-6">
-            <h2 className="font-headline font-bold text-4xl md:text-5xl text-primary tracking-tight">Settings</h2>
+            <h2 className="cc-page-title font-headline font-bold text-4xl md:text-5xl text-primary tracking-tight">Settings</h2>
             <p className="text-on-surface-variant mt-2 text-sm">
               Everything in one place — changes apply instantly.
             </p>
