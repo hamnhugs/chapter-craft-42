@@ -342,11 +342,17 @@ describe("the year is the header's rule", () => {
 });
 
 describe("Library wiring", () => {
-  it("keeps the upload dropzone out of the Showcase, but adding a book within reach", () => {
-    expect(LIBRARY).toContain('view !== "graph" && view !== "showcase" && (');
-    const compact = LIBRARY.slice(LIBRARY.indexOf('(view === "graph" || view === "showcase") && ('));
-    expect(compact.slice(0, 900)).toContain("fileInputRef.current?.click()");
-    expect(compact.slice(0, 1800)).toContain("From YouTube");
+  it("keeps the big dropzone for the empty Vault only, with adding a book one click away in every view", () => {
+    // The foot-tall dropzone used to sit above the books in Shelves and List
+    // and push the first one ~1,400px down. It is now the empty Vault's
+    // welcome; a populated Vault adds through the toolbar and a drag overlay.
+    const empty = LIBRARY.slice(LIBRARY.indexOf(") : books.length === 0 ? ("));
+    expect(empty.slice(0, 400)).toContain("<VaultDropzone");
+    expect(LIBRARY.match(/<VaultDropzone\b/g)).toHaveLength(1);
+    const tools = LIBRARY.slice(LIBRARY.indexOf("{/* Add: one click to the file picker"));
+    expect(tools.slice(0, 600)).toContain("fileInputRef.current?.click()");
+    expect(tools.slice(0, 3000)).toContain("From YouTube…");
+    expect(LIBRARY).toContain("{dragOver && <VaultDropOverlay");
   });
 
   it("offers the Showcase as a fourth view and remembers it", () => {

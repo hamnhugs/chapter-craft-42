@@ -132,7 +132,7 @@ describe("Library, mounted", () => {
     localStorage.setItem("vault_sort_by", "name");
     state.books = [book("b1", "Zebra"), book("b2", "Aardvark")];
     await mount();
-    expect(text()).toContain("By Name");
+    expect(text()).toContain("A–Z");
   });
 
   it("restores the remembered search text", async () => {

@@ -157,6 +157,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
     else openShelves(pickedIds.length > 0 ? [...pickedIds.filter((x) => x !== id), id] : [id]);
   };
   const [newName, setNewName] = useState("");
+  const [creating, setCreating] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   // Facet filters. These narrow the WHOLE view — shelf-card matching counts,
@@ -326,15 +327,18 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
   const pageResetKey = `${facetKey}|${openIds.join(",")}`;
   const allBooksPage = usePagedBooks(visibleBooks, pageResetKey);
 
-  const handleCreate = async () => {
+  /** True when the shelf was made — the form stays open on a failure. */
+  const handleCreate = async (): Promise<boolean> => {
     const name = newName.trim();
-    if (!name) return;
+    if (!name) return false;
     try {
       await createShelf(name);
       setNewName("");
       toast.success(`Shelf "${name}" created`);
+      return true;
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not create shelf");
+      return false;
     }
   };
 
@@ -396,7 +400,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
   const renderBookCard = (b: BookDocument, index: number) => (
     <div
       key={b.id}
-      className="relative group transition-[opacity,filter] duration-200"
+      className="relative group h-full transition-[opacity,filter] duration-200"
       style={spotlight && spotlight !== UNSHELVED_ID
         ? (b.folderIds.includes(spotlight) ? undefined : { opacity: 0.22, filter: "grayscale(0.8)" })
         : spotlight === UNSHELVED_ID && b.folderIds.length > 0 ? { opacity: 0.22, filter: "grayscale(0.8)" } : undefined}
@@ -664,7 +668,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
         </div>
       )}
       {/* Shelf cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 min-[480px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
         {shelves.map((f) => {
           const members = membersByShelf.get(f.id) || [];
           // Computed while ANYTHING narrows the view — search or facets.
@@ -682,7 +686,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
               onMouseLeave={() => setSpotlight((cur) => (cur === f.id ? null : cur))}
               onFocus={() => setSpotlight(f.id)}
               onBlur={() => setSpotlight((cur) => (cur === f.id ? null : cur))}
-              className={`group relative flex flex-col items-start gap-3 overflow-hidden rounded-2xl p-5 pl-6 text-left border bg-surface-container-high transition-all hover:-translate-y-0.5 hover:shadow-xl ${pickedIds.includes(f.id) ? "border-primary ring-1 ring-primary/40" : "border-outline-variant/15"}`}
+              className={`cc-shelf-tile group relative flex items-center gap-3.5 overflow-hidden rounded-2xl min-h-[4.5rem] py-3 pl-5 pr-4 text-left border bg-surface-container-high transition-all hover:-translate-y-0.5 hover:shadow-xl ${pickedIds.includes(f.id) ? "border-primary ring-1 ring-primary/40" : "border-outline-variant/15"}`}
               style={mark ? {
                 backgroundImage: `linear-gradient(135deg, ${mark.color}38, transparent 65%)`,
                 borderColor: pickedIds.includes(f.id) ? undefined : `${mark.color}66`,
@@ -692,25 +696,16 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
                 <span aria-hidden className="absolute left-0 top-0 bottom-0 w-1.5 pointer-events-none" style={{ background: mark.color }} />
               )}
               <button onClick={(e) => onShelfCardClick(e, f.id)} className="absolute inset-0" aria-label={`Open ${f.name}`} />
-              <div className="flex items-center justify-between w-full pointer-events-none">
+              {/* A row, not a stack: mark, then name and count, then cover
+                  peeks. The stacked tile was ~140px tall, so eight shelves
+                  took two screens' worth of the Vault before the first book. */}
+              <span className="shrink-0 pointer-events-none">
                 {mark ? (
                   <MarkChip mark={mark} size="xl" />
                 ) : (
                   <span className="material-symbols-outlined text-4xl text-primary" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden>shelves</span>
                 )}
-                {/* Cover peeks — covers are the highest-recognition cue for books */}
-                <div className="flex -space-x-2">
-                  {covers.map((url, i) => (
-                    <img
-                      key={i}
-                      src={url}
-                      alt=""
-                      className="w-7 h-10 object-cover rounded-sm border border-black/40 shadow-sm"
-                      style={{ transform: `rotate(${(i - 1) * 6}deg)` }}
-                    />
-                  ))}
-                </div>
-              </div>
+              </span>
               {/* `w-full`, not just `min-w-0`: this is a flex item in a COLUMN
                   flex container, so `min-width` does not constrain it — the
                   cross-axis size is fit-content, and a `truncate` child's
@@ -747,13 +742,28 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
                     which says why the shelf exists. */}
                 {f.summary && (
                   <p
-                    className="text-[11px] leading-snug text-on-surface-variant/80 mt-1.5 line-clamp-3"
+                    className="text-[11px] leading-snug text-on-surface-variant/80 mt-0.5 line-clamp-1"
                     title={`AI digest: ${f.summary}`}
                   >
                     {f.summary}
                   </p>
                 )}
               </div>
+              {/* Cover peeks — covers are the highest-recognition cue for books.
+                  They make way for the actions on hover. */}
+              {covers.length > 0 && (
+                <div className="shrink-0 flex -space-x-2 pointer-events-none transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
+                  {covers.map((url, i) => (
+                    <img
+                      key={i}
+                      src={url}
+                      alt=""
+                      className="w-7 h-10 object-cover rounded-sm border border-black/40 shadow-sm"
+                      style={{ transform: `rotate(${(i - 1) * 6}deg)` }}
+                    />
+                  ))}
+                </div>
+              )}
               {/* On a touch screen these are the ONLY route to renaming or
                   deleting a shelf, and `hover` never fires there — so
                   `.cc-hover-reveal` un-hides them and `.cc-tap-32` gives each
@@ -763,7 +773,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
                   control that is fully transparent and cannot see where they
                   are (WCAG 2.4.7). The book card's shelf trigger already had
                   this; the shelf card was missed. */}
-              <div className="cc-hover-reveal absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity z-20">
+              <div className="cc-hover-reveal cc-shelf-actions absolute top-1/2 -translate-y-1/2 right-3 flex gap-1 rounded-lg bg-surface-container-high/90 p-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity z-20">
                 <PickButton picked={pickedIds.includes(f.id)} name={f.name} onClick={() => togglePicked(f.id)} />
                 <button
                   onClick={(e) => { e.stopPropagation(); chatWithShelf(f); }}
@@ -801,8 +811,8 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
           <div
             onMouseEnter={() => setSpotlight(UNSHELVED_ID)}
             onMouseLeave={() => setSpotlight((cur) => (cur === UNSHELVED_ID ? null : cur))}
-            className={`group relative flex flex-col items-start gap-3 rounded-2xl p-5 text-left border border-dashed bg-surface-container-low transition-all hover:-translate-y-0.5 hover:shadow-xl ${pickedIds.includes(UNSHELVED_ID) ? "border-primary ring-1 ring-primary/40" : "border-outline-variant/40"}`}>
-            <div className="cc-hover-reveal absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity z-20">
+            className={`cc-shelf-tile group relative flex items-center gap-3.5 rounded-2xl min-h-[4.5rem] py-3 pl-5 pr-4 text-left border border-dashed bg-surface-container-low transition-all hover:-translate-y-0.5 hover:shadow-xl ${pickedIds.includes(UNSHELVED_ID) ? "border-primary ring-1 ring-primary/40" : "border-outline-variant/40"}`}>
+            <div className="cc-hover-reveal cc-shelf-actions absolute top-1/2 -translate-y-1/2 right-3 flex gap-1 rounded-lg bg-surface-container-low/90 p-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity z-20">
               <PickButton picked={pickedIds.includes(UNSHELVED_ID)} name="Unshelved" onClick={() => togglePicked(UNSHELVED_ID)} />
             </div>
             <button
@@ -810,20 +820,9 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
               className="absolute inset-0"
               aria-label={`Open Unshelved (${unshelvedAll.length} book${unshelvedAll.length === 1 ? "" : "s"})`}
             />
-            <div className="flex items-center justify-between w-full pointer-events-none">
-              <span className="material-symbols-outlined text-4xl text-on-surface-variant" aria-hidden>inbox</span>
-              <div className="flex -space-x-2">
-                {unshelvedAll.filter((b) => b.coverImageUrl).slice(0, 3).map((b, i) => (
-                  <img
-                    key={b.id}
-                    src={b.coverImageUrl as string}
-                    alt=""
-                    className="w-7 h-10 object-cover rounded-sm border border-black/40 shadow-sm"
-                    style={{ transform: `rotate(${(i - 1) * 6}deg)` }}
-                  />
-                ))}
-              </div>
-            </div>
+            <span className="shrink-0 grid w-11 h-11 place-items-center pointer-events-none">
+              <span className="material-symbols-outlined text-[32px] text-on-surface-variant" aria-hidden>inbox</span>
+            </span>
             <div className="w-full min-w-0 z-10 pointer-events-none">
               <p className="font-headline font-bold text-base text-foreground truncate w-full">Unshelved</p>
               <p className="text-xs text-on-surface-variant mt-0.5">
@@ -836,24 +835,41 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
           </div>
         )}
 
-        {/* Create card */}
-        <div className="flex flex-col items-stretch gap-2 rounded-2xl p-5 border-2 border-dashed border-outline-variant/30">
-          <p className="text-xs uppercase tracking-widest text-on-surface-variant">New shelf</p>
-          <input
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") handleCreate(); }}
-            placeholder="Shelf name"
-            className="bg-surface-container-high rounded-lg text-sm py-2 px-3 focus:ring-1 focus:ring-primary/40 border-none"
-          />
-          <button
-            onClick={handleCreate}
-            disabled={!newName.trim()}
-            className="px-3 py-1.5 bg-primary/10 text-primary text-sm font-bold rounded-lg hover:bg-primary hover:text-on-primary-container disabled:opacity-40"
+        {/* New shelf: a quiet tile until it is wanted. It used to be a
+            standing form — label, field and button — the tallest card in the
+            grid, for something done a handful of times in a library's life. */}
+        {creating ? (
+          <form
+            onSubmit={(e) => { e.preventDefault(); void handleCreate().then((ok) => ok && setCreating(false)); }}
+            className="flex items-center gap-2 rounded-2xl min-h-[4.5rem] px-3 border-2 border-dashed border-primary/40 bg-surface-container-low"
           >
-            Create
+            <input
+              autoFocus
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Escape") { setNewName(""); setCreating(false); } }}
+              onBlur={() => { if (!newName.trim()) setCreating(false); }}
+              placeholder="Name the shelf"
+              aria-label="New shelf name"
+              className="min-w-0 flex-1 bg-surface-container-high rounded-lg text-sm py-2 px-3 focus:ring-1 focus:ring-primary/40 border-none"
+            />
+            <button
+              type="submit"
+              disabled={!newName.trim()}
+              className="shrink-0 px-3 py-2 bg-primary/10 text-primary text-sm font-bold rounded-lg hover:bg-primary hover:text-on-primary-container disabled:opacity-40"
+            >
+              Create
+            </button>
+          </form>
+        ) : (
+          <button
+            onClick={() => setCreating(true)}
+            className="flex items-center justify-center gap-2 rounded-2xl min-h-[4.5rem] border-2 border-dashed border-outline-variant/30 text-sm font-semibold text-on-surface-variant hover:text-primary hover:border-primary/40 hover:bg-surface-container-low transition-colors"
+          >
+            <span className="material-symbols-outlined text-xl" aria-hidden>add</span>
+            New shelf
           </button>
-        </div>
+        )}
       </div>
 
       {/* All books, filterable by category/tag facets (the old virtual-folder
