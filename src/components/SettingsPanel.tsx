@@ -512,8 +512,10 @@ const SettingsPanel: React.FC = () => {
             </p>
           </header>
 
-          {/* Mobile/tablet section chips */}
-          <div className="lg:hidden sticky top-0 z-10 -mx-4 sm:-mx-6 px-4 sm:px-6 py-2 bg-background/90 backdrop-blur-md flex gap-1.5 overflow-x-auto hide-scrollbar">
+          {/* Mobile/tablet section chips. Touch swipes the row sideways; with a
+              mouse (e.g. a zoomed-in PC window below lg) a hidden-scrollbar row
+              can't be scrolled, so the chips wrap instead. */}
+          <div className="lg:hidden sticky top-0 z-10 -mx-4 sm:-mx-6 px-4 sm:px-6 py-2 bg-background/90 backdrop-blur-md flex gap-1.5 overflow-x-auto hide-scrollbar [@media(pointer:fine)]:flex-wrap">
             {SECTIONS.map((s) => (
               <button
                 key={s.id}
