@@ -17,7 +17,15 @@ export interface Wiki {
 
 export interface WikiWithStats extends Wiki {
   entry_count: number;
+  /** Notes whose spaced review is due now (0 before the review migration). */
+  due_count: number;
 }
+
+/** Notebooks the app keeps for itself (self-built tools, copy-craft seed cards).
+ *  Names match TOOLSHED_WIKI_NAME and COPY_CRAFT_WIKI_NAME; kept literal here so
+ *  this module doesn't pull in those libraries. */
+const SYSTEM_WIKI_NAMES = new Set(["Toolshed", "Copy & Design Masters"]);
+export const isSystemWiki = (w: Pick<Wiki, "name">) => SYSTEM_WIKI_NAMES.has(w.name);
 
 export async function fetchWikis(): Promise<Wiki[]> {
   const { data, error } = await supabase
@@ -33,16 +41,27 @@ export async function fetchWikisWithStats(): Promise<WikiWithStats[]> {
   // One exact HEAD count per wiki. The old path selected wiki_id for EVERY
   // entry and counted client-side — which PostgREST silently truncated at
   // 1000 rows, so a large library under-reported every neuron's size.
+  // Live notes only (superseded versions live in history), matching the
+  // open notebook's count. Before the supersession migration the column is
+  // missing and the count falls back to every row.
   const wikis = await fetchWikis();
-  const counts = await Promise.all(
-    wikis.map((w) =>
-      (supabase.from("knowledge_entries") as any)
-        .select("id", { count: "exact", head: true })
-        .eq("wiki_id", w.id)
-        .then((r: { count: number | null }) => r.count ?? 0, () => 0) as Promise<number>,
-    ),
-  );
-  return wikis.map((w, i) => ({ ...w, entry_count: counts[i] }));
+  const count = (wikiId: string, live: boolean, dueBy?: string): Promise<number> => {
+    let q = (supabase.from("knowledge_entries") as any)
+      .select("id", { count: "exact", head: true })
+      .eq("wiki_id", wikiId);
+    if (live) q = q.is("superseded_by", null);
+    if (dueBy) q = q.eq("archived", false).lte("next_review_at", dueBy);
+    return q.then((r: { count: number | null; error: unknown }) => {
+      if (r.error) throw r.error;
+      return r.count ?? 0;
+    });
+  };
+  const now = new Date().toISOString();
+  const [counts, dues] = await Promise.all([
+    Promise.all(wikis.map((w) => count(w.id, true).catch(() => count(w.id, false)).catch(() => 0))),
+    Promise.all(wikis.map((w) => count(w.id, true, now).catch(() => 0))),
+  ]);
+  return wikis.map((w, i) => ({ ...w, entry_count: counts[i], due_count: dues[i] }));
 }
 
 export async function createWiki(input: {

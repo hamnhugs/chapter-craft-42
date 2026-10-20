@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback, useMemo, useSyncExternalStore } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { toast } from "sonner";
-import { Check, Sparkles, Lock, Plus, Minus, Link2, Brain, Pencil } from "lucide-react";
+import { Check, Lock, Plus, Minus, Link2, Pencil } from "lucide-react";
 import {
   CommandDialog,
   CommandInput,
@@ -15,19 +15,17 @@ import { computeLockedWikiIds, MAX_ACTIVE_NEURONS } from "@/lib/neuronAccess";
 import { openPricing } from "@/components/PricingDialog";
 import { openChainDialog } from "@/components/ChainDialog";
 import { useChains, touchChainUsed, NeuronChain } from "@/lib/chainsApi";
-import { useAuth } from "@/hooks/useAuth";
-import { usePromptPresets } from "@/hooks/usePromptPresets";
-import { turnPromptStore } from "@/lib/promptRouting";
-import { usePromptBindings } from "@/hooks/usePromptBindings";
+import { isSystemWiki } from "@/lib/wikisApi";
 
 // Global keyboard-driven wiki switcher. Toggle with Cmd+K (Mac) / Ctrl+K (others).
 // Listens for keydown anywhere; ignores input/textarea/contenteditable focus
 // so it doesn't fight with normal in-field shortcuts.
 //
-// Selecting a neuron LOADS it (replaces the loaded set — the long-standing
-// behavior); the +/− button on each row adds/removes it as a secondary
-// neuron without closing the palette, and the Chains group activates a saved
-// set in one hit.
+// Selecting a notebook switches Counsel to it (replaces the loaded set),
+// except when opened from Counsel's "+" chip ("add" mode), where it is added
+// alongside. The +/− button on each row adds/removes a secondary notebook
+// without closing the palette, and the saved-sets group activates a set in
+// one hit.
 
 const isEditable = (el: Element | null): boolean => {
   if (!el) return false;
@@ -44,40 +42,10 @@ const WikiQuickSwitcher: React.FC = () => {
   const { wikis, activeWikiId, activeWikiIds, setActiveWiki, setActiveNeurons, toggleNeuronInSession, setActiveTab } = useApp();
   const { isPaid, loaded: planLoaded } = usePlan();
   const { chains } = useChains();
-  const { user } = useAuth();
-  const { presets, activePreset } = usePromptPresets();
-  const { applyBindings, describeBindings } = usePromptBindings();
   const [open, setOpen] = useState(false);
-
-  // The palette is already the fastest way to change what Counsel is thinking
-  // WITH; prompts are what it is thinking AS, so they belong on the same
-  // keystroke. Pin lives in the session store (see promptRouting.ts) so the
-  // choice survives onto hands-free turns, which never touch the composer.
-  // In an effect, never during render: init() notifies subscribers, and a
-  // store notification raised while React is rendering schedules an update
-  // from inside a render pass. Same shape as bookContextStore's callers.
-  useEffect(() => { turnPromptStore.init(user?.id ?? null); }, [user?.id]);
-  const promptSelection = useSyncExternalStore(
-    useCallback((cb: () => void) => turnPromptStore.subscribe(cb), []),
-    () => turnPromptStore.get(),
-    () => turnPromptStore.get(),
-  );
-
-  const handlePickPrompt = useCallback(
-    async (id: string) => {
-      setOpen(false);
-      if (id === "__auto") { turnPromptStore.set({ mode: "auto" }); toast.success("Prompt: Auto"); return; }
-      if (id === "__plain") { turnPromptStore.set({ mode: "plain" }); toast.success("Prompt: Plain"); return; }
-      turnPromptStore.set({ mode: "pinned", presetId: id });
-      const p = presets.find((x) => x.id === id);
-      if (!p) { toast.success("Prompt set"); return; }
-      // Same rule as the Counsel chip: a pick loads the prompt's context, and
-      // the toast reports what actually happened rather than what was meant.
-      const changed = await applyBindings(p);
-      toast.success(changed ? `Prompt: ${p.name} — ${changed}` : `Prompt: ${p.name}`);
-    },
-    [presets, applyBindings],
-  );
+  // "add": opened from Counsel's "+" chip — picking a notebook adds it to what
+  // Counsel is using instead of replacing it.
+  const [mode, setMode] = useState<"switch" | "add">("switch");
 
   // Locked neurons (free plan) stay visible but can't be loaded — same rule
   // as the BRAIN tab cards and the database itself.
@@ -100,6 +68,7 @@ const WikiQuickSwitcher: React.FC = () => {
         ) return;
         // Allow Cmd+K to work even from inputs — it's a global command-palette convention.
         e.preventDefault();
+        setMode("switch");
         setOpen((prev) => !prev);
         return;
       }
@@ -113,7 +82,10 @@ const WikiQuickSwitcher: React.FC = () => {
   }, [open]);
 
   useEffect(() => {
-    const openHandler = () => setOpen(true);
+    const openHandler = (e: Event) => {
+      setMode((e as CustomEvent<{ mode?: "add" }>).detail?.mode === "add" ? "add" : "switch");
+      setOpen(true);
+    };
     window.addEventListener(OPEN_NEURON_SWITCHER_EVENT, openHandler);
     return () => window.removeEventListener(OPEN_NEURON_SWITCHER_EVENT, openHandler);
   }, []);
@@ -128,7 +100,7 @@ const WikiQuickSwitcher: React.FC = () => {
       try {
         await setActiveWiki(wikiId);
         const wiki = wikis.find((w) => w.id === wikiId);
-        toast.success(`Loaded "${wiki?.name || "neuron"}"`);
+        toast.success(wiki ? `Counsel is now using "${wiki.name}"` : "Counsel switched notebooks");
         setOpen(false);
       } catch (err: any) {
         toast.error(err.message || "Switch failed");
@@ -140,9 +112,9 @@ const WikiQuickSwitcher: React.FC = () => {
   // Add/remove a secondary neuron without closing the palette, so several
   // can be toggled in one visit (NN/g: multi-select toggles independently).
   const handleToggleInSession = useCallback(
-    async (e: React.MouseEvent, wikiId: string) => {
-      e.preventDefault();
-      e.stopPropagation();
+    async (e: React.MouseEvent | null, wikiId: string) => {
+      e?.preventDefault();
+      e?.stopPropagation();
       if (lockedIds.has(wikiId)) {
         setOpen(false);
         openPricing("neuron-chains");
@@ -151,16 +123,17 @@ const WikiQuickSwitcher: React.FC = () => {
       const wiki = wikis.find((w) => w.id === wikiId);
       try {
         const next = await toggleNeuronInSession(wikiId);
+        const name = wiki ? `"${wiki.name}"` : "that notebook";
         if (!next.includes(wikiId)) {
-          toast.success(`Unloaded "${wiki?.name || "neuron"}"`);
+          toast.success(`Counsel stopped using ${name}`);
         } else {
-          toast.success(`Loaded "${wiki?.name || "neuron"}" alongside (${next.length}/${MAX_ACTIVE_NEURONS})`);
+          toast.success(`Counsel is also using ${name} (${next.length} of ${MAX_ACTIVE_NEURONS})`);
           if (next.length === 4) {
             toast.info("More isn't always better — beyond 3 loaded notebooks, connections get diluted.", { id: "neuron-dilution-tip" });
           }
         }
       } catch (err: any) {
-        toast.error(err.message || "Couldn't update the loaded set");
+        toast.error(err.message || "Couldn't change Counsel's notebooks");
       }
     },
     [toggleNeuronInSession, wikis, lockedIds]
@@ -183,17 +156,18 @@ const WikiQuickSwitcher: React.FC = () => {
       try {
         await setActiveNeurons(liveIds);
         touchChainUsed(chain.id);
-        toast.success(`Activated saved set "${chain.name}" — ${liveIds.length} notebook${liveIds.length === 1 ? "" : "s"} loaded`);
+        toast.success(`Counsel is now using the set "${chain.name}" (${liveIds.length} notebook${liveIds.length === 1 ? "" : "s"})`);
         setOpen(false);
       } catch (err: any) {
-        toast.error(err.message || "Saved set activation failed");
+        toast.error(err.message || "Couldn't switch to that set");
       }
     },
     [setActiveNeurons, lockedIds, wikis]
   );
 
-  // Sort: active first, then most recently loaded, then name
-  const sorted = [...wikis].sort((a, b) => {
+  // Sort: active first, then most recently loaded, then name. The app's own
+  // notebooks stay out of the way unless Counsel is using one.
+  const sorted = wikis.filter((w) => !isSystemWiki(w) || activeWikiIds.includes(w.id)).sort((a, b) => {
     if (a.id === activeWikiId) return -1;
     if (b.id === activeWikiId) return 1;
     const aTime = a.last_loaded_at ? new Date(a.last_loaded_at).getTime() : 0;
@@ -206,7 +180,7 @@ const WikiQuickSwitcher: React.FC = () => {
 
   return (
     <CommandDialog open={open} onOpenChange={setOpen}>
-      <CommandInput placeholder="Switch notebook — type to filter…" />
+      <CommandInput placeholder={mode === "add" ? "Add a notebook for Counsel — type to filter…" : "Switch Counsel's notebook — type to filter…"} />
       <CommandList>
         <CommandEmpty>No notebooks match.</CommandEmpty>
         {chains.length > 0 && (
@@ -254,33 +228,7 @@ const WikiQuickSwitcher: React.FC = () => {
             ))}
           </CommandGroup>
         )}
-        {presets.length > 0 && (
-          <CommandGroup heading="Prompts">
-            {[
-              { id: "__auto", name: "Auto", hint: activePreset?.name || "no default set", pinned: promptSelection.mode === "auto" },
-              { id: "__plain", name: "Plain — no prompt", hint: "", pinned: promptSelection.mode === "plain" },
-              ...presets.map((p) => ({
-                id: p.id,
-                name: p.name,
-                hint: p.scope === "voice" ? "voice only" : describeBindings(p),
-                pinned: promptSelection.mode === "pinned" && promptSelection.presetId === p.id,
-              })),
-            ].map((row) => (
-              <CommandItem
-                key={row.id}
-                value={`prompt ${row.name} ${row.id}`}
-                onSelect={() => handlePickPrompt(row.id)}
-                className="flex items-center gap-3 py-2.5"
-              >
-                <Brain className={`w-3.5 h-3.5 shrink-0 ${row.pinned ? "text-primary" : "text-muted-foreground"}`} />
-                <span className="flex-1 min-w-0 font-medium truncate">{row.name}</span>
-                {row.hint && <span className="text-[10px] text-muted-foreground shrink-0">{row.hint}</span>}
-                {row.pinned && <Check className="w-3.5 h-3.5 text-primary shrink-0" />}
-              </CommandItem>
-            ))}
-          </CommandGroup>
-        )}
-        <CommandGroup heading="Notebooks">
+        <CommandGroup heading={mode === "add" ? "Add for Counsel" : "Use with Counsel"}>
           {sorted.map((wiki) => {
             const isPrimary = wiki.id === activeWikiId;
             const isLoaded = activeWikiIds.includes(wiki.id);
@@ -289,7 +237,14 @@ const WikiQuickSwitcher: React.FC = () => {
               <CommandItem
                 key={wiki.id}
                 value={`${wiki.name} ${wiki.tags.join(" ")} ${wiki.id}`}
-                onSelect={() => handleSelect(wiki.id)}
+                onSelect={() => {
+                  if (mode === "add" && !isPrimary) {
+                    if (isLoaded) { setOpen(false); return; }
+                    void handleToggleInSession(null, wiki.id).then(() => setOpen(false));
+                    return;
+                  }
+                  void handleSelect(wiki.id);
+                }}
                 className="flex items-center gap-3 py-2.5"
               >
                 <span
@@ -299,11 +254,6 @@ const WikiQuickSwitcher: React.FC = () => {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="font-medium truncate">{wiki.name}</span>
-                    {wiki.is_meta && (
-                      <span className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-widest text-primary">
-                        <Sparkles className="w-2.5 h-2.5" /> Meta
-                      </span>
-                    )}
                   </div>
                   {wiki.description && (
                     <div className="text-xs text-muted-foreground truncate">{wiki.description}</div>
@@ -311,12 +261,12 @@ const WikiQuickSwitcher: React.FC = () => {
                 </div>
                 {isPrimary && (
                   <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-primary shrink-0">
-                    <Check className="w-3 h-3" /> Primary
+                    <Check className="w-3 h-3" /> Saves here
                   </span>
                 )}
                 {!isPrimary && isLoaded && (
                   <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-primary/80 shrink-0">
-                    <Check className="w-3 h-3" /> Loaded
+                    <Check className="w-3 h-3" /> In use
                   </span>
                 )}
                 {isLocked ? (
@@ -328,8 +278,8 @@ const WikiQuickSwitcher: React.FC = () => {
                     type="button"
                     onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
                     onClick={(e) => handleToggleInSession(e, wiki.id)}
-                    title={isLoaded ? "Unload from this session" : "Load alongside (keeps your current notebook)"}
-                    aria-label={isLoaded ? `Unload ${wiki.name}` : `Load ${wiki.name} alongside`}
+                    title={isLoaded ? "Stop using this one" : "Also use this one (keeps the others)"}
+                    aria-label={isLoaded ? `Stop using ${wiki.name}` : `Also use ${wiki.name}`}
                     className="shrink-0 p-1 rounded-md border border-outline-variant/30 text-muted-foreground hover:text-primary hover:border-primary/50 transition-colors"
                   >
                     {isLoaded ? <Minus className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}

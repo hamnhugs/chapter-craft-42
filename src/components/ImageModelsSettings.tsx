@@ -4,6 +4,7 @@ import { IMAGE_MODELS, IMAGE_ASPECT_RATIOS } from "@/lib/imageGen";
 import { LOCAL_IMAGE_MODEL, localImagesAvailable } from "@/lib/localImageGen";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
+import ImagesPanel from "@/components/ImagesPanel";
 
 const ImageModelsSettings: React.FC = () => {
   const {
@@ -14,6 +15,7 @@ const ImageModelsSettings: React.FC = () => {
     setImageQuality, setImageSize,
   } = useChatSettings();
   const [newModel, setNewModel] = useState("");
+  const [imagesOpen, setImagesOpen] = useState(false);
   const local = localImagesAvailable();
   const allModels = Array.from(new Set([...(local ? [LOCAL_IMAGE_MODEL] : []), ...savedImageModels, ...IMAGE_MODELS]));
 
@@ -24,6 +26,12 @@ const ImageModelsSettings: React.FC = () => {
           Pick which model the AI uses when generating or editing images. Primary is tried first;
           if it fails the fallback runs automatically. Built-in defaults are always available.
         </p>
+        <div>
+          <Button variant="outline" size="sm" onClick={() => setImagesOpen(true)}>
+            View all generated images
+          </Button>
+          <ImagesPanel open={imagesOpen} onOpenChange={setImagesOpen} />
+        </div>
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

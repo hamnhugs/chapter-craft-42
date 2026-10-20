@@ -40,9 +40,9 @@
  *      name assembled by concatenation is never emitted into the stylesheet
  *      and the overlay silently loses `position: fixed`.
  *
- * The repo already ships this pattern correctly in four places —
- * `MediaFrame.tsx:307`, `LibraryGraph.tsx:271`, `NeuronGraph.tsx:320`,
- * `EntryNeuronGraph.tsx:398` — all `expanded ? "fixed inset-0 z-[100] …"` on
+ * The repo already ships this pattern correctly in three places —
+ * `MediaFrame.tsx:307`, `LibraryGraph.tsx:271`, `NeuronGraph.tsx:320` —
+ * all `expanded ? "fixed inset-0 z-[100] …"` on
  * the SAME node. `MediaFrame.tsx:9-13` states the rationale verbatim for its
  * WebGL context; ours is a browsing context, and browsing contexts are worse:
  * a lost WebGL context can be restored, a destroyed document cannot.

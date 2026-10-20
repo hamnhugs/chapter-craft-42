@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Check, Sparkles, Lock, Link2 } from "lucide-react";
+import { Check, Lock, Link2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { useApp } from "@/context/AppContext";
 import { usePlan } from "@/hooks/usePlan";
 import { computeLockedWikiIds } from "@/lib/neuronAccess";
+import { isSystemWiki } from "@/lib/wikisApi";
 import { openPricing } from "@/components/PricingDialog";
 import { useChains, touchChainUsed } from "@/lib/chainsApi";
 import { bookContextStore, isEmptySelection, selectContextBooks, selectionShelfIds, shelvesSelection } from "@/lib/chatBooks";
@@ -93,7 +94,8 @@ const LoadNeuronDialog: React.FC = () => {
   // Active first, then most recently loaded, then alphabetical — same order as
   // the Cmd+K switcher so the list feels familiar.
   const sorted = useMemo(() => {
-    return [...wikis].sort((a, b) => {
+    // The app's own notebooks stay out of the way unless they're in use.
+    return wikis.filter((w) => !isSystemWiki(w) || w.id === activeWikiId).sort((a, b) => {
       if (a.id === activeWikiId) return -1;
       if (b.id === activeWikiId) return 1;
       const at = a.last_loaded_at ? new Date(a.last_loaded_at).getTime() : 0;
@@ -176,11 +178,11 @@ const LoadNeuronDialog: React.FC = () => {
       <DialogContent className="flex flex-col w-[calc(100%-2rem)] max-h-[calc(100dvh-2rem)] gap-3 p-4 rounded-lg sm:max-w-md sm:gap-4 sm:p-6">
         <DialogHeader className="shrink-0 text-left">
           <DialogTitle className="font-display pr-6 leading-snug">
-            Load a notebook alongside {subject}?
+            Which notebook should Counsel use with {subject}?
           </DialogTitle>
           <DialogDescription className="text-xs sm:text-sm">
-            Pick the notebook — or a saved set of notebooks — Counsel
-            should draw on. Your current notebook is pre-selected — skip to keep it.
+            Pick a notebook, or a saved set of notebooks. The one Counsel is using now is
+            already picked; Skip keeps it.
           </DialogDescription>
         </DialogHeader>
 
@@ -191,7 +193,7 @@ const LoadNeuronDialog: React.FC = () => {
             className="shrink-0 rounded-md bg-surface-container-high px-3 py-2 text-xs text-on-surface-variant"
           >
             {pendingLoad?.kind === "book" && offerAlongside && (
-              <>“Load &amp; open” makes this book Counsel’s focus and unloads {loadedLabel}. “Open alongside” keeps {loadedLabel} loaded and only opens the reader.</>
+              <>“Load &amp; open” makes this book what Counsel discusses, in place of {loadedLabel}. “Just open it” keeps Counsel on {loadedLabel} and only opens the book to read.</>
             )}
             {pendingLoad?.kind !== "book" && loadedLabel && (
               <>This replaces {loadedLabel}. </>
@@ -276,14 +278,9 @@ const LoadNeuronDialog: React.FC = () => {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="font-medium truncate">{wiki.name}</span>
-                    {wiki.is_meta && (
-                      <span className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-widest text-primary">
-                        <Sparkles className="w-2.5 h-2.5" /> Meta
-                      </span>
-                    )}
                     {wiki.id === activeWikiId && (
                       <span className="text-[9px] font-bold uppercase tracking-widest text-on-surface-variant">
-                        current
+                        in use
                       </span>
                     )}
                   </div>
@@ -316,7 +313,7 @@ const LoadNeuronDialog: React.FC = () => {
           </Button>
           {offerAlongside && (
             <Button variant="secondary" onClick={handleAlongside} disabled={selectedLocked} className="flex-1 sm:flex-none">
-              Open alongside
+              Just open it
             </Button>
           )}
           <Button onClick={handleLoad} disabled={!selected || selectedLocked} className="flex-1 sm:flex-none">

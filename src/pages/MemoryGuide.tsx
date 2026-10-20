@@ -119,8 +119,8 @@ const MemoryGuide: React.FC = () => {
           <Section icon="auto_fix_high" title="Tidy-up" analogy="Once a day, and undoable">
             <p>
               Once a day the app links related notes and writes summaries for notes that don't have
-              one. You can see each tidy-up and <strong>undo</strong> it from the notebook menu under
-              Recent tidy-ups.
+              one. When it changes something it tells you, and you can <strong>undo</strong> it right
+              from that message.
             </p>
           </Section>
 
