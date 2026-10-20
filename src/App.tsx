@@ -14,7 +14,6 @@ import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 // Non-critical routes are code-split so the initial bundle only carries Index/Auth
 const MemoryGuide = lazy(() => import("./pages/MemoryGuide"));
-const WikiControlsGuide = lazy(() => import("./pages/WikiControlsGuide"));
 const Admin = lazy(() => import("./pages/Admin"));
 const PaymentSuccess = lazy(() => import("./pages/PaymentSuccess"));
 const ModelExplorer = lazy(() => import("./pages/ModelExplorer"));
@@ -92,14 +91,8 @@ const App = () => (
                     </ProtectedRoute>
                   }
                 />
-                <Route
-                  path="/wiki-controls-guide"
-                  element={
-                    <ProtectedRoute>
-                      <WikiControlsGuide />
-                    </ProtectedRoute>
-                  }
-                />
+                {/* The old controls tour folded into the notes guide. */}
+                <Route path="/wiki-controls-guide" element={<Navigate to="/memory-guide" replace />} />
                 <Route
                   path="/models"
                   element={

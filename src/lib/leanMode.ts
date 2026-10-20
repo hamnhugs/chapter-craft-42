@@ -172,7 +172,7 @@ export function leanModePromptBlock(
   // still has to say what is off and how to answer well without it.
   const displayable = FREE_DISPLAY_TOOLS.filter(isOffered);
   const freeThings = [
-    "memory and neurons",
+    "memory and notebooks",
     "books",
     ...(isOffered("create_artifact") ? ["artifacts"] : []),
     ...(isOffered("render_blocks") ? ["structured blocks"] : []),

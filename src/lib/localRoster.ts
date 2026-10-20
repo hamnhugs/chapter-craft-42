@@ -79,7 +79,7 @@ export const FIND_TOOLS_DEFINITION = {
   function: {
     name: FIND_TOOLS_NAME,
     description:
-      "Find more of your tools. You only see some of your tools at a time; call this when the user asks for something none of your current tools can do (images, video, wikis, shelves, scenes, programs, deleting things, and more). Describe the action in plain words. The matching tools become available immediately — call them next.",
+      "Find more of your tools. You only see some of your tools at a time; call this when the user asks for something none of your current tools can do (images, video, notebooks, shelves, scenes, programs, deleting things, and more). Describe the action in plain words. The matching tools become available immediately — call them next.",
     parameters: {
       type: "object",
       properties: {

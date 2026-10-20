@@ -83,7 +83,7 @@ describe("the prompt is byte-stable for unchanged inputs", () => {
     const a = await build({ latestUserQuery: "tides" });
     const b = await build({ latestUserQuery: "tides" });
     expect(a.prompt).toBe(b.prompt);
-    expect(a.prompt).toContain("Your Knowledge Wiki (fallback)");
+    expect(a.prompt).toContain("Your notes (fallback)");
   });
 });
 

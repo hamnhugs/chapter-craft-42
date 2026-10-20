@@ -1566,7 +1566,7 @@ const BookCardImpl: React.FC<{
     ? "Extracting figures…"
     : figJob?.status === "error"
       ? "Extract figures (retry)"
-      : "Extract figures (signs, diagrams, charts) into your Images, tagged with their chapter — and paired with this book's neurons where they exist";
+      : "Extract figures (signs, diagrams, charts) into your Images, tagged with their chapter — and paired with this book's notebooks where they exist";
   const removeLabel = softDelete ? `Move “${book.title}” to the Trash` : `Delete “${book.title}”`;
 
   // Warm gradient hues, chosen by the book's id rather than its position.

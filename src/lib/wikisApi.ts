@@ -68,7 +68,7 @@ export async function createWiki(input: {
     .select()
     .single();
 
-  if (error || !data) throw error || new Error("Failed to create neuron");
+  if (error || !data) throw error || new Error("Failed to create notebook");
   return data as unknown as Wiki;
 }
 
@@ -119,7 +119,7 @@ export async function loadWikiSet(ids: string[]): Promise<void> {
     // so instead of silently degrading.
     if (!error && ids.length > 1) {
       toast.info(
-        "Multi-neuron loading isn't fully set up yet — the database migration hasn't been applied, so only your primary neuron will persist.",
+        "Multi-notebook loading isn't fully set up yet — the database migration hasn't been applied, so only your primary notebook will persist.",
         { id: "multi-neuron-migration" },
       );
     }

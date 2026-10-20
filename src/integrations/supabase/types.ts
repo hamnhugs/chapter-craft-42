@@ -637,60 +637,6 @@ export type Database = {
         }
         Relationships: []
       }
-      cleanup_flags: {
-        Row: {
-          confidence: number
-          created_at: string
-          dismissed_at: string | null
-          entry_id: string
-          flagged_by: string
-          id: string
-          note: string | null
-          reason: string
-          user_id: string
-          wiki_id: string | null
-        }
-        Insert: {
-          confidence?: number
-          created_at?: string
-          dismissed_at?: string | null
-          entry_id: string
-          flagged_by?: string
-          id?: string
-          note?: string | null
-          reason: string
-          user_id: string
-          wiki_id?: string | null
-        }
-        Update: {
-          confidence?: number
-          created_at?: string
-          dismissed_at?: string | null
-          entry_id?: string
-          flagged_by?: string
-          id?: string
-          note?: string | null
-          reason?: string
-          user_id?: string
-          wiki_id?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "cleanup_flags_entry_id_fkey"
-            columns: ["entry_id"]
-            isOneToOne: false
-            referencedRelation: "knowledge_entries"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "cleanup_flags_wiki_id_fkey"
-            columns: ["wiki_id"]
-            isOneToOne: false
-            referencedRelation: "wikis"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       consolidation_queue: {
         Row: {
           created_at: string
@@ -720,33 +666,6 @@ export type Database = {
           priority?: number
           processed_at?: string | null
           reason?: string
-          user_id?: string
-        }
-        Relationships: []
-      }
-      conversation_memory: {
-        Row: {
-          id: string
-          key_facts: Json
-          summary: string
-          total_conversations: number
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          id?: string
-          key_facts?: Json
-          summary?: string
-          total_conversations?: number
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          id?: string
-          key_facts?: Json
-          summary?: string
-          total_conversations?: number
-          updated_at?: string
           user_id?: string
         }
         Relationships: []
@@ -789,39 +708,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
-      }
-      episodic_log: {
-        Row: {
-          created_at: string
-          entry_count: number
-          id: string
-          key_facts: Json
-          session_id: string
-          summary: string | null
-          user_id: string
-          wiki_id: string | null
-        }
-        Insert: {
-          created_at?: string
-          entry_count?: number
-          id?: string
-          key_facts?: Json
-          session_id: string
-          summary?: string | null
-          user_id: string
-          wiki_id?: string | null
-        }
-        Update: {
-          created_at?: string
-          entry_count?: number
-          id?: string
-          key_facts?: Json
-          session_id?: string
-          summary?: string | null
-          user_id?: string
-          wiki_id?: string | null
-        }
-        Relationships: []
       }
       generation_ledger: {
         Row: {
@@ -1044,42 +930,6 @@ export type Database = {
           },
         ]
       }
-      incubator_entries: {
-        Row: {
-          cluster_id: string | null
-          created_at: string
-          embedding: unknown
-          entry_id: string
-          expires_at: string
-          id: string
-          reason: string
-          status: string
-          user_id: string
-        }
-        Insert: {
-          cluster_id?: string | null
-          created_at?: string
-          embedding: unknown
-          entry_id: string
-          expires_at?: string
-          id?: string
-          reason?: string
-          status?: string
-          user_id: string
-        }
-        Update: {
-          cluster_id?: string | null
-          created_at?: string
-          embedding?: unknown
-          entry_id?: string
-          expires_at?: string
-          id?: string
-          reason?: string
-          status?: string
-          user_id?: string
-        }
-        Relationships: []
-      }
       knowledge_conflicts: {
         Row: {
           created_at: string
@@ -1128,12 +978,10 @@ export type Database = {
           embedding: string | null
           embedding_768_model: string | null
           embedding_model: string | null
-          embedding_v2: unknown
-          encoding_strength: number | null
           entry_type: string
           folder: string
+          hook: string | null
           id: string
-          importance: number | null
           is_index: boolean
           last_retrieved_at: string | null
           linked_wiki_id: string | null
@@ -1148,7 +996,6 @@ export type Database = {
           subject: string | null
           supersede_reason: string | null
           superseded_by: string | null
-          surprise: number | null
           tags: string[]
           title: string
           tsv: unknown
@@ -1170,12 +1017,10 @@ export type Database = {
           embedding?: string | null
           embedding_768_model?: string | null
           embedding_model?: string | null
-          embedding_v2?: unknown
-          encoding_strength?: number | null
           entry_type?: string
           folder?: string
+          hook?: string | null
           id?: string
-          importance?: number | null
           is_index?: boolean
           last_retrieved_at?: string | null
           linked_wiki_id?: string | null
@@ -1190,7 +1035,6 @@ export type Database = {
           subject?: string | null
           supersede_reason?: string | null
           superseded_by?: string | null
-          surprise?: number | null
           tags?: string[]
           title: string
           tsv?: unknown
@@ -1212,12 +1056,10 @@ export type Database = {
           embedding?: string | null
           embedding_768_model?: string | null
           embedding_model?: string | null
-          embedding_v2?: unknown
-          encoding_strength?: number | null
           entry_type?: string
           folder?: string
+          hook?: string | null
           id?: string
-          importance?: number | null
           is_index?: boolean
           last_retrieved_at?: string | null
           linked_wiki_id?: string | null
@@ -1232,7 +1074,6 @@ export type Database = {
           subject?: string | null
           supersede_reason?: string | null
           superseded_by?: string | null
-          surprise?: number | null
           tags?: string[]
           title?: string
           tsv?: unknown
@@ -1355,6 +1196,44 @@ export type Database = {
             columns: ["splat_id"]
             isOneToOne: false
             referencedRelation: "splat_generations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      memory_sleep_runs: {
+        Row: {
+          created_at: string
+          edge_ids: string[]
+          hook_entry_ids: string[]
+          id: string
+          undone_at: string | null
+          user_id: string
+          wiki_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          edge_ids?: string[]
+          hook_entry_ids?: string[]
+          id?: string
+          undone_at?: string | null
+          user_id?: string
+          wiki_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          edge_ids?: string[]
+          hook_entry_ids?: string[]
+          id?: string
+          undone_at?: string | null
+          user_id?: string
+          wiki_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "memory_sleep_runs_wiki_id_fkey"
+            columns: ["wiki_id"]
+            isOneToOne: false
+            referencedRelation: "wikis"
             referencedColumns: ["id"]
           },
         ]
@@ -1939,131 +1818,6 @@ export type Database = {
           },
         ]
       }
-      reroute_suggestions: {
-        Row: {
-          created_at: string
-          entry_id: string
-          from_wiki_id: string
-          id: string
-          reason: string
-          status: string
-          to_wiki_id: string
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          entry_id: string
-          from_wiki_id: string
-          id?: string
-          reason?: string
-          status?: string
-          to_wiki_id: string
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          created_at?: string
-          entry_id?: string
-          from_wiki_id?: string
-          id?: string
-          reason?: string
-          status?: string
-          to_wiki_id?: string
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "reroute_suggestions_entry_id_fkey"
-            columns: ["entry_id"]
-            isOneToOne: false
-            referencedRelation: "knowledge_entries"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "reroute_suggestions_from_wiki_id_fkey"
-            columns: ["from_wiki_id"]
-            isOneToOne: false
-            referencedRelation: "wikis"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "reroute_suggestions_to_wiki_id_fkey"
-            columns: ["to_wiki_id"]
-            isOneToOne: false
-            referencedRelation: "wikis"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      routing_decisions: {
-        Row: {
-          created_at: string
-          entry_id: string
-          final_wiki_id: string | null
-          id: string
-          novelty: number | null
-          proposed_action: string
-          proposed_wiki_id: string | null
-          s_2nd: number | null
-          s_active: number | null
-          s_max: number | null
-          user_corrected: boolean
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          entry_id: string
-          final_wiki_id?: string | null
-          id?: string
-          novelty?: number | null
-          proposed_action: string
-          proposed_wiki_id?: string | null
-          s_2nd?: number | null
-          s_active?: number | null
-          s_max?: number | null
-          user_corrected?: boolean
-          user_id: string
-        }
-        Update: {
-          created_at?: string
-          entry_id?: string
-          final_wiki_id?: string | null
-          id?: string
-          novelty?: number | null
-          proposed_action?: string
-          proposed_wiki_id?: string | null
-          s_2nd?: number | null
-          s_active?: number | null
-          s_max?: number | null
-          user_corrected?: boolean
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "routing_decisions_entry_id_fkey"
-            columns: ["entry_id"]
-            isOneToOne: false
-            referencedRelation: "knowledge_entries"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "routing_decisions_final_wiki_id_fkey"
-            columns: ["final_wiki_id"]
-            isOneToOne: false
-            referencedRelation: "wikis"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "routing_decisions_proposed_wiki_id_fkey"
-            columns: ["proposed_wiki_id"]
-            isOneToOne: false
-            referencedRelation: "wikis"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       splat_generations: {
         Row: {
           caption: string
@@ -2156,33 +1910,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
-      }
-      subject_progress: {
-        Row: {
-          id: string
-          ingest_count: number
-          interleave_unlocked_at: string | null
-          started_at: string
-          subject: string
-          user_id: string
-        }
-        Insert: {
-          id?: string
-          ingest_count?: number
-          interleave_unlocked_at?: string | null
-          started_at?: string
-          subject: string
-          user_id: string
-        }
-        Update: {
-          id?: string
-          ingest_count?: number
-          interleave_unlocked_at?: string | null
-          started_at?: string
-          subject?: string
-          user_id?: string
-        }
-        Relationships: []
       }
       subscribers: {
         Row: {
@@ -2372,7 +2099,6 @@ export type Database = {
           saved_models: Json | null
           saved_video_models: Json | null
           selected_model: string | null
-          smart_filing_enabled: boolean
           splat_auto_fallback: boolean | null
           splat_click_to_activate: boolean | null
           splat_confirm_threshold: number | null
@@ -2442,7 +2168,6 @@ export type Database = {
           saved_models?: Json | null
           saved_video_models?: Json | null
           selected_model?: string | null
-          smart_filing_enabled?: boolean
           splat_auto_fallback?: boolean | null
           splat_click_to_activate?: boolean | null
           splat_confirm_threshold?: number | null
@@ -2512,7 +2237,6 @@ export type Database = {
           saved_models?: Json | null
           saved_video_models?: Json | null
           selected_model?: string | null
-          smart_filing_enabled?: boolean
           splat_auto_fallback?: boolean | null
           splat_click_to_activate?: boolean | null
           splat_confirm_threshold?: number | null
@@ -2726,50 +2450,6 @@ export type Database = {
         }
         Relationships: []
       }
-      wiki_centroids: {
-        Row: {
-          centroid: unknown
-          confident_threshold: number
-          entry_count: number
-          last_recomputed_at: string
-          name_embedding: unknown
-          name_embedding_source: string | null
-          novelty_threshold: number
-          user_id: string
-          wiki_id: string
-        }
-        Insert: {
-          centroid: unknown
-          confident_threshold?: number
-          entry_count?: number
-          last_recomputed_at?: string
-          name_embedding?: unknown
-          name_embedding_source?: string | null
-          novelty_threshold?: number
-          user_id: string
-          wiki_id: string
-        }
-        Update: {
-          centroid?: unknown
-          confident_threshold?: number
-          entry_count?: number
-          last_recomputed_at?: string
-          name_embedding?: unknown
-          name_embedding_source?: string | null
-          novelty_threshold?: number
-          user_id?: string
-          wiki_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "wiki_centroids_wiki_id_fkey"
-            columns: ["wiki_id"]
-            isOneToOne: true
-            referencedRelation: "wikis"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       wiki_chain_members: {
         Row: {
           chain_id: string
@@ -2838,149 +2518,6 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
-      }
-      wiki_health_alerts: {
-        Row: {
-          created_at: string
-          id: string
-          kind: string
-          rationale: string
-          status: string
-          suggestion: Json
-          updated_at: string
-          user_id: string
-          wiki_id: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          kind: string
-          rationale?: string
-          status?: string
-          suggestion?: Json
-          updated_at?: string
-          user_id: string
-          wiki_id: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          kind?: string
-          rationale?: string
-          status?: string
-          suggestion?: Json
-          updated_at?: string
-          user_id?: string
-          wiki_id?: string
-        }
-        Relationships: []
-      }
-      wiki_log: {
-        Row: {
-          created_at: string
-          details: Json
-          entry_id: string | null
-          id: string
-          operation: string
-          summary: string
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          details?: Json
-          entry_id?: string | null
-          id?: string
-          operation: string
-          summary?: string
-          user_id: string
-        }
-        Update: {
-          created_at?: string
-          details?: Json
-          entry_id?: string | null
-          id?: string
-          operation?: string
-          summary?: string
-          user_id?: string
-        }
-        Relationships: []
-      }
-      wiki_proposals: {
-        Row: {
-          created_at: string
-          id: string
-          member_entry_ids: string[]
-          proposed_name: string
-          rationale: string
-          sample_titles: string[]
-          status: string
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          member_entry_ids?: string[]
-          proposed_name: string
-          rationale?: string
-          sample_titles?: string[]
-          status?: string
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          member_entry_ids?: string[]
-          proposed_name?: string
-          rationale?: string
-          sample_titles?: string[]
-          status?: string
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: []
-      }
-      wiki_questions: {
-        Row: {
-          answer: string
-          created_at: string
-          entry_id: string
-          id: string
-          last_reviewed_at: string | null
-          question: string
-          times_reviewed: number
-          user_id: string
-        }
-        Insert: {
-          answer?: string
-          created_at?: string
-          entry_id: string
-          id?: string
-          last_reviewed_at?: string | null
-          question: string
-          times_reviewed?: number
-          user_id: string
-        }
-        Update: {
-          answer?: string
-          created_at?: string
-          entry_id?: string
-          id?: string
-          last_reviewed_at?: string | null
-          question?: string
-          times_reviewed?: number
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "wiki_questions_entry_id_fkey"
-            columns: ["entry_id"]
-            isOneToOne: false
-            referencedRelation: "knowledge_entries"
-            referencedColumns: ["id"]
-          },
-        ]
       }
       wikis: {
         Row: {
@@ -3251,11 +2788,12 @@ export type Database = {
         Returns: {
           content: string
           entry_type: string
+          hook: string | null
           id: string
-          next_review_at: string
-          storage_strength: number
+          locators: Json
+          next_review_at: string | null
+          review_count: number
           title: string
-          vibrancy: number
           wiki_id: string
         }[]
       }
@@ -3272,12 +2810,10 @@ export type Database = {
           embedding: string | null
           embedding_768_model: string | null
           embedding_model: string | null
-          embedding_v2: unknown
-          encoding_strength: number | null
           entry_type: string
           folder: string
+          hook: string | null
           id: string
-          importance: number | null
           is_index: boolean
           last_retrieved_at: string | null
           linked_wiki_id: string | null
@@ -3292,7 +2828,6 @@ export type Database = {
           subject: string | null
           supersede_reason: string | null
           superseded_by: string | null
-          surprise: number | null
           tags: string[]
           title: string
           tsv: unknown
@@ -3335,28 +2870,6 @@ export type Database = {
           relationship: string
         }[]
       }
-      find_near_duplicates: {
-        Args: { p_entry_ids: string[]; p_threshold?: number }
-        Returns: {
-          duplicate_of: string
-          duplicate_title: string
-          entry_id: string
-          similarity: number
-          wiki_id: string
-        }[]
-      }
-      get_neighbors: {
-        Args: { classes?: string[]; depth?: number; seed_ids: string[] }
-        Returns: {
-          content: string
-          entry_id: string
-          from_seed: string
-          hop: number
-          title: string
-          via_edge_class: string
-          via_relationship: string
-        }[]
-      }
       get_neighbors_v2: {
         Args: {
           classes?: string[]
@@ -3388,25 +2901,6 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
-      }
-      hybrid_search_knowledge: {
-        Args: {
-          full_text_weight?: number
-          match_count?: number
-          query_embedding: string
-          query_text: string
-          rrf_k?: number
-          semantic_weight?: number
-        }
-        Returns: {
-          content: string
-          entry_type: string
-          id: string
-          score: number
-          source_book_id: string
-          tags: string[]
-          title: string
-        }[]
       }
       hybrid_search_knowledge_v2: {
         Args: {
@@ -3489,25 +2983,6 @@ export type Database = {
           title: string
         }[]
       }
-      match_knowledge_entries: {
-        Args: {
-          filter_wiki_ids?: string[]
-          match_count: number
-          match_threshold: number
-          query_embedding: unknown
-        }
-        Returns: {
-          confidence: number
-          content: string
-          entry_type: string
-          id: string
-          similarity: number
-          source_book_id: string
-          tags: string[]
-          title: string
-          wiki_id: string
-        }[]
-      }
       memory_edge_delete: {
         Args: { _source: string; _target: string }
         Returns: number
@@ -3575,10 +3050,6 @@ export type Database = {
         Args: { p_schedule_id: string; p_token: string }
         Returns: undefined
       }
-      renormalize_vibrancy: {
-        Args: { _target_mean?: number; _user_id: string; _wiki_id?: string }
-        Returns: number
-      }
       rerank_vibrancy: {
         Args: {
           p_ceil?: number
@@ -3587,22 +3058,6 @@ export type Database = {
           p_user_id: string
         }
         Returns: number
-      }
-      scan_cleanup_flags: {
-        Args: { target_wiki_id?: string }
-        Returns: {
-          added: number
-          reason: string
-        }[]
-      }
-      score_entry_against_wikis: {
-        Args: { query_embedding: unknown }
-        Returns: {
-          confident_threshold: number
-          novelty_threshold: number
-          similarity: number
-          wiki_id: string
-        }[]
       }
       set_program_schedule: {
         Args: {
@@ -3640,15 +3095,7 @@ export type Database = {
         Args: { boost?: number; node_ids: string[] }
         Returns: undefined
       }
-      upsert_wiki_health_alert: {
-        Args: {
-          p_kind: string
-          p_rationale: string
-          p_suggestion?: Json
-          p_wiki_id: string
-        }
-        Returns: string
-      }
+      undo_sleep_run: { Args: { _run_id: string }; Returns: boolean }
     }
     Enums: {
       app_role: "admin" | "user"

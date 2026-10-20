@@ -117,8 +117,8 @@ const TAB_WORDS: [RegExp, VoiceTab][] = [
   [/^(?:vault|library|bookshelf|book shelf|shelves|shelf|bookcase)$/, "library"],
   [/^(?:read|reader|reading|read along|book reader)$/, "viewer"],
   [/^(?:counsel|council|counselor|counsellor|cancel|chat|conversation|consul)$/, "chat"],
-  [/^(?:neuron|neurons|newron|nuron|wiki)$/, "wiki"],
-  [/^(?:brain|brains|the brain|wikis|wiki library)$/, "wikis"],
+  [/^(?:notebook|my notebook|notes|my notes|neuron|neurons|newron|nuron|wiki)$/, "wiki"],
+  [/^(?:notebooks|all notebooks|my notebooks|brain|brains|the brain|wikis|wiki library)$/, "wikis"],
   [/^(?:settings|setting|preferences|options)$/, "settings"],
   [/^(?:admin|admin panel)$/, "admin"],
 ];
@@ -171,7 +171,7 @@ function parseSave(t: string): VoiceCommand | null {
   if (!m0) return null;
   let rest = m0[1];
   let asCard = false;
-  const cardTail = rest.match(/\s+(?:as\s+(?:a\s+)?(?:card|quote|note)|to\s+(?:my\s+|the\s+)?(?:neuron|brain|cards?)|in\s+(?:my\s+|the\s+)?neuron)$/);
+  const cardTail = rest.match(/\s+(?:as\s+(?:a\s+)?(?:card|quote|note)|to\s+(?:my\s+|the\s+)?(?:notebook|notes|neuron|brain|cards?)|in\s+(?:my\s+|the\s+)?(?:notebook|neuron))$/);
   if (cardTail) { asCard = true; rest = rest.slice(0, cardTail.index).trim(); }
   rest = rest.replace(/\s+(?:in\s+(?:the\s+)?book|on\s+(?:this|the)\s+page|here)$/, "").trim();
 
@@ -286,7 +286,7 @@ function parseOne(t: string, raw: string): VoiceCommand | null {
     // A bare word ("read", "brain") counts only with a nav verb or "tab" —
     // otherwise "read" alone might be a request to the model.
     const hasVerbOrTab = nav[1] !== t || /\b(?:tab|page|screen|panel|view)$/.test(t);
-    if (tab && (hasVerbOrTab || ["vault", "counsel", "council", "neuron", "brain", "settings"].includes(t))) return { kind: "tab", tab };
+    if (tab && (hasVerbOrTab || ["vault", "counsel", "council", "notebook", "notebooks", "neuron", "brain", "settings"].includes(t))) return { kind: "tab", tab };
   }
   if (/^go back$|^back$/.test(t)) return { kind: "back" };
 

@@ -363,7 +363,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       let [list, active] = await Promise.all([fetchWikis(), fetchActiveWikiIds()]);
       if (list.length === 0) {
-        const created = await createWiki({ name: "My 1st Neuron", description: "Your default neuron — extracted knowledge lives here." });
+        const created = await createWiki({ name: "My notes", description: "Your first notebook — Counsel saves notes here." });
         await loadWikiApi(created.id);
         list = [created]; active = { primary: created.id, set: [created.id], setPersisted: true };
       }
@@ -397,7 +397,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       setWikis(list);
       commitActiveSet(set);
-    } catch (err) { console.error("Failed to load wikis:", err); }
+    } catch (err) { console.error("Failed to load notebooks:", err); }
   }, [user, commitActiveSet]);
 
   useEffect(() => { refreshWikis(); }, [refreshWikis]);
@@ -435,7 +435,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const setActiveNeurons = useCallback(async (wikiIds: string[]) => {
     const ids = Array.from(new Set(wikiIds)).slice(0, MAX_ACTIVE_NEURONS);
-    if (ids.length === 0) throw new Error("No neurons to load — they may have been deleted.");
+    if (ids.length === 0) throw new Error("No notebooks to load — they may have been deleted.");
     await applyActiveSet(ids);
   }, [applyActiveSet]);
 
@@ -447,7 +447,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       next = current.filter((id) => id !== wikiId);
     } else {
       if (current.length >= MAX_ACTIVE_NEURONS) {
-        throw new Error(`You can load up to ${MAX_ACTIVE_NEURONS} neurons at once — unload one first.`);
+        throw new Error(`You can load up to ${MAX_ACTIVE_NEURONS} notebooks at once — unload one first.`);
       }
       next = [...current, wikiId];
     }
@@ -478,7 +478,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       try {
         await applyActiveSet(next.wikiIds);
       } catch (err) {
-        neuronError = err instanceof Error ? err.message : "Couldn't load the neuron";
+        neuronError = err instanceof Error ? err.message : "Couldn't load the notebook";
       }
     }
     if (changed.selection) bookContextStore.set(next.selection);
@@ -503,7 +503,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
     const err = await writeFocus(prev, focusChanged(next, prev));
-    toast(err ? `Restored the books; the neuron did not change: ${err}` : "Restored the previous focus.");
+    toast(err ? `Restored the books; the notebook did not change: ${err}` : "Restored the previous focus.");
   }, [writeFocus]);
 
   const loadFocus = useCallback(async (
@@ -518,7 +518,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ? { next: { ...outcome.next, wikiIds: prev.wikiIds }, changed: { ...outcome.changed, wikiIds: false } }
       : outcome;
     const summary = describeLoad(prev, effective, focusNames()) +
-      (neuronError ? ` The neuron did not change: ${neuronError}` : "");
+      (neuronError ? ` The notebook did not change: ${neuronError}` : "");
     if (opts.navigate !== false) {
       if (action.kind === "book") navigateTab("viewer");
       else if (action.kind === "shelf" || action.kind === "books") navigateTab("chat");

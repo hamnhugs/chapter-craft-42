@@ -82,7 +82,7 @@ const SECTIONS: { id: SectionId; icon: string; title: string; blurb: string; pow
   { id: "voice", icon: "record_voice_over", title: "Voice", blurb: "How replies sound, and how hands-free conversations behave." },
   { id: "research", icon: "travel_explore", title: "Research", blurb: "Live web search and what Counsel may read." },
   { id: "images", icon: "image", title: "Images & video", blurb: "Models and defaults for pictures, video and 3D." },
-  { id: "memory", icon: "neurology", title: "Memory & library", blurb: "How chats write to your neurons, and how new books are catalogued." },
+  { id: "memory", icon: "menu_book", title: "Notes & library", blurb: "Whether Counsel saves notes, and how new books are catalogued." },
   { id: "prompts", icon: "edit_note", title: "Replies & prompts", blurb: "Reply length, saved prompts and standing instructions." },
   { id: "appearance", icon: "palette", title: "Appearance", blurb: "Theme and seasonal colour." },
   { id: "account", icon: "person", title: "Account", blurb: "Your plan, developer keys and the setup helper." },
@@ -103,7 +103,7 @@ const SEARCH_INDEX: { s: SectionId; label: string; anchor?: string; k?: string }
   { s: "models", label: "Deep Research model", anchor: "role-deep", k: "reasoning" },
   { s: "models", label: "Quick search model", anchor: "role-quick", k: "web" },
   { s: "models", label: "Background summaries model", anchor: "role-utility", k: "utility compaction gists" },
-  { s: "models", label: "Wiki upkeep model", anchor: "role-wiki", k: "neuron extract health" },
+  { s: "models", label: "Notebook upkeep model", anchor: "role-wiki", k: "notebook extract health" },
   { s: "models", label: "Book figures model", anchor: "role-figures", k: "figure extraction images diagrams" },
   { s: "models", label: "Spending", anchor: "spending", k: "lean chat only cost money budget" },
   { s: "models", label: "Studio tools", anchor: "studio", k: "video 3d masters blueprints tokens" },
@@ -123,13 +123,13 @@ const SEARCH_INDEX: { s: SectionId; label: string; anchor?: string; k?: string }
   { s: "voice", label: "Pocket screen", anchor: "pocket", k: "phone dim battery" },
   { s: "research", label: "Web search", anchor: "web-search", k: "tavily burplexity internet" },
   { s: "research", label: "Background quick search", anchor: "quick-search" },
-  { s: "research", label: "Search all neurons", anchor: "all-neurons", k: "access brain" },
+  { s: "research", label: "Search all notebooks", anchor: "all-neurons", k: "access brain" },
   { s: "images", label: "Image generation", anchor: "gen-images", k: "picture model aspect quality" },
   { s: "images", label: "Video generation", anchor: "gen-video", k: "clip veo cost" },
   { s: "images", label: "3D models", anchor: "gen-3d", k: "splat fal gaussian" },
-  { s: "memory", label: "Save new memories (recording mode)", anchor: "memory-mode", k: "retrieval read-only" },
-  { s: "memory", label: "Reflex cues", anchor: "reflex", k: "contradiction conflict" },
-  { s: "memory", label: "Auto-show memory images", anchor: "memory-lens", k: "muted images lens" },
+  { s: "memory", label: "Off the record", anchor: "memory-mode", k: "save notes memory recording private pause" },
+  { s: "memory", label: "Point out contradictions", anchor: "reflex", k: "reflex conflict disagree" },
+  { s: "memory", label: "Auto-show note images", anchor: "memory-lens", k: "muted images lens memory" },
   { s: "memory", label: "Catalog new books automatically", anchor: "catalog", k: "summaries upload chapters" },
   { s: "prompts", label: "Reply length", anchor: "reply-length", k: "max sentences concise" },
   { s: "prompts", label: "Prompt library", anchor: "prompt-library", k: "presets system prompt" },
@@ -354,7 +354,7 @@ const SettingsPanel: React.FC = () => {
     `openrouter key: ${apiKey ? "saved" : "none"}`,
     `nvidia key: ${nvidiaKeyLast4 ? `saved (…${nvidiaKeyLast4})` : "none"}`,
     ...roleRows.map((r) => `${r.label.toLowerCase()}: ${r.id}${r.usable ? "" : "  ← no key for this provider"}`),
-    `wiki: ${wikiModel || "(default)"}`,
+    `notes: ${wikiModel || "(default)"}`,
     `saved models (${savedModels.length}):`,
     ...savedModels.map((m) => `  ${m}`),
   ].join("\n");
@@ -409,7 +409,8 @@ const SettingsPanel: React.FC = () => {
   useEffect(() => { localStorage.setItem(BARGE_IN_KEY, String(bargeInEnabled)); }, [bargeInEnabled]);
   useEffect(() => { localStorage.setItem(POCKET_SCREEN_KEY, String(pocketScreen)); }, [pocketScreen]);
 
-  // Memory mode (Supabase-backed; Neuron tab re-reads on mount).
+  // Off the record (user_settings.is_recording_mode, inverted). The notebook
+  // view and Counsel re-read it on mount.
   const [memoryMode, setMemoryModeState] = useState<MemoryMode>("recording");
   const [memoryModeLoading, setMemoryModeLoading] = useState(false);
   useEffect(() => {
@@ -421,9 +422,9 @@ const SettingsPanel: React.FC = () => {
     try {
       await setMemoryMode(next);
       setMemoryModeState(next);
-      toast.success(next === "recording" ? "Recording Mode: writes enabled" : "Retrieval Mode: writes disabled");
+      toast.success(next === "recording" ? "Saving notes again" : "Off the record — nothing new is saved");
     } catch (err: any) {
-      toast.error(err.message || "Failed to switch mode");
+      toast.error(err.message || "Couldn't change that setting");
     } finally {
       setMemoryModeLoading(false);
     }
@@ -729,11 +730,11 @@ const SettingsPanel: React.FC = () => {
                 </Row>
                 <Row
                   id="role-wiki"
-                  label="Wiki upkeep"
+                  label="Notebook upkeep"
                   description={wikiModel && !apiKey && !isLocalBackend()
-                    ? <span className="text-destructive">No OpenRouter key — wiki ops fall back to the default.</span>
-                    : "Extracts and health-checks your neurons."}
-                  more="Wiki ops run on OpenRouter only, so NVIDIA and local models aren't offered here. Custom models need your OpenRouter key."
+                    ? <span className="text-destructive">No OpenRouter key — notebook ops fall back to the default.</span>
+                    : "Runs the daily tidy-up and health checks on your notes."}
+                  more="Notebook ops run on OpenRouter only, so NVIDIA and local models aren't offered here. Custom models need your OpenRouter key."
                 >
                   <select
                     // An NVIDIA id can only get here via the Admin panel's
@@ -742,7 +743,7 @@ const SettingsPanel: React.FC = () => {
                     value={!wikiModel || isNvidiaModel(wikiModel) ? "__default__" : wikiModel}
                     onChange={(e) => setWikiModel(e.target.value === "__default__" ? "" : e.target.value)}
                     className={selectCls}
-                    aria-label="Wiki model"
+                    aria-label="Notebook model"
                   >
                     <option value="__default__">Default (Gemini Flash)</option>
                     <ModelOptions models={savedModels.filter((m) => !isBatchOnlyModel(m))} openrouterOnly />
@@ -855,7 +856,7 @@ const SettingsPanel: React.FC = () => {
                                   key={m}
                                   title={
                                     embed
-                                      ? "Embedding model — used by Wiki reindex, not Chat"
+                                      ? "Embedding model — used by Notebook reindex, not Chat"
                                       : batchOnly
                                         ? "Batch-pricing variant — OpenRouter serves it only through the asynchronous Batch API, so no live feature here can run it"
                                         : describeModel(m)
@@ -1132,17 +1133,17 @@ const SettingsPanel: React.FC = () => {
               <Group title="What Counsel reads" footer={<>Research and search models are picked in <button data-no-sticker className="text-primary underline" onClick={() => go("models", "role-deep")}>Models</button>.</>}>
                 <Row
                   id="all-neurons"
-                  label={<span className="inline-flex items-center gap-1">{!isPaid && <span className="material-symbols-outlined text-sm" aria-hidden>lock</span>}Search all neurons</span>}
-                  description={accessAllNeurons && isPaid ? "Answers draw on every neuron in your brain." : `Answers draw only on the loaded neuron — focused and cheaper.${!isPaid ? " Pro feature." : ""}`}
+                  label={<span className="inline-flex items-center gap-1">{!isPaid && <span className="material-symbols-outlined text-sm" aria-hidden>lock</span>}Search all notebooks</span>}
+                  description={accessAllNeurons && isPaid ? "Answers draw on every notebook you have." : `Answers draw only on the loaded notebook — focused and cheaper.${!isPaid ? " Pro feature." : ""}`}
                 >
                   <Switch
                     checked={accessAllNeurons && isPaid}
                     onCheckedChange={(v) => {
                       if (!isPaid) { openPricing("all-neurons"); return; }
                       setAccessAllNeurons(v);
-                      toast.success(v ? "Counsel can now read all your neurons" : "Counsel reads only the loaded neuron");
+                      toast.success(v ? "Counsel can now read all your notebooks" : "Counsel reads only the loaded notebook");
                     }}
-                    aria-label="Search all neurons"
+                    aria-label="Search all notebooks"
                   />
                 </Row>
               </Group>
@@ -1168,29 +1169,26 @@ const SettingsPanel: React.FC = () => {
           {active === "memory" && (
             <>
               <Group
-                title="Memory"
+                title="Notes"
                 footer={
-                  <span className="flex flex-wrap gap-x-4 gap-y-1">
-                    <Link to="/memory-guide" className="text-primary hover:underline">How memory works</Link>
-                    <Link to="/wiki-controls-guide" className="text-primary hover:underline">What the Neuron controls do</Link>
-                  </span>
+                  <Link to="/memory-guide" className="text-primary hover:underline">How notes work</Link>
                 }
               >
                 <Row
                   id="memory-mode"
-                  label="Save new memories"
-                  description={memoryMode === "recording" ? "Recording — chats can write to your neurons." : "Retrieval — memories are read-only."}
-                  more="Also switchable from the Neuron tab toolbar."
+                  label="Off the record"
+                  description={memoryMode === "recording" ? "Off — Counsel saves notes as you chat." : "On — Counsel reads your notes but saves nothing new."}
+                  more="Also in Counsel's tools and at the top of your notebook. Forgetting a note still works while it's on."
                 >
-                  <Switch checked={memoryMode === "recording"} onCheckedChange={handleMemoryMode} disabled={memoryModeLoading} aria-label="Save new memories" />
+                  <Switch checked={memoryMode !== "recording"} onCheckedChange={(off) => handleMemoryMode(!off)} disabled={memoryModeLoading} aria-label="Off the record" />
                 </Row>
                 <Row
                   id="reflex"
-                  label="Reflex cues"
-                  description="Flags when something you say contradicts a saved memory."
-                  more="The assistant proactively points out contradictions with saved memories (and offers to reconcile them), and neuron cards show an amber marker when an entry is part of an open conflict. A convenience over the existing conflict detection — not a claim about neuroscience."
+                  label="Point out contradictions"
+                  description="Counsel tells you when something you say or read disagrees with one of your notes."
+                  more="It names the note and the page it came from, and asks which is right before changing anything. Notes in an open conflict also get an amber marker in the notebook."
                 >
-                  <Switch checked={reflexCues} onCheckedChange={setReflexEnabled} aria-label="Reflex cues" />
+                  <Switch checked={reflexCues} onCheckedChange={setReflexEnabled} aria-label="Point out contradictions" />
                 </Row>
                 <div id="set-memory-lens" className="px-4 py-3 cc-set-row">
                   <MemoryLensSettings />

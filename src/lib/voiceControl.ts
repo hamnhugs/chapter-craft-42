@@ -53,7 +53,7 @@ export function registerVoiceReader(t: VoiceReaderTarget): () => void {
 }
 
 const TAB_NAMES: Record<VoiceTab, string> = {
-  library: "Vault", viewer: "Read", chat: "Counsel", wiki: "Neuron", wikis: "Brain", settings: "Settings", admin: "Admin",
+  library: "Vault", viewer: "Read", chat: "Counsel", wiki: "Notebook", wikis: "Notebooks", settings: "Settings", admin: "Admin",
 };
 
 const HELP =

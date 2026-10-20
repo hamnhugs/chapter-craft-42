@@ -403,7 +403,7 @@ const PromptLibrary: React.FC<Props> = ({ scopeHint }) => {
                     <span className="text-[10px] uppercase tracking-wider text-primary shrink-0" title="The AI may choose this one on its own">auto</span>
                   )}
                   {(p.neuron_ids.length > 0 || p.book_id) && (
-                    <span className="material-symbols-outlined text-[13px] text-on-surface-variant shrink-0" title="Switching to this prompt also loads its neurons or book" aria-label="brings context">hub</span>
+                    <span className="material-symbols-outlined text-[13px] text-on-surface-variant shrink-0" title="Switching to this prompt also loads its notebooks or book" aria-label="brings context">hub</span>
                   )}
                   {p.tool_permissions && (
                     <span className="material-symbols-outlined text-[13px] text-on-surface-variant shrink-0" title="This prompt limits which tools the AI can use" aria-label="limits tools">lock</span>

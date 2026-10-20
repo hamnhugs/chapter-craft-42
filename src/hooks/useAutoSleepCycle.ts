@@ -3,13 +3,13 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { triggerSleepCycle } from "@/lib/knowledgeApi";
 
-// Background memory consolidation. The Sleep Cycle (rerank vibrancy →
-// generate graph edges → flag orphans) previously only ran when manually
-// triggered from the BRAIN tab, so new entries could sit in the
-// consolidation queue for weeks. This hook runs it automatically once per
-// day: shortly after sign-in, if the queue has pending items and the last
-// run is stale, fire it quietly in the background. Failures are swallowed —
-// consolidation is an optimization, never something to bother the user about.
+// The daily tidy-up (knowledge-consolidate: link related notes, write
+// missing one-line summaries, queue unlinked notes for the next run). Runs
+// once per day, shortly after sign-in, when the last run is stale AND there
+// is work: queued notes, or notes still without a summary. Failures are
+// swallowed — a tidy-up is an optimization, never something to bother the
+// user about. Every run that changes anything can be undone from the
+// notebook's Recent tidy-ups.
 
 const STALE_MS = 24 * 60 * 60 * 1000;
 const BOOT_DELAY_MS = 15_000; // stay off the critical path of app startup
@@ -30,12 +30,21 @@ export function useAutoSleepCycle() {
           .maybeSingle();
         const last = (settings as any)?.last_sleep_cycle_at;
         if (last && Date.now() - new Date(last).getTime() < STALE_MS) return;
-        const { count } = await supabase
-          .from("consolidation_queue" as any)
-          .select("id", { count: "exact", head: true })
-          .eq("user_id", user.id)
-          .is("processed_at", null);
-        if (!count) return;
+        const [{ count: queued }, { count: unsummarized }] = await Promise.all([
+          supabase
+            .from("consolidation_queue" as any)
+            .select("id", { count: "exact", head: true })
+            .eq("user_id", user.id)
+            .is("processed_at", null),
+          supabase
+            .from("knowledge_entries")
+            .select("id", { count: "exact", head: true })
+            .eq("user_id", user.id)
+            .is("hook" as any, null)
+            .is("superseded_by", null)
+            .not("entry_type", "in", "(tool,program)"),
+        ]);
+        if (!queued && !unsummarized) return;
         await triggerSleepCycle(null);
       } catch {
         /* background — never surface */

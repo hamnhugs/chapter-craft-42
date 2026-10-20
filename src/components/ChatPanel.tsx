@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import { getMemoryMode, setMemoryMode } from "@/lib/knowledgeApi";
 import ReactMarkdown from "react-markdown";
 import { safeUrlTransform, safeMarkdownComponents } from "@/lib/markdownSafety";
 import { focusComposer, isTouchPrimary } from "@/lib/focusPolicy";
@@ -37,7 +38,7 @@ import GeneratedImage from "@/components/GeneratedImage";
 import VideoBubble from "@/components/VideoBubble";
 import SplatBubble from "@/components/SplatBubble";
 import MediaReveal from "@/components/MediaReveal";
-import WorkingMemoryPanel from "@/components/WorkingMemoryPanel";
+import { openNote } from "@/lib/openPassage";
 import WorkspaceShell from "@/components/WorkspaceShell";
 import ToolStatusPanel from "@/components/ToolStatusPanel";
 import PromptSwitcher from "@/components/PromptSwitcher";
@@ -238,6 +239,29 @@ const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
 
   // ---- Voice features absorbed from the former Echo (Voice) tab ----
   const [notesPanelOpen, setNotesPanelOpen] = useState(false);
+
+  // Off the record: Counsel still reads notes but saves nothing new
+  // (user_settings.is_recording_mode = false, enforced in the save tools).
+  // Re-read whenever Counsel comes into view — the notebook view and
+  // Settings can flip it too.
+  const [offTheRecord, setOffTheRecord] = useState(false);
+  useEffect(() => {
+    if (!visible) return;
+    let live = true;
+    getMemoryMode().then((m) => { if (live) setOffTheRecord(m === "retrieval"); }).catch(() => { /* default stands */ });
+    return () => { live = false; };
+  }, [visible]);
+  const toggleOffTheRecord = async () => {
+    const next = !offTheRecord;
+    setOffTheRecord(next);
+    try {
+      await setMemoryMode(next ? "retrieval" : "recording");
+      toast.success(next ? "Off the record — Counsel won't save new notes" : "Saving notes again");
+    } catch (e: any) {
+      setOffTheRecord(!next);
+      toast.error(e?.message || "Couldn't change that setting");
+    }
+  };
   const [toolsOpen, setToolsOpen] = useState(false);
   // Configured in the Settings tab; read-only here (re-read when Counsel shows).
   const voiceQuickSearch = useMemo(() => localStorage.getItem(VOICE_QUICK_SEARCH_KEY) === "true", [visible]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -675,13 +699,13 @@ const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
       // Deliberately does NOT open the notes panel any more. A save is a small
       // thing; burying the transcript under a panel made every misfire cost a
       // dismissal, and the toast already says where the note went.
-      toast.success("Saved to notes", {
+      toast.success("Saved to voice notes", {
         duration: NOTE_PRESS.undoMs,
         action: {
           label: "Undo",
           onClick: async () => {
             const gone = await deleteVoiceNote(note.id);
-            toast[gone ? "success" : "error"](gone ? "Note removed" : "Could not remove that note");
+            toast[gone ? "success" : "error"](gone ? "Voice note removed" : "Could not remove that voice note");
           },
         },
       });
@@ -891,6 +915,7 @@ const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
    */
   const activeModes = useMemo(() => {
     const m: string[] = [];
+    if (offTheRecord) m.push("Off the record");
     if (chatDeepResearch && isPaid) m.push("Deep Research");
     if (autoContinue) m.push("Auto-continue");
     if (autoReadReplies) m.push("Read Aloud");
@@ -898,7 +923,7 @@ const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
     if (focusedItems.length) m.push(`${focusedItems.length} pinned`);
     if (workspaceOpen) m.push("Files");
     return m;
-  }, [chatDeepResearch, isPaid, autoContinue, autoReadReplies, contextBooks.length, focusedItems.length, workspaceOpen]);
+  }, [offTheRecord, chatDeepResearch, isPaid, autoContinue, autoReadReplies, contextBooks.length, focusedItems.length, workspaceOpen]);
   const activeModeCount = activeModes.length;
 
   const handsFreeStateLabel =
@@ -1113,7 +1138,7 @@ const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
       {activeWikis.length > 0 && (
         <div className="px-4 pt-3 pb-1 flex items-center gap-1.5 flex-wrap text-xs font-body text-on-surface-variant">
           <span className="mr-0.5">
-            {activeWikis.length > 1 ? "Loaded neurons:" : "Your Knowledge Neuron:"}
+            {activeWikis.length > 1 ? "Open notebooks:" : "Notebook:"}
           </span>
           {activeWikis.map((w, i) => (
             <span
@@ -1145,7 +1170,7 @@ const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
           <button
             onClick={() => window.dispatchEvent(new CustomEvent("open-neuron-switcher"))}
             className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full border border-dashed border-outline-variant/40 hover:border-primary/50 hover:text-primary transition-colors"
-            title="Load another neuron alongside (⌘K)"
+            title="Load another notebook alongside (⌘K)"
           >
             <span className="material-symbols-outlined text-[14px]">add</span>
           </button>
@@ -1153,10 +1178,10 @@ const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
             <button
               onClick={() => import("@/components/ChainDialog").then((m) => m.openChainDialog({ prefillIds: activeWikiIds }))}
               className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-outline-variant/40 hover:border-primary/50 hover:text-primary transition-colors"
-              title="Save these neurons as a chain"
+              title="Save these notebooks as a saved set"
             >
               <span className="material-symbols-outlined text-[14px]">link</span>
-              <span className="text-[10px] font-bold uppercase tracking-widest">Save chain</span>
+              <span className="text-[10px] font-bold uppercase tracking-widest">Save saved set</span>
             </button>
           )}
         </div>
@@ -1224,7 +1249,6 @@ const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
           </div>
         )}
 
-        {messages.length > 0 && <WorkingMemoryPanel />}
 
         {messages.map((msg, i) => (
           <div key={msg.id || i} data-bubble-id={bubbleId(msg, i)} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"} max-w-[85%] ${msg.role === "user" ? "self-end" : ""} group`}>
@@ -1247,14 +1271,19 @@ const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
             {msg.role === "assistant" && msg.usedMemories && msg.usedMemories.length > 0 && (
               <details className="mb-2 ml-4">
                 <summary className="cursor-pointer list-none inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md bg-primary-container/20 text-on-surface-variant hover:bg-primary-container/30 transition-colors">
-                  <span className="material-symbols-outlined text-xs">neurology</span>
-                  Drew on {msg.usedMemories.length} {msg.usedMemories.length === 1 ? "memory" : "memories"}
+                  <span className="material-symbols-outlined text-xs">menu_book</span>
+                  Used {msg.usedMemories.length} {msg.usedMemories.length === 1 ? "note" : "notes"}
                 </summary>
                 <div className="mt-1.5 flex flex-wrap gap-1.5">
                   {msg.usedMemories.map((m) => (
-                    <span key={m.id} className="text-[11px] px-2 py-0.5 rounded-md bg-surface-container-high text-on-surface-variant border border-outline-variant/20">
+                    <button
+                      key={m.id}
+                      onClick={() => openNote({ setActiveTab }, m.id)}
+                      title="Open this note"
+                      className="text-[11px] px-2 py-0.5 rounded-md bg-surface-container-high text-on-surface-variant border border-outline-variant/20 hover:text-primary hover:border-primary/40 transition-colors"
+                    >
                       {m.title}
-                    </span>
+                    </button>
                   ))}
                 </div>
               </details>
@@ -2023,10 +2052,10 @@ const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
         onOpenChange={setToolsOpen}
         readingLabel={
           accessAllNeurons && isPaid
-            ? "Reading: all neurons"
+            ? "Reading: all notebooks"
             : activeWikis.length > 1
-              ? `Reading: ${activeWikis.length} neurons`
-              : `Reading: ${activeWiki?.name || "no neuron"}`
+              ? `Reading: ${activeWikis.length} notebooks`
+              : `Reading: ${activeWiki?.name || "no notebook"}`
         }
         onAttachImage={() => fileInputRef.current?.click()}
         onOpenResearchSettings={() => openSettings("research")}
@@ -2037,6 +2066,8 @@ const ChatPanel: React.FC<{ visible?: boolean }> = ({ visible = true }) => {
         onToggleWorkspace={() => setWorkspaceOpen((v) => !v)}
         notesOpen={notesPanelOpen}
         onToggleNotes={() => setNotesPanelOpen((v) => !v)}
+        offTheRecord={offTheRecord}
+        onToggleOffTheRecord={() => void toggleOffTheRecord()}
         deepResearch={chatDeepResearch}
         deepResearchAllowed={isPaid}
         onToggleDeepResearch={() => {

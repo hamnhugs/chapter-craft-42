@@ -363,7 +363,7 @@ export async function saveImageToMemory(opts: {
       .select("id")
       .eq("id", opts.entryId)
       .maybeSingle();
-    if (!entry) throw new Error("Target memory entry not found");
+    if (!entry) throw new Error("Target note not found");
     const { error } = await (supabase.from("image_attachments" as any) as any)
       .update({ entry_id: opts.entryId })
       .eq("id", row.id);
@@ -400,7 +400,7 @@ export async function saveImageToMemory(opts: {
     } as any)
     .select("id")
     .single();
-  if (error || !entry) throw new Error(`Could not create memory entry: ${error?.message || "unknown"}`);
+  if (error || !entry) throw new Error(`Could not create note: ${error?.message || "unknown"}`);
   const entryId = (entry as any).id as string;
   const { error: linkErr } = await (supabase.from("image_attachments" as any) as any)
     .update({ entry_id: entryId })
@@ -410,7 +410,7 @@ export async function saveImageToMemory(opts: {
     // image still "unsaved") would both break idempotency and duplicate
     // neurons on retry — roll the entry back and fail loudly.
     try { await supabase.from("knowledge_entries").delete().eq("id", entryId); } catch { /* best-effort */ }
-    throw new Error(`Could not link the image to the new memory entry: ${linkErr.message}`);
+    throw new Error(`Could not link the image to the new note: ${linkErr.message}`);
   }
   // Embed the new neuron in the background so retrieval can find it.
   void reindexEmbeddings(true, wikiId).catch(() => {});

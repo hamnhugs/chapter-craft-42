@@ -44,7 +44,7 @@ type Section = "overview" | "users" | "neurons" | "welcome" | "announcements" | 
 const SECTIONS: { id: Section; icon: string; label: string }[] = [
   { id: "overview", icon: "monitoring", label: "Overview" },
   { id: "users", icon: "group", label: "Users" },
-  { id: "neurons", icon: "neurology", label: "Neurons" },
+  { id: "neurons", icon: "neurology", label: "Notebooks" },
   { id: "welcome", icon: "waving_hand", label: "Welcome dialog" },
   { id: "announcements", icon: "campaign", label: "Announcements" },
   { id: "audit", icon: "receipt_long", label: "Audit log" },
@@ -174,7 +174,7 @@ const OverviewSection: React.FC<{
     <div className="space-y-8">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard icon="group" label="Users" value={users ? String(users.length) : "…"} />
-        <StatCard icon="neurology" label="Neurons" value={wikis ? String(wikis.length) : "…"} />
+        <StatCard icon="neurology" label="Notebooks" value={wikis ? String(wikis.length) : "…"} />
         <StatCard icon="article" label="Entries" value={wikis ? String(entryTotal) : "…"} />
         <StatCard icon="campaign" label="Active announcements" value={announcements ? String(activeAnnouncements) : "…"} />
       </div>
@@ -393,7 +393,7 @@ const NeuronsSection: React.FC<{ wikis: AdminWikiRow[] | null }> = ({ wikis }) =
   return (
     <div className="space-y-8">
       <p className="text-xs text-on-surface-variant max-w-2xl">
-        Every neuron across all accounts. Opening a neuron's entries is recorded in the audit
+        Every notebook across all accounts. Opening a notebook's entries is recorded in the audit
         log — access user content only for support, moderation, or security purposes.
       </p>
       {grouped.map(([email, list]) => (
@@ -442,7 +442,7 @@ const NeuronsSection: React.FC<{ wikis: AdminWikiRow[] | null }> = ({ wikis }) =
                   <Loader2 className="w-6 h-6 animate-spin text-on-surface-variant" />
                 </div>
               ) : entries.length === 0 ? (
-                <p className="text-sm text-on-surface-variant py-4">This neuron has no entries.</p>
+                <p className="text-sm text-on-surface-variant py-4">This notebook has no notes.</p>
               ) : (
                 <div className="divide-y divide-outline-variant/10">
                   {entries.map((e) => (

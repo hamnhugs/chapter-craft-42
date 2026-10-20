@@ -48,6 +48,9 @@ export interface CounselToolsSheetProps {
   onToggleWorkspace: () => void;
   notesOpen: boolean;
   onToggleNotes: () => void;
+  /** Counsel reads notes but saves nothing new. */
+  offTheRecord: boolean;
+  onToggleOffTheRecord: () => void;
 
   /** Modes */
   deepResearch: boolean;
@@ -202,10 +205,18 @@ const CounselToolsSheet: React.FC<CounselToolsSheetProps> = (p) => {
 
         <Group title="Context">
           <Row
-            icon={sym("neurology")}
-            label="Neurons"
+            icon={sym("menu_book")}
+            label="Notebooks"
             detail={p.readingLabel}
             onClick={andClose(p.onOpenResearchSettings)}
+          />
+          <Row
+            icon={sym("visibility_off", p.offTheRecord)}
+            label="Off the record"
+            detail={p.offTheRecord ? "Counsel reads your notes but saves nothing new" : "Counsel saves notes as you chat"}
+            state={p.offTheRecord ? "ON" : "OFF"}
+            active={p.offTheRecord}
+            onClick={p.onToggleOffTheRecord}
           />
           <Row
             icon={sym("auto_stories", p.contextBookCount > 0)}
@@ -224,7 +235,7 @@ const CounselToolsSheet: React.FC<CounselToolsSheetProps> = (p) => {
           />
           <Row
             icon={sym("sticky_note_2", p.notesOpen)}
-            label="Notes"
+            label="Voice notes"
             state={p.notesOpen ? "OPEN" : undefined}
             active={p.notesOpen}
             onClick={andClose(p.onToggleNotes)}
