@@ -1,8 +1,6 @@
 // Backfill or refresh embeddings for knowledge_entries.
 // Body (exactly one mode):
-//   { entry_ids: string[] }                     targeted (≤ MAX_TARGETED ids);
-//                                               also refreshes a missing
-//                                               embedding_v2 for those ids
+//   { entry_ids: string[] }                     targeted (≤ MAX_TARGETED ids)
 //   { all_missing: true, wiki_id?, force? }     rows with embedding IS NULL
 //                                               (force: every row, re-embed)
 //   { stale_model: true, wiki_id? }             rows whose vector was NOT made
@@ -11,11 +9,10 @@
 //                                               migration after changing
 //                                               EMBED_PROVIDER / model. Never
 //                                               run automatically.
-// Returns { updated, failed, total, model, v2_updated, possible_duplicates }.
+// Returns { updated, failed, total, model }.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { embedBatch, EMBEDDING_MODEL_ID, writeEntryEmbedding } from "../_shared/embed.ts";
-import { embedAndStore as embedV2AndStore } from "../_shared/wiki-embed.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,8 +22,6 @@ const corsHeaders = {
 const BATCH_SIZE = 25;
 const MAX_TARGETED = 100;
 const MAX_ROWS_PER_CALL = 1000;
-/** Cosine at/above which a freshly embedded entry is flagged as a likely duplicate. */
-const NEAR_DUPLICATE_COSINE = 0.92;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -92,72 +87,7 @@ serve(async (req) => {
       }
     }
 
-    // Targeted calls come from embedEntriesSoon after a create/edit. The
-    // staleness trigger cleared embedding_v2 (the 1536-dim column behind
-    // search-knowledge, smart filing and wiki centroids) along with the 768
-    // vector, so refill it here for the same ids — otherwise an edited card
-    // silently drops out of cross-wiki search until a manual backfill.
-    // A stale_model migration refills it too, for rows whose embedding_v2 was
-    // cleared because it came from the old model (scripts/local-up.sh).
-    // Best-effort; deliberately NOT chained to smart-file (that would re-route
-    // entries the user just placed).
-    let v2_updated = 0;
-    if ((Array.isArray(entry_ids) && entry_ids.length > 0) || stale_model) {
-      try {
-        const { data: v2Rows } = await supabase
-          .from("knowledge_entries")
-          .select("id, title, content")
-          .eq("user_id", user.id)
-          .in("id", rows.map((r) => r.id))
-          .is("embedding_v2", null);
-        if (v2Rows && v2Rows.length > 0) {
-          v2_updated = await embedV2AndStore(supabase, Deno.env.get("LOVABLE_API_KEY") || "", v2Rows as any, user.id);
-        }
-      } catch (e) {
-        console.warn("knowledge-embed: embedding_v2 refresh skipped:", e);
-      }
-    }
-
-    // Semantic near-duplicate check for targeted (create/edit) embeds: flag —
-    // never merge or delete — an entry whose nearest OLDER living entry in the
-    // same wiki is ≥ NEAR_DUPLICATE_COSINE similar. The flag lands in
-    // cleanup_flags (reason 'duplicate' — the table built for "should this be
-    // deleted?" markers; no client screen reads it yet) and the pairs are
-    // returned as possible_duplicates. flagged_by 'chat' because these are
-    // write-time checks, and because
-    // scan_cleanup_flags wipes non-dismissed 'scan' flags on every rescan.
-    // Best-effort: missing RPC (migration 20260917130700) or any error → skip.
-    let possible_duplicates: Array<{ entry_id: string; duplicate_of: string; similarity: number }> = [];
-    if (Array.isArray(entry_ids) && entry_ids.length > 0 && updated > 0) {
-      try {
-        const { data: dups, error: dupErr } = await supabase.rpc("find_near_duplicates", {
-          p_entry_ids: rows.map((r) => r.id),
-          p_threshold: NEAR_DUPLICATE_COSINE,
-        });
-        if (!dupErr && Array.isArray(dups) && dups.length > 0) {
-          possible_duplicates = (dups as any[]).map((d) => ({
-            entry_id: d.entry_id, duplicate_of: d.duplicate_of, similarity: d.similarity,
-          }));
-          const { error: flagErr } = await supabase.from("cleanup_flags").upsert(
-            (dups as any[]).map((d) => ({
-              user_id: user.id,
-              wiki_id: d.wiki_id,
-              entry_id: d.entry_id,
-              reason: "duplicate",
-              note: `Near-duplicate of "${String(d.duplicate_title || "").slice(0, 120)}" (${Math.round(d.similarity * 100)}% similar, detected on save; possible_duplicate_of=${d.duplicate_of}).`,
-              confidence: Math.max(0, Math.min(1, Number(d.similarity) || 0)),
-              flagged_by: "chat",
-            })),
-            { onConflict: "entry_id,reason", ignoreDuplicates: true },
-          );
-          if (flagErr) console.warn("knowledge-embed: duplicate flag write failed:", flagErr.message);
-        }
-      } catch (e) {
-        console.warn("knowledge-embed: near-duplicate check skipped:", e);
-      }
-    }
-
-    return json({ updated, failed, total: rows.length, model: EMBEDDING_MODEL_ID, v2_updated, possible_duplicates });
+    return json({ updated, failed, total: rows.length, model: EMBEDDING_MODEL_ID });
   } catch (e) {
     console.error("knowledge-embed error:", e);
     return json({ error: e instanceof Error ? e.message : "Unknown error" }, 500);

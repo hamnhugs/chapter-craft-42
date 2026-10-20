@@ -223,12 +223,5 @@ for (let i = 0; i < 200; i++) {
   if (!n) break;
   process.stdout.write(`   +${n}`);
 }
-for (let i = 0; i < 200; i++) {
-  const r = await fn("embed-entries", { backfill: true, limit: 200 });
-  const n = Number(r.body?.embedded ?? r.body?.count ?? 0);
-  if (!r.ok || !n) break;
-  process.stdout.write(`   v2 +${n}`);
-}
-await fn("recompute-centroids", {}).catch(() => {});
 console.log();
 say("done. Open http://127.0.0.1:8080 and sign in with your local account.");

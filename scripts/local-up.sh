@@ -227,18 +227,10 @@ wait_for "$(svc searxng)/" searxng 90
 # --- memories follow the embedding model -----------------------------------------
 # Vectors from two models can't be compared, so after LOCAL_EMBED_MODEL changes
 # (or on the first run that records it — earlier installs used nomic-embed-text)
-# every stored vector is rebuilt once. The 768-d column carries its model id and
-# knowledge-embed {stale_model} migrates it. embedding_v2 (search, filing,
-# centroids) and the wiki-name cache carry no model id, so they're cleared
-# here; stale_model refills embedding_v2 for the rows it migrates.
+# every stored vector is rebuilt once. Each vector carries its model id and
+# knowledge-embed {stale_model} migrates the ones from another model.
 if [ "$(cat "$STATE/embed-model" 2>/dev/null)" != "$LOCAL_EMBED_MODEL" ]; then
   say "memories: re-embedding with $LOCAL_EMBED_MODEL (once per model change)"
-  docker exec -i "supabase_db_$PROJECT_ID" psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres >/dev/null <<SQL || fail "couldn't clear old embeddings"
--- Only rows not yet migrated, so a rerun after an interruption keeps finished work.
-UPDATE public.knowledge_entries SET embedding_v2 = NULL
-  WHERE embedding_v2 IS NOT NULL AND embedding_768_model IS DISTINCT FROM 'ollama/$LOCAL_EMBED_MODEL';
-UPDATE public.wiki_centroids SET name_embedding = NULL, name_embedding_source = NULL WHERE name_embedding IS NOT NULL;
-SQL
   API_URL="$API_URL" ANON="$ANON" EMAIL="$OWNER_EMAIL" PW="$OWNER_PASSWORD" python3 - <<'PY' || fail "re-embedding failed (rerun scripts/local-up.sh to retry)"
 import json, os, sys, time, urllib.request, urllib.error
 api, anon = os.environ["API_URL"], os.environ["ANON"]
@@ -264,7 +256,6 @@ def drain(fn, body, key):
         total += n; print(f"    {fn}: {total}", flush=True)
     return total
 drain("knowledge-embed", {"stale_model": True}, "updated")
-post("/functions/v1/recompute-centroids", {}, token)
 PY
   echo "$LOCAL_EMBED_MODEL" >"$STATE/embed-model"
 fi

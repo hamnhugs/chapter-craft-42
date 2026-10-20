@@ -25,6 +25,12 @@
  *     Identify orphan nodes (zero edges). Add them to the queue with reason
  *     'orphan' for next-run consolidation. Report them in the response.
  *
+ *   Phase 4 — Hooks
+ *     Write the one-line index hook for notes that have none (one LLM call).
+ *
+ * Every run that changes something writes a memory_sleep_runs row listing
+ * the links it added and the hooks it wrote; undo_sleep_run reverses it.
+ *
  * Called from the frontend via knowledgeApi.triggerSleepCycle().
  * Also suitable for pg_cron: `SELECT pg_net.http_post(url, ...)`.
  */
@@ -33,7 +39,6 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolveWikiLlm } from "../_shared/wiki-llm.ts";
 import {
-  checkRecordingMode,
   markProcessed,
   enqueueEntries,
   selectAllPages,
@@ -47,16 +52,12 @@ import {
   QUEUE_PRIORITY,
 } from "../_shared/memory-layers.ts";
 import { embedOne, embedBatch, writeEntryEmbedding } from "../_shared/embed.ts";
-import { embedAndStore } from "../_shared/atomicity.ts";
 import { aiFetch } from "../_shared/ai-local.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
-
-const AI_URL   = "https://ai.gateway.lovable.dev/v1/chat/completions";
-const FAST_MODEL = "google/gemini-3-flash-preview";
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -135,7 +136,7 @@ async function reconsolidate(
   lovableKey: string,
   llm: { url: string; headers: Record<string, string>; model: string },
   wikiId: string | null,
-): Promise<{ processed: number; edges_created: number; conflicts_inserted: number }> {
+): Promise<{ processed: number; edges_created: number; conflicts_inserted: number; edge_ids: string[] }> {
 
   // Pull a batch from the queue using FOR UPDATE SKIP LOCKED for concurrency safety.
   // Supabase JS client doesn't expose advisory locks directly, so we use a raw RPC.
@@ -145,7 +146,7 @@ async function reconsolidate(
   });
 
   if (queueErr || !queueItems || queueItems.length === 0) {
-    return { processed: 0, edges_created: 0, conflicts_inserted: 0 };
+    return { processed: 0, edges_created: 0, conflicts_inserted: 0, edge_ids: [] };
   }
 
   // Anchor candidates are chosen PER ITEM (see anchorsFor below): the item's
@@ -218,6 +219,7 @@ async function reconsolidate(
 
   let edgesCreated    = 0;
   let conflictsInserted = 0;
+  const edgeIds: string[] = [];
   const processedIds: string[] = [];
 
   for (const item of queueItems as any[]) {
@@ -332,7 +334,10 @@ async function reconsolidate(
         for (const edge of proposedEdges) {
           const target = linkableCores.find((c) => c.id === edge.target_id);
           if (!target) continue;
-          const { error: edgeErr } = await supabase.from("memory_graph").upsert(
+          // ignoreDuplicates: an existing link is left as it was, so the
+          // rows that come back are exactly the ones this run ADDED — the
+          // run log's undo list must never include a link the user made.
+          const { data: added, error: edgeErr } = await supabase.from("memory_graph").upsert(
             {
               user_id:         userId,
               source_entry_id: resolvedId,
@@ -342,9 +347,12 @@ async function reconsolidate(
               weight:          1.0,
               created_by:      "sleep_cycle",
             },
-            { onConflict: "source_entry_id,target_entry_id,relationship" },
-          );
-          if (!edgeErr) edgesCreated++;
+            { onConflict: "source_entry_id,target_entry_id,relationship", ignoreDuplicates: true },
+          ).select("id");
+          if (!edgeErr) {
+            for (const row of (added || []) as Array<{ id: string }>) edgeIds.push(row.id);
+            edgesCreated += (added || []).length;
+          }
         }
       }
 
@@ -356,7 +364,7 @@ async function reconsolidate(
   }
 
   await markProcessed(supabase, processedIds);
-  return { processed: processedIds.length, edges_created: edgesCreated, conflicts_inserted: conflictsInserted };
+  return { processed: processedIds.length, edges_created: edgesCreated, conflicts_inserted: conflictsInserted, edge_ids: edgeIds };
 }
 
 // ── Phase 3: Pruning (orphan detection) ────────────────────────────────────────
@@ -422,110 +430,108 @@ async function prune(supabase: any, userId: string, wikiId: string | null): Prom
   return { orphans: orphanIds, enqueued };
 }
 
-// ── Phase 4: Semanticize (episodic → semantic consolidation) ──────────────────
-// The brain's central consolidation act: replay recent episodes and distill
-// recurring patterns into context-free semantic knowledge. Fully guarded — any
-// failure returns { created: 0 } and never affects the other phases.
-async function semanticize(
+// ── Phase 4: Hooks (the one-line index entry for each note) ───────────────────
+// The chat keeps an always-loaded index of the user's notes, one line each:
+// title + hook + where it points. A hook is a search-snippet-style line ("what
+// it is and why it matters to this user") — it is what makes the model open
+// the right note on the first try. New notes usually arrive with one (the
+// save tool asks for it); this phase writes the rest, in ONE model call per
+// run. Only empty hooks are written, and the run log keeps their ids so the
+// whole run can be undone.
+const HOOKS_PER_RUN = 40;
+const HOOK_MAX = 160;
+
+export function cleanHook(raw: unknown): string | null {
+  const h = String(raw ?? "").replace(/\s+/g, " ").trim().replace(/^["'“]+|["'”]+$/g, "");
+  if (h.length < 8) return null;
+  return h.length > HOOK_MAX ? `${h.slice(0, HOOK_MAX - 1).trimEnd()}…` : h;
+}
+
+async function writeHooks(
   supabase: any,
   userId: string,
   llm: { url: string; headers: Record<string, string>; model: string },
   wikiId: string | null,
-): Promise<{ created: number }> {
+): Promise<{ written: number; entry_ids: string[] }> {
   try {
-    let epq = supabase
-      .from("episodic_log")
-      .select("summary, key_facts, created_at, wiki_id")
+    let q = supabase
+      .from("knowledge_entries")
+      .select("id, title, content, entry_type")
       .eq("user_id", userId)
-      .order("created_at", { ascending: false })
-      .limit(25);
-    if (wikiId) epq = epq.eq("wiki_id", wikiId);
-    const { data: eps } = await epq;
-    const episodes = (eps || []) as any[];
-    if (episodes.length < 3) return { created: 0 };
-
-    const facts: string[] = [];
-    for (const e of episodes) {
-      if (Array.isArray(e.key_facts)) for (const f of e.key_facts) if (typeof f === "string") facts.push(f);
-    }
-    if (facts.length < 6) return { created: 0 };
-
+      .is("hook", null)
+      .is("superseded_by", null)
+      .not("entry_type", "in", "(tool,program)")
+      .order("updated_at", { ascending: false })
+      .limit(HOOKS_PER_RUN);
+    if (wikiId) q = q.eq("wiki_id", wikiId);
+    const { data: rows, error } = await q;
+    if (error || !rows || rows.length === 0) return { written: 0, entry_ids: [] };
+    const notes = rows as Array<{ id: string; title: string; content: string | null }>;
+    const listing = notes
+      .map((n, i) => `[${i}] ${n.title}\n${(n.content || "").replace(/\s+/g, " ").slice(0, 500)}`)
+      .join("\n\n");
     const resp = await aiFetch(llm.url, {
       method: "POST",
       headers: llm.headers,
       body: JSON.stringify({
         model: llm.model,
         messages: [
-          { role: "system", content: "You consolidate episodic memories into semantic knowledge, like the brain does during sleep. From facts gathered across many sessions, distill 1-3 GENERAL, durable, context-free semantic facts that RECUR or generalize across episodes. Ignore one-off specifics. Each must be a genuine generalization, not a copy of a single fact. If nothing genuinely recurs, return an empty list. Reply only via the tool." },
-          { role: "user", content: `FACTS FROM RECENT SESSIONS:\n${facts.slice(0, 120).map((f) => `- ${f}`).join("\n")}` },
+          {
+            role: "system",
+            content:
+              "You write one-line hooks for a reader's notes. A hook is under 120 characters and reads like a search snippet: the note's specific claim or subject plus why it matters, in plain words. Never repeat the title verbatim, never start with 'This note', and never invent facts that are not in the note. Reply only via the tool, with one hook per note index.",
+          },
+          { role: "user", content: `NOTES:\n${listing}` },
         ],
         tools: [{
           type: "function",
           function: {
-            name: "save_schema",
-            description: "Save generalized semantic facts",
+            name: "write_hooks",
+            description: "Save one hook per note",
             parameters: {
               type: "object",
               properties: {
-                entries: {
-                  type: "array", maxItems: 3,
-                  items: { type: "object", properties: { title: { type: "string" }, content: { type: "string" } }, required: ["title", "content"] },
+                hooks: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: { index: { type: "number" }, hook: { type: "string" } },
+                    required: ["index", "hook"],
+                  },
                 },
               },
-              required: ["entries"],
+              required: ["hooks"],
             },
           },
         }],
-        tool_choice: { type: "function", function: { name: "save_schema" } },
+        tool_choice: { type: "function", function: { name: "write_hooks" } },
       }),
     });
-    if (!resp.ok) return { created: 0 };
+    if (!resp.ok) return { written: 0, entry_ids: [] };
     const d = await resp.json();
     const tc = d.choices?.[0]?.message?.tool_calls?.[0];
-    if (!tc) return { created: 0 };
-    let entries: any[] = [];
-    try { entries = JSON.parse(tc.function.arguments).entries || []; } catch { return { created: 0 }; }
-
-    let created = 0;
-    for (const e of entries.slice(0, 3)) {
-      const title = String(e.title || "").trim();
-      const content = String(e.content || "").trim();
-      if (!title || !content) continue;
-      // Dedup against existing memory so we never re-create the same schema.
-      try {
-        const vec = await embedOne(`${title}\n${content}`);
-        if (vec) {
-          const { data: near } = await supabase.rpc("match_knowledge", { query_embedding: vec as any, match_count: 1 });
-          const top = ((near || []) as any[])[0];
-          if (top && typeof top.similarity === "number" && top.similarity >= 0.85) {
-            // match_knowledge isn't wiki-scoped; when this cycle is wiki-scoped,
-            // only treat it as a duplicate if the match lives in the SAME wiki,
-            // so wiki B still gets a schema that merely resembles one in wiki A.
-            let sameScope = true;
-            if (wikiId) {
-              const { data: hit } = await supabase.from("knowledge_entries").select("wiki_id").eq("id", top.id).single();
-              sameScope = (hit as any)?.wiki_id === wikiId;
-            }
-            if (sameScope) continue; // already known in this scope
-          }
-        }
-      } catch { /* dedup best-effort */ }
-
-      const { data: ins } = await supabase.from("knowledge_entries").insert({
-        user_id: userId, title, content,
-        entry_type: "synthesis", tags: ["consolidated", "schema"],
-        confidence: 0.7, vibrancy: 0.6,
-        ...(wikiId ? { wiki_id: wikiId } : {}),
-      } as any).select("id").single();
-      if (ins?.id) {
-        try { await embedAndStore(supabase, ins.id, userId, title, content); } catch { /* reindex later */ }
-        created++;
-      }
+    if (!tc) return { written: 0, entry_ids: [] };
+    let hooks: Array<{ index: number; hook: string }> = [];
+    try { hooks = JSON.parse(tc.function.arguments).hooks || []; } catch { return { written: 0, entry_ids: [] }; }
+    const ids: string[] = [];
+    for (const h of hooks) {
+      const note = notes[Number(h.index)];
+      const hook = cleanHook(h.hook);
+      if (!note || !hook || ids.includes(note.id)) continue;
+      // `hook IS NULL` again at write time: a hook the user or the chat wrote
+      // while this call ran wins.
+      const { data: upd } = await supabase
+        .from("knowledge_entries")
+        .update({ hook })
+        .eq("id", note.id)
+        .is("hook", null)
+        .select("id");
+      if (upd && upd.length > 0) ids.push(note.id);
     }
-    return { created };
+    return { written: ids.length, entry_ids: ids };
   } catch (e) {
-    console.warn("semanticize skipped:", e);
-    return { created: 0 };
+    console.warn("writeHooks skipped:", e);
+    return { written: 0, entry_ids: [] };
   }
 }
 
@@ -579,8 +585,25 @@ serve(async (req) => {
     // Phase 3
     const pruneResult      = await prune(supabase, user.id, wikiId);
 
-    // Phase 4 — Semanticize (episodic → semantic). Guarded; never breaks phases 1-3.
-    const semanticizeResult = await semanticize(supabase, user.id, llm, wikiId);
+    // Phase 4 — hooks for notes that have none.
+    const hooksResult      = await writeHooks(supabase, user.id, llm, wikiId);
+
+    // Run log: what this run added, so the user can see it and undo it
+    // (undo_sleep_run). Only runs that changed something are logged.
+    let run_id: string | null = null;
+    if (consolidateResult.edge_ids.length > 0 || hooksResult.entry_ids.length > 0) {
+      const { data: run } = await supabase
+        .from("memory_sleep_runs")
+        .insert({
+          user_id:        user.id,
+          wiki_id:        wikiId,
+          edge_ids:       consolidateResult.edge_ids,
+          hook_entry_ids: hooksResult.entry_ids,
+        })
+        .select("id")
+        .single();
+      run_id = (run as any)?.id ?? null;
+    }
 
     // Record last run time.
     await supabase
@@ -596,10 +619,11 @@ serve(async (req) => {
       phases: {
         embed:        embedResult,
         rerank:       { ...rerankResult, renormalized },
-        consolidate:  consolidateResult,
+        consolidate:  { processed: consolidateResult.processed, edges_created: consolidateResult.edges_created, conflicts_inserted: consolidateResult.conflicts_inserted },
         prune:        pruneResult,
-        semanticize:  semanticizeResult,
+        hooks:        { written: hooksResult.written },
       },
+      run_id,
     });
   } catch (e) {
     console.error("knowledge-consolidate error:", e);

@@ -116,54 +116,6 @@ export const QUEUE_PRIORITY: Record<QueueReason, number> = {
   orphan:          8,
 };
 
-// ── Encoding-mode check ────────────────────────────────────────────────────────
-
-/**
- * Returns { allowed: true } or { allowed: false, reason } based on user settings.
- * Call this at the top of any write-path edge function.
- */
-export async function checkRecordingMode(
-  supabase: any,
-  userId: string,
-): Promise<{ allowed: boolean; reason?: string }> {
-  const { data } = await supabase
-    .from("user_settings")
-    .select("is_recording_mode")
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  // Default to allowed if the row/column doesn't exist yet.
-  if (!data || data.is_recording_mode !== false) {
-    return { allowed: true };
-  }
-  return {
-    allowed: false,
-    reason: "System is in Retrieval Mode. Switch to Recording Mode in Wiki settings to write new knowledge.",
-  };
-}
-
-// ── Episodic log helpers ───────────────────────────────────────────────────────
-
-/** Append one session to the episodic_log table. */
-export async function logEpisode(
-  supabase: any,
-  userId: string,
-  sessionId: string,
-  summary: string,
-  keyFacts: string[],
-  entryCount: number,
-  wikiId: string | null = null,
-): Promise<void> {
-  await supabase.from("episodic_log").insert({
-    user_id:     userId,
-    session_id:  sessionId,
-    summary:     summary.slice(0, 2000),
-    key_facts:   keyFacts.slice(0, 30),
-    entry_count: entryCount,
-    wiki_id:     wikiId,
-  });
-}
-
 // ── Consolidation queue helpers ────────────────────────────────────────────────
 
 /** PostgREST / Postgres codes meaning "this RPC isn't deployed yet". */
@@ -227,16 +179,6 @@ export async function enqueueEntries(
   return inserted;
 }
 
-/** Enqueue one existing entry for Sleep Cycle processing. */
-export async function enqueueEntry(
-  supabase: any,
-  userId: string,
-  entryId: string,
-  reason: QueueReason,
-): Promise<void> {
-  await enqueueEntries(supabase, userId, [entryId], reason);
-}
-
 /**
  * Read every row of a PostgREST query, page by page. PostgREST caps responses
  * at the project's max-rows (1000 by default) WITHOUT an error, so a plain
@@ -259,21 +201,6 @@ export async function selectAllPages<T = any>(
     if (page.length < pageSize) break;
   }
   return { rows, error: null };
-}
-
-/** Enqueue a not-yet-inserted entry (conflict_staged) with its full data. */
-export async function enqueueConflictStaged(
-  supabase: any,
-  userId: string,
-  pendingData: object,
-): Promise<void> {
-  await supabase.from("consolidation_queue").insert({
-    user_id:      userId,
-    entry_id:     null,    // no DB row yet
-    reason:       "conflict_staged" satisfies QueueReason,
-    priority:     QUEUE_PRIORITY.conflict_staged,
-    pending_data: pendingData,
-  });
 }
 
 /** Mark queue items as processed. */
