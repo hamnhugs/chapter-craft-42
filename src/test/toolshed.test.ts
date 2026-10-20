@@ -72,7 +72,7 @@ describe("the card is retrieval-shaped", () => {
 
   it("states its capabilities in plain language plus what it can never do", () => {
     expect(card.content).toContain("reads chapter text");
-    expect(card.content).toContain("reads your memory entries");
+    expect(card.content).toContain("reads your notes");
     expect(card.content).toContain("cannot reach the network");
     expect(card.content).toContain("cannot write or change anything");
   });
@@ -281,7 +281,7 @@ describe("ranking is relevant, capped, and byte-stable", () => {
   const library: RankableTool[] = [
     tool({ name: "chapter_word_count", description: "Counts words in a chapter.", last_run_at: "2026-08-01T00:00:00Z" }),
     tool({ name: "list_themes", description: "Lists recurring themes across the book.", last_run_at: "2026-08-04T00:00:00Z" }),
-    tool({ name: "memory_dedupe", description: "Finds duplicate memory entries.", last_run_at: "2026-08-03T00:00:00Z" }),
+    tool({ name: "memory_dedupe", description: "Finds duplicate notes.", last_run_at: "2026-08-03T00:00:00Z" }),
     tool({ name: "image_index", description: "Indexes library images by caption.", last_run_at: "2026-08-02T00:00:00Z" }),
     tool({ name: "outline_builder", description: "Builds a chapter outline.", last_run_at: "2026-08-05T00:00:00Z" }),
   ];
@@ -370,7 +370,7 @@ describe("withToolshed", () => {
     expect(withToolshed(["a", "", "b", "a"], "ts")).toEqual(["a", "b", "ts"]);
   });
 
-  it("names the wiki the Foundry actually creates", () => {
+  it("names the notebook the Foundry actually creates", () => {
     expect(TOOLSHED_WIKI_NAME).toBe("Toolshed");
   });
 });

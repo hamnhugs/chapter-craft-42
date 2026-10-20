@@ -142,7 +142,7 @@ const LoadNeuronDialog: React.FC = () => {
       // Deleted neurons cascade out of chains — only pass live members.
       const liveIds = chain.wiki_ids.filter((id) => wikiById.has(id));
       if (liveIds.length === 0) {
-        toast.error(`The neurons in "${chain.name}" have been deleted — continuing with your current neuron.`);
+        toast.error(`The notebooks in "${chain.name}" have been deleted — continuing with your current notebook.`);
         return { kind: "keep" };
       }
       touchChainUsed(chain.id);
@@ -171,11 +171,11 @@ const LoadNeuronDialog: React.FC = () => {
       <DialogContent className="flex flex-col w-[calc(100%-2rem)] max-h-[calc(100dvh-2rem)] gap-3 p-4 rounded-lg sm:max-w-md sm:gap-4 sm:p-6">
         <DialogHeader className="shrink-0 text-left">
           <DialogTitle className="font-display pr-6 leading-snug">
-            Load a neuron alongside {subject}?
+            Load a notebook alongside {subject}?
           </DialogTitle>
           <DialogDescription className="text-xs sm:text-sm">
-            Pick the knowledge neuron — or a saved chain of neurons — Counsel
-            should draw on. Your current neuron is pre-selected — skip to keep it.
+            Pick the notebook — or a saved set of notebooks — Counsel
+            should draw on. Your current notebook is pre-selected — skip to keep it.
           </DialogDescription>
         </DialogHeader>
 
@@ -202,7 +202,7 @@ const LoadNeuronDialog: React.FC = () => {
           {chains.length > 0 && (
             <>
               <div className="px-3 pt-1 pb-0.5 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-                Chains
+                Saved sets
               </div>
               {chains.map((chain) => {
                 const isSel = selected?.kind === "chain" && selected.id === chain.id;
@@ -229,7 +229,7 @@ const LoadNeuronDialog: React.FC = () => {
                           />
                         ))}
                         <span className="text-[10px] text-muted-foreground ml-1">
-                          {chain.wiki_ids.length} neurons load together
+                          {chain.wiki_ids.length} notebooks load together
                         </span>
                       </div>
                     </div>
@@ -244,7 +244,7 @@ const LoadNeuronDialog: React.FC = () => {
                 );
               })}
               <div className="px-3 pt-2 pb-0.5 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-                Neurons
+                Notebooks
               </div>
             </>
           )}
@@ -298,7 +298,7 @@ const LoadNeuronDialog: React.FC = () => {
           })}
           {sorted.length === 0 && (
             <p className="text-sm text-muted-foreground py-6 text-center">
-              No neurons yet — open the book and create one in the BRAIN tab.
+              No notebooks yet — open the book and create one in the Notebooks tab.
             </p>
           )}
         </div>

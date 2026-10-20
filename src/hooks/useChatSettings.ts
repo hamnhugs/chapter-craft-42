@@ -414,11 +414,11 @@ const SETTING_LABEL: Partial<Record<keyof ChatSettings, string>> = {
   utilityModel: "the background model",
   studioTools: "the studio tools setting",
   voiceModel: "the voice model",
-  wikiModel: "the neuron model",
+  wikiModel: "the notes model",
   customSystemPrompt: "your custom instructions",
   autoApproveToolUpdates: "Tool Foundry auto-approval",
   autoCatalogOnUpload: "Auto-catalog on upload",
-  accessAllNeurons: "the neuron access setting",
+  accessAllNeurons: "the notebook access setting",
   maxReplySentences: "the reply-length cap",
   imageModelPrimary: "the image model",
   videoModelPrimary: "the video model",
@@ -717,7 +717,7 @@ export function useChatSettings() {
       selectedModel: embed || unusable ? cur.selectedModel : id,
     });
     if (embed) {
-      toast.success(`Embedding model "${id}" added — select it in Neuron Settings.`);
+      toast.success(`Embedding model "${id}" added — it is used for search, not chat.`);
     } else if (unusable) {
       toast.success(`Model "${id}" added — add your ${providerLabel(idProvider)} key in Settings to chat with it.`);
     } else {

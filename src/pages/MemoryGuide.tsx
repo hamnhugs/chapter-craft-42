@@ -38,10 +38,10 @@ const MemoryGuide: React.FC = () => {
             className="inline-flex items-center gap-2 text-sm font-body font-medium text-primary hover:text-accent transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
-            Back to Neurons
+            Back
           </Link>
           <span className="text-xs uppercase tracking-widest font-bold text-on-surface-variant">
-            Field Guide
+            Guide
           </span>
         </div>
       </header>
@@ -50,14 +50,14 @@ const MemoryGuide: React.FC = () => {
         {/* Hero */}
         <div className="mb-12">
           <span className="px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded text-[10px] font-bold tracking-widest uppercase">
-            How It Works
+            How it works
           </span>
           <h1 className="font-headline font-bold text-5xl md:text-6xl text-primary tracking-tight mt-3 mb-4">
-            The Memory System, Explained
+            How notes work
           </h1>
           <p className="text-on-surface-variant text-lg font-body leading-relaxed">
-            Your neurons aren't just folders of notes — they're a living memory that learns,
-            connects, and tidies itself up over time. Here's how it works, in plain English.
+            Counsel keeps notes as you read and chat. Each note is short, says where it came from,
+            and points back to the page. That's the whole system.
           </p>
         </div>
 
@@ -67,128 +67,99 @@ const MemoryGuide: React.FC = () => {
             The big picture
           </h2>
           <p className="text-on-primary-container/90 font-body leading-relaxed">
-            Think of the system like a <strong>brain with five kinds of memory</strong>. Each kind
-            has its own job. Together, they let the AI remember what you told it, find the right
-            fact at the right moment, and improve quietly in the background — just like sleep
-            cleans up a real brain.
+            There are two things: your <strong>books</strong> and your <strong>notes</strong>. Notes
+            live in <strong>notebooks</strong>, one per subject. The books are the real source; a note
+            is a pointer into them with a sentence about why it matters to you.
           </p>
         </section>
 
-        {/* The five layers */}
-        <h2 className="font-headline font-bold text-3xl text-primary mb-6">The five layers</h2>
+        <h2 className="font-headline font-bold text-3xl text-primary mb-6">The parts</h2>
         <div className="space-y-5 mb-16">
-          <Section icon="desk" title="Working Memory" analogy="Your desk">
+          <Section icon="sticky_note_2" title="Notes" analogy="Margin notes that know their page">
             <p>
-              This is what's <strong>in front of you right now</strong> — the chat you're having,
-              the page you're reading, the neuron you just opened. It's temporary. When you close
-              the tab or switch neurons, the desk gets cleared.
-            </p>
-            <p>You don't manage this layer. It just keeps the current moment ready.</p>
-          </Section>
-
-          <Section icon="auto_stories" title="Episodic Memory" analogy="A diary">
-            <p>
-              Every conversation you have gets a short diary entry: <em>"On Tuesday we talked
-              about X, and the key takeaways were Y and Z."</em>
+              When something worth keeping comes up — or when you say "remember this" — Counsel saves a
+              note. Every note has a <strong>one-line summary</strong> and, when it came from a book, a
+              link to the <strong>exact page</strong>.
             </p>
             <p>
-              This lets the AI <strong>pick up where you left off</strong> — even weeks later — and
-              remember the gist of past chats without re-reading every word.
+              Open any note to see <em>why it's there</em>: who saved it, when, and the passages it
+              points to. Edit it, or Forget it, any time.
             </p>
           </Section>
 
-          <Section icon="hub" title="Semantic Memory" analogy="A filing cabinet with webs between cards">
+          <Section icon="menu_book" title="Notebooks" analogy="One per subject">
             <p>
-              This is the big one. Every fact, person, idea, or concept becomes a{" "}
-              <strong>card</strong> (an "entry"). Cards are linked to other related cards, forming
-              a web — the <strong>memory graph</strong>.
-            </p>
-            <p>
-              When you ask a question, the AI doesn't just find one card — it follows the links
-              to nearby cards too. That's how it gives answers that feel <em>connected</em>
-              instead of disjointed.
+              New notes go into the notebook that's open. Open two or three related notebooks
+              together and Counsel connects ideas across them. Save a combination you use often as a
+              <strong> saved set</strong>.
             </p>
           </Section>
 
-          <Section icon="receipt_long" title="Procedural Memory" analogy="Recipe cards">
+          <Section icon="format_list_bulleted" title="How Counsel uses them" analogy="An index, not a pile">
             <p>
-              A special kind of card for <strong>step-by-step knowledge</strong>: "how to do X",
-              "the process for Y", "the rules of Z."
+              Counsel always sees a one-line list of your notes. It opens a full note only when it
+              needs one, and reads the actual book page before quoting it. That keeps answers quick and
+              lets it cite pages like <em>(Moby-Dick, p. 214)</em> — tap a cited note under a reply to
+              open it.
             </p>
             <p>
-              The AI pulls these out whenever you ask it to <em>do</em> something rather than{" "}
-              <em>recall</em> something.
+              If something you say or read disagrees with one of your notes, Counsel says so and shows
+              you where the earlier note came from.
             </p>
           </Section>
 
-          <Section icon="bedtime" title="Sleep Cycle (Consolidation)" analogy="A night cleanup crew">
+          <Section icon="psychology_alt" title="Daily recall" analogy="Three questions a day">
             <p>
-              In the background, the system runs a "sleep cycle." It looks for{" "}
-              <strong>lonely cards</strong> with no links, <strong>contradictions</strong> between
-              cards, and <strong>duplicates</strong>.
+              Each day, <strong>Daily recall</strong> picks three notes. Answer from memory first, then
+              check. Notes you remember come back less often; ones you miss come back tomorrow. Trying
+              to remember before looking is what makes reading stick.
             </p>
+          </Section>
+
+          <Section icon="auto_fix_high" title="Tidy-up" analogy="Once a day, and undoable">
             <p>
-              It quietly stitches the web together, flags conflicts for you to resolve, and keeps
-              the whole library tidy — so it stays useful as it grows.
+              Once a day the app links related notes and writes summaries for notes that don't have
+              one. You can see each tidy-up and <strong>undo</strong> it from the notebook menu under
+              Recent tidy-ups.
+            </p>
+          </Section>
+
+          <Section icon="visibility_off" title="Off the record" analogy="Read, but don't write">
+            <p>
+              Turn on <strong>Off the record</strong> in Counsel's tools when you don't want anything
+              saved. Counsel can still use the notes you have; it just won't add new ones. Asking it to
+              forget a note still works.
             </p>
           </Section>
         </div>
 
         {/* Glossary */}
         <h2 className="font-headline font-bold text-3xl text-primary mb-2">Words you'll see</h2>
-        <p className="text-on-surface-variant font-body mb-6">
-          Quick translations for the terms that show up in the app.
-        </p>
         <div className="bg-surface-container-low rounded-2xl p-6 md:p-8 border border-outline-variant/10 mb-16">
-          <Term word="Neuron">
-            A themed bucket for your cards. You might have a "Work" neuron, a "Cooking" neuron, and a
-            "Family" neuron — each kept separate so things don't get mixed up.
-          </Term>
-          <Term word="Entry (or card)">
-            A single piece of knowledge. One fact, one concept, one person. The smallest unit the
-            memory works with.
-          </Term>
-          <Term word="Memory graph">
-            The web of links between cards. Two cards that talk about related things get a line
-            drawn between them.
-          </Term>
-          <Term word="Conflict">
-            When two cards say opposite things ("the meeting is Monday" vs. "the meeting is
-            Tuesday"). The system flags these so you can decide which is right.
-          </Term>
-          <Term word="Vibrancy">
-            How "alive" a card is. Cards you use often stay bright and easy to find. Cards no one
-            has touched in a long time fade — but they never disappear.
-          </Term>
-          <Term word="Recording vs. Retrieval Mode">
-            <strong>Recording</strong> means the AI is allowed to add new cards as you chat.{" "}
-            <strong>Retrieval</strong> means it can only read — useful when you want answers
-            without growing the neuron.
-          </Term>
+          <Term word="Note">One saved idea, fact or quote, with a one-line summary and the page it points to.</Term>
+          <Term word="Notebook">A collection of notes on one subject. New notes go to the one that's open.</Term>
+          <Term word="Saved set">A few notebooks you open together in one tap.</Term>
+          <Term word="Daily recall">Three notes a day to answer from memory.</Term>
+          <Term word="Off the record">Counsel reads your notes but saves nothing new.</Term>
         </div>
 
         {/* How to use it */}
-        <h2 className="font-headline font-bold text-3xl text-primary mb-6">How to use it well</h2>
+        <h2 className="font-headline font-bold text-3xl text-primary mb-6">Using it well</h2>
         <ol className="space-y-4 list-decimal list-outside ml-6 text-foreground/90 font-body leading-relaxed mb-16">
           <li>
-            <strong>Pick a neuron before you chat.</strong> Whatever neuron is active is where new
-            cards land. If you're talking about cooking, load your Cooking neuron first.
+            <strong>Open the right notebook.</strong> If you're reading about cooking, open your
+            Cooking notebook so new notes land there.
           </li>
           <li>
-            <strong>Just talk normally.</strong> The AI extracts cards automatically. You don't
-            need to write them yourself.
+            <strong>Just talk and read.</strong> Highlight what matters and chat about it. Say
+            "remember this" for anything you want kept.
           </li>
           <li>
-            <strong>Check the Suggestions tab now and then.</strong> When the system isn't sure
-            where a card belongs, it asks you. A few seconds of cleanup keeps the library sharp.
+            <strong>Do your three a day.</strong> Daily recall takes about a minute.
           </li>
           <li>
-            <strong>Resolve conflicts when they pop up.</strong> Two cards disagreeing? Pick the
-            right one. The system learns from your choice.
-          </li>
-          <li>
-            <strong>Let the sleep cycle do its thing.</strong> You don't have to organize — that's
-            the system's job. Just keep adding knowledge and reviewing the prompts it surfaces.
+            <strong>Fix what's wrong.</strong> If a note is off, tell Counsel — it corrects the note
+            and keeps the old version in the note's history. You can also edit it yourself.
           </li>
         </ol>
 
@@ -198,7 +169,7 @@ const MemoryGuide: React.FC = () => {
             className="inline-flex items-center gap-2 bg-primary-container text-on-primary-container px-6 py-3 rounded-xl font-bold active:scale-95 transition-transform shadow-lg"
           >
             <ArrowLeft className="w-4 h-4" />
-            Back to Neurons
+            Back to the app
           </Link>
         </div>
       </main>

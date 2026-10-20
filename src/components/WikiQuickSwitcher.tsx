@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useSyncExternalStore } from "react";
 import { toast } from "sonner";
-import { Check, Sparkles, Lock, Plus, Minus, Link2, Brain } from "lucide-react";
+import { Check, Sparkles, Lock, Plus, Minus, Link2, Brain, Pencil } from "lucide-react";
 import {
   CommandDialog,
   CommandInput,
@@ -156,7 +156,7 @@ const WikiQuickSwitcher: React.FC = () => {
         } else {
           toast.success(`Loaded "${wiki?.name || "neuron"}" alongside (${next.length}/${MAX_ACTIVE_NEURONS})`);
           if (next.length === 4) {
-            toast.info("More isn't always better — beyond 3 loaded neurons, connections get diluted.", { id: "neuron-dilution-tip" });
+            toast.info("More isn't always better — beyond 3 loaded notebooks, connections get diluted.", { id: "neuron-dilution-tip" });
           }
         }
       } catch (err: any) {
@@ -172,7 +172,7 @@ const WikiQuickSwitcher: React.FC = () => {
       // members against the live wiki list before activating.
       const liveIds = chain.wiki_ids.filter((id) => wikis.some((w) => w.id === id));
       if (liveIds.length === 0) {
-        toast.error(`The neurons in "${chain.name}" have been deleted — edit the chain in the BRAIN tab.`);
+        toast.error(`The notebooks in "${chain.name}" have been deleted — edit the set from its pencil in ⌘K.`);
         return;
       }
       if (liveIds.some((id) => lockedIds.has(id))) {
@@ -183,10 +183,10 @@ const WikiQuickSwitcher: React.FC = () => {
       try {
         await setActiveNeurons(liveIds);
         touchChainUsed(chain.id);
-        toast.success(`Activated chain "${chain.name}" — ${liveIds.length} neuron${liveIds.length === 1 ? "" : "s"} loaded`);
+        toast.success(`Activated saved set "${chain.name}" — ${liveIds.length} notebook${liveIds.length === 1 ? "" : "s"} loaded`);
         setOpen(false);
       } catch (err: any) {
-        toast.error(err.message || "Chain activation failed");
+        toast.error(err.message || "Saved set activation failed");
       }
     },
     [setActiveNeurons, lockedIds, wikis]
@@ -206,15 +206,15 @@ const WikiQuickSwitcher: React.FC = () => {
 
   return (
     <CommandDialog open={open} onOpenChange={setOpen}>
-      <CommandInput placeholder="Switch neuron — type to filter…" />
+      <CommandInput placeholder="Switch notebook — type to filter…" />
       <CommandList>
-        <CommandEmpty>No neurons match.</CommandEmpty>
+        <CommandEmpty>No notebooks match.</CommandEmpty>
         {chains.length > 0 && (
-          <CommandGroup heading="Chains">
+          <CommandGroup heading="Saved sets">
             {chains.map((chain) => (
               <CommandItem
                 key={chain.id}
-                value={`chain ${chain.name} ${chain.id}`}
+                value={`saved set ${chain.name} ${chain.id}`}
                 onSelect={() => handleActivateChain(chain)}
                 className="flex items-center gap-3 py-2.5"
               >
@@ -231,10 +231,25 @@ const WikiQuickSwitcher: React.FC = () => {
                       />
                     ))}
                     <span className="text-[10px] text-muted-foreground ml-1">
-                      {chain.wiki_ids.length} neurons
+                      {chain.wiki_ids.length} notebooks
                     </span>
                   </div>
                 </div>
+                {/* Sets are edited here (and from the notebook's "Save as set"). */}
+                <button
+                  type="button"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setOpen(false);
+                    openChainDialog({ chain });
+                  }}
+                  title={`Edit "${chain.name}"`}
+                  aria-label={`Edit saved set ${chain.name}`}
+                  className="shrink-0 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
               </CommandItem>
             ))}
           </CommandGroup>
@@ -265,7 +280,7 @@ const WikiQuickSwitcher: React.FC = () => {
             ))}
           </CommandGroup>
         )}
-        <CommandGroup heading="Neurons">
+        <CommandGroup heading="Notebooks">
           {sorted.map((wiki) => {
             const isPrimary = wiki.id === activeWikiId;
             const isLoaded = activeWikiIds.includes(wiki.id);
@@ -313,7 +328,7 @@ const WikiQuickSwitcher: React.FC = () => {
                     type="button"
                     onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
                     onClick={(e) => handleToggleInSession(e, wiki.id)}
-                    title={isLoaded ? "Unload from this session" : "Load alongside (keeps your current neuron)"}
+                    title={isLoaded ? "Unload from this session" : "Load alongside (keeps your current notebook)"}
                     aria-label={isLoaded ? `Unload ${wiki.name}` : `Load ${wiki.name} alongside`}
                     className="shrink-0 p-1 rounded-md border border-outline-variant/30 text-muted-foreground hover:text-primary hover:border-primary/50 transition-colors"
                   >
@@ -327,33 +342,33 @@ const WikiQuickSwitcher: React.FC = () => {
         <CommandGroup heading="Navigate">
           {activeWikiIds.length >= 2 && (
             <CommandItem
-              value="save loaded neurons as chain"
+              value="save loaded notebooks as saved set"
               onSelect={() => {
                 setOpen(false);
                 openChainDialog({ prefillIds: activeWikiIds });
               }}
             >
               <Link2 className="w-3.5 h-3.5 mr-2" />
-              Save the {activeWikiIds.length} loaded neurons as a chain…
+              Save these {activeWikiIds.length} notebooks as a set…
             </CommandItem>
           )}
           <CommandItem
-            value="open wiki library wikis page"
+            value="all notebooks list library"
             onSelect={() => {
               setActiveTab("wikis");
               setOpen(false);
             }}
           >
-            Open Neuron Library →
+            All notebooks →
           </CommandItem>
           <CommandItem
-            value="open current wiki entries"
+            value="open current notebook notes"
             onSelect={() => {
               setActiveTab("wiki");
               setOpen(false);
             }}
           >
-            Open active neuron entries →
+            Open this notebook's notes →
           </CommandItem>
         </CommandGroup>
       </CommandList>

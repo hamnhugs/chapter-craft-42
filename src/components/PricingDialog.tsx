@@ -34,18 +34,18 @@ export function openPricing(reason?: string) {
 }
 
 const REASON_COPY: Record<string, string> = {
-  "neuron-limit": "Free accounts include one neuron. Upgrade to grow your whole brain.",
-  "neuron-locked": "This neuron is locked on the free plan. Upgrade to regain access to all of them.",
+  "neuron-limit": "Free accounts include one notebook. Upgrade for a notebook for every subject.",
+  "neuron-locked": "This notebook is locked on the free plan. Upgrade to regain access to all of them.",
   "deep-research": "Deep Research is a Pro feature. Upgrade to unlock it.",
   "auto-structure": "Auto-chapterize is a Pro feature. Upgrade and Bookworm will detect chapters in your books automatically.",
   "figure-extraction": "Extracting figures with the built-in AI is a Pro feature. Upgrade, or add your own OpenRouter key in Settings → AI Models & Keys to use it free.",
-  "all-neurons": "Letting Counsel read all your neurons at once is a Pro feature. Upgrade to unlock it.",
-  "neuron-chains": "Loading several neurons together and saving neuron chains is a Pro feature. Upgrade to unlock it.",
+  "all-neurons": "Letting Counsel read all your notebooks at once is a Pro feature. Upgrade to unlock it.",
+  "neuron-chains": "Loading several notebooks together and saving saved sets is a Pro feature. Upgrade to unlock it.",
   ad: "Tired of ads? Upgrade and they're gone forever.",
 };
 
 const FEATURES: { label: string; free: string | boolean; pro: string | boolean; lifetime: string | boolean }[] = [
-  { label: "Neurons", free: "1", pro: "Unlimited", lifetime: "Unlimited" },
+  { label: "Notebooks", free: "1", pro: "Unlimited", lifetime: "Unlimited" },
   { label: "Deep Research", free: false, pro: true, lifetime: true },
   { label: "Ad-free", free: false, pro: true, lifetime: true },
   { label: "Bring your own API keys", free: true, pro: true, lifetime: true },
@@ -134,7 +134,7 @@ const PricingDialog: React.FC = () => {
         <DialogHeader>
           <DialogTitle className="font-headline text-3xl">Choose your plan</DialogTitle>
           <DialogDescription>
-            {(reason && REASON_COPY[reason]) || "One brain, many neurons. Pick how far you want to take it."}
+            {(reason && REASON_COPY[reason]) || "A notebook for every subject. Pick how far you want to take it."}
           </DialogDescription>
         </DialogHeader>
 
@@ -152,7 +152,7 @@ const PricingDialog: React.FC = () => {
           <div className="rounded-2xl border border-outline-variant/20 bg-surface-container-high p-5 flex flex-col gap-3">
             <div className="text-xs font-bold uppercase tracking-widest text-on-surface-variant">Free</div>
             <div className="font-headline text-3xl text-foreground">$0</div>
-            <p className="text-xs text-on-surface-variant min-h-[32px]">Try Bookworm with one neuron. Ad-supported.</p>
+            <p className="text-xs text-on-surface-variant min-h-[32px]">Try Bookworm with one notebook. Ad-supported.</p>
             <Button variant="outline" disabled className="mt-auto">
               {!isPaid ? "Current plan" : "Free"}
             </Button>
@@ -236,7 +236,7 @@ const PricingDialog: React.FC = () => {
 
         <p className="text-[11px] text-on-surface-variant text-center">
           Payments are processed securely by Stripe. Cancel your subscription anytime — you keep access through the
-          period you paid for, and your neurons are never deleted.
+          period you paid for, and your notebooks are never deleted.
         </p>
       </DialogContent>
     </Dialog>

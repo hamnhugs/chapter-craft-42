@@ -129,7 +129,7 @@ describe("the tools sheet", () => {
   });
 
   it("carries the controls the chip row used to hold", () => {
-    for (const label of ["Neurons", "Books", "Files", "Notes", "Deep Research", "Read Aloud", "Settings"]) {
+    for (const label of ["Notebooks", "Off the record", "Books", "Files", "Voice notes", "Deep Research", "Read Aloud", "Settings"]) {
       expect(SHEET).toContain(`label="${label}"`);
     }
     expect(SHEET).toContain("<PromptSwitcher");

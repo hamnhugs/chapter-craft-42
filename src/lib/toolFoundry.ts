@@ -58,7 +58,7 @@ const LONG_TEXT = "Ils entrèrent dans la salle. ".repeat(120);
 export const CAPABILITY_REGISTRY: CapabilityMeta[] = [
   {
     name: "memory_search",
-    description: "Search the user's loaded neurons (title/content keyword match). Args: { query: string, limit?: number ≤ 20 }. Returns { results: [{ id, title, snippet }] }.",
+    description: "Search the user's loaded notebooks (title/content keyword match). Args: { query: string, limit?: number ≤ 20 }. Returns { results: [{ id, title, snippet }] }.",
     stub: { results: [{ id: "00000000-0000-0000-0000-000000000001", title: "Sample memory", snippet: "A canned fixture memory used during tool verification." }] },
     heldOut: [
       { label: "no matches", value: { results: [] } },
@@ -81,7 +81,7 @@ export const CAPABILITY_REGISTRY: CapabilityMeta[] = [
   },
   {
     name: "memory_get",
-    description: "Fetch one memory entry by id. Args: { entry_id: string }. Returns { id, title, entry_type, content } (content capped at 4000 chars).",
+    description: "Fetch one saved memory card by id. Args: { entry_id: string }. Returns { id, title, entry_type, content } (content capped at 4000 chars).",
     stub: { id: "00000000-0000-0000-0000-000000000001", title: "Sample memory", entry_type: "concept", content: "Fixture content for verification runs." },
     heldOut: [
       { label: "empty entry", value: { id: "00000000-0000-0000-0000-0000000000c1", title: "", entry_type: "note", content: "" } },

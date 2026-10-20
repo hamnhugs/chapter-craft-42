@@ -1,5 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
-import { reindexEmbeddings } from "@/lib/knowledgeApi";
+import { reindexEmbeddings, isOffTheRecord } from "@/lib/knowledgeApi";
 import { getSignedImageUrl } from "@/lib/imageGen";
 import { sanitizeIlike } from "@/lib/sanitize";
 import {
@@ -554,7 +554,7 @@ export async function finalizeSplatJob(opts: {
   // Create the memory neuron once — re-read entry_id first so a concurrent
   // finalizer's neuron isn't duplicated.
   let entryId: string | null = existing.entry_id;
-  if (opts.remember !== false && !entryId) {
+  if (opts.remember !== false && !entryId && !(await isOffTheRecord())) {
     const fresh = await fetchSplatByRequestId(opts.requestId);
     entryId = fresh?.entry_id || null;
     if (!entryId) {

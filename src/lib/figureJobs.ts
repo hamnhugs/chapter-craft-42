@@ -162,13 +162,13 @@ async function runJob(input: JobInput): Promise<void> {
   // model. Zero neurons is a normal state (digestion is gone; only chat
   // extraction writes source_book_id now): the job proceeds and figures
   // simply carry no neuron pairing, just book/page/chapter provenance.
-  patch(bookId, { progress: "Checking this book's neurons…" });
+  patch(bookId, { progress: "Checking this book's notebooks…" });
   const { data: entries, error: entriesErr } = await supabase
     .from("knowledge_entries")
     .select("id, title")
     .eq("source_book_id", bookId)
     .limit(400);
-  if (entriesErr) throw new Error(`Could not load neurons: ${entriesErr.message}`);
+  if (entriesErr) throw new Error(`Could not load notebooks: ${entriesErr.message}`);
   const candidates = (entries || []).map((e: any) => ({ id: e.id as string, title: (e.title as string) || "" }));
 
   // 2. Extract candidates client-side (no AI spend yet).

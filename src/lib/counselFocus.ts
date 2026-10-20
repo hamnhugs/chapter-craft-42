@@ -241,9 +241,9 @@ export function describeLoad(
   }
   if (changed.wikiIds) {
     const list = next.wikiIds.map(names.wiki).join(", ");
-    parts.push(next.wikiIds.length > 1 ? `Loaded neurons: ${list}` : `Switched to neuron "${list}"`);
+    parts.push(next.wikiIds.length > 1 ? `Loaded notebooks: ${list}` : `Switched to notebook "${list}"`);
   } else if (next.wikiIds.length > 0 && (changed.selection || changed.activeBookId)) {
-    parts.push(`Kept neuron "${names.wiki(next.wikiIds[0])}"${next.wikiIds.length > 1 ? ` (+${next.wikiIds.length - 1})` : ""}`);
+    parts.push(`Kept notebook "${names.wiki(next.wikiIds[0])}"${next.wikiIds.length > 1 ? ` (+${next.wikiIds.length - 1})` : ""}`);
   }
   return parts.length > 0 ? parts.join(". ") + "." : "Nothing changed.";
 }

@@ -39,7 +39,7 @@ export function isChainsMigrationMissing(err: unknown): boolean {
 }
 
 export const CHAINS_MIGRATION_MESSAGE =
-  "The neuron-chains database migration hasn't been applied yet — give the deploy a minute and try again.";
+  "Saved sets aren't set up yet — the database migration hasn't been applied. Give the deploy a minute and try again.";
 
 interface ChainRow {
   id: string;
@@ -108,7 +108,7 @@ export async function createChain(input: {
     })
     .select()
     .single();
-  if (error || !data) throw error || new Error("Failed to create chain");
+  if (error || !data) throw error || new Error("Failed to create saved set");
   try {
     await replaceMembers((data as any).id, input.wikiIds);
   } catch (e) {

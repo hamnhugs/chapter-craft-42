@@ -27,15 +27,20 @@ import ReactMarkdown from "react-markdown";
 import { safeUrlTransform, safeMarkdownComponents } from "@/lib/markdownSafety";
 import {
   KnowledgeEntry, MemoryGraphEdge, LintResult, KnowledgeConflict,
-  EpisodicLogEntry, SleepCycleReport, MemoryMode,
+  SleepCycleReport, MemoryMode, SleepRun,
   fetchKnowledgeEntries, fetchKnowledgeEntriesForSet,
   fetchMemoryGraph, fetchMemoryGraphForSet,
   deleteKnowledgeEntry, updateKnowledgeEntry,
   runLint,
-  fetchConflicts, fetchConflictsForSet, updateConflictStatus, reindexEmbeddings,
-  fetchEpisodicLog, fetchEpisodicLogForSet, getMemoryMode, setMemoryMode, triggerSleepCycle, fetchDueReviews,
-  fetchConsolidationQueue, fetchConsolidationQueueForSet, ConsolidationQueueItem,
+  fetchConflicts, fetchConflictsForSet, updateConflictStatus,
+  getMemoryMode, setMemoryMode, triggerSleepCycle, fetchDueReviews,
+  fetchSleepRuns, undoSleepRun,
 } from "@/lib/knowledgeApi";
+import { parseLocators } from "@/lib/cardLocators";
+import { fallbackHook } from "@/lib/notesIndex";
+import { openPassage, OPEN_NOTE_EVENT, OPEN_NOTE_PENDING_KEY } from "@/lib/openPassage";
+import { supabase } from "@/integrations/supabase/client";
+import { ENTRY_LIST_COLUMNS } from "@/lib/knowledgeApi";
 import { Loader2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import GeneratedImage from "@/components/GeneratedImage";
@@ -43,19 +48,20 @@ import EntryLocatorPanel from "@/components/EntryLocatorPanel";
 import { fetchImagesForEntries, deleteImageAttachment, type ImageAttachmentRow } from "@/lib/imageGen";
 import { requestSettingsSection } from "@/lib/settingsNav";
 import { useReflexEnabled } from "@/lib/reflex";
-import MemoryReview from "@/components/MemoryReview";
+import DailyRecall from "@/components/DailyRecall";
+import { dailyRecallDoneToday, locatorBookId, DAILY_RECALL_SIZE } from "@/lib/dailyRecall";
 
-type WikiView = "entries" | "detail" | "lint" | "conflicts" | "episodic" | "queue";
+type WikiView = "entries" | "detail" | "lint" | "conflicts" | "runs";
 type EntriesView = "map" | "list";
 // Scope mirrors the app's real model: the loaded neuron set (what Counsel
 // reads), optionally focused to one loaded neuron, or "everything ever".
 type ScopeKind = "loaded" | "all";
 
-// Lazy: shares the three.js chunk with the Vault/BRAIN graphs; only fetched
-// when the mind-map view renders (it's the default entries view).
+// Lazy: shares the three.js chunk with the Vault graph; only fetched when
+// someone switches the notes to the map view (the list is the default).
 const EntryNeuronGraph = React.lazy(() => import("@/components/EntryNeuronGraph"));
 
-const ENTRIES_VIEW_KEY = "neuron_entries_view";
+const ENTRIES_VIEW_KEY = "notebook_notes_view";
 const healthCacheKey = (targetId: string | null) => `neuron_health:${targetId || "all"}`;
 
 const ENTRY_TYPE_FILTERS: { value: string; label: string }[] = [
@@ -68,18 +74,11 @@ const ENTRY_TYPE_FILTERS: { value: string; label: string }[] = [
   { value: "summary", label: "Summaries" },
 ];
 
-const QUEUE_REASON_LABELS: Record<ConsolidationQueueItem["reason"], string> = {
-  conflict_staged: "Flagged conflict",
-  orphan: "Waiting to be connected",
-  new_entry: "Waiting to be filed",
-};
-
 const VIEW_TITLES: Record<Exclude<WikiView, "entries">, string> = {
-  detail: "Entry",
-  lint: "Health report",
+  detail: "Note",
+  lint: "Health check",
   conflicts: "Conflicts",
-  episodic: "Chat history",
-  queue: "Pending tidy-ups",
+  runs: "Recent tidy-ups",
 };
 
 interface ConfirmRequest {
@@ -91,7 +90,7 @@ interface ConfirmRequest {
 }
 
 const WikiPanel: React.FC = () => {
-  const { books, activeWikiId, activeWikiIds, activeWikis, wikis, setActiveTab } = useApp();
+  const { books, activeWikiId, activeWikiIds, activeWikis, wikis, setActiveTab, setActiveBook } = useApp();
   const [entries, setEntries] = useState<KnowledgeEntry[]>([]);
   const [wikiByEntry, setWikiByEntry] = useState<Record<string, string>>({});
   const [graph, setGraph] = useState<MemoryGraphEdge[]>([]);
@@ -104,17 +103,16 @@ const WikiPanel: React.FC = () => {
   const [editTitle, setEditTitle] = useState("");
   const [editContent, setEditContent] = useState("");
   const [editTags, setEditTags] = useState("");
+  const [editHook, setEditHook] = useState("");
   const [entryImages, setEntryImages] = useState<ImageAttachmentRow[]>([]);
   const [lintResult, setLintResult] = useState<LintResult | null>(null);
   const [lintLoading, setLintLoading] = useState(false);
   const [conflicts, setConflicts] = useState<KnowledgeConflict[]>([]);
-  const [reindexing, setReindexing] = useState(false);
   const [memoryMode, setMemoryModeState] = useState<MemoryMode>("recording");
   const [memoryModeLoading, setMemoryModeLoading] = useState(false);
   const [sleepCycleRunning, setSleepCycleRunning] = useState(false);
   const [sleepCycleReport, setSleepCycleReport] = useState<SleepCycleReport | null>(null);
-  const [episodicLog, setEpisodicLog] = useState<EpisodicLogEntry[]>([]);
-  const [queueItems, setQueueItems] = useState<ConsolidationQueueItem[]>([]);
+  const [sleepRuns, setSleepRuns] = useState<SleepRun[]>([]);
   const [confirmRequest, setConfirmRequest] = useState<ConfirmRequest | null>(null);
   const [healthScore, setHealthScore] = useState<number | null>(null);
   // The neuron the visible lint report was actually run against — kept with
@@ -134,11 +132,11 @@ const WikiPanel: React.FC = () => {
   // can't revert the chip to a stale server reading.
   const modeVersionRef = useRef(0);
 
-  // Entries render as a neuron mind map by default; list stays one tap away.
-  const [entriesView, setEntriesView] = useState<EntriesView>(() =>
-    localStorage.getItem(ENTRIES_VIEW_KEY) === "list" ? "list" : "map",
-  );
-  useEffect(() => { localStorage.setItem(ENTRIES_VIEW_KEY, entriesView); }, [entriesView]);
+  // Notes render as a list; the map is one tap away for people who like it.
+  const [entriesView, setEntriesView] = useState<EntriesView>(() => {
+    try { return localStorage.getItem(ENTRIES_VIEW_KEY) === "map" ? "map" : "list"; } catch { return "list"; }
+  });
+  useEffect(() => { try { localStorage.setItem(ENTRIES_VIEW_KEY, entriesView); } catch { /* cosmetic */ } }, [entriesView]);
 
   const activeWiki = wikis.find((w) => w.id === activeWikiId) || null;
   const loadedIds = useMemo(
@@ -174,8 +172,8 @@ const WikiPanel: React.FC = () => {
   // Named from the id (not the scope kind) so label and target can't disagree.
   const maintenanceTargetName =
     maintenanceTargetId === null
-      ? "all neurons"
-      : (focusedWiki?.name || activeWiki?.name || "this neuron");
+      ? "all notebooks"
+      : (focusedWiki?.name || activeWiki?.name || "this notebook");
   const maintenanceTargetRef = useRef({ id: maintenanceTargetId, name: maintenanceTargetName });
   maintenanceTargetRef.current = { id: maintenanceTargetId, name: maintenanceTargetName };
 
@@ -202,7 +200,7 @@ const WikiPanel: React.FC = () => {
             : fetchKnowledgeEntriesForSet(ids)
           : fetchKnowledgeEntries(null).then((es) => ({
               // Everything scope: attribute entries via their own wiki_id so
-              // "which neuron is this in?" is answerable here too.
+              // "which notebook is this in?" is answerable here too.
               entries: es,
               wikiByEntry: Object.fromEntries(
                 es.flatMap((e) => ((e as any).wiki_id ? [[e.id, (e as any).wiki_id as string]] : [])),
@@ -226,12 +224,12 @@ const WikiPanel: React.FC = () => {
       if (modeV === modeVersionRef.current) setMemoryModeState(mode);
       if (entriesRes.failedWikiIds.length > 0) {
         toast.warning(
-          `Couldn't load ${entriesRes.failedWikiIds.length} of your loaded neurons — showing the rest.`,
+          `Couldn't load ${entriesRes.failedWikiIds.length} of your open notebooks — showing the rest.`,
           { id: "neuron-partial-load" },
         );
       }
     } catch (err: any) {
-      if (reqId === requestIdRef.current) toast.error(err.message || "Failed to load knowledge base");
+      if (reqId === requestIdRef.current) toast.error(err.message || "Couldn't load your notes");
     } finally {
       if (reqId === requestIdRef.current) setLoading(false);
     }
@@ -282,7 +280,7 @@ const WikiPanel: React.FC = () => {
       if (editingRef.current) {
         setConfirmRequest({
           title: "Discard your unsaved edit?",
-          description: "You have an entry edit open. Reviewing conflicts now will discard the unsaved changes.",
+          description: "You have a note edit open. Reviewing conflicts now will discard the unsaved changes.",
           confirmLabel: "Discard and review",
           destructive: true,
           onConfirm: goToConflicts,
@@ -303,6 +301,34 @@ const WikiPanel: React.FC = () => {
     return () => window.removeEventListener("open-conflicts", handler);
   }, []);
 
+  // "Used N notes" under a reply opens that note here (lib/openPassage.ts).
+  // Fetched by id, so it opens even when its notebook isn't the open one.
+  useEffect(() => {
+    const open = async (entryId: string) => {
+      try { sessionStorage.removeItem(OPEN_NOTE_PENDING_KEY); } catch { /* private mode */ }
+      const { data, error } = await supabase
+        .from("knowledge_entries")
+        .select(ENTRY_LIST_COLUMNS as any)
+        .eq("id", entryId)
+        .maybeSingle();
+      if (error || !data) { toast.error("That note no longer exists."); return; }
+      setSelectedEntry(data as unknown as KnowledgeEntry);
+      setEditing(false);
+      setReturnView(null);
+      setView("detail");
+    };
+    const onOpen = (e: Event) => {
+      const id = (e as CustomEvent<{ entryId: string }>).detail?.entryId;
+      if (id) void open(id);
+    };
+    try {
+      const pending = sessionStorage.getItem(OPEN_NOTE_PENDING_KEY);
+      if (pending) void open(pending);
+    } catch { /* private mode */ }
+    window.addEventListener(OPEN_NOTE_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_NOTE_EVENT, onOpen);
+  }, []);
+
   // Scoped sub-views hold a snapshot fetched at click time; if the loaded set
   // or scope changes underneath them, fall back to entries rather than
   // labeling stale data with the new scope's identity.
@@ -311,7 +337,7 @@ const WikiPanel: React.FC = () => {
   useEffect(() => {
     if (prevScopeSigRef.current === scopeSignature) return;
     prevScopeSigRef.current = scopeSignature;
-    setView((v) => (v === "episodic" || v === "queue" ? "entries" : v));
+    setView((v) => (v === "runs" ? "entries" : v));
   }, [scopeSignature]);
 
   const applyMemoryMode = async (next: MemoryMode) => {
@@ -322,29 +348,20 @@ const WikiPanel: React.FC = () => {
       setMemoryModeState(next);
       toast.success(
         next === "recording"
-          ? "Memory on — Counsel saves new knowledge as you chat."
-          : "Memory paused for all neurons — Counsel can read, but won't save anything new.",
+          ? "Saving notes again — Counsel keeps notes as you chat."
+          : "Off the record — Counsel can still read your notes, but won't save new ones.",
       );
     } catch (err: any) {
-      toast.error(err.message || "Failed to switch mode");
+      toast.error(err.message || "Couldn't change that setting");
     } finally {
       setMemoryModeLoading(false);
     }
   };
 
-  // Pausing is an account-wide mutation, so it gets the same named
-  // confirmation as other wide-scope actions; resuming stays one tap.
+  // Off the record is one tap either way, and it is never hidden: the pill
+  // below and Counsel's header both show it while it's on.
   const handleToggleMemoryMode = () => {
-    if (memoryMode === "recording") {
-      setConfirmRequest({
-        title: "Pause memory for all neurons?",
-        description: `Counsel will stop saving new knowledge from your chats — across every neuron, not just "${activeWiki?.name || "your primary"}". You can resume anytime.`,
-        confirmLabel: "Pause saving",
-        onConfirm: () => void applyMemoryMode("retrieval"),
-      });
-    } else {
-      void applyMemoryMode("recording");
-    }
+    void applyMemoryMode(memoryMode === "recording" ? "retrieval" : "recording");
   };
 
   const runSleepCycle = async () => {
@@ -353,21 +370,19 @@ const WikiPanel: React.FC = () => {
     try {
       const report = await triggerSleepCycle(maintenanceTargetId);
       setSleepCycleReport(report);
-      // Say what it actually did across all three real phases: ACT-R re-ranking
-      // (strengthen/fade), edge consolidation (connect), and orphan pruning.
+      // Say what it actually changed — the two things a person would notice.
       const p = report.phases;
       const bits = [
-        p.rerank.updated > 0 ? `refreshed ${p.rerank.updated} ${p.rerank.updated === 1 ? "memory" : "memories"}` : null,
-        p.consolidate.edges_created > 0 ? `connected ${p.consolidate.edges_created} ${p.consolidate.edges_created === 1 ? "idea" : "ideas"}` : null,
-        p.semanticize && p.semanticize.created > 0 ? `distilled ${p.semanticize.created} ${p.semanticize.created === 1 ? "insight" : "insights"}` : null,
-        p.prune.orphans.length > 0 ? `flagged ${p.prune.orphans.length} for review` : null,
+        p.consolidate.edges_created > 0 ? `linked ${p.consolidate.edges_created} related ${p.consolidate.edges_created === 1 ? "note" : "notes"}` : null,
+        p.hooks && p.hooks.written > 0 ? `wrote ${p.hooks.written} one-line ${p.hooks.written === 1 ? "summary" : "summaries"}` : null,
       ].filter(Boolean);
       toast.success(
-        `Consolidated ${maintenanceTargetName}${bits.length ? " — " + bits.join(", ") : " — nothing new to tidy"}`,
+        `Tidied ${maintenanceTargetName}${bits.length ? " — " + bits.join(", ") : " — nothing needed tidying"}`,
+        report.run_id ? { action: { label: "Undo", onClick: () => void handleUndoRun(report.run_id!) } } : undefined,
       );
       await loadData();
     } catch (err: any) {
-      toast.error(err.message || "Consolidation failed");
+      toast.error(err.message || "Tidy-up failed");
     } finally {
       setSleepCycleRunning(false);
     }
@@ -376,10 +391,10 @@ const WikiPanel: React.FC = () => {
   const handleSleepCycle = () => {
     if (maintenanceTargetId === null) {
       setConfirmRequest({
-        title: "Consolidate every neuron?",
+        title: "Tidy every notebook?",
         description:
-          "You're scoped to Everything, so this connects and tidies entries across all your neurons at once. It writes changes and can take a while.",
-        confirmLabel: "Consolidate all",
+          "You're looking at Everything, so this links and tidies notes across all your notebooks at once. It can take a while, and you can undo it afterwards.",
+        confirmLabel: "Tidy all",
         onConfirm: runSleepCycle,
       });
     } else {
@@ -387,33 +402,26 @@ const WikiPanel: React.FC = () => {
     }
   };
 
-  const handleLoadEpisodic = async () => {
+  const handleLoadRuns = async () => {
     try {
-      const log = scopeIds
-        ? scopeIds.length === 1
-          ? await fetchEpisodicLog(30, scopeIds[0])
-          : await fetchEpisodicLogForSet(scopeIds, 30)
-        : await fetchEpisodicLog(30, null);
-      setEpisodicLog(log);
-      setView("episodic");
+      setSleepRuns(await fetchSleepRuns(10));
+      setView("runs");
     } catch (err: any) {
-      toast.error(err.message || "Failed to load chat history");
+      toast.error(err.message || "Couldn't load recent tidy-ups");
     }
   };
 
-  const handleLoadQueue = async () => {
+  async function handleUndoRun(runId: string) {
     try {
-      const items = scopeIds
-        ? scopeIds.length === 1
-          ? await fetchConsolidationQueue(false, scopeIds[0])
-          : await fetchConsolidationQueueForSet(scopeIds, false)
-        : await fetchConsolidationQueue(false, null);
-      setQueueItems(items);
-      setView("queue");
+      const ok = await undoSleepRun(runId);
+      if (!ok) { toast.error("That tidy-up was already undone."); return; }
+      toast.success("Tidy-up undone");
+      setSleepRuns((prev) => prev.map((r) => (r.id === runId ? { ...r, undone_at: new Date().toISOString() } : r)));
+      await loadData();
     } catch (err: any) {
-      toast.error(err.message || "Failed to load pending tidy-ups");
+      toast.error(err.message || "Undo failed");
     }
-  };
+  }
 
   // Memoized: the mind map keys its graphData on this array's identity, so an
   // unstable reference would tear down and re-layout the whole 3D scene on
@@ -426,25 +434,6 @@ const WikiPanel: React.FC = () => {
     }
     return true;
   }), [entries, filterType, searchQuery]);
-
-  // Reveal the ACT-R vibrancy the memory engine already tracks. The mind map
-  // must keep filteredEntries' stable identity (see above), so only the LIST is
-  // re-sorted by strength when the user asks.
-  const [sortByStrength, setSortByStrength] = useState<null | "fading" | "core">(null);
-  const sortedEntries = useMemo(() => {
-    if (!sortByStrength) return filteredEntries;
-    const dir = sortByStrength === "fading" ? 1 : -1;
-    return [...filteredEntries].sort((a, b) => dir * ((a.vibrancy ?? 1) - (b.vibrancy ?? 1)));
-  }, [filteredEntries, sortByStrength]);
-  const vitality = useMemo(() => {
-    let core = 0, fading = 0;
-    for (const e of filteredEntries) {
-      const v = e.vibrancy ?? 1;
-      if (v >= 0.7) core++;
-      else if (v < 0.35) fading++;
-    }
-    return { core, fading };
-  }, [filteredEntries]);
 
   const newThisWeek = useMemo(() => {
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
@@ -502,17 +491,17 @@ const WikiPanel: React.FC = () => {
       await deleteKnowledgeEntry(id);
       setEntries((prev) => prev.filter((e) => e.id !== id));
       if (selectedEntry?.id === id) { setSelectedEntry(null); setView("entries"); }
-      toast.success("Entry deleted");
+      toast.success("Note forgotten");
     } catch (err: any) { toast.error(err.message); }
   };
 
-  // Every entry deletion goes through a confirmation that names its target —
-  // entries are the user's core asset and deletes here are permanent.
+  // Every forget goes through a confirmation that names its target —
+  // notes are the user's core asset and deletes here are permanent.
   const requestDeleteEntry = (entry: KnowledgeEntry) => {
     setConfirmRequest({
-      title: `Delete "${entry.title}"?`,
-      description: "This entry will be permanently removed from your neuron. This can't be undone.",
-      confirmLabel: "Delete entry",
+      title: `Forget "${entry.title}"?`,
+      description: "Counsel will no longer have this note. This can't be undone.",
+      confirmLabel: "Forget note",
       destructive: true,
       onConfirm: () => void handleDelete(entry.id),
     });
@@ -540,11 +529,12 @@ const WikiPanel: React.FC = () => {
     if (!selectedEntry) return;
     try {
       const tags = editTags.split(",").map((t) => t.trim()).filter(Boolean);
-      await updateKnowledgeEntry(selectedEntry.id, { title: editTitle, content: editContent, tags });
-      setEntries((prev) => prev.map((e) => e.id === selectedEntry.id ? { ...e, title: editTitle, content: editContent, tags } : e));
-      setSelectedEntry((prev) => prev ? { ...prev, title: editTitle, content: editContent, tags } : null);
+      const hook = editHook.replace(/\s+/g, " ").trim().slice(0, 160) || null;
+      await updateKnowledgeEntry(selectedEntry.id, { title: editTitle, content: editContent, tags, hook });
+      setEntries((prev) => prev.map((e) => e.id === selectedEntry.id ? { ...e, title: editTitle, content: editContent, tags, hook } : e));
+      setSelectedEntry((prev) => prev ? { ...prev, title: editTitle, content: editContent, tags, hook } : null);
       setEditing(false);
-      toast.success("Entry updated");
+      toast.success("Note saved");
     } catch (err: any) { toast.error(err.message); }
   };
 
@@ -570,43 +560,13 @@ const WikiPanel: React.FC = () => {
   const handleHealthCheck = () => {
     if (maintenanceTargetId === null) {
       setConfirmRequest({
-        title: "Check every neuron?",
-        description: "You're scoped to Everything, so this scans all your neurons at once and can take a while.",
+        title: "Check every notebook?",
+        description: "You're looking at Everything, so this checks all your notebooks at once and can take a while.",
         confirmLabel: "Run check",
         onConfirm: runHealthCheck,
       });
     } else {
       void runHealthCheck();
-    }
-  };
-
-  const runReindex = async () => {
-    setReindexing(true);
-    try {
-      const res = await reindexEmbeddings(true, maintenanceTargetId);
-      if (!res || res.total === 0) {
-        toast.success("Search is already up to date.");
-      } else if (res.updated === 0 && res.failed > 0) {
-        toast.error(`Couldn't rebuild search — the embedding service is unavailable (${res.failed} entries).`);
-      } else if (res.failed > 0) {
-        toast.warning(`Search rebuilt for ${res.updated} of ${res.total} entries · ${res.failed} failed.`);
-      } else {
-        toast.success(`Search rebuilt — ${res.updated} of ${res.total} entries refreshed.`);
-      }
-    } catch (err: any) { toast.error(err.message || "Search rebuild failed"); }
-    finally { setReindexing(false); }
-  };
-
-  const handleReindex = () => {
-    if (maintenanceTargetId === null) {
-      setConfirmRequest({
-        title: "Rebuild search for every neuron?",
-        description: "You're scoped to Everything, so this refreshes search embeddings across all your neurons and can take a while.",
-        confirmLabel: "Rebuild all",
-        onConfirm: runReindex,
-      });
-    } else {
-      void runReindex();
     }
   };
 
@@ -623,7 +583,7 @@ const WikiPanel: React.FC = () => {
       await updateConflictStatus(conflictId, "resolved");
       setEntries((prev) => prev.filter((e) => e.id !== deleteEntryId));
       setConflicts((prev) => prev.map((c) => c.id === conflictId ? { ...c, status: "resolved" } : c));
-      toast.success("Conflict resolved — entry deleted");
+      toast.success("Conflict resolved — note deleted");
     } catch (err: any) { toast.error(err.message); }
   };
 
@@ -650,11 +610,13 @@ const WikiPanel: React.FC = () => {
     return s;
   }, [conflicts]);
 
-  // Spaced retrieval-practice: how many memories are due for review right now.
+  // Daily recall: three notes a day (DailyRecall.tsx).
   const [reviewOpen, setReviewOpen] = useState(false);
   const [dueCount, setDueCount] = useState(0);
+  const [recallDone, setRecallDone] = useState(dailyRecallDoneToday);
   const refreshDueCount = useCallback(() => {
-    fetchDueReviews(maintenanceTargetId, 50).then((r) => setDueCount(r.length)).catch(() => setDueCount(0));
+    setRecallDone(dailyRecallDoneToday());
+    fetchDueReviews(maintenanceTargetId, DAILY_RECALL_SIZE).then((r) => setDueCount(r.length)).catch(() => setDueCount(0));
   }, [maintenanceTargetId]);
   useEffect(() => { refreshDueCount(); }, [refreshDueCount, refreshNonce]);
 
@@ -671,6 +633,7 @@ const WikiPanel: React.FC = () => {
     setEditTitle(selectedEntry.title);
     setEditContent(selectedEntry.content);
     setEditTags(selectedEntry.tags.join(", "));
+    setEditHook(selectedEntry.hook || "");
     setEditing(true);
   };
 
@@ -689,15 +652,15 @@ const WikiPanel: React.FC = () => {
   };
 
   const titleName = scopeKind === "all"
-    ? "All neurons"
-    : (focusedWiki?.name || activeWiki?.name || "Knowledge Neuron");
+    ? "All notebooks"
+    : (focusedWiki?.name || activeWiki?.name || "Notebook");
   const titleColor = scopeKind === "all" ? null : (focusedWiki?.cover_color || activeWiki?.cover_color || "#7C3AED");
-  // Scoped to the neuron being displayed — a focused neuron with no
+  // Scoped to the notebook being displayed — a focused notebook with no
   // description must not borrow the primary's.
   const description = scopeKind === "all"
     ? null
     : ((focusId ? focusedWiki?.description : activeWiki?.description)?.trim() || null);
-  const primaryName = activeWiki?.name || "your neuron";
+  const primaryName = activeWiki?.name || "your notebook";
   const healthTone = healthScore == null ? null : healthScore >= 80 ? "good" : healthScore >= 50 ? "warn" : "bad";
 
   const lintFindEntries = (titles: string[] | undefined) =>
@@ -719,6 +682,13 @@ const WikiPanel: React.FC = () => {
           ? "grid grid-cols-1 md:grid-cols-[1.618fr_1fr] items-start gap-4 md:gap-6 mb-4"
           : "mb-4"}>
           <div className="min-w-0 space-y-1">
+            <button
+              onClick={() => setActiveTab("wikis")}
+              className="inline-flex items-center gap-1 text-xs font-semibold text-on-surface-variant hover:text-primary transition-colors"
+            >
+              <span className="material-symbols-outlined text-sm" aria-hidden>arrow_back</span>
+              All notebooks
+            </button>
             <div className="flex items-center gap-3 min-w-0">
               {titleColor && (
                 <span
@@ -732,12 +702,12 @@ const WikiPanel: React.FC = () => {
               </h2>
             </div>
             <p className="text-xs text-on-surface-variant">
-              {entries.length} {entries.length === 1 ? "entry" : "entries"}
+              {entries.length} {entries.length === 1 ? "note" : "notes"}
               {newThisWeek > 0 && (
                 <span className="text-primary font-semibold"> · +{newThisWeek} this week</span>
               )}
               {scopeKind === "loaded" && loadedWikis.length > 1 && !focusId && (
-                <span> · across {loadedWikis.length} loaded neurons</span>
+                <span> · across {loadedWikis.length} open notebooks</span>
               )}
             </p>
             {description && view === "entries" && (
@@ -747,46 +717,15 @@ const WikiPanel: React.FC = () => {
 
           {view === "entries" && (
             <div className="flex items-center md:justify-end gap-2 flex-wrap">
-              {/* Health — informational status, the tab's one accent-colored control. */}
+              {/* Daily recall — the tab's one accent-colored control. */}
               <button
-                onClick={handleHealthCheck}
-                disabled={lintLoading || targetEntryCount === 0}
-                title={`Knowledge health — ${maintenanceTargetName}. Click to run a fresh check.`}
-                className="flex items-center gap-2 pl-1.5 pr-4 py-1.5 rounded-full bg-primary-container text-on-primary-container text-sm font-bold active:scale-95 transition-transform disabled:opacity-50"
+                onClick={() => setReviewOpen(true)}
+                disabled={entries.length === 0}
+                title="Three notes a day: answer first, then check against the note and its page."
+                className="flex items-center gap-2 pl-2.5 pr-4 py-1.5 rounded-full bg-primary-container text-on-primary-container text-sm font-bold active:scale-95 transition-transform disabled:opacity-50"
               >
-                {lintLoading ? (
-                  <Loader2 className="w-6 h-6 animate-spin p-1" aria-hidden />
-                ) : healthScore != null ? (
-                  <span
-                    aria-hidden
-                    className="relative inline-flex w-6 h-6 rounded-full items-center justify-center"
-                    style={{
-                      background: `conic-gradient(${
-                        healthTone === "good" ? "hsl(var(--primary))" : healthTone === "warn" ? "#f59e0b" : "hsl(var(--destructive))"
-                      } ${healthScore * 3.6}deg, hsl(var(--surface-container-highest)) 0deg)`,
-                    }}
-                  >
-                    <span className="w-[18px] h-[18px] rounded-full bg-surface-container-high" />
-                  </span>
-                ) : (
-                  <span className="material-symbols-outlined text-xl p-0.5" aria-hidden>health_and_safety</span>
-                )}
-                <span className="truncate max-w-[240px]">
-                  {lintLoading
-                    ? "Checking…"
-                    : healthScore == null
-                      ? "Health check"
-                      : (healthTone === "good"
-                          ? `Healthy · ${healthScore}`
-                          : healthTone === "warn"
-                            ? `Needs care · ${healthScore}`
-                            : `Unwell · ${healthScore}`) +
-                        // The score belongs to ONE neuron; say which when the
-                        // header stats above show a multi-neuron union.
-                        (scopeKind === "loaded" && loadedWikis.length > 1 && !focusId
-                          ? ` — ${activeWiki?.name ?? "primary"}`
-                          : "")}
-                </span>
+                <span className="material-symbols-outlined text-xl" aria-hidden>{recallDone ? "task_alt" : "psychology_alt"}</span>
+                <span>{recallDone ? "Recall done today" : dueCount > 0 ? `Daily recall · ${dueCount}` : "Daily recall"}</span>
               </button>
 
               {/* Conflicts are status: visible only when something needs you. */}
@@ -800,12 +739,12 @@ const WikiPanel: React.FC = () => {
                 </button>
               )}
 
-              {/* Everything rare lives in one plain-language care menu. */}
+              {/* Everything rare lives in one plain-language menu. */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button
-                    aria-label="Neuron care menu"
-                    title="Neuron care"
+                    aria-label="Notebook menu"
+                    title="More"
                     className="p-2 rounded-full bg-surface-container-high hover:bg-surface-container-highest transition-colors"
                   >
                     <span className="material-symbols-outlined block" aria-hidden>more_horiz</span>
@@ -813,43 +752,27 @@ const WikiPanel: React.FC = () => {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-72">
                   <DropdownMenuLabel className="text-xs text-on-surface-variant font-normal">
-                    Care · {maintenanceTargetName}
+                    {maintenanceTargetName}
                   </DropdownMenuLabel>
                   <DropdownMenuItem onClick={handleSleepCycle} disabled={sleepCycleRunning || targetEntryCount === 0}>
-                    <span className="material-symbols-outlined text-base mr-1" aria-hidden>bedtime</span>
+                    <span className="material-symbols-outlined text-base mr-1" aria-hidden>auto_fix_high</span>
                     <span className="flex flex-col">
-                      <span>Consolidate knowledge</span>
-                      <span className="text-xs text-on-surface-variant">Connect &amp; tidy entries (Sleep Cycle — auto-runs daily while you use the app)</span>
+                      <span>Tidy up now</span>
+                      <span className="text-xs text-on-surface-variant">Links related notes and writes missing one-line summaries. Also runs by itself once a day.</span>
                     </span>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setReviewOpen(true)}>
-                    <span className="material-symbols-outlined text-base mr-1" aria-hidden>fitness_center</span>
-                    <span className="flex flex-col">
-                      <span>Review memories{dueCount > 0 ? ` (${dueCount})` : ""}</span>
-                      <span className="text-xs text-on-surface-variant">Active recall for memories starting to fade (spaced practice)</span>
-                    </span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleReindex} disabled={reindexing || (scopeKind === "loaded" && !maintenanceTargetId)}>
-                    <span className="material-symbols-outlined text-base mr-1" aria-hidden>memory</span>
-                    <span className="flex flex-col">
-                      <span>Rebuild search</span>
-                      <span className="text-xs text-on-surface-variant">Refresh the index behind semantic search</span>
-                    </span>
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuLabel className="text-xs text-on-surface-variant font-normal">Look around</DropdownMenuLabel>
-                  <DropdownMenuItem onClick={handleLoadEpisodic}>
+                  <DropdownMenuItem onClick={handleLoadRuns}>
                     <span className="material-symbols-outlined text-base mr-1" aria-hidden>history</span>
                     <span className="flex flex-col">
-                      <span>Chat history</span>
-                      <span className="text-xs text-on-surface-variant">Summaries of what Counsel remembers</span>
+                      <span>Recent tidy-ups</span>
+                      <span className="text-xs text-on-surface-variant">See what changed, and undo it</span>
                     </span>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleLoadQueue}>
-                    <span className="material-symbols-outlined text-base mr-1" aria-hidden>pending_actions</span>
+                  <DropdownMenuItem onClick={handleHealthCheck} disabled={lintLoading || targetEntryCount === 0}>
+                    <span className="material-symbols-outlined text-base mr-1" aria-hidden>health_and_safety</span>
                     <span className="flex flex-col">
-                      <span>Pending tidy-ups</span>
-                      <span className="text-xs text-on-surface-variant">Entries waiting for the next consolidation</span>
+                      <span>Health check{healthScore != null ? ` · last ${healthScore}/100` : ""}</span>
+                      <span className="text-xs text-on-surface-variant">Finds duplicates, gaps and notes that disagree</span>
                     </span>
                   </DropdownMenuItem>
                   {openConflictsCount === 0 && conflicts.length > 0 && (
@@ -864,17 +787,13 @@ const WikiPanel: React.FC = () => {
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={loadData} disabled={loading}>
                     <span className="material-symbols-outlined text-base mr-1" aria-hidden>refresh</span>
-                    Refresh data
+                    Refresh
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
-                    <Link to="/wiki-controls-guide">
+                    <Link to="/memory-guide">
                       <span className="material-symbols-outlined text-base mr-1" aria-hidden>help</span>
-                      What do these controls do?
+                      How notes work
                     </Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => { requestSettingsSection("memory"); setActiveTab("settings"); }}>
-                    <span className="material-symbols-outlined text-base mr-1" aria-hidden>settings</span>
-                    Neuron settings
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -895,8 +814,8 @@ const WikiPanel: React.FC = () => {
                     onClick={() => setFocusId(focused ? null : w.id)}
                     aria-pressed={focused}
                     title={
-                      (i === 0 ? `${w.name} — primary (new knowledge saves here). ` : `${w.name}. `) +
-                      (focused ? "Click to show all loaded neurons again." : "Click to focus just this neuron.")
+                      (i === 0 ? `${w.name} — new notes are saved here. ` : `${w.name}. `) +
+                      (focused ? "Click to show all open notebooks again." : "Click to show just this notebook.")
                     }
                     className={`inline-flex items-center gap-1.5 pl-2 pr-2.5 py-1 rounded-full border text-xs font-semibold max-w-[180px] transition-colors ${
                       focused
@@ -913,7 +832,7 @@ const WikiPanel: React.FC = () => {
                     />
                     <span className="truncate">{w.name}</span>
                     {i === 0 && loadedWikis.length > 1 && (
-                      <span role="img" aria-label="primary" title="Primary — new knowledge saves here" className="text-primary">★</span>
+                      <span role="img" aria-label="new notes go here" title="New notes are saved here" className="text-primary">★</span>
                     )}
                   </button>
                 );
@@ -921,21 +840,21 @@ const WikiPanel: React.FC = () => {
               {scopeKind === "loaded" && (
                 <button
                   onClick={() => window.dispatchEvent(new CustomEvent("open-neuron-switcher"))}
-                  title="Load another neuron alongside (⌘K)"
+                  title="Open another notebook alongside this one (⌘K)"
                   className="inline-flex items-center gap-0.5 px-2 py-1 rounded-full border border-dashed border-outline-variant/40 text-xs text-on-surface-variant hover:border-primary/50 hover:text-primary transition-colors"
                 >
                   <span className="material-symbols-outlined text-sm" aria-hidden>add</span>
-                  Load
+                  Add notebook
                 </button>
               )}
               {scopeKind === "loaded" && loadedWikis.length >= 2 && (
                 <button
                   onClick={() => import("@/components/ChainDialog").then((m) => m.openChainDialog({ prefillIds: loadedIds }))}
-                  title="Save these neurons as a chain"
+                  title="Save these notebooks as a set you can open together"
                   className="inline-flex items-center gap-1 px-2 py-1 rounded-full border border-outline-variant/40 text-xs text-on-surface-variant hover:border-primary/50 hover:text-primary transition-colors"
                 >
-                  <span className="material-symbols-outlined text-sm" aria-hidden>link</span>
-                  Save chain
+                  <span className="material-symbols-outlined text-sm" aria-hidden>bookmark_add</span>
+                  Save as set
                 </button>
               )}
 
@@ -949,16 +868,16 @@ const WikiPanel: React.FC = () => {
                   onClick={() => { setScopeKind("loaded"); setFocusId(null); }}
                   aria-pressed={scopeKind === "loaded"}
                   disabled={loadedIds.length === 0}
-                  title="Show the neurons Counsel is reading right now"
+                  title="Show the notebooks Counsel is using right now"
                   className={`px-3 py-1.5 transition-colors ${scopeKind === "loaded" ? "bg-secondary-container text-on-secondary-container" : "text-on-surface-variant hover:bg-surface-container-high"} disabled:opacity-40`}
                 >
-                  {loadedWikis.length > 1 ? `Loaded (${loadedWikis.length})` : "This neuron"}
+                  {loadedWikis.length > 1 ? `Open (${loadedWikis.length})` : "This notebook"}
                 </button>
                 <button
                   type="button"
                   onClick={() => { setScopeKind("all"); setFocusId(null); }}
                   aria-pressed={scopeKind === "all"}
-                  title="Every neuron you've ever created, loaded or not"
+                  title="Every notebook you have, open or not"
                   className={`px-3 py-1.5 transition-colors ${scopeKind === "all" ? "bg-secondary-container text-on-secondary-container" : "text-on-surface-variant hover:bg-surface-container-high"}`}
                 >
                   Everything
@@ -966,15 +885,15 @@ const WikiPanel: React.FC = () => {
               </div>
             </div>
 
-            {/* Memory mode is persistent, glanceable state — never a mystery button. */}
+            {/* Off the record is persistent, glanceable state — never a mystery button. */}
             <button
               onClick={handleToggleMemoryMode}
               disabled={memoryModeLoading}
               aria-pressed={memoryMode === "recording"}
               title={
                 memoryMode === "recording"
-                  ? `Counsel saves new knowledge to "${primaryName}" as you chat. Applies across all neurons — click to pause.`
-                  : "Saving is paused for all neurons. Counsel can still read and answer — click to resume."
+                  ? `Counsel saves notes to "${primaryName}" as you chat. Click to go off the record.`
+                  : "Off the record: Counsel still reads your notes but saves nothing new. Click to start saving again."
               }
               className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-medium transition-colors disabled:opacity-50 ${
                 memoryMode === "recording"
@@ -991,8 +910,8 @@ const WikiPanel: React.FC = () => {
                 />
               )}
               {memoryMode === "recording"
-                ? `Memory on — saving to ${primaryName}`
-                : "Memory paused — nothing is being saved"}
+                ? `Saving notes to ${primaryName}`
+                : "Off the record — nothing new is saved"}
             </button>
           </section>
         )}
@@ -1013,17 +932,12 @@ const WikiPanel: React.FC = () => {
             {view === "conflicts" && (
               <span className="text-xs text-on-surface-variant">{openConflictsCount} open · {conflicts.length} total</span>
             )}
-            {view === "episodic" && (
-              <span className="text-xs text-on-surface-variant">
-                {episodicLog.length} {episodicLog.length === 1 ? "session" : "sessions"}
-              </span>
-            )}
-            {view === "queue" && <span className="text-xs text-on-surface-variant">{queueItems.length} waiting</span>}
+            {view === "runs" && <span className="text-xs text-on-surface-variant">last {sleepRuns.length}</span>}
             {/* The paused state must never be invisible, even mid-triage. */}
             {memoryMode !== "recording" && (
               <span className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-500 text-[11px] font-medium">
                 <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                Memory paused
+                Off the record
               </span>
             )}
           </div>
@@ -1048,16 +962,16 @@ const WikiPanel: React.FC = () => {
               <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant" aria-hidden>search</span>
               <input
                 value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
-                aria-label="Search entries"
+                aria-label="Search notes"
                 className="w-full bg-surface-container-low border-none rounded-2xl py-3.5 pl-12 pr-6 focus:ring-1 focus:ring-primary/40 placeholder:text-on-surface-variant/50 text-foreground text-base transition-all shadow-inner"
-                placeholder="Search concepts, entities, or relations…"
+                placeholder="Search this notebook…"
               />
             </div>
 
             {/* Filter pills + map/list view toggle */}
             <div className="flex items-center gap-3 mb-4">
               <div className="relative flex-1 min-w-0">
-                <div className="flex items-center gap-2 overflow-x-auto pb-1 hide-scrollbar" role="group" aria-label="Filter by entry type">
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 hide-scrollbar" role="group" aria-label="Filter by kind of note">
                   {ENTRY_TYPE_FILTERS.map(({ value, label }) => (
                     <button
                       key={value}
@@ -1078,13 +992,13 @@ const WikiPanel: React.FC = () => {
               </div>
               <div
                 role="group"
-                aria-label="Entries view"
+                aria-label="Notes view"
                 className="flex items-center gap-1 rounded-full border border-outline-variant/20 bg-surface-container-low p-1 shrink-0 self-start"
                 onMouseEnter={() => { void import("@/components/EntryNeuronGraph"); }}
               >
                 {([
-                  ["map", "hub", "Mind map"],
                   ["list", "view_list", "List"],
+                  ["map", "hub", "Map"],
                 ] as const).map(([id, icon, label]) => (
                   <button
                     key={id}
@@ -1110,18 +1024,18 @@ const WikiPanel: React.FC = () => {
               </div>
             </div>
 
-            {/* Entries — neuron mind map (default) or card list */}
+            {/* Notes — list (default) or map */}
             {filteredEntries.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant gap-3">
                 <span className="material-symbols-outlined text-5xl" aria-hidden>menu_book</span>
                 <p className="text-sm text-center">
                   {entries.length === 0
                     ? scopeKind === "all"
-                      ? "No entries in any neuron yet. Chat about your books to start growing them."
+                      ? "No notes yet. Chat with Counsel about what you're reading and notes appear here."
                       : loadedWikis.length > 1 && !focusId
-                        ? "These neurons are empty. Chat about your books to grow them."
-                        : "This neuron is empty. Chat about your books to grow it."
-                    : "No entries match your search."}
+                        ? "These notebooks are empty. Chat with Counsel about what you're reading to fill them."
+                        : "This notebook is empty. Chat with Counsel about what you're reading to fill it."
+                    : "No notes match your search."}
                 </p>
               </div>
             ) : entriesView === "map" ? (
@@ -1143,42 +1057,12 @@ const WikiPanel: React.FC = () => {
               </React.Suspense>
             ) : (
               <div key="list" className="space-y-4 motion-safe:animate-fade-in">
-                {(vitality.core > 0 || vitality.fading > 0) && (
-                  <div className="flex items-center gap-2 text-[11px] text-on-surface-variant mb-1 flex-wrap">
-                    <span className="inline-flex items-center gap-1" title="Memory strength (ACT-R vibrancy): recalling a memory makes it vivid; unused ones gently fade over weeks.">
-                      <span className="material-symbols-outlined text-[13px]" aria-hidden>bolt</span>
-                      Memory vitality
-                    </span>
-                    {vitality.core > 0 && (
-                      <button
-                        onClick={() => setSortByStrength((s) => (s === "core" ? null : "core"))}
-                        aria-pressed={sortByStrength === "core"}
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full transition-colors ${sortByStrength === "core" ? "bg-primary/15 text-primary" : "hover:bg-surface-container-high"}`}
-                      >
-                        <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-primary" />
-                        {vitality.core} core
-                      </button>
-                    )}
-                    {vitality.fading > 0 && (
-                      <button
-                        onClick={() => setSortByStrength((s) => (s === "fading" ? null : "fading"))}
-                        aria-pressed={sortByStrength === "fading"}
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full transition-colors ${sortByStrength === "fading" ? "bg-primary/15 text-primary" : "hover:bg-surface-container-high"}`}
-                      >
-                        <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-primary/40" />
-                        {vitality.fading} fading
-                      </button>
-                    )}
-                    {sortByStrength && (
-                      <button onClick={() => setSortByStrength(null)} className="text-primary hover:underline">clear</button>
-                    )}
-                  </div>
-                )}
-                {sortedEntries.map((entry) => {
+                {filteredEntries.map((entry) => {
                   const relCount = graph.filter(g => g.source_entry_id === entry.id || g.target_entry_id === entry.id).length;
                   const sourceWiki = neuronNameByEntry?.[entry.id];
                   const sourceColor = sourceWiki ? wikis.find((w) => w.id === wikiByEntry[entry.id])?.cover_color : null;
                   const inConflict = reflexOn && conflictEntryIds.has(entry.id);
+                  const pageLoc = parseLocators(entry.locators)[0];
                   return (
                     <button
                       key={entry.id} onClick={() => openDetail(entry)}
@@ -1188,19 +1072,12 @@ const WikiPanel: React.FC = () => {
                         <div>
                           <div className="flex items-center gap-2 mb-1.5 flex-wrap text-[11px] font-semibold text-on-surface-variant">
                             <span className="capitalize text-primary">{entry.entry_type}</span>
-                            <span aria-hidden className="text-outline-variant">·</span>
-                            <span>{Math.round(entry.confidence * 100)}% confidence</span>
-                            {typeof entry.vibrancy === "number" && entry.vibrancy < 0.999 && (
+                            {pageLoc && (
                               <>
                                 <span aria-hidden className="text-outline-variant">·</span>
-                                <span
-                                  className="inline-flex items-center gap-1"
-                                  title={`Memory strength ${Math.round(entry.vibrancy * 100)}% — ${entry.vibrancy >= 0.7 ? "core: anchors related memories" : entry.vibrancy < 0.35 ? "fading: rarely recalled lately" : "active"}. Recalling it makes it more vivid; unused memories gently fade.`}
-                                >
-                                  <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-primary" style={{ opacity: 0.2 + 0.8 * entry.vibrancy }} />
-                                  {entry.vibrancy < 0.35
-                                    ? <span className="text-on-surface-variant/70">fading</span>
-                                    : entry.vibrancy >= 0.7 ? "core" : null}
+                                <span className="inline-flex items-center gap-0.5 min-w-0 max-w-[220px] truncate">
+                                  <span className="material-symbols-outlined text-[13px]" aria-hidden>bookmark</span>
+                                  {pageLoc.book_title ? `${pageLoc.book_title}, ` : ""}p. {pageLoc.page}
                                 </span>
                               </>
                             )}
@@ -1236,7 +1113,7 @@ const WikiPanel: React.FC = () => {
                         <span className="material-symbols-outlined text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity" aria-hidden>chevron_right</span>
                       </div>
 
-                      <p className="text-on-surface-variant mb-3 line-clamp-2 leading-relaxed text-sm">{entry.content.slice(0, 200)}</p>
+                      <p className="text-on-surface-variant mb-3 line-clamp-2 leading-relaxed text-sm">{entry.hook || fallbackHook(entry.content)}</p>
                       <div className="flex flex-wrap gap-2">
                         {entry.tags.slice(0, 4).map((tag) => (
                           <span key={tag} className="bg-surface-container-highest px-2.5 py-0.5 rounded text-[11px] font-semibold text-secondary">{tag}</span>
@@ -1252,9 +1129,13 @@ const WikiPanel: React.FC = () => {
           <div className="max-w-3xl mx-auto space-y-6">
             {editing ? (
               <>
-                <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} aria-label="Entry title" className="text-2xl font-headline font-bold bg-surface-container-high border-none" />
-                <Textarea value={editContent} onChange={(e) => setEditContent(e.target.value)} rows={10} aria-label="Entry content" className="text-sm font-mono bg-surface-container-high border-none" />
-                <Input value={editTags} onChange={(e) => setEditTags(e.target.value)} placeholder="tag1, tag2, tag3" aria-label="Entry tags" className="text-sm bg-surface-container-high border-none" />
+                <Input id="note-edit-title" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} aria-label="Note title" className="text-2xl font-headline font-bold bg-surface-container-high border-none" />
+                <div className="space-y-1">
+                  <label htmlFor="note-edit-hook" className="text-xs font-semibold text-on-surface-variant">One-line summary (what Counsel sees first)</label>
+                  <Input id="note-edit-hook" value={editHook} maxLength={160} onChange={(e) => setEditHook(e.target.value)} placeholder="Leave empty and the nightly tidy-up writes one" className="text-sm bg-surface-container-high border-none" />
+                </div>
+                <Textarea id="note-edit-content" value={editContent} onChange={(e) => setEditContent(e.target.value)} rows={10} aria-label="Note text" className="text-sm font-mono bg-surface-container-high border-none" />
+                <Input id="note-edit-tags" value={editTags} onChange={(e) => setEditTags(e.target.value)} placeholder="tag1, tag2, tag3" aria-label="Note tags" className="text-sm bg-surface-container-high border-none" />
                 <div className="flex gap-2">
                   <Button size="sm" onClick={handleSaveEdit}>Save</Button>
                   <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button>
@@ -1262,21 +1143,24 @@ const WikiPanel: React.FC = () => {
               </>
             ) : (
               <>
-                <div className="flex items-start justify-between">
-                  <div>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
                     <div className="flex items-center gap-2 mb-2 text-[11px] font-semibold text-on-surface-variant">
                       <span className="capitalize text-primary">{selectedEntry.entry_type}</span>
-                      <span aria-hidden className="text-outline-variant">·</span>
-                      <span>{Math.round(selectedEntry.confidence * 100)}% confidence</span>
                     </div>
                     <h2 className="font-headline font-bold text-3xl md:text-4xl text-foreground">{selectedEntry.title}</h2>
+                    {selectedEntry.hook && (
+                      <p className="text-base text-on-surface-variant mt-2">{selectedEntry.hook}</p>
+                    )}
                   </div>
-                  <div className="flex gap-2">
-                    <button onClick={startEdit} aria-label="Edit entry" className="p-2 hover:bg-surface-container-high rounded-lg transition-colors">
-                      <span className="material-symbols-outlined text-on-surface-variant" aria-hidden>edit</span>
+                  <div className="flex gap-1 shrink-0">
+                    <button onClick={startEdit} className="flex items-center gap-1 px-3 py-1.5 hover:bg-surface-container-high rounded-lg transition-colors text-sm text-on-surface-variant">
+                      <span className="material-symbols-outlined text-base" aria-hidden>edit</span>
+                      Edit
                     </button>
-                    <button onClick={() => requestDeleteEntry(selectedEntry)} aria-label="Delete entry" className="p-2 hover:bg-error-container/20 rounded-lg transition-colors">
-                      <span className="material-symbols-outlined text-destructive" aria-hidden>delete</span>
+                    <button onClick={() => requestDeleteEntry(selectedEntry)} className="flex items-center gap-1 px-3 py-1.5 hover:bg-error-container/20 rounded-lg transition-colors text-sm text-destructive">
+                      <span className="material-symbols-outlined text-base" aria-hidden>delete</span>
+                      Forget
                     </button>
                   </div>
                 </div>
@@ -1324,7 +1208,7 @@ const WikiPanel: React.FC = () => {
                   if (related.length === 0) return null;
                   return (
                     <div className="border-t border-outline-variant/10 pt-6">
-                      <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant mb-4">Connected Knowledge</h3>
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant mb-4">Related notes</h3>
                       <div className="space-y-2">
                         {related.map(({ entry, relationship }) => (
                           <button key={entry.id} onClick={() => openDetail(entry, "preserve")} className="w-full text-left p-4 rounded-xl bg-surface-container-high hover:bg-surface-container-highest transition-all flex items-center gap-3">
@@ -1338,16 +1222,50 @@ const WikiPanel: React.FC = () => {
                     </div>
                   );
                 })()}
-                <div className="text-xs text-on-surface-variant/60 border-t border-outline-variant/10 pt-4">
-                  {(() => {
-                    const book = selectedEntry.source_book_id ? books.find(b => b.id === selectedEntry.source_book_id) : null;
-                    const when = new Date(selectedEntry.created_at).toLocaleDateString();
-                    return book
-                      ? `Remembered from "${book.title}" on ${when}`
-                      : `Remembered from a chat on ${when}`;
-                  })()}
-                  {" · "}Updated {new Date(selectedEntry.updated_at).toLocaleDateString()}
-                </div>
+                {(() => {
+                  // "Why is this here?" — where the note came from, in words,
+                  // with every page one tap away.
+                  const locs = parseLocators(selectedEntry.locators);
+                  const book = selectedEntry.source_book_id ? books.find((b) => b.id === selectedEntry.source_book_id) : null;
+                  const when = new Date(selectedEntry.created_at).toLocaleDateString();
+                  const who = selectedEntry.author === "user" ? "You saved this" : "Counsel saved this";
+                  return (
+                    <div className="border-t border-outline-variant/10 pt-6 space-y-3">
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">Why this is here</h3>
+                      <p className="text-sm text-on-surface-variant">
+                        {who} on {when}
+                        {book ? `, while you were reading "${book.title}"` : locs.length === 0 ? ", from a chat" : ""}.
+                        {" "}Last changed {new Date(selectedEntry.updated_at).toLocaleDateString()}.
+                      </p>
+                      {locs.length > 0 && (
+                        <ul className="space-y-2">
+                          {locs.map((l, i) => {
+                            const bookId = locatorBookId(l, books);
+                            return (
+                              <li key={`${l.chapter_id}:${l.char_start}:${i}`} className="flex items-start gap-3 p-3 rounded-xl bg-surface-container-high">
+                                <span className="material-symbols-outlined text-primary text-base mt-0.5" aria-hidden>bookmark</span>
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-xs text-on-surface-variant">
+                                    {l.book_title || "Book"}{l.chapter_name ? ` · ${l.chapter_name}` : ""} · p. {l.page}
+                                  </div>
+                                  <p className="text-sm text-foreground/90 italic line-clamp-2">“{l.quote}”</p>
+                                </div>
+                                {bookId && (
+                                  <button
+                                    onClick={() => openPassage({ setActiveBook, setActiveTab }, bookId, l.page)}
+                                    className="shrink-0 text-xs font-semibold text-primary hover:underline"
+                                  >
+                                    Open page
+                                  </button>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  );
+                })()}
               </>
             )}
           </div>
@@ -1357,7 +1275,7 @@ const WikiPanel: React.FC = () => {
             <div className="bg-surface-container-high rounded-xl p-8 text-center relative overflow-hidden">
               <div className="absolute -right-4 -top-4 w-24 h-24 bg-primary/5 rounded-full blur-2xl" aria-hidden />
               <div className="text-5xl font-bold font-headline text-primary mb-2">{lintResult.health_score}/100</div>
-              <p className="text-on-surface-variant">Knowledge health · {lintTarget?.name || maintenanceTargetName}</p>
+              <p className="text-on-surface-variant">Health check · {lintTarget?.name || maintenanceTargetName}</p>
               {lintTarget && lintTarget.id !== maintenanceTargetId && (
                 <p className="text-xs text-amber-500 mt-1">
                   This report is for {lintTarget.name} — you're now viewing a different scope. Re-run for fresh results.
@@ -1367,7 +1285,7 @@ const WikiPanel: React.FC = () => {
                 <div className="h-full bg-gradient-to-r from-primary to-primary-fixed-dim rounded-full" style={{ width: `${lintResult.health_score}%` }} />
               </div>
               <div className="flex justify-center gap-6 mt-4 text-xs text-on-surface-variant">
-                <span>{lintResult.stats.total_entries} entries</span>
+                <span>{lintResult.stats.total_entries} notes</span>
                 <span>{lintResult.stats.total_relationships} links</span>
                 <span>{lintResult.stats.orphan_count} unconnected</span>
               </div>
@@ -1416,8 +1334,8 @@ const WikiPanel: React.FC = () => {
                           <div className="flex gap-2 mt-3 flex-wrap">
                             {issue.type === "orphan" && (
                               <Button size="sm" variant="outline" onClick={handleSleepCycle} disabled={sleepCycleRunning}>
-                                {sleepCycleRunning ? <Loader2 className="w-3 h-3 animate-spin mr-1" aria-hidden /> : <span className="material-symbols-outlined text-sm mr-1" aria-hidden>bedtime</span>}
-                                Fix: consolidate
+                                {sleepCycleRunning ? <Loader2 className="w-3 h-3 animate-spin mr-1" aria-hidden /> : <span className="material-symbols-outlined text-sm mr-1" aria-hidden>auto_fix_high</span>}
+                                Fix: tidy up
                               </Button>
                             )}
                             {(issue.type === "duplicate" || issue.type === "stale") && affected.map((entry) => (
@@ -1447,8 +1365,8 @@ const WikiPanel: React.FC = () => {
                       </div>
                       {(s.type === "add_relationship" || s.type === "merge_entries") && (
                         <Button size="sm" variant="outline" onClick={handleSleepCycle} disabled={sleepCycleRunning} className="shrink-0">
-                          {sleepCycleRunning ? <Loader2 className="w-3 h-3 animate-spin" aria-hidden /> : <span className="material-symbols-outlined text-sm" aria-hidden>bedtime</span>}
-                          Consolidate
+                          {sleepCycleRunning ? <Loader2 className="w-3 h-3 animate-spin" aria-hidden /> : <span className="material-symbols-outlined text-sm" aria-hidden>auto_fix_high</span>}
+                          Tidy up
                         </Button>
                       )}
                     </div>
@@ -1458,7 +1376,7 @@ const WikiPanel: React.FC = () => {
             )}
 
             {lintResult.issues.length === 0 && lintResult.suggestions.length === 0 && (
-              <p className="text-center text-on-surface-variant py-8">Your knowledge base looks healthy! 🎉</p>
+              <p className="text-center text-on-surface-variant py-8">Your notes look healthy.</p>
             )}
           </div>
         ) : view === "conflicts" ? (
@@ -1484,7 +1402,7 @@ const WikiPanel: React.FC = () => {
                     {[{ entry: a, other: b, id: c.entry_a }, { entry: b, other: a, id: c.entry_b }].map(({ entry, other, id }) => (
                       <div key={id} className="bg-surface-container-high rounded-lg overflow-hidden border border-outline-variant/10 flex flex-col">
                         <div className="px-3 pt-3 pb-2 flex-1">
-                          <p className="font-bold text-sm text-foreground leading-snug">{entry?.title || "Entry no longer exists"}</p>
+                          <p className="font-bold text-sm text-foreground leading-snug">{entry?.title || "Note no longer exists"}</p>
                           {entry && (
                             <p className="text-xs text-on-surface-variant mt-1.5 line-clamp-3 leading-relaxed">{entry.content.slice(0, 180)}</p>
                           )}
@@ -1525,65 +1443,35 @@ const WikiPanel: React.FC = () => {
               );
             })}
           </div>
-        ) : view === "episodic" ? (
-          <div className="space-y-4">
-            {episodicLog.length === 0 ? (
-              <p className="text-on-surface-variant text-sm italic">No chat sessions recorded yet. Save a chat to your neuron to start the history.</p>
-            ) : episodicLog.map((ep) => (
-              <div key={ep.id} className="p-4 rounded-xl bg-surface-container-high">
-                <div className="flex items-center gap-3 mb-2 text-xs text-on-surface-variant">
-                  <span>{new Date(ep.created_at).toLocaleString()}</span>
-                  <span className="ml-auto">{ep.entry_count} {ep.entry_count === 1 ? "entry" : "entries"} saved</span>
+        ) : view === "runs" ? (
+          <div className="max-w-3xl mx-auto space-y-3">
+            <p className="text-sm text-on-surface-variant">
+              Each tidy-up links related notes and writes missing one-line summaries. Undo removes exactly what that tidy-up added.
+            </p>
+            {sleepRuns.length === 0 ? (
+              <p className="text-on-surface-variant text-sm italic py-6">No tidy-ups have changed anything yet.</p>
+            ) : sleepRuns.map((run) => (
+              <div key={run.id} className="p-4 rounded-xl bg-surface-container-high flex items-center gap-4">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-foreground">
+                    {[
+                      run.edge_ids.length > 0 ? `Linked ${run.edge_ids.length} ${run.edge_ids.length === 1 ? "pair" : "pairs"} of notes` : null,
+                      run.hook_entry_ids.length > 0 ? `wrote ${run.hook_entry_ids.length} ${run.hook_entry_ids.length === 1 ? "summary" : "summaries"}` : null,
+                    ].filter(Boolean).join(", ")}
+                  </p>
+                  <p className="text-xs text-on-surface-variant">
+                    {new Date(run.created_at).toLocaleString()}
+                    {run.wiki_id ? ` · ${wikiNameById[run.wiki_id] || "a notebook"}` : " · all notebooks"}
+                  </p>
                 </div>
-                {ep.summary && <p className="text-sm text-foreground mb-2">{ep.summary}</p>}
-                {ep.key_facts.length > 0 && (
-                  <ul className="text-xs text-on-surface-variant space-y-0.5 list-disc list-inside">
-                    {ep.key_facts.map((f, i) => <li key={i}>{f}</li>)}
-                  </ul>
+                {run.undone_at ? (
+                  <span className="text-xs text-on-surface-variant">Undone</span>
+                ) : (
+                  <Button size="sm" variant="outline" onClick={() => void handleUndoRun(run.id)}>Undo</Button>
                 )}
               </div>
             ))}
           </div>
-
-        ) : view === "queue" ? (
-          <div className="space-y-4">
-            {sleepCycleReport && (
-              <div className="p-4 rounded-xl bg-secondary-container/20 border border-secondary-container/30 text-sm space-y-1">
-                <p className="font-semibold text-foreground">Last consolidation</p>
-                <p className="text-on-surface-variant">
-                  Connected {sleepCycleReport.phases.consolidate.edges_created} ideas · refreshed {sleepCycleReport.phases.rerank.updated} memories ·
-                  {" "}{sleepCycleReport.phases.prune.orphans.length} entries queued for review
-                </p>
-              </div>
-            )}
-            {queueItems.length === 0 ? (
-              <p className="text-on-surface-variant text-sm italic">Nothing waiting. New entries and flagged conflicts will queue here for the next consolidation.</p>
-            ) : queueItems.map((item) => {
-              const entryTitle =
-                (item.entry_id && entries.find((e) => e.id === item.entry_id)?.title) ||
-                ((item.pending_data as any)?.title as string | undefined) ||
-                "New entry";
-              return (
-                <div key={item.id} className="p-4 rounded-xl bg-surface-container-high flex items-start gap-4">
-                  <span className={`mt-0.5 text-[11px] font-semibold px-2 py-1 rounded-full whitespace-nowrap ${
-                    item.reason === "conflict_staged" ? "bg-destructive/15 text-destructive"
-                    : item.reason === "orphan" ? "bg-amber-500/15 text-amber-500"
-                    : "bg-secondary-container/40 text-on-secondary-container"
-                  }`}>
-                    {QUEUE_REASON_LABELS[item.reason] || item.reason.replace("_", " ")}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-foreground truncate">{entryTitle}</p>
-                    <p className="text-xs text-on-surface-variant">{new Date(item.created_at).toLocaleString()}</p>
-                  </div>
-                  <span className={`text-[11px] font-semibold ${item.processed_at ? "text-green-400" : "text-on-surface-variant"}`}>
-                    {item.processed_at ? "done" : "waiting"}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-
         ) : null}
       </main>
 
@@ -1611,7 +1499,7 @@ const WikiPanel: React.FC = () => {
       </AlertDialog>
 
       {reviewOpen && (
-        <MemoryReview
+        <DailyRecall
           wikiId={maintenanceTargetId}
           open
           onClose={() => { setReviewOpen(false); refreshDueCount(); void loadData(); }}

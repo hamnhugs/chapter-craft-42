@@ -338,7 +338,7 @@ const ALLOWLIST: Allowed[] = [
   // literal names nothing else.
   {
     file: "src/lib/chatTools.ts", tool: "set_loaded_books",
-    snippet: "set_loaded_books (neuron branch)",
+    snippet: "set_loaded_books (notebook branch)",
     why: "self-reference — set_loaded_books' own neuron-branch refusal; it just ran, so it is on the wire.",
   },
   {

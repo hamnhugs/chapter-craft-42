@@ -96,28 +96,28 @@ export const BRANCH_PERMISSIONS: Record<string, string> = {
   // switch_wiki is already a tool permission; set_loaded_books' wiki_ids /
   // chain_id branch honours the same switch (an off switch refuses the
   // branch, the load itself still runs).
-  switch_wiki: "switch_wiki, and set_loaded_books (neuron branch)",
+  switch_wiki: "switch_wiki, and set_loaded_books (notebook branch)",
 };
 
 /** What the settings screen renders. Ids here MUST appear in TOOL_PERMISSION
  *  values or BRANCH_PERMISSIONS keys — the coverage test enforces it. */
 export const PERMISSION_GROUPS: PermGroup[] = [
   {
-    group: "Memory (Neurons)",
+    group: "Notes & notebooks",
     items: [
-      { id: "create_memory_entry", label: "Create memory entries", description: "Let the AI add new notes to your active neuron." },
-      { id: "update_memory_entry", label: "Edit memory entries", description: "Let the AI rewrite existing entries (typo/phrasing fixes)." },
-      { id: "supersede_memory_entry", label: "Supersede memory entries", description: "Let the AI retire an outdated entry and write its corrected replacement, keeping the old version in history. Also disabled when editing is off." },
-      { id: "delete_memory_entry", label: "Delete memory entries", description: "Let the AI permanently remove entries.", danger: true },
+      { id: "create_memory_entry", label: "Create notes", description: "Let the AI add new notes to your active notebook." },
+      { id: "update_memory_entry", label: "Edit notes", description: "Let the AI rewrite existing entries (typo/phrasing fixes)." },
+      { id: "supersede_memory_entry", label: "Supersede notes", description: "Let the AI retire an outdated entry and write its corrected replacement, keeping the old version in history. Also disabled when editing is off." },
+      { id: "delete_memory_entry", label: "Delete notes", description: "Let the AI permanently remove entries.", danger: true },
       { id: "link_memory_entries", label: "Link / unlink entries", description: "Let the AI create or remove relationships between entries." },
     ],
   },
   {
-    group: "Wikis (Neurons)",
+    group: "Notebooks",
     items: [
-      { id: "switch_wiki", label: "Switch active wiki", description: "Allow the AI to change which neuron is in focus." },
-      { id: "create_wiki", label: "Create new wikis", description: "Allow the AI to spin up new neurons." },
-      { id: "delete_wiki", label: "Delete wikis", description: "Allow the AI to permanently delete a neuron after you confirm.", danger: true },
+      { id: "switch_wiki", label: "Switch active notebook", description: "Allow the AI to change which notebook is in focus." },
+      { id: "create_wiki", label: "Create new notebooks", description: "Allow the AI to spin up new notes." },
+      { id: "delete_wiki", label: "Delete notebooks", description: "Allow the AI to permanently delete a notebook after you confirm.", danger: true },
     ],
   },
   {
@@ -140,7 +140,7 @@ export const PERMISSION_GROUPS: PermGroup[] = [
     items: [
       { id: "generate_image", label: "Generate images", description: "Allow the AI to create new images. Uses your API key." },
       { id: "edit_image", label: "Edit images", description: "Allow the AI to modify existing images. Uses your API key." },
-      { id: "save_image_to_memory", label: "Save images to memory", description: "Let the AI file an uploaded or generated image into your neurons as a memory entry." },
+      { id: "save_image_to_memory", label: "Save images to memory", description: "Let the AI file an uploaded or generated image into your notebooks as a note." },
       { id: "delete_image", label: "Delete images", description: "Allow the AI to permanently delete generated or uploaded images after you confirm.", danger: true },
       { id: "delete_image_memory", label: "Delete uploaded image memories", description: "Allow the AI to delete the memory record (caption/search data) of an uploaded picture after you confirm. Removing the picture itself is covered by Delete images.", danger: true },
     ],

@@ -26,6 +26,7 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import { usePageSwipe } from "@/hooks/usePageSwipe";
 import { useReaderFocus } from "@/hooks/useReaderFocus";
 import { loadLastPage, saveLastPage, useReaderPrefs } from "@/hooks/useReaderPrefs";
+import { READER_GO_TO_PAGE } from "@/lib/openPassage";
 import { useWakeLock } from "@/hooks/useWakeLock";
 import { useReaderHighlights, type HighlightHit } from "@/hooks/useReaderHighlights";
 
@@ -215,6 +216,18 @@ const PdfViewer: React.FC = () => {
   const goToPage = useCallback((page: number) => {
     setCurrentPage((p) => (page >= 1 && page <= numPages ? page : p));
   }, [numPages]);
+
+  // A note's "open page" link (lib/openPassage.ts) for the book already open.
+  useEffect(() => {
+    const onGo = (e: Event) => {
+      const d = (e as CustomEvent<{ bookId: string; page: number }>).detail;
+      if (!d || d.bookId !== activeBookId) return;
+      // Before the document loads numPages is 0; onDocumentLoadSuccess clamps.
+      setCurrentPage((p) => (d.page >= 1 && (numPages === 0 || d.page <= numPages) ? d.page : p));
+    };
+    window.addEventListener(READER_GO_TO_PAGE, onGo);
+    return () => window.removeEventListener(READER_GO_TO_PAGE, onGo);
+  }, [activeBookId, numPages]);
   const goToNextPage = useCallback(() => setCurrentPage((p) => (p < numPages ? p + 1 : p)), [numPages]);
   const goToPrevPage = useCallback(() => setCurrentPage((p) => (p > 1 ? p - 1 : p)), []);
   const changeZoom = (delta: number) => {
@@ -753,7 +766,7 @@ const PdfViewer: React.FC = () => {
               className="flex items-center gap-2 px-4 py-2 bg-primary-container text-on-primary-container rounded-full shadow-xl font-bold text-sm active:scale-95 transition-all"
             >
               <span className="material-symbols-outlined text-base" style={{ fontVariationSettings: "'FILL' 1" }}>bookmark_add</span>
-              Save quote to neuron
+              Save quote to notebook
             </button>
           )}
         </div>

@@ -45,7 +45,7 @@ import { FIGURE_MODELS_PAID, FIGURE_MODELS_FREE, DEFAULT_FIGURE_MODEL } from "@/
 // immediately (modern consensus — no global Save button to forget).
 //
 // Contextual quick toggles (Read Aloud / Hands-free in Counsel, Recording
-// mode in Neuron) intentionally stay where they are — research favors a
+// mode in the notebook) intentionally stay where they are — research favors a
 // central hub PLUS shortcuts at the point of use, not either/or.
 
 const VOICE_QUICK_SEARCH_KEY = "voice_quick_search";
@@ -60,7 +60,7 @@ const SECTIONS = [
   { id: "voice", icon: "record_voice_over", title: "Voice & Speech" },
   { id: "research", icon: "science", title: "Research & Web Search" },
   { id: "images", icon: "image", title: "Images & Vision" },
-  { id: "memory", icon: "neurology", title: "Neuron & Memory" },
+  { id: "memory", icon: "menu_book", title: "Notes & library" },
   { id: "permissions", icon: "shield_person", title: "AI Permissions" },
   { id: "programs", icon: "dns", title: "Program Foundry" },
   { id: "prompts", icon: "history_edu", title: "Prompts" },
@@ -298,7 +298,7 @@ const SettingsPanel: React.FC = () => {
     `openrouter key: ${apiKey ? "saved" : "none"}`,
     `nvidia key: ${nvidiaKeyLast4 ? `saved (…${nvidiaKeyLast4})` : "none"}`,
     ...roleRows.map((r) => `${r.label.toLowerCase()}: ${r.id}${r.usable ? "" : "  ← no key for this provider"}`),
-    `wiki: ${wikiModel || "(default)"}`,
+    `notes: ${wikiModel || "(default)"}`,
     `saved models (${savedModels.length}):`,
     ...savedModels.map((m) => `  ${m}`),
   ].join("\n");
@@ -353,7 +353,8 @@ const SettingsPanel: React.FC = () => {
   useEffect(() => { localStorage.setItem(BARGE_IN_KEY, String(bargeInEnabled)); }, [bargeInEnabled]);
   useEffect(() => { localStorage.setItem(POCKET_SCREEN_KEY, String(pocketScreen)); }, [pocketScreen]);
 
-  // Memory mode (Supabase-backed; Neuron tab re-reads on mount).
+  // Off the record (user_settings.is_recording_mode, inverted). The notebook
+  // view and Counsel re-read it on mount.
   const [memoryMode, setMemoryModeState] = useState<MemoryMode>("recording");
   const [memoryModeLoading, setMemoryModeLoading] = useState(false);
   useEffect(() => {
@@ -365,7 +366,7 @@ const SettingsPanel: React.FC = () => {
     try {
       await setMemoryMode(next);
       setMemoryModeState(next);
-      toast.success(next === "recording" ? "Recording Mode: writes enabled" : "Retrieval Mode: writes disabled");
+      toast.success(next === "recording" ? "Saving notes again" : "Off the record — nothing new is saved");
     } catch (err: any) {
       toast.error(err.message || "Failed to switch mode");
     } finally {
@@ -776,7 +777,7 @@ const SettingsPanel: React.FC = () => {
                               <ProviderBadge id={m} />
                               <button
                                 onClick={() => {
-                                  if (embed) { toast.error("Embedding model — pick it under Neuron & Memory, not Chat."); return; }
+                                  if (embed) { toast.error("Embedding model — pick it under Notes & library, not Chat."); return; }
                                   setSelectedModel(m);
                                 }}
                                 className="hover:underline"
@@ -959,22 +960,22 @@ const SettingsPanel: React.FC = () => {
               description="Deep Research, live web search, and what Counsel is allowed to read."
             >
               <div>
-                <FieldLabel>Neuron access</FieldLabel>
+                <FieldLabel>Notebook access</FieldLabel>
                 <div className="mt-1.5">
                   <ToggleRow
-                    text={accessAllNeurons && isPaid ? "Reading all neurons at once" : "Reading only the loaded neuron"}
+                    text={accessAllNeurons && isPaid ? "Reading all notebooks at once" : "Reading only the loaded notebook"}
                     checked={accessAllNeurons && isPaid}
                     locked={!isPaid}
                     onChange={(v) => {
                       if (!isPaid) { openPricing("all-neurons"); return; }
                       setAccessAllNeurons(v);
-                      toast.success(v ? "Counsel can now read all your neurons" : "Counsel reads only the loaded neuron");
+                      toast.success(v ? "Counsel can now read all your notebooks" : "Counsel reads only the loaded notebook");
                     }}
-                    ariaLabel="Access all neurons at once"
+                    ariaLabel="Search all notebooks"
                   />
                 </div>
                 <Hint>
-                  Off = answers draw only on the neuron you've loaded (focused, cheaper, usually more accurate). On = Counsel searches every neuron in your brain at once.{!isPaid && " Pro feature."}
+                  Off = answers draw only on the notebook you've loaded (focused, cheaper, usually more accurate). On = Counsel searches every notebook you have.{!isPaid && " Pro feature."}
                 </Hint>
               </div>
               <div>
@@ -1088,7 +1089,7 @@ const SettingsPanel: React.FC = () => {
                   })()}
                 </select>
                 <Hint>
-                  Reads the figures pulled out of your uploaded documents (road signs, diagrams, charts…), writes a description for each, and files it in your Images tagged with its book, page, and chapter — paired with the matching neuron when the book has any, so chat can show the real picture while explaining the concept. Run it from a book card's <span className="material-symbols-outlined text-xs align-middle">image_search</span> button; described figures are stored forever and cost nothing to reuse. Free models work but are limited to ~20 requests/min and 50–1000/day on OpenRouter.
+                  Reads the figures pulled out of your uploaded documents (road signs, diagrams, charts…), writes a description for each, and files it in your Images tagged with its book, page, and chapter — paired with the matching notebook when the book has any, so chat can show the real picture while explaining the concept. Run it from a book card's <span className="material-symbols-outlined text-xs align-middle">image_search</span> button; described figures are stored forever and cost nothing to reuse. Free models work but are limited to ~20 requests/min and 50–1000/day on OpenRouter.
                 </Hint>
               </div>
               <ImageModelsSettings />
@@ -1096,40 +1097,40 @@ const SettingsPanel: React.FC = () => {
               <SplatModelsSettings />
             </Section>
 
-            {/* ── Neuron & Memory ── */}
+            {/* ── Notes & library ── */}
             <Section
               id="memory"
-              icon="neurology"
-              title="Neuron & Memory"
-              description="How your knowledge wikis are written to and which model maintains them."
+              icon="menu_book"
+              title="Notes & library"
+              description="Whether Counsel saves notes, and which model looks after them."
             >
               <div>
-                <FieldLabel>Memory Mode</FieldLabel>
+                <FieldLabel>Off the record</FieldLabel>
                 <div className="mt-1.5">
                   <ToggleRow
-                    text={memoryMode === "recording" ? "Recording — chats can write new memories" : "Retrieval — memories are read-only"}
-                    checked={memoryMode === "recording"}
-                    onChange={handleMemoryMode}
+                    text={memoryMode === "recording" ? "Off — Counsel saves notes as you chat" : "On — Counsel reads your notes but saves nothing new"}
+                    checked={memoryMode !== "recording"}
+                    onChange={(off) => handleMemoryMode(!off)}
                     disabled={memoryModeLoading}
-                    ariaLabel="Toggle memory recording mode"
+                    ariaLabel="Off the record"
                   />
                 </div>
-                <Hint>Also toggleable from the Neuron tab toolbar.</Hint>
+                <Hint>Also in Counsel's tools. Forgetting a note still works while it's on.</Hint>
               </div>
               <div>
-                <FieldLabel>Reflex cues</FieldLabel>
+                <FieldLabel>Point out contradictions</FieldLabel>
                 <div className="mt-1.5">
                   <ToggleRow
-                    text={reflexCues ? "On — flag contradictions & mark conflicting entries" : "Off"}
+                    text={reflexCues ? "On — Counsel tells you when something disagrees with a note" : "Off"}
                     checked={reflexCues}
                     onChange={setReflexEnabled}
-                    ariaLabel="Toggle reflex cues"
+                    ariaLabel="Point out contradictions"
                   />
                 </div>
-                <Hint>A fast salience layer: the assistant proactively points out when something you say contradicts a saved memory (and offers to reconcile it), and neuron cards show an amber marker when an entry is part of an open conflict. A convenience over the existing conflict detection — not a claim about neuroscience.</Hint>
+                <Hint>Counsel names the note and the page it came from, and asks which is right before changing anything. Notes that may disagree show up under the notebook's amber badge.</Hint>
               </div>
               <div>
-                <FieldLabel>Wiki Model</FieldLabel>
+                <FieldLabel>Notebook upkeep model</FieldLabel>
                 <select
                   // An NVIDIA id can only get here via the Admin panel's
                   // free-text field; wiki ops can't run it, so show (and on
@@ -1144,21 +1145,17 @@ const SettingsPanel: React.FC = () => {
                       reindexing. */}
                   <ModelOptions models={savedModels.filter((m) => !isBatchOnlyModel(m))} openrouterOnly />
                 </select>
-                <Hint>Powers wiki extract and health checks. Custom models use OpenRouter and need your API key above (NVIDIA models aren't available for wiki ops).</Hint>
+                <Hint>Runs the daily tidy-up of your notes. Custom models use OpenRouter and need your API key above (NVIDIA models aren't available here).</Hint>
                 {wikiModel && !apiKey && (
                   <p className="text-xs text-destructive px-1 mt-1">
-                    No OpenRouter API key found — wiki ops will fall back to the default model.
+                    No OpenRouter API key found — notebook upkeep will fall back to the default model.
                   </p>
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                 <Link to="/memory-guide" className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary hover:underline">
                   <span className="material-symbols-outlined text-sm" aria-hidden>menu_book</span>
-                  How memory works
-                </Link>
-                <Link to="/wiki-controls-guide" className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary hover:underline">
-                  <span className="material-symbols-outlined text-sm" aria-hidden>help</span>
-                  What the Neuron controls do
+                  How notes work
                 </Link>
               </div>
             </Section>
@@ -1178,7 +1175,7 @@ const SettingsPanel: React.FC = () => {
               id="foundry"
               icon="construction"
               title="Tool Foundry"
-              description="The AI's workshop: it forges reusable tools for itself, stored as neurons in its Toolshed — nothing runs without your approval."
+              description="The AI's workshop: it forges reusable tools for itself, stored as notes in its Toolshed — nothing runs without your approval."
             >
               <ToolFoundrySettings />
             </Section>

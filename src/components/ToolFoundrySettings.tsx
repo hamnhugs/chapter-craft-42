@@ -745,7 +745,7 @@ const ToolFoundrySettings: React.FC<ToolFoundrySettingsProps> = ({ onCapability 
 
       {migrated && tools.length === 0 && (
         <p className="text-xs text-on-surface-variant italic">
-          No tools yet. With forging enabled, try: “make yourself a tool that counts words per chapter.” Tools live as entries in the Toolshed neuron (BRAIN tab).
+          No tools yet. With forging enabled, try: “make yourself a tool that counts words per chapter.” Tools live as entries in the Toolshed notebook (Notebooks tab).
         </p>
       )}
     </div>

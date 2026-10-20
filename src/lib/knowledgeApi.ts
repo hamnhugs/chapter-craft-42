@@ -25,33 +25,12 @@ export interface KnowledgeEntry {
   locators?: unknown;
   aliases?: string[] | null;
   author?: string | null;
+  /** One-line, search-snippet description shown in the chat's notes index
+   *  (memory_redesign migration). NULL until the save tool or the Sleep
+   *  Cycle writes one; display falls back to fallbackHook(content). */
+  hook?: string | null;
   created_at: string;
   updated_at: string;
-}
-
-// ── Layer 2: Episodic log ──────────────────────────────────────────────────────
-
-export interface EpisodicLogEntry {
-  id: string;
-  user_id: string;
-  session_id: string;
-  summary: string | null;
-  key_facts: string[];
-  entry_count: number;
-  created_at: string;
-}
-
-// ── Layer 5: Consolidation queue ──────────────────────────────────────────────
-
-export interface ConsolidationQueueItem {
-  id: string;
-  user_id: string;
-  entry_id: string | null;
-  reason: "conflict_staged" | "new_entry" | "orphan";
-  priority: number;
-  pending_data: Record<string, unknown> | null;
-  processed_at: string | null;
-  created_at: string;
 }
 
 // ── Sleep Cycle result ─────────────────────────────────────────────────────────
@@ -65,8 +44,10 @@ export interface SleepCycleReport {
     rerank:      { updated: number; renormalized?: number };
     consolidate: { processed: number; edges_created: number; conflicts_inserted: number };
     prune:       { orphans: string[]; enqueued?: number };
-    semanticize?: { created: number };
+    hooks?:      { written: number };
   };
+  /** The run-log row (memory_sleep_runs) when the run changed something. */
+  run_id?: string | null;
 }
 
 // ── Recording mode ─────────────────────────────────────────────────────────────
@@ -82,15 +63,6 @@ export interface MemoryGraphEdge {
   created_at: string;
 }
 
-export interface ConversationMemory {
-  id: string;
-  user_id: string;
-  summary: string;
-  key_facts: string[];
-  total_conversations: number;
-  updated_at: string;
-}
-
 export interface LintResult {
   issues: { type: string; severity: string; description: string; affected_entries?: string[]; suggested_fix?: string }[];
   suggestions: { type: string; description: string; priority: string }[];
@@ -100,13 +72,13 @@ export interface LintResult {
 }
 
 // ── Entry list reads: explicit columns, every page ─────────────────────────────
-// `select("*")` on knowledge_entries shipped both vector columns (embedding
-// 768 floats + embedding_v2 1536 floats, serialized as text) and the tsvector
+// `select("*")` on knowledge_entries shipped the vector column (768 floats,
+// serialized as text) and the tsvector
 // for EVERY row the WikiPanel or chat prompt listed — typically >90% of the
 // payload, for data no client reads. And PostgREST silently caps a response
 // at max-rows (1000): a big neuron just "lost" its oldest entries.
 //
-// ENTRY_LIST_COLUMNS is every column except embedding / embedding_v2 / tsv.
+// ENTRY_LIST_COLUMNS is every column except embedding / tsv.
 // PostgREST applies `select` and `range` to set-returning RPCs too, so the
 // entries_for_wiki RPC is narrowed the same way — no new SQL function needed.
 // If a listed column doesn't exist yet (an unapplied optional migration →
@@ -115,9 +87,9 @@ export const ENTRY_LIST_COLUMNS = [
   "id", "user_id", "wiki_id", "linked_wiki_id", "title", "content", "entry_type",
   "source_book_id", "tags", "confidence", "folder", "maturity", "subject", "is_index",
   "pending_changes", "atomicity_warning", "embedding_model", "vibrancy",
-  "last_retrieved_at", "retrieval_count", "importance", "surprise", "encoding_strength",
-  "storage_strength", "review_count", "next_review_at", "archived", "valid_from",
-  "valid_to", "superseded_by", "supersede_reason", "locators", "aliases", "author",
+  "last_retrieved_at", "retrieval_count", "storage_strength", "review_count",
+  "next_review_at", "archived", "valid_from", "valid_to", "superseded_by",
+  "supersede_reason", "locators", "aliases", "author", "hook",
   "created_at", "updated_at",
 ].join(", ");
 
@@ -240,42 +212,16 @@ export async function fetchMemoryGraph(wikiId?: string | null): Promise<MemoryGr
   );
 }
 
-export async function fetchConversationMemory(): Promise<ConversationMemory | null> {
-  const { data, error } = await supabase
-    .from("conversation_memory")
-    .select("*")
-    .maybeSingle();
-  if (error) throw error;
-  return data as unknown as ConversationMemory | null;
-}
-
 export async function deleteKnowledgeEntry(id: string): Promise<void> {
   const { error } = await supabase.from("knowledge_entries").delete().eq("id", id);
   if (error) throw error;
 }
 
-export async function updateKnowledgeEntry(id: string, updates: { title?: string; content?: string; tags?: string[]; confidence?: number }): Promise<void> {
+export async function updateKnowledgeEntry(id: string, updates: { title?: string; content?: string; tags?: string[]; confidence?: number; hook?: string | null }): Promise<void> {
   const { error } = await supabase.from("knowledge_entries").update(updates).eq("id", id);
   if (error) throw error;
   // A text edit clears the stale vectors (embedding_staleness trigger) — re-embed.
   if (updates.title !== undefined || updates.content !== undefined) embedEntriesSoon([id]);
-}
-
-export async function extractKnowledge(messages: { role: string; content: string }[], sourceBookId?: string, wikiId?: string | null): Promise<any> {
-  const { data: { session } } = await supabase.auth.getSession();
-  const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/knowledge-extract`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-    },
-    body: JSON.stringify({ messages, source_book_id: sourceBookId, wiki_id: wikiId }),
-  });
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({ error: "Extraction failed" }));
-    throw new Error(err.error || `Error ${resp.status}`);
-  }
-  return resp.json();
 }
 
 export async function runLint(wikiId?: string | null): Promise<LintResult> {
@@ -328,8 +274,7 @@ export interface RetrievalResult {
   nodes: RetrievedNode[];
   edges: RetrievedEdge[];
   query_embedded?: boolean;
-  /** Which search path served the request ("legacy" = v2 migration not applied). */
-  search?: "v2" | "legacy";
+  search?: "v2";
   scoped_wiki_ids?: string[] | null;
   dropped?: { seeds_below_cosine: number; below_relative_floor: number };
   /** Prompt routing, returned only when the caller asked for it. Absent or
@@ -523,39 +468,6 @@ export async function updateConflictStatus(id: string, status: KnowledgeConflict
   if (error) throw error;
 }
 
-// ── Layer 2: Episodic log ──────────────────────────────────────────────────────
-
-export async function fetchEpisodicLog(
-  limit = 20,
-  wikiId?: string | null,
-): Promise<EpisodicLogEntry[]> {
-  let q = supabase
-    .from("episodic_log")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(limit);
-  if (wikiId) {
-    // Include rows tagged to this wiki, plus legacy untagged rows (wiki_id IS NULL)
-    // so older episodes don't disappear when scoping.
-    q = q.or(`wiki_id.eq.${wikiId},wiki_id.is.null`);
-  }
-  const { data, error } = await q;
-  if (error) throw error;
-  return (data || []) as unknown as EpisodicLogEntry[];
-}
-
-export async function fetchEpisodicLogForSet(wikiIds: string[], limit = 20): Promise<EpisodicLogEntry[]> {
-  const { data, error } = await supabase
-    .from("episodic_log")
-    .select("*")
-    // Loaded-set scope plus legacy untagged rows, same policy as the single-wiki path.
-    .or(`wiki_id.in.(${wikiIds.join(",")}),wiki_id.is.null`)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-  if (error) throw error;
-  return (data || []) as unknown as EpisodicLogEntry[];
-}
-
 // ── Recording / Retrieval mode ─────────────────────────────────────────────────
 
 export async function getMemoryMode(): Promise<MemoryMode> {
@@ -564,6 +476,13 @@ export async function getMemoryMode(): Promise<MemoryMode> {
     .select("is_recording_mode")
     .maybeSingle();
   return data?.is_recording_mode === false ? "retrieval" : "recording";
+}
+
+/** Off the record: the user asked that nothing new be saved to their notes.
+ *  Every path that creates a note checks this (chat save tools, generated
+ *  images, videos and 3D models). A read failure means "not off the record". */
+export async function isOffTheRecord(): Promise<boolean> {
+  return (await getMemoryMode().catch(() => "recording" as MemoryMode)) === "retrieval";
 }
 
 export async function setMemoryMode(mode: MemoryMode): Promise<void> {
@@ -575,60 +494,37 @@ export async function setMemoryMode(mode: MemoryMode): Promise<void> {
   if (error) throw error;
 }
 
-// ── Layer 5: Consolidation queue ──────────────────────────────────────────────
-
-export async function fetchConsolidationQueue(
-  includingProcessed = false,
-  wikiId?: string | null,
-): Promise<ConsolidationQueueItem[]> {
-  if (wikiId) {
-    const { data, error } = await supabase.rpc("consolidation_queue_for_wiki" as any, {
-      target_wiki_id: wikiId,
-    } as any);
-    if (error) throw error;
-    let rows = (data || []) as unknown as ConsolidationQueueItem[];
-    if (!includingProcessed) rows = rows.filter((r) => !r.processed_at);
-    return rows.sort((a, b) => {
-      if (a.priority !== b.priority) return a.priority - b.priority;
-      return a.created_at < b.created_at ? -1 : 1;
-    });
-  }
-  let q = supabase
-    .from("consolidation_queue")
-    .select("*")
-    .order("priority", { ascending: true })
-    .order("created_at", { ascending: true });
-  if (!includingProcessed) q = q.is("processed_at", null);
-  const { data, error } = await q;
-  if (error) throw error;
-  return (data || []) as unknown as ConsolidationQueueItem[];
-}
-
-export async function fetchConsolidationQueueForSet(
-  wikiIds: string[],
-  includingProcessed = false,
-): Promise<ConsolidationQueueItem[]> {
-  const settled = await Promise.allSettled(
-    wikiIds.map((id) => fetchConsolidationQueue(includingProcessed, id)),
-  );
-  if (wikiIds.length > 0 && settled.every((r) => r.status === "rejected")) {
-    throw (settled[0] as PromiseRejectedResult).reason;
-  }
-  const seen = new Map<string, ConsolidationQueueItem>();
-  for (const res of settled) {
-    if (res.status !== "fulfilled") continue;
-    for (const item of res.value) if (!seen.has(item.id)) seen.set(item.id, item);
-  }
-  return [...seen.values()].sort((a, b) => {
-    if (a.priority !== b.priority) return a.priority - b.priority;
-    return a.created_at < b.created_at ? -1 : 1;
-  });
-}
-
 // ── Sleep Cycle ────────────────────────────────────────────────────────────────
 
 export async function triggerSleepCycle(wikiId?: string | null): Promise<SleepCycleReport> {
   return callEdge("knowledge-consolidate", { wiki_id: wikiId ?? null });
+}
+
+/** One Sleep Cycle run that changed something (memory_sleep_runs). */
+export interface SleepRun {
+  id: string;
+  wiki_id: string | null;
+  edge_ids: string[];
+  hook_entry_ids: string[];
+  created_at: string;
+  undone_at: string | null;
+}
+
+export async function fetchSleepRuns(limit = 5): Promise<SleepRun[]> {
+  const { data, error } = await supabase
+    .from("memory_sleep_runs" as any)
+    .select("id, wiki_id, edge_ids, hook_entry_ids, created_at, undone_at")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data || []) as unknown as SleepRun[];
+}
+
+/** Reverse a run: removes the links it added and the hooks it wrote. */
+export async function undoSleepRun(runId: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc("undo_sleep_run" as any, { _run_id: runId } as any);
+  if (error) throw error;
+  return data === true;
 }
 
 // ── Spaced retrieval-practice (spacing + testing effects) ───────────────────
@@ -641,12 +537,15 @@ export interface DueReview {
   content: string;
   entry_type: string;
   wiki_id: string | null;
-  vibrancy: number | null;
-  storage_strength: number | null;
+  hook: string | null;
+  /** Raw jsonb — parse with cardLocators.parseLocators. */
+  locators: unknown;
+  review_count: number;
   next_review_at: string | null;
 }
 
-export async function fetchDueReviews(wikiId: string | null, limit = 12): Promise<DueReview[]> {
+/** Notes to ask about: due ones first, then never-reviewed ones. */
+export async function fetchDueReviews(wikiId: string | null, limit = 3): Promise<DueReview[]> {
   const { data, error } = await supabase.rpc("entries_due_for_review" as any, { _wiki_id: wikiId, _limit: limit });
   if (error) throw error;
   return (data as DueReview[]) || [];
@@ -660,95 +559,31 @@ export async function recordReview(entryId: string, recalled: boolean): Promise<
 }
 
 
-// ─── Multi-wiki additions ────────────────────────────────────────────────────
-
-export interface SemanticSearchMatch {
+// ── Search every note (the Notebooks tab's search box) ─────────────────────
+// The same engine the chat uses (knowledge-retrieve: hybrid full-text +
+// vector + link walk), unscoped — one search path for the whole app.
+export interface NoteSearchMatch {
   id: string;
   wiki_id: string | null;
   title: string;
   content: string;
-  entry_type: string;
-  tags: string[];
-  confidence: number;
-  source_book_id: string | null;
-  similarity: number;
-  wiki_name: string | null;
-  wiki_color: string | null;
+  hook: string | null;
+  score: number;
 }
 
-export async function searchKnowledge(input: {
-  query: string;
-  wiki_ids?: string[] | null;
-  threshold?: number;
-  limit?: number;
-}): Promise<SemanticSearchMatch[]> {
-  const { data: { session } } = await supabase.auth.getSession();
-  const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/search-knowledge`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-    },
-    body: JSON.stringify(input),
-  });
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({ error: "Search failed" }));
-    throw new Error(err.error || `Error ${resp.status}`);
-  }
-  const data = await resp.json();
-  return (data.matches || []) as SemanticSearchMatch[];
-}
-
-export async function embedEntries(input: { entry_ids?: string[]; backfill?: boolean; limit?: number }): Promise<{ embedded: number; attempted: number }> {
-  const { data: { session } } = await supabase.auth.getSession();
-  const resp = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/embed-entries`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-    },
-    body: JSON.stringify(input),
-  });
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({ error: "Embedding failed" }));
-    throw new Error(err.error || `Error ${resp.status}`);
-  }
-  return resp.json();
-}
-
-export interface EntryBridge {
-  id: string;
-  user_id: string;
-  entry_id: string;
-  wiki_id: string;
-  created_at: string;
-}
-
-export async function fetchBridgesForEntry(entryId: string): Promise<EntryBridge[]> {
-  const { data, error } = await supabase
-    .from("entry_bridges" as any)
-    .select("*")
-    .eq("entry_id", entryId);
-  if (error) throw error;
-  return (data || []) as unknown as EntryBridge[];
-}
-
-export async function bridgeEntryToWiki(entryId: string, wikiId: string): Promise<void> {
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) throw new Error("Not signed in");
-  const { error } = await supabase
-    .from("entry_bridges" as any)
-    .insert({ entry_id: entryId, wiki_id: wikiId, user_id: userData.user.id } as any);
-  if (error) throw error;
-}
-
-export async function unbridgeEntryFromWiki(entryId: string, wikiId: string): Promise<void> {
-  const { error } = await supabase
-    .from("entry_bridges" as any)
-    .delete()
-    .eq("entry_id", entryId)
-    .eq("wiki_id", wikiId);
-  if (error) throw error;
+export async function searchAllNotes(query: string, limit = 20): Promise<NoteSearchMatch[]> {
+  const r = await retrieveKnowledge(query, { wiki_id: null, limit, depth: 0 });
+  const nodes = (r.nodes || []).filter((n) => n.entry_type !== "tool" && n.entry_type !== "program");
+  if (nodes.length === 0) return [];
+  const hooks = await fetchCardPointers(nodes.map((n) => n.id)).catch(() => new Map<string, CardPointerRow>());
+  return nodes.map((n) => ({
+    id: n.id,
+    wiki_id: n.wiki_id ?? null,
+    title: n.title,
+    content: n.content,
+    hook: hooks.get(n.id)?.hook ?? null,
+    score: typeof n.similarity === "number" ? n.similarity : n.score,
+  }));
 }
 
 // ── Bi-temporal supersession (VGMS 4D axis) ──────────────────────────────────
@@ -855,6 +690,7 @@ export interface CardPointerRow {
   locators: import("@/lib/cardLocators").CardLocator[];
   aliases: string[];
   author: string | null;
+  hook: string | null;
 }
 
 export async function fetchCardPointers(ids: string[]): Promise<Map<string, CardPointerRow>> {
@@ -865,7 +701,7 @@ export async function fetchCardPointers(ids: string[]): Promise<Map<string, Card
   try {
     const { data, error } = await supabase
       .from("knowledge_entries")
-      .select("id, locators, aliases, author" as any)
+      .select("id, locators, aliases, author, hook" as any)
       .in("id", ids);
     if (error) {
       if (isCardSchemaMissing(error)) noteCardSchema("missing");
@@ -876,40 +712,13 @@ export async function fetchCardPointers(ids: string[]): Promise<Map<string, Card
       const locators = parseLocators(r.locators);
       const aliases = Array.isArray(r.aliases) ? r.aliases.filter((a: unknown): a is string => typeof a === "string") : [];
       const author = typeof r.author === "string" ? r.author : null;
-      if (locators.length > 0 || aliases.length > 0 || author) {
-        out.set(r.id as string, { locators, aliases, author });
+      const hook = typeof r.hook === "string" && r.hook.trim() ? r.hook.trim() : null;
+      if (locators.length > 0 || aliases.length > 0 || author || hook) {
+        out.set(r.id as string, { locators, aliases, author, hook });
       }
     }
     return out;
   } catch {
     return out;
   }
-}
-
-export async function createWikiPointerEntry(input: {
-  wiki_id: string;
-  linked_wiki_id: string;
-  title: string;
-  content?: string;
-  tags?: string[];
-}): Promise<KnowledgeEntry> {
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) throw new Error("Not signed in");
-  const { data, error } = await supabase
-    .from("knowledge_entries")
-    .insert({
-      user_id: userData.user.id,
-      wiki_id: input.wiki_id,
-      linked_wiki_id: input.linked_wiki_id,
-      title: input.title,
-      content: input.content || "",
-      entry_type: "concept",
-      tags: input.tags || [],
-      confidence: 1,
-    } as any)
-    .select()
-    .single();
-  if (error || !data) throw error || new Error("Failed to create pointer");
-  embedEntriesSoon((data as any).id);
-  return data as unknown as KnowledgeEntry;
 }
