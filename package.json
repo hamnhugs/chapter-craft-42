@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2:answer": "vitest run --config vitest.e2.config.ts src/harness/e2/answer.e2run.ts",
-    "e2:grade": "vitest run --config vitest.e2.config.ts src/harness/e2/grade.e2run.ts"
+    "e2:grade": "vitest run --config vitest.e2.config.ts src/harness/e2/grade.e2run.ts",
+    "eval:memory": "vitest run --config vitest.memory.config.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
