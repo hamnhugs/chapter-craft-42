@@ -70,6 +70,11 @@ interface AppState {
   getActiveBookId: () => string | null;
   getShelves: () => BookFolder[];
   setActiveTab: (tab: TabId) => void;
+  /** The notebook the Notebooks view shows when opened from the list. Null =
+   *  show Counsel's loaded set. Viewing never changes what Counsel has loaded. */
+  viewedWikiId: string | null;
+  /** Open one notebook to read, leaving Counsel's loaded set alone. */
+  openNotebook: (wikiId: string) => void;
   addChapter: (bookId: string, chapter: Chapter) => Promise<void>;
   /** Bulk insert (one request per 100 rows, one state patch). */
   addChapters: (bookId: string, chapters: Chapter[]) => Promise<void>;
@@ -343,7 +348,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // flushSync forces React to commit the new tab inside the transition's
   // snapshot callback. Falls back to a plain update on older engines or when
   // the user prefers reduced motion.
-  const navigateTab = useCallback((tab: TabId) => {
+  const [viewedWikiId, setViewedWikiId] = useState<string | null>(null);
+  const navigateTab = useCallback((tab: TabId, viewWikiId: string | null = null) => {
+    // Every other way into the notebook view shows the loaded set.
+    if (tab === "wiki") setViewedWikiId(viewWikiId);
     const doc = document as Document & {
       startViewTransition?: (cb: () => void) => unknown;
     };
@@ -356,6 +364,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setActiveTab(tab);
     }
   }, []);
+  const openNotebook = useCallback((wikiId: string) => navigateTab("wiki", wikiId), [navigateTab]);
+  // The public setter takes only the tab, so nothing can pass a view id by accident.
+  const setTab = useCallback((tab: TabId) => navigateTab(tab), [navigateTab]);
 
   const refreshWikis = useCallback(async () => {
     if (!user) { setWikis([]); setActiveWikiId(null); setActiveWikiIds([]); activeWikiIdsRef.current = []; return; }
@@ -1716,7 +1727,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         getBooks: () => booksRef.current,
         getActiveBookId: () => activeBookIdRef.current,
         getShelves: () => shelvesRef.current,
-        setActiveTab: navigateTab,
+        setActiveTab: setTab,
+        viewedWikiId,
+        openNotebook,
         addChapter,
         addChapters,
         updateChapter,

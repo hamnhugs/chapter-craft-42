@@ -193,14 +193,9 @@ const Index: React.FC = () => {
   const [moreOpen, setMoreOpen] = useState(false);
   const visibleTabs: NavTab[] = (isAdmin ? [...tabs, ADMIN_TAB] : tabs).filter((t) => t.id !== "wiki");
   // One "Notebooks" destination: it lights up for the list and for an open
-  // notebook. From elsewhere it opens your notebook (or the list when none is
-  // open); pressed again inside a notebook it steps back to the list.
+  // notebook, and always lands on the list.
   const navActiveTab = activeTab === "wiki" ? "wikis" : activeTab;
-  const navSelect = (id: NavTabId) => {
-    if (id !== "wikis") return setActiveTab(id);
-    if (activeTab === "wiki" || activeTab === "wikis") return setActiveTab("wikis");
-    setActiveTab(activeWiki ? "wiki" : "wikis");
-  };
+  const navSelect = (id: NavTabId) => setActiveTab(id);
   const moreTabs = visibleTabs.filter((t) => !PRIMARY_IDS.includes(t.id as any));
   const moreActive = moreTabs.some((t) => t.id === navActiveTab);
   const activeBook = getActiveBook();
@@ -228,8 +223,8 @@ const Index: React.FC = () => {
               onClick={() => setActiveTab("wiki")}
               title={
                 activeWikis.length > 1
-                  ? `Loaded notebooks: ${activeWikis.map((w) => w.name).join(", ")} — press ⌘K to switch`
-                  : `Open notebook: ${activeWiki.name} — press ⌘K to switch`
+                  ? `Counsel is using: ${activeWikis.map((w) => w.name).join(", ")} — press ⌘K to switch`
+                  : `Counsel is using: ${activeWiki.name} — press ⌘K to switch`
               }
               className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent/10 hover:bg-accent/20 transition-colors text-xs font-body font-medium text-accent max-w-[200px] truncate"
             >

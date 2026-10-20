@@ -1103,7 +1103,7 @@ const ChatPanel: React.FC = () => {
             <span
               key={w.id}
               className="inline-flex items-center gap-1.5 pl-2 pr-1.5 py-0.5 rounded-full bg-surface-container-high border border-outline-variant/20 max-w-[160px]"
-              title={i === 0 ? `${w.name} — primary (new knowledge is saved here)` : w.name}
+              title={i === 0 ? `${w.name} — new notes are saved here` : w.name}
             >
               <span
                 className="w-2 h-2 rounded-full flex-shrink-0"
@@ -1112,14 +1112,14 @@ const ChatPanel: React.FC = () => {
               />
               <span className="font-semibold text-primary truncate">{w.name}</span>
               {i === 0 && activeWikis.length > 1 && (
-                <span className="text-[9px] font-bold uppercase tracking-widest text-on-surface-variant">primary</span>
+                <span className="text-[9px] font-bold uppercase tracking-widest text-on-surface-variant">saves here</span>
               )}
               {i > 0 && (
                 <button
-                  onClick={() => toggleNeuronInSession(w.id).catch((e: any) => toast.error(e.message || "Couldn't unload"))}
+                  onClick={() => toggleNeuronInSession(w.id).catch((e: any) => toast.error(e.message || "Couldn't remove that notebook"))}
                   className="rounded-full hover:bg-surface-container-highest p-0.5 leading-none"
-                  title={`Unload "${w.name}"`}
-                  aria-label={`Unload ${w.name}`}
+                  title={`Stop using "${w.name}"`}
+                  aria-label={`Stop using ${w.name}`}
                 >
                   <span className="material-symbols-outlined text-[12px] block">close</span>
                 </button>
@@ -1127,9 +1127,10 @@ const ChatPanel: React.FC = () => {
             </span>
           ))}
           <button
-            onClick={() => window.dispatchEvent(new CustomEvent("open-neuron-switcher"))}
+            onClick={() => window.dispatchEvent(new CustomEvent("open-neuron-switcher", { detail: { mode: "add" } }))}
             className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full border border-dashed border-outline-variant/40 hover:border-primary/50 hover:text-primary transition-colors"
-            title="Load another notebook alongside (⌘K)"
+            title="Add another notebook for Counsel"
+            aria-label="Add another notebook for Counsel"
           >
             <span className="material-symbols-outlined text-[14px]">add</span>
           </button>
@@ -1137,10 +1138,10 @@ const ChatPanel: React.FC = () => {
             <button
               onClick={() => import("@/components/ChainDialog").then((m) => m.openChainDialog({ prefillIds: activeWikiIds }))}
               className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-outline-variant/40 hover:border-primary/50 hover:text-primary transition-colors"
-              title="Save these notebooks as a saved set"
+              title="Save these notebooks as a set you can switch to in one step"
             >
               <span className="material-symbols-outlined text-[14px]">link</span>
-              <span className="text-[10px] font-bold uppercase tracking-widest">Save saved set</span>
+              <span className="text-[10px] font-bold uppercase tracking-widest">Save as set</span>
             </button>
           )}
         </div>
