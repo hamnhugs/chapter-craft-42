@@ -1320,3 +1320,29 @@ html.cc-media-overlay-open .message-bubble-user {
 }
 .cc-set-flash { animation: cc-set-flash 1.6s ease-out; }
 @media (prefers-reduced-motion: reduce) { .cc-set-flash { animation: none; outline: 2px solid hsl(var(--primary) / 0.5); } }
+
+/* ── Counsel's reading column ─────────────────────────────────────────────
+ *
+ * The composer was a centred 56rem card while the transcript, the context
+ * rows above it and the TTS bar ran edge to edge. On a desktop window that
+ * put the bubbles' left edge at the window's left edge and the composer in
+ * the middle, with ~1600px-long lines at 1920 wide. Everything in the tab
+ * now shares ONE column: the composer caps at --cc-counsel-col, and the rest
+ * pads (or margins) itself by half of whatever is left over. Percentages in
+ * padding/margin resolve against the parent's width, so the column follows
+ * the chat pane — narrower when the workspace panel is open beside it —
+ * without a breakpoint per window size. At ≤ col + 2rem it is the old 1rem
+ * gutter exactly, so phones and tiled windows are unchanged.
+ */
+:root { --cc-counsel-col: 56rem; }
+@media (min-width: 1536px) { :root { --cc-counsel-col: 64rem; } }
+.cc-counsel-px { padding-inline: max(1rem, calc((100% - var(--cc-counsel-col)) / 2)); }
+.cc-counsel-mx { margin-inline: max(1rem, calc((100% - var(--cc-counsel-col)) / 2)); }
+
+/* Short windows (956x506 full screen, 476x506 half tile): the transcript is
+   what gets squeezed, so trim the padding around it rather than its rows. */
+@media (max-height: 640px) {
+  .cc-counsel-log.cc-counsel-log { padding-top: 0.75rem; padding-bottom: 0.75rem; }
+  .cc-counsel-composer.cc-counsel-composer { padding-bottom: 0.5rem; }
+  .cc-counsel-context.cc-counsel-context { padding-top: 0.375rem; }
+}

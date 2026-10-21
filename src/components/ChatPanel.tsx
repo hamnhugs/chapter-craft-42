@@ -1070,7 +1070,7 @@ const ChatPanel: React.FC = () => {
           book that is NOT on the loaded shelf, both are named, so the screen
           never implies the AI is reading what the user is reading. */}
       {selectedBook && (
-        <div className="px-4 pt-3 pb-0.5 flex items-center gap-2 text-xs font-body text-on-surface-variant">
+        <div className="cc-counsel-px cc-counsel-context pt-3 pb-0.5 flex items-center gap-2 text-xs font-body text-on-surface-variant">
           <span className="material-symbols-outlined text-sm text-primary-container" aria-hidden>
             auto_stories
           </span>
@@ -1080,7 +1080,7 @@ const ChatPanel: React.FC = () => {
         </div>
       )}
       {!selectedBook && readerBook && loadedLabel && (
-        <div className="px-4 pt-3 pb-0.5 flex items-center gap-2 text-xs font-body text-on-surface-variant" data-testid="reader-vs-focus">
+        <div className="cc-counsel-px cc-counsel-context pt-3 pb-0.5 flex items-center gap-2 text-xs font-body text-on-surface-variant" data-testid="reader-vs-focus">
           <span className="material-symbols-outlined text-sm text-primary-container" aria-hidden>
             auto_stories
           </span>
@@ -1093,9 +1093,11 @@ const ChatPanel: React.FC = () => {
 
       {/* Loaded-neuron chips — the set Counsel reads from. Secondary chips
           can be unloaded inline; "+" opens the ⌘K switcher; 2+ loaded shows
-          a save-as-chain affordance (Linear-style: save at point of use). */}
+          a save-as-chain affordance (Linear-style: save at point of use).
+          One line that scrolls, like the composer's strips: wrapping grew a
+          row per few notebooks, taken from a 506px-tall transcript. */}
       {activeWikis.length > 0 && (
-        <div className="px-4 pt-3 pb-1 flex items-center gap-1.5 flex-wrap text-xs font-body text-on-surface-variant">
+        <div className="cc-counsel-px cc-counsel-context pt-3 pb-1 flex flex-nowrap overflow-x-auto hide-scrollbar items-center gap-1.5 text-xs font-body text-on-surface-variant [&>*]:shrink-0">
           <span className="mr-0.5">
             {activeWikis.length > 1 ? "Open notebooks:" : "Notebook:"}
           </span>
@@ -1177,7 +1179,7 @@ const ChatPanel: React.FC = () => {
             <BookWorm ref={worm.ref} mood={worm.mood} voiceSource={worm.voiceSource} onPet={worm.onPet} size={64} className="w-[52px] sm:w-16 h-auto" />
           </div>
         )}
-        <div ref={messagesContainerRef} role="log" aria-label="Conversation with The Librarian" aria-live="off" onScroll={() => { cancelLongPress(); if (Date.now() >= programmaticScrollUntilRef.current) lastTranscriptInteractionRef.current = Date.now(); }} onPointerDown={() => { lastTranscriptInteractionRef.current = Date.now(); }} onWheel={() => { lastTranscriptInteractionRef.current = Date.now(); }} onTouchMove={() => { lastTranscriptInteractionRef.current = Date.now(); }} className="h-full overflow-auto px-4 py-6 space-y-6 hide-scrollbar [overflow-anchor:none]">
+        <div ref={messagesContainerRef} role="log" aria-label="Conversation with The Librarian" aria-live="off" onScroll={() => { cancelLongPress(); if (Date.now() >= programmaticScrollUntilRef.current) lastTranscriptInteractionRef.current = Date.now(); }} onPointerDown={() => { lastTranscriptInteractionRef.current = Date.now(); }} onWheel={() => { lastTranscriptInteractionRef.current = Date.now(); }} onTouchMove={() => { lastTranscriptInteractionRef.current = Date.now(); }} className="cc-counsel-log cc-counsel-px h-full overflow-auto py-6 space-y-6 hide-scrollbar [overflow-anchor:none]">
 
         {messages.length > 0 && hasEarlier && (
           <div className="flex justify-center">
@@ -1210,8 +1212,14 @@ const ChatPanel: React.FC = () => {
         )}
 
 
+        {/* `ml-auto`, not `self-end`: the log is a block, not a flex column,
+            so `self-end` did nothing and user bubbles stopped at 85% of the
+            width instead of the right edge. `min-w-0` + `max-w-full` on the
+            bubble stop a code block or a long URL from sizing it to its
+            unbroken width (the whole transcript scrolled sideways on a tiled
+            window); the <pre> scrolls inside the bubble instead. */}
         {messages.map((msg, i) => (
-          <div key={msg.id || i} data-bubble-id={bubbleId(msg, i)} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"} max-w-[85%] ${msg.role === "user" ? "self-end" : ""} group`}>
+          <div key={msg.id || i} data-bubble-id={bubbleId(msg, i)} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"} max-w-[85%] min-w-0 ${msg.role === "user" ? "ml-auto" : ""} group`}>
             <div className="flex items-center gap-2 mb-2 mx-4">
               {msg.role === "assistant" && <span className="material-symbols-outlined text-primary-container text-lg">auto_stories</span>}
               <span className={`font-headline font-bold text-sm tracking-wide ${msg.role === "user" ? "text-primary" : "text-secondary"}`}>
@@ -1328,7 +1336,7 @@ const ChatPanel: React.FC = () => {
               </details>
             )}
             <div
-              className={`relative group ${msg.role === "user" ? "message-bubble-user bg-primary-container text-on-primary-container" : "message-bubble-ai bg-surface-container-high text-foreground border-l-2 border-primary-container/20"} p-5 shadow-sm leading-relaxed select-text`}
+              className={`relative group max-w-full min-w-0 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto ${msg.role === "user" ? "message-bubble-user bg-primary-container text-on-primary-container" : "message-bubble-ai bg-surface-container-high text-foreground border-l-2 border-primary-container/20"} p-5 shadow-sm leading-relaxed select-text`}
               style={{ WebkitTouchCallout: "none" } as React.CSSProperties}
               onTouchStart={(e) => startLongPress(msg.content, e)}
               // The fired flag must be CONSUMED here, not just read: media frames
@@ -1512,7 +1520,7 @@ const ChatPanel: React.FC = () => {
           and a manual resume mid-verification would transcribe the
           assistant's own audio as the next turn). */}
       {miniPlayerVisible && speakProgress && (
-        <div className="mx-4 mb-2 flex items-center gap-1 rounded-2xl bg-surface-container-high border border-outline-variant/30 shadow-lg px-2 py-1.5">
+        <div className="cc-counsel-mx mb-2 flex items-center gap-1 rounded-2xl bg-surface-container-high border border-outline-variant/30 shadow-lg px-2 py-1.5">
           <button
             onClick={scrollToSpeakingBubble}
             title="Show this message in the conversation"
@@ -1580,13 +1588,13 @@ const ChatPanel: React.FC = () => {
       <BookContextPicker open={booksPickerOpen} onOpenChange={setBooksPickerOpen} />
 
       {/* Input Area */}
-      <div className="px-4 pb-4 pt-2">
+      <div className="cc-counsel-composer px-4 pb-4 pt-2">
         {/* The ring is the state signal that survives typing. The `+` badge and
             the named summary in the placeholder are both gone or unread once
             the user starts a message; this stays, and it is why a bare count
             was never allowed to be the whole disclosure. */}
         <div
-          className={`bg-surface-container-low/90 backdrop-blur-xl p-3 rounded-2xl shadow-2xl border flex flex-col gap-2 max-w-4xl mx-auto transition-shadow ${
+          className={`bg-surface-container-low/90 backdrop-blur-xl p-3 rounded-2xl shadow-2xl border flex flex-col gap-2 max-w-[var(--cc-counsel-col)] mx-auto transition-shadow ${
             handsFree.active
               ? "border-primary/40 ring-1 ring-primary/40"
               : activeModeCount > 0

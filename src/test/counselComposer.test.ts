@@ -51,7 +51,9 @@ describe("nothing stacks under the composer", () => {
   });
 
   it("keeps the context strips to a single scrolling line", () => {
-    expect(count(CHAT_PANEL, "flex flex-nowrap overflow-x-auto hide-scrollbar items-center")).toBe(2);
+    // Two in the composer (pinned files, loaded books) and the notebook row
+    // above the transcript, which wrapped onto extra rows in short windows.
+    expect(count(CHAT_PANEL, "flex flex-nowrap overflow-x-auto hide-scrollbar items-center")).toBe(3);
   });
 
   it("defaults loaded books to collapsed, so the bar does not grow with context", () => {
