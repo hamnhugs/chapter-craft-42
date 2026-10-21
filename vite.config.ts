@@ -77,6 +77,7 @@ const CONNECT_ORIGINS = [
   "https://huggingface.co",
   "https://cdn-lfs.huggingface.co",
   "https://cdn-lfs-us-1.huggingface.co",
+  "https://api.open-meteo.com", // Bookworm Studio's live Vegas sky (optional weather)
 ];
 
 // Production Content-Security-Policy. Every origin here is load-bearing —
