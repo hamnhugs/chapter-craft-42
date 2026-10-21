@@ -86,6 +86,13 @@
     @apply border-border;
   }
 
+  /* Sizes are rem-based, so this scales the whole UI to what one Ctrl+minus
+     (90%) looks like. Mouse/trackpad screens only: phones keep 16px so iOS
+     doesn't zoom into inputs under 16px. */
+  @media (pointer: fine) {
+    html { font-size: 90%; }
+  }
+
   body {
     @apply bg-background text-foreground font-body antialiased;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
