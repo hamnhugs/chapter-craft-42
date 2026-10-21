@@ -580,7 +580,7 @@ const SettingsPanel: React.FC = () => {
   };
 
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="flex h-full overflow-hidden w-full max-w-6xl mx-auto">
       {/* ── Section list (sidebar; the whole first screen when narrow) ── */}
       <nav
         aria-label="Settings sections"
