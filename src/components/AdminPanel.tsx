@@ -180,7 +180,7 @@ const OverviewSection: React.FC<{
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard icon="group" label="Users" value={users ? String(users.length) : "…"} />
         <StatCard icon="neurology" label="Notebooks" value={wikis ? String(wikis.length) : "…"} />
-        <StatCard icon="article" label="Entries" value={wikis ? String(entryTotal) : "…"} />
+        <StatCard icon="article" label="Notes" value={wikis ? String(entryTotal) : "…"} />
         <StatCard icon="campaign" label="Active announcements" value={announcements ? String(activeAnnouncements) : "…"} />
       </div>
 
@@ -386,7 +386,7 @@ const NeuronsSection: React.FC<{ wikis: AdminWikiRow[] | null }> = ({ wikis }) =
     try {
       setEntries(await adminListWikiEntries(wiki.id, 50));
     } catch (err: any) {
-      toast.error(err.message || "Failed to load entries");
+      toast.error(err.message || "Failed to load notes");
       setEntries([]);
     }
   };
@@ -398,7 +398,7 @@ const NeuronsSection: React.FC<{ wikis: AdminWikiRow[] | null }> = ({ wikis }) =
   return (
     <div className="space-y-8">
       <p className="text-xs text-on-surface-variant max-w-2xl">
-        Every notebook across all accounts. Opening a notebook's entries is recorded in the audit
+        Every notebook across all accounts. Opening a notebook's notes is recorded in the audit
         log — access user content only for support, moderation, or security purposes.
       </p>
       {grouped.map(([email, list]) => (
@@ -406,8 +406,8 @@ const NeuronsSection: React.FC<{ wikis: AdminWikiRow[] | null }> = ({ wikis }) =
           <div className="flex items-center gap-2 mb-3">
             <span className="text-sm font-bold text-foreground">{email}</span>
             <span className="text-xs text-on-surface-variant">
-              {list.length} neuron{list.length === 1 ? "" : "s"} ·{" "}
-              {list.reduce((s, w) => s + w.entry_count, 0)} entries
+              {list.length} notebook{list.length === 1 ? "" : "s"} ·{" "}
+              {list.reduce((s, w) => s + w.entry_count, 0)} notes
             </span>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
@@ -437,7 +437,7 @@ const NeuronsSection: React.FC<{ wikis: AdminWikiRow[] | null }> = ({ wikis }) =
               <DialogHeader>
                 <DialogTitle className="font-headline text-2xl">{selected.name}</DialogTitle>
                 <DialogDescription>
-                  {selected.owner_email} · {selected.entry_count} entries · created{" "}
+                  {selected.owner_email} · {selected.entry_count} notes · created{" "}
                   {new Date(selected.created_at).toLocaleDateString()}. This access was recorded
                   in the audit log.
                 </DialogDescription>
