@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -23,11 +23,12 @@ import AiPermissionsSettings from "@/components/AiPermissionsSettings";
 import MemoryLensSettings from "@/components/MemoryLensSettings";
 import ToolFoundrySettings from "@/components/ToolFoundrySettings";
 import ProgramRunnerSettings from "@/components/ProgramRunnerSettings";
+import { Choice, Disclosure, Group, Pill, Row, selectCls } from "@/components/settings/SettingsUI";
 import { getMemoryMode, setMemoryMode, MemoryMode } from "@/lib/knowledgeApi";
 import { consumeSettingsSection } from "@/lib/settingsNav";
 import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
 import { isEmbeddingModel, isBatchOnlyModel } from "@/lib/utils";
-import { allProviders, describeModel, freeChatProviders, isNvidiaModel, localModelId, modelProvider, namespacedId, providerConfigured, providerKeyUrl, providerLabel, NVIDIA_PREFIX } from "@/lib/providers/registry";
+import { allProviders, describeModel, freeChatProviders, isNvidiaModel, localModelId, modelProvider, namespacedId, providerConfigured, providerLabel } from "@/lib/providers/registry";
 import type { ProviderId } from "@/lib/providers/types";
 import { namespacedNvidiaId, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
 import { LEAN_MODES, LEAN_MODE_INFO } from "@/lib/leanMode";
@@ -38,14 +39,27 @@ import { FIGURE_MODELS_PAID, FIGURE_MODELS_FREE, DEFAULT_FIGURE_MODEL } from "@/
 //
 // Why one hub: settings scattered across tabs fail the "where do I change X?"
 // test (NN/g: users look for a single Settings location before anything else).
-// Structure follows settings-page research: a single scrollable page (no
-// hidden sub-pages — most users change ≤1 setting per visit and abandon
-// searches across sub-screens), grouped by user goal rather than by internal
-// module, ordered by how often each group is touched. Controls apply
-// immediately (modern consensus — no global Save button to forget).
+//
+// Layout (2026-10-15 rework — the old single scroll had grown past 9,000px
+// and, on a 956×506 window, showed no setting at all on the first screen):
+//  - A sidebar of sections with ONE section shown at a time — the macOS
+//    System Settings / Linear / GitHub pattern. On a narrow window the
+//    sidebar becomes the first screen and a section opens over it (iOS
+//    drill-in), so nothing needs sideways scrolling.
+//  - A search box over every setting (VS Code's finding: with many settings,
+//    people search rather than browse). A result opens its section and
+//    flashes the row.
+//  - Grouped rows: label + one short line on the left, control on the right.
+//    Long explanations hide behind an ⓘ (progressive disclosure — NN/g:
+//    show the few things most people need, keep the rest one obvious click
+//    away, no more than two levels).
+//  - Grouped by what the user is trying to do: every API key on one page,
+//    every "which model does this job" picker in one table.
+// Controls apply immediately (no global Save button to forget); secrets keep
+// an explicit Save so a half-typed key is never stored.
 //
 // Contextual quick toggles (Read Aloud / Hands-free in Counsel, Recording
-// mode in the notebook) intentionally stay where they are — research favors a
+// mode in Neuron) intentionally stay where they are — research favors a
 // central hub PLUS shortcuts at the point of use, not either/or.
 
 const VOICE_QUICK_SEARCH_KEY = "voice_quick_search";
@@ -54,102 +68,78 @@ const BARGE_IN_KEY = "hands_free_barge_in";
 /** The pocket screen defaults ON — it is a battery and phantom-tap guard, and
  *  it existed before it was a setting, so absence must read as enabled. */
 const POCKET_SCREEN_KEY = "hands_free_pocket_screen";
+const LAST_SECTION_KEY = "cc-settings-section";
 
-const SECTIONS = [
-  { id: "models", icon: "tune", title: "AI Models & Keys" },
-  { id: "voice", icon: "record_voice_over", title: "Voice & Speech" },
-  { id: "research", icon: "science", title: "Research & Web Search" },
-  { id: "images", icon: "image", title: "Images & Vision" },
-  { id: "memory", icon: "menu_book", title: "Notes & library" },
-  { id: "permissions", icon: "shield_person", title: "AI Permissions" },
-  { id: "programs", icon: "dns", title: "Program Foundry" },
-  { id: "prompts", icon: "history_edu", title: "Prompts" },
-  { id: "appearance", icon: "palette", title: "Appearance" },
-  { id: "account", icon: "person", title: "Account & Plan" },
-] as const;
+type SectionId =
+  | "models" | "keys" | "voice" | "research" | "images" | "memory" | "prompts" | "appearance" | "account"
+  | "permissions" | "foundry" | "programs";
 
-/** Section card with an anchor id for the side nav. */
-const Section: React.FC<{
-  id: string;
-  icon: string;
-  title: string;
-  description?: string;
-  children: React.ReactNode;
-}> = ({ id, icon, title, description, children }) => (
-  <section id={`settings-${id}`} aria-labelledby={`settings-${id}-h`} className="scroll-mt-24">
-    <div className="flex items-center gap-2.5 mb-1">
-      <span className="material-symbols-outlined text-primary text-xl" aria-hidden>{icon}</span>
-      <h3 id={`settings-${id}-h`} className="font-headline font-bold text-xl text-foreground">{title}</h3>
-    </div>
-    {description && <p className="text-xs text-on-surface-variant mb-3 ml-0.5">{description}</p>}
-    <div className="rounded-2xl bg-surface-container-low border border-outline-variant/10 p-4 md:p-5 space-y-5">
-      {children}
-    </div>
-  </section>
-);
+const SECTIONS: { id: SectionId; icon: string; title: string; blurb: string; power?: boolean }[] = [
+  { id: "models", icon: "tune", title: "Models", blurb: "Which AI answers, which one does each job, and what it may spend." },
+  { id: "keys", icon: "key", title: "API keys", blurb: "The accounts the app uses on your behalf. Keys save only when you press Save." },
+  { id: "voice", icon: "record_voice_over", title: "Voice", blurb: "How replies sound, and how hands-free conversations behave." },
+  { id: "research", icon: "travel_explore", title: "Research", blurb: "Live web search and what Counsel may read." },
+  { id: "images", icon: "image", title: "Images & video", blurb: "Models and defaults for pictures, video and 3D." },
+  { id: "memory", icon: "menu_book", title: "Notes & library", blurb: "Whether Counsel saves notes, and how new books are catalogued." },
+  { id: "prompts", icon: "edit_note", title: "Replies & prompts", blurb: "Reply length, saved prompts and standing instructions." },
+  { id: "appearance", icon: "palette", title: "Appearance", blurb: "Theme and seasonal colour." },
+  { id: "account", icon: "person", title: "Account", blurb: "Your plan, developer keys and the setup helper." },
+  { id: "permissions", icon: "shield_person", title: "AI permissions", blurb: "Exactly which tools the AI may use on your behalf.", power: true },
+  { id: "foundry", icon: "construction", title: "Tool Foundry", blurb: "Reusable tools the AI forges for itself — nothing runs without your approval.", power: true },
+  { id: "programs", icon: "dns", title: "Program Foundry", blurb: "Run real programs on your VPS in a sealed sandbox, each one approved by you.", power: true },
+];
+const SECTION_IDS = new Set<string>(SECTIONS.map((s) => s.id));
 
-const FieldLabel: React.FC<{ children: React.ReactNode; right?: React.ReactNode }> = ({ children, right }) => (
-  <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1 flex items-center justify-between gap-2">
-    <span>{children}</span>
-    {right}
-  </label>
-);
-
-const Hint: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <p className="text-[10px] text-on-surface-variant px-1">{children}</p>
-);
-
-/** Toggle row: label state text on the left, switch on the right. */
-const ToggleRow: React.FC<{
-  text: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-  disabled?: boolean;
-  ariaLabel: string;
-  locked?: boolean;
-}> = ({ text, checked, onChange, disabled, ariaLabel, locked }) => (
-  <div className="flex items-center justify-between gap-3 bg-surface-container-high rounded-lg py-3 px-4 border border-outline-variant/10">
-    <span className="text-sm text-primary flex items-center gap-1.5">
-      {locked && <span className="material-symbols-outlined text-sm" aria-hidden>lock</span>}
-      {text}
-    </span>
-    <Switch checked={checked} onCheckedChange={onChange} disabled={disabled} aria-label={ariaLabel} />
-  </div>
-);
-
-/** Password-style secret with explicit Save/Remove (keys shouldn't save per keystroke). */
-const SecretField: React.FC<{
-  value: string;
-  placeholder: string;
-  icon: string;
-  onSave: (v: string) => void;
-  saveLabel?: string;
-}> = ({ value, placeholder, icon, onSave, saveLabel = "Save" }) => {
-  const [draft, setDraft] = useState(value);
-  useEffect(() => { setDraft(value); }, [value]);
-  return (
-    <>
-      <div className="relative">
-        <input
-          className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 pr-10 focus:ring-1 focus:ring-primary/40 transition-all"
-          type="password"
-          placeholder={placeholder}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") onSave(draft); }}
-        />
-        <span className="material-symbols-outlined absolute right-3 top-2.5 text-on-surface-variant text-sm" aria-hidden>{icon}</span>
-      </div>
-      <div className="flex gap-2 mt-1">
-        <Button size="sm" onClick={() => onSave(draft)}>{saveLabel}</Button>
-        {value && <Button size="sm" variant="destructive" onClick={() => { setDraft(""); onSave(""); }}>Remove</Button>}
-      </div>
-    </>
-  );
-};
-
-const selectCls =
-  "w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40";
+/** Everything the search box can find. `anchor` matches a Row/Disclosure id;
+ *  without one, the result opens the section. `k` holds extra words people
+ *  might type for it. */
+const SEARCH_INDEX: { s: SectionId; label: string; anchor?: string; k?: string }[] = [
+  { s: "models", label: "Chat model", anchor: "chat-model", k: "active model llm provider" },
+  { s: "models", label: "Voice replies model", anchor: "role-voice", k: "spoken hands-free" },
+  { s: "models", label: "Model for pictures you attach", anchor: "role-vision", k: "vision image ocr" },
+  { s: "models", label: "Deep Research model", anchor: "role-deep", k: "reasoning" },
+  { s: "models", label: "Quick search model", anchor: "role-quick", k: "web" },
+  { s: "models", label: "Background summaries model", anchor: "role-utility", k: "utility compaction gists" },
+  { s: "models", label: "Notebook upkeep model", anchor: "role-wiki", k: "notebook extract health" },
+  { s: "models", label: "Book figures model", anchor: "role-figures", k: "figure extraction images diagrams" },
+  { s: "models", label: "Spending", anchor: "spending", k: "lean chat only cost money budget" },
+  { s: "models", label: "Studio tools", anchor: "studio", k: "video 3d masters blueprints tokens" },
+  { s: "models", label: "Saved models", anchor: "saved-models", k: "add remove model list browse" },
+  { s: "models", label: "Diagnostics", anchor: "diagnostics", k: "debug" },
+  { s: "keys", label: "OpenRouter key", anchor: "key-openrouter", k: "api credit balance" },
+  { s: "keys", label: "NVIDIA key", anchor: "key-nvidia", k: "api free nvapi" },
+  { s: "keys", label: "Gemini key", anchor: "key-gemini", k: "google api ai studio" },
+  { s: "keys", label: "Tavily key (free web search)", anchor: "key-tavily", k: "search api" },
+  { s: "keys", label: "Burplexity token (web search)", anchor: "key-burplexity", k: "search api perplexity" },
+  { s: "keys", label: "Inworld key (voices)", anchor: "key-inworld", k: "tts voice api" },
+  { s: "voice", label: "Read replies aloud", anchor: "auto-read", k: "tts speak" },
+  { s: "voice", label: "Reading speed", anchor: "tts-rate", k: "playback rate" },
+  { s: "voice", label: "Inworld voice", anchor: "inworld", k: "tts character voice" },
+  { s: "voice", label: "Hands-free speech speed", anchor: "hf-rate", k: "rate" },
+  { s: "voice", label: "Interrupt by talking (barge-in)", anchor: "barge-in", k: "echo headphones" },
+  { s: "voice", label: "Pocket screen", anchor: "pocket", k: "phone dim battery" },
+  { s: "research", label: "Web search", anchor: "web-search", k: "tavily burplexity internet" },
+  { s: "research", label: "Background quick search", anchor: "quick-search" },
+  { s: "research", label: "Search all notebooks", anchor: "all-neurons", k: "access brain" },
+  { s: "images", label: "Image generation", anchor: "gen-images", k: "picture model aspect quality" },
+  { s: "images", label: "Video generation", anchor: "gen-video", k: "clip veo cost" },
+  { s: "images", label: "3D models", anchor: "gen-3d", k: "splat fal gaussian" },
+  { s: "memory", label: "Off the record", anchor: "memory-mode", k: "save notes memory recording private pause" },
+  { s: "memory", label: "Point out contradictions", anchor: "reflex", k: "reflex conflict disagree" },
+  { s: "memory", label: "Auto-show note images", anchor: "memory-lens", k: "muted images lens memory" },
+  { s: "memory", label: "Catalog new books automatically", anchor: "catalog", k: "summaries upload chapters" },
+  { s: "prompts", label: "Reply length", anchor: "reply-length", k: "max sentences concise" },
+  { s: "prompts", label: "Prompt library", anchor: "prompt-library", k: "presets system prompt" },
+  { s: "prompts", label: "Older custom instructions", anchor: "legacy-prompt", k: "system prompt" },
+  { s: "appearance", label: "Theme", anchor: "theme", k: "dark light colors" },
+  { s: "appearance", label: "Drift with the season", anchor: "seasonal", k: "hemisphere accent" },
+  { s: "account", label: "Plan", anchor: "plan", k: "upgrade pro billing email" },
+  { s: "account", label: "Developer API keys", anchor: "dev-keys", k: "bookworm api" },
+  { s: "account", label: "Setup helper", anchor: "setup", k: "wizard onboarding" },
+  { s: "permissions", label: "AI tool permissions", k: "delete allow tools" },
+  { s: "foundry", label: "Tool Foundry", k: "toolshed forge" },
+  { s: "programs", label: "Program Foundry", k: "vps bash python sandbox" },
+];
 
 const PROVIDER_GROUP_LABEL: Record<ProviderId, string> = {
   nvidia: "NVIDIA — free, no balance needed",
@@ -198,6 +188,64 @@ const ProviderBadge: React.FC<{ id: string }> = ({ id }) => {
     >
       {providerLabel(p)}
     </span>
+  );
+};
+
+/** Password-style secret on one line with an explicit Save (keys shouldn't
+ *  save per keystroke) and Remove once something is stored. */
+const SecretField: React.FC<{
+  value: string;
+  placeholder: string;
+  onSave: (v: string) => void;
+  saveLabel?: string;
+}> = ({ value, placeholder, onSave, saveLabel = "Save" }) => {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => { setDraft(value); }, [value]);
+  return (
+    <div className="flex flex-wrap gap-2">
+      <Input
+        type="password"
+        placeholder={placeholder}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") onSave(draft); }}
+        className="flex-1 min-w-[12rem] text-sm font-mono bg-surface-container-high border-outline-variant/15"
+      />
+      <Button size="sm" onClick={() => onSave(draft)} disabled={draft === value}>{saveLabel}</Button>
+      {value && <Button size="sm" variant="ghost" className="text-destructive" onClick={() => { setDraft(""); onSave(""); }}>Remove</Button>}
+    </div>
+  );
+};
+
+/** One API key: name, what it's for, saved/not-set at a glance. The editor
+ *  opens on demand so a page of six keys reads as six lines, not six forms. */
+const KeyRow: React.FC<{
+  id: string;
+  name: string;
+  purpose: React.ReactNode;
+  saved: boolean;
+  savedText?: string;
+  status?: React.ReactNode;
+  more?: React.ReactNode;
+  actions?: React.ReactNode;
+  children: React.ReactNode;
+}> = ({ id, name, purpose, saved, savedText = "Saved", status, more, actions, children }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <Row
+      id={id}
+      label={<span className="flex items-center gap-2 flex-wrap">{name}{saved ? <Pill tone="ok"><Check className="w-3 h-3" />{savedText}</Pill> : <Pill>Not set</Pill>}</span>}
+      description={<>{purpose}{status && <span className="block mt-0.5">{status}</span>}</>}
+      more={more}
+      after={open ? children : undefined}
+    >
+      <div className="flex gap-2">
+        {actions}
+        <Button size="sm" variant="outline" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+          {open ? "Close" : saved ? "Change" : "Add key"}
+        </Button>
+      </div>
+    </Row>
   );
 };
 
@@ -284,7 +332,10 @@ const SettingsPanel: React.FC = () => {
   };
 
   // Every role that can pick its own model, with whether its provider is
-  // actually usable right now.
+  // actually usable right now. Chat doesn't use ONE model — Deep Research,
+  // voice and image turns each swap in their own, and a role still pointing
+  // at a provider you can't use fails only on those turns, which reads as
+  // random breakage.
   const roleUsable = (id: string) => (modelProvider(id) === "nvidia" ? !!nvidiaKeyLast4 : !!apiKey);
   const roleRows = [
     { label: "Chat", id: selectedModel },
@@ -327,7 +378,7 @@ const SettingsPanel: React.FC = () => {
       const remaining = typeof limit === "number" ? ` · $${Math.max(0, limit - usage).toFixed(2)} left` : " · no spend cap set";
       setOrStatus(free
         ? `⚠️ Free tier${remaining}. OpenRouter needs a lifetime top-up of about $10 before ANY of its models run — including the ones marked ":free". NVIDIA has no such requirement.`
-        : `✅ Key valid${remaining}.`);
+        : `Key valid${remaining}.`);
     } catch {
       setOrStatus("Couldn't reach OpenRouter to check the key.");
     }
@@ -343,7 +394,7 @@ const SettingsPanel: React.FC = () => {
   const [promptDraft, setPromptDraft] = useState(customSystemPrompt || "");
   useEffect(() => { setPromptDraft(customSystemPrompt || ""); }, [customSystemPrompt]);
 
-  // localStorage-backed toggles shared with Counsel (it re-reads them on mount).
+  // localStorage-backed toggles shared with Counsel (it re-reads them when shown).
   const [voiceQuickSearch, setVoiceQuickSearch] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_KEY) === "true");
   const [voiceQuickSearchModel, setVoiceQuickSearchModel] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_MODEL_KEY) || "");
   const [bargeInEnabled, setBargeInEnabled] = useState(() => localStorage.getItem(BARGE_IN_KEY) === "true");
@@ -368,13 +419,13 @@ const SettingsPanel: React.FC = () => {
       setMemoryModeState(next);
       toast.success(next === "recording" ? "Saving notes again" : "Off the record — nothing new is saved");
     } catch (err: any) {
-      toast.error(err.message || "Failed to switch mode");
+      toast.error(err.message || "Couldn't change that setting");
     } finally {
       setMemoryModeLoading(false);
     }
   };
 
-  // ----- Inworld voice management (moved here from Counsel) -----
+  // ----- Inworld voice management -----
   const [inworldVoices, setInworldVoices] = useState<InworldVoice[]>([]);
   const [loadingVoices, setLoadingVoices] = useState(false);
   const [testingVoice, setTestingVoice] = useState(false);
@@ -433,965 +484,872 @@ const SettingsPanel: React.FC = () => {
     setNewModelInput("");
   };
 
-  // Deep link from other tabs → scroll to a section after mount.
-  const [activeSection, setActiveSection] = useState<string>(SECTIONS[0].id);
-  const scrollTo = (id: string) => {
-    setActiveSection(id);
-    document.getElementById(`settings-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
+  // ----- Navigation: one section at a time -----
+  const [active, setActive] = useState<SectionId>(() => {
+    try {
+      const last = localStorage.getItem(LAST_SECTION_KEY);
+      if (last && SECTION_IDS.has(last)) return last as SectionId;
+    } catch { /* storage blocked */ }
+    return "models";
+  });
+  // Narrow windows: the section list is the first screen; picking one opens it.
+  const [narrowList, setNarrowList] = useState(true);
+  const [query, setQuery] = useState("");
+  const paneRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  const go = useCallback((id: string, anchor?: string) => {
+    const sid = (SECTION_IDS.has(id) ? id : "models") as SectionId;
+    setActive(sid);
+    setNarrowList(false);
+    try { localStorage.setItem(LAST_SECTION_KEY, sid); } catch { /* storage blocked */ }
+    // After the section renders: scroll to the row (and flash it) or to the top.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const el = anchor ? document.getElementById(`set-${anchor}`) : null;
+      if (el) {
+        if (el instanceof HTMLDetailsElement) el.open = true;
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.classList.remove("cc-set-flash");
+        void el.offsetWidth;
+        el.classList.add("cc-set-flash");
+      } else {
+        paneRef.current?.scrollTo({ top: 0 });
+      }
+    }));
+  }, []);
+
+  // Deep link from other tabs (Counsel's "add a key", Neuron's menu, …).
   useEffect(() => {
     const id = consumeSettingsSection();
-    // Wait a frame so the layout is committed before scrolling.
-    if (id) requestAnimationFrame(() => scrollTo(id));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (id) go(id);
+  }, [go]);
 
-  // Highlight the section in view (simple scroll-spy).
-  const mainRef = useRef<HTMLDivElement>(null);
+  // "/" jumps to search, like most apps with a settings search.
   useEffect(() => {
-    const root = mainRef.current;
-    if (!root) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) {
-          if (e.isIntersecting) {
-            setActiveSection(e.target.id.replace("settings-", ""));
-            break;
-          }
-        }
-      },
-      { root, rootMargin: "-10% 0px -70% 0px" },
-    );
-    SECTIONS.forEach((s) => {
-      const el = document.getElementById(`settings-${s.id}`);
-      if (el) obs.observe(el);
-    });
-    return () => obs.disconnect();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      if (!searchRef.current || searchRef.current.offsetParent === null) return;
+      e.preventDefault();
+      searchRef.current.focus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  const results = useMemo(() => {
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    if (words.length === 0) return [];
+    const title = (s: SectionId) => SECTIONS.find((x) => x.id === s)!.title;
+    return SEARCH_INDEX.filter((e) => {
+      const hay = `${e.label} ${e.k || ""} ${title(e.s)}`.toLowerCase();
+      return words.every((w) => hay.includes(w));
+    }).slice(0, 12);
+  }, [query]);
+
+  const section = SECTIONS.find((s) => s.id === active)!;
+  const webSearchBackend = burplexityApiToken ? "Burplexity" : tavilyApiKey ? "Tavily (free)" : null;
+  const goKeys = (anchor: string) => go("keys", anchor);
+
+  const navButton = (s: (typeof SECTIONS)[number]) => {
+    const on = s.id === active;
+    return (
+      <button
+        key={s.id}
+        data-no-sticker
+        onClick={() => go(s.id)}
+        aria-current={on ? "page" : undefined}
+        className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm text-left transition-colors ${
+          on
+            ? "sm:bg-primary-container/20 sm:text-primary sm:font-semibold text-foreground"
+            : "text-foreground sm:text-on-surface-variant hover:bg-surface-container-high hover:text-foreground"
+        }`}
+      >
+        <span
+          className={`material-symbols-outlined text-[20px] ${on ? "sm:text-primary" : ""} text-on-surface-variant`}
+          style={on ? { fontVariationSettings: "'FILL' 1" } : undefined}
+          aria-hidden
+        >
+          {s.icon}
+        </span>
+        <span className="flex-1 min-w-0 truncate">{s.title}</span>
+        <span className="material-symbols-outlined text-lg text-on-surface-variant sm:hidden" aria-hidden>chevron_right</span>
+      </button>
+    );
+  };
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* Desktop side nav */}
+      {/* ── Section list (sidebar; the whole first screen when narrow) ── */}
       <nav
         aria-label="Settings sections"
-        className="hidden lg:flex w-60 shrink-0 flex-col gap-1 border-r border-outline-variant/10 py-10 px-4 overflow-y-auto"
+        className={`${narrowList ? "flex" : "hidden"} sm:flex w-full sm:w-52 lg:w-60 shrink-0 flex-col border-r border-outline-variant/10 overflow-y-auto`}
       >
-        <p className="px-3 pb-3 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Settings</p>
-        {SECTIONS.map((s) => (
-          <button
-            key={s.id}
-            onClick={() => scrollTo(s.id)}
-            aria-current={activeSection === s.id ? "true" : undefined}
-            className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm text-left transition-colors ${
-              activeSection === s.id
-                ? "bg-primary-container/20 text-primary font-semibold"
-                : "text-on-surface-variant hover:bg-surface-container-high hover:text-foreground"
-            }`}
-          >
-            <span
-              className="material-symbols-outlined text-lg"
-              style={activeSection === s.id ? { fontVariationSettings: "'FILL' 1" } : undefined}
-              aria-hidden
-            >
-              {s.icon}
-            </span>
-            {s.title}
-          </button>
-        ))}
+        <div className="px-3 pt-5 pb-2 sm:pt-6 space-y-3">
+          <h2 className="px-1 font-headline font-bold text-2xl text-foreground tracking-tight">Settings</h2>
+          <div className="relative">
+            <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-lg text-on-surface-variant pointer-events-none" aria-hidden>search</span>
+            <input
+              ref={searchRef}
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && results[0]) { go(results[0].s, results[0].anchor); setQuery(""); }
+                if (e.key === "Escape") setQuery("");
+              }}
+              placeholder="Search settings"
+              aria-label="Search settings"
+              className="w-full bg-surface-container-high border border-outline-variant/15 rounded-lg text-sm text-foreground py-2 pl-9 pr-3 placeholder:text-on-surface-variant/70 focus:outline-none focus:ring-1 focus:ring-primary/40"
+            />
+          </div>
+        </div>
+
+        <div className="px-3 pb-6 flex-1">
+          {query.trim() ? (
+            results.length > 0 ? (
+              <ul className="space-y-0.5" aria-label="Search results">
+                {results.map((r) => (
+                  <li key={`${r.s}-${r.label}`}>
+                    <button
+                      data-no-sticker
+                      onClick={() => { go(r.s, r.anchor); setQuery(""); }}
+                      className="w-full text-left px-2.5 py-2 rounded-lg hover:bg-surface-container-high transition-colors"
+                    >
+                      <span className="block text-sm text-foreground">{r.label}</span>
+                      <span className="block text-[11px] text-on-surface-variant">{SECTIONS.find((s) => s.id === r.s)!.title}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="px-2.5 py-2 text-sm text-on-surface-variant">No setting matches “{query.trim()}”.</p>
+            )
+          ) : (
+            <>
+              <div className="space-y-0.5">{SECTIONS.filter((s) => !s.power).map(navButton)}</div>
+              <p className="px-2.5 pt-5 pb-1.5 text-[11px] font-semibold text-on-surface-variant/80">Power tools</p>
+              <div className="space-y-0.5">{SECTIONS.filter((s) => s.power).map(navButton)}</div>
+            </>
+          )}
+        </div>
       </nav>
 
-      {/* Content */}
-      <div ref={mainRef} className="flex-1 overflow-y-auto">
-        <main className="cc-page-main max-w-3xl mx-auto px-4 sm:px-6 py-10 pb-32 w-full space-y-4">
-          <header className="mb-6">
-            <h2 className="cc-page-title font-headline font-bold text-4xl md:text-5xl text-primary tracking-tight">Settings</h2>
-            <p className="text-on-surface-variant mt-2 text-sm">
-              Everything in one place — changes apply instantly.
-            </p>
+      {/* ── The open section ── */}
+      <div ref={paneRef} className={`${narrowList ? "hidden" : "block"} sm:block flex-1 min-w-0 overflow-y-auto`}>
+        <main className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 pt-5 sm:pt-7 pb-24 space-y-6">
+          <header>
+            <button
+              data-no-sticker
+              onClick={() => setNarrowList(true)}
+              className="sm:hidden -ml-1 mb-2 inline-flex items-center gap-0.5 text-sm text-primary"
+            >
+              <span className="material-symbols-outlined text-lg" aria-hidden>chevron_left</span>
+              Settings
+            </button>
+            <h3 className="font-headline font-bold text-2xl text-foreground tracking-tight">{section.title}</h3>
+            <p className="text-sm text-on-surface-variant mt-1">{section.blurb}</p>
           </header>
 
-          {/* Mobile/tablet section chips. Touch swipes the row sideways; with a
-              mouse (e.g. a zoomed-in PC window below lg) a hidden-scrollbar row
-              can't be scrolled, so the chips wrap instead. */}
-          <div className="lg:hidden sticky top-0 z-10 -mx-4 sm:-mx-6 px-4 sm:px-6 py-2 bg-background/90 backdrop-blur-md flex gap-1.5 overflow-x-auto hide-scrollbar [@media(pointer:fine)]:flex-wrap">
-            {SECTIONS.map((s) => (
-              <button
-                key={s.id}
-                onClick={() => scrollTo(s.id)}
-                className={`shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-bold transition-colors ${
-                  activeSection === s.id
-                    ? "bg-primary-container text-on-primary-container"
-                    : "bg-surface-container-high text-on-surface-variant"
-                }`}
+          {/* ── Models ── */}
+          {active === "models" && (
+            <>
+              <Group>
+                <Row
+                  id="chat-model"
+                  label="Chat model"
+                  description={
+                    activeProviderUsable ? (
+                      <span className="inline-flex items-center gap-1">
+                        <span className="material-symbols-outlined text-sm text-primary" aria-hidden>check_circle</span>
+                        Answering on {providerLabel(modelProvider(selectedModel))}
+                      </span>
+                    ) : (
+                      <span className="text-destructive">
+                        No {providerLabel(modelProvider(selectedModel))} key saved —{" "}
+                        <button data-no-sticker className="underline" onClick={() => goKeys(`key-${modelProvider(selectedModel)}`)}>add it</button> or pick another model.
+                      </span>
+                    )
+                  }
+                >
+                  <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} className={selectCls} aria-label="Chat model">
+                    <ModelOptions models={savedModels.filter((m) => (!isEmbeddingModel(m) && !isBatchOnlyModel(m)) || m === selectedModel)} />
+                  </select>
+                </Row>
+              </Group>
+
+              <Group
+                title="Model for each job"
+                footer="Each job can run on its own model — a fast one for voice, a strong one for research. “Same as chat” follows the chat model."
               >
-                <span className="material-symbols-outlined text-sm" aria-hidden>{s.icon}</span>
-                {s.title}
-              </button>
-            ))}
-          </div>
+                <Row id="role-voice" label="Voice replies" description={!roleUsable(voiceModel || selectedModel) ? <span className="text-destructive">No key for this provider — spoken turns will fail</span> : "Spoken replies and hands-free. A fast model feels snappier."}>
+                  <select value={voiceModel || ""} onChange={(e) => setVoiceModel(e.target.value)} className={selectCls} aria-label="Voice replies model">
+                    <option value="">Same as chat</option>
+                    <ModelOptions models={savedModels.filter((m) => !isBatchOnlyModel(m) || m === voiceModel)} />
+                  </select>
+                </Row>
+                <Row
+                  id="role-vision"
+                  label="Pictures you attach"
+                  description={!roleUsable(visionModel || selectedModel) ? <span className="text-destructive">No key for this provider — image turns will fail</span> : "Reads images you add to a message."}
+                  more={<>For best image understanding pick a vision-strong model like <code>google/gemini-2.5-flash</code> (cheap, great at docs/OCR) or <code>google/gemini-2.5-pro</code> (best reasoning).</>}
+                >
+                  <select value={visionModel || ""} onChange={(e) => setVisionModel(e.target.value)} className={selectCls} aria-label="Vision model">
+                    <option value="">Same as chat</option>
+                    <ModelOptions models={savedModels.filter((m) => !isBatchOnlyModel(m) || m === visionModel)} />
+                  </select>
+                </Row>
+                <Row id="role-deep" label="Deep Research" description={!roleUsable(deepResearchModel) ? <span className="text-destructive">No key for this provider — research turns will fail</span> : "Used when Deep Research is on. Pick a strong reasoner."}>
+                  <select value={deepResearchModel} onChange={(e) => setDeepResearchModel(e.target.value)} className={selectCls} aria-label="Deep Research model">
+                    <ModelOptions models={savedModels.filter((m) => !isBatchOnlyModel(m) || m === deepResearchModel)} />
+                  </select>
+                </Row>
+                <Row id="role-quick" label="Quick search" description="Sums up background search results. Lightweight is best.">
+                  <select value={voiceQuickSearchModel || selectedModel} onChange={(e) => setVoiceQuickSearchModel(e.target.value)} className={selectCls} aria-label="Quick search model">
+                    <ModelOptions models={savedModels.filter((m) => !isBatchOnlyModel(m) || m === voiceQuickSearchModel)} />
+                  </select>
+                </Row>
+                <Row
+                  id="role-utility"
+                  label="Background summaries"
+                  description="Condenses long chats, chapter gists and book summaries."
+                  more="Long chats are summarized in the background so older messages don't have to be re-sent. Automatic uses Gemini 2.5 Flash-Lite on OpenRouter or Gemini, and your chat model on NVIDIA or a free model."
+                >
+                  <select value={utilityModel || ""} onChange={(e) => setUtilityModel(e.target.value)} className={selectCls} aria-label="Background model">
+                    <option value="">Automatic (low-cost)</option>
+                    <ModelOptions models={savedModels.filter((m) => !isBatchOnlyModel(m) || m === utilityModel)} />
+                  </select>
+                </Row>
+                <Row
+                  id="role-wiki"
+                  label="Notebook upkeep"
+                  description={wikiModel && !apiKey
+                    ? <span className="text-destructive">No OpenRouter key — notebook ops fall back to the default.</span>
+                    : "Runs the daily tidy-up and health checks on your notes."}
+                  more="Notebook ops run on OpenRouter only, so NVIDIA models aren't offered here. Custom models need your OpenRouter key."
+                >
+                  <select
+                    // An NVIDIA id can only get here via the Admin panel's
+                    // free-text field; wiki ops can't run it, so show (and on
+                    // any change, save) the default rather than an empty control.
+                    value={!wikiModel || isNvidiaModel(wikiModel) ? "__default__" : wikiModel}
+                    onChange={(e) => setWikiModel(e.target.value === "__default__" ? "" : e.target.value)}
+                    className={selectCls}
+                    aria-label="Notebook model"
+                  >
+                    <option value="__default__">Default (Gemini Flash)</option>
+                    <ModelOptions models={savedModels.filter((m) => !isBatchOnlyModel(m))} openrouterOnly />
+                  </select>
+                </Row>
+                <Row
+                  id="role-figures"
+                  label="Book figures"
+                  description="Describes diagrams and charts pulled from your books."
+                  more={<>Reads the figures pulled out of your uploaded documents, writes a description for each, and files it in your Images tagged with its book, page and chapter — so chat can show the real picture while explaining the concept. Run it from a book card's <span className="material-symbols-outlined text-xs align-middle">image_search</span> button; described figures are stored forever and cost nothing to reuse. Runs on your OpenRouter key; free models are limited to ~20 requests/min and 50–1000/day.</>}
+                >
+                  <select value={imageExtractionModel || ""} onChange={(e) => setImageExtractionModel(e.target.value)} className={selectCls} aria-label="Figure extraction model">
+                    <option value="">Default — {DEFAULT_FIGURE_MODEL}</option>
+                    {/* A non-OpenRouter id saved by an older picker must stay
+                        VISIBLE (the server ignores it and uses the default) —
+                        silently rendering "Default" would hide a setting that
+                        still exists and does nothing. */}
+                    {imageExtractionModel && modelProvider(imageExtractionModel) !== "openrouter" && (
+                      <option value={imageExtractionModel} disabled>
+                        {imageExtractionModel} — saved earlier, but figures need an OpenRouter model; pick one below
+                      </option>
+                    )}
+                    <optgroup label="Recommended — paid (needs your OpenRouter key)">
+                      {FIGURE_MODELS_PAID.map((m) => (<option key={m.id} value={m.id}>{m.label}</option>))}
+                    </optgroup>
+                    <optgroup label="Recommended — free (also needs your OpenRouter key; rate-limited, may train on your data)">
+                      {FIGURE_MODELS_FREE.map((m) => (<option key={m.id} value={m.id}>{m.label}</option>))}
+                    </optgroup>
+                    {(() => {
+                      const known = new Set([...FIGURE_MODELS_PAID, ...FIGURE_MODELS_FREE].map((m) => m.id));
+                      // Figure extraction runs server-side on OpenRouter/gateway
+                      // — NVIDIA ids would be forwarded verbatim and 400.
+                      const extra = savedModels.filter((m) => !known.has(m) && !isEmbeddingModel(m) && modelProvider(m) === "openrouter");
+                      return extra.length > 0 ? (
+                        <optgroup label="Your saved models">
+                          {extra.map((m) => (<option key={m} value={m}>{m}</option>))}
+                        </optgroup>
+                      ) : null;
+                    })()}
+                  </select>
+                </Row>
+              </Group>
 
-          <div className="space-y-8 pt-2">
-            {/* ── AI Models & Keys ── */}
-            <Section
-              id="models"
-              icon="tune"
-              title="AI Models & Keys"
-              description="The models and API key that power Counsel and everything else."
-            >
-              {/* Which provider is answering right now — the single most
-                  important fact, and the one that used to be invisible. */}
-              <div className="flex items-center gap-2.5 p-3 rounded-xl bg-surface-container-high">
-                <span className="material-symbols-outlined text-primary text-lg" aria-hidden>
-                  {activeProviderUsable ? "check_circle" : "error"}
-                </span>
-                <div className="text-sm">
-                  <div className="font-semibold text-foreground">
-                    Chat runs on {providerLabel(modelProvider(selectedModel))}
-                  </div>
-                  <div className="text-xs text-on-surface-variant font-mono">{localModelId(selectedModel)}</div>
-                  {!activeProviderUsable && (
-                    <div className="text-xs text-destructive mt-1">
-                      No {providerLabel(modelProvider(selectedModel))} key saved — pick a model from the other provider, or add the key below.
+              <Group title="Cost">
+                <Row
+                  id="spending"
+                  label="Spending"
+                  description={LEAN_MODE_INFO[leanMode].summary}
+                  more={<>Blocked capabilities are removed from the assistant's tools entirely, so it can't offer or attempt them — it will say so once and give you the best free version instead. Anything you've already made stays fully viewable in every mode. Applies to all your devices.{leanMode !== "full" && " Figure extraction isn’t covered — it only runs when you queue it from a book card."}</>}
+                >
+                  <Choice
+                    ariaLabel="Spending"
+                    value={leanMode}
+                    onChange={(m) => { void setLeanMode(m); }}
+                    options={LEAN_MODES.map((m) => ({ value: m, label: LEAN_MODE_INFO[m].label }))}
+                  />
+                </Row>
+                <Row
+                  id="studio"
+                  label="Studio tools"
+                  description="Video, 3D, masters, blueprints and stage plans."
+                  more="These tools add about 10,000 tokens to every message you send, so by default they join a chat only after you ask for a video, a 3D model or a blueprint (or one is already in the chat), and then stay on for 12 hours."
+                >
+                  <select value={studioTools} onChange={(e) => setStudioTools(e.target.value as typeof studioTools)} className={selectCls} aria-label="Studio tools">
+                    <option value="auto">Auto — when a chat needs them</option>
+                    <option value="always">Always on</option>
+                    <option value="off">Off</option>
+                  </select>
+                </Row>
+              </Group>
+
+              <Group>
+                <Disclosure id="saved-models" icon="list" label="Saved models" summary={`${savedModels.length} saved — the list every picker above chooses from`}>
+                  <div className="space-y-3">
+                    {/* Provider is a CHOICE, never something typed: the routing
+                        tag can't be forgotten if it can't be typed. */}
+                    <div className="flex flex-wrap gap-2">
+                      <select
+                        value={newModelProvider}
+                        onChange={(e) => setNewModelProvider(e.target.value as ProviderId)}
+                        className="bg-surface-container-high border border-outline-variant/15 rounded-lg text-sm text-foreground py-2 px-3 shrink-0"
+                        aria-label="Provider for the model being added"
+                      >
+                        {allProviders().map((p) => (
+                          <option key={p} value={p}>{providerLabel(p)}</option>
+                        ))}
+                      </select>
+                      <Input
+                        type="text"
+                        placeholder="vendor/model"
+                        value={newModelInput}
+                        onChange={(e) => handleModelInputChange(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") handleAddModel(); }}
+                        className="flex-1 min-w-[10rem] text-sm font-mono bg-surface-container-high border-outline-variant/15"
+                      />
+                      <Button size="sm" onClick={handleAddModel}>Add</Button>
                     </div>
-                  )}
-                </div>
-              </div>
-
-              <div>
-                <FieldLabel>OpenRouter API Key</FieldLabel>
-                <div className="mt-1.5">
-                  <SecretField value={apiKey} placeholder="sk-or-v1-..." icon="key" onSave={saveApiKey} />
-                </div>
-                {apiKey && orStatus && (
-                  <p className={`text-xs px-1 mt-1 ${orFreeTier ? "text-destructive" : "text-on-surface-variant"}`}>
-                    {orStatus}
-                    {orFreeTier && !nvidiaKeyLast4 && " Add a free NVIDIA key below to keep chatting."}
-                  </p>
-                )}
-                {orFreeTier && nvidiaKeyLast4 && modelProvider(selectedModel) === "openrouter" && (
+                    {(["nvidia", "openrouter"] as const).map((p) => {
+                      const group = savedModels.filter((m) => modelProvider(m) === p);
+                      if (group.length === 0) return null;
+                      return (
+                        <div key={p}>
+                          <div className="text-xs text-on-surface-variant mb-1.5">{providerLabel(p)}{p === "nvidia" ? " — free" : ""}</div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {group.map((m) => {
+                              const embed = isEmbeddingModel(m);
+                              const batchOnly = isBatchOnlyModel(m);
+                              return (
+                                <span
+                                  key={m}
+                                  title={
+                                    embed
+                                      ? "Embedding model — used by Notebook reindex, not Chat"
+                                      : batchOnly
+                                        ? "Batch-pricing variant — OpenRouter serves it only through the asynchronous Batch API, so no live feature here can run it"
+                                        : describeModel(m)
+                                  }
+                                  className={`inline-flex items-center gap-1 text-xs pl-2 pr-1 py-1 rounded-md ${
+                                    m === selectedModel
+                                      ? "bg-primary-container/20 text-primary border border-primary-container/30"
+                                      : embed || batchOnly
+                                        ? "bg-surface-container-highest/50 text-on-surface-variant/60 italic"
+                                        : "bg-surface-container-highest text-on-surface-variant"
+                                  }`}
+                                >
+                                  <button
+                                    data-no-sticker
+                                    onClick={() => {
+                                      if (embed) { toast.error("Embedding model — it's used for search, not Chat."); return; }
+                                      setSelectedModel(m);
+                                    }}
+                                    className="hover:underline font-mono"
+                                  >
+                                    {localModelId(m)}{embed ? " (embed)" : ""}
+                                  </button>
+                                  <button data-no-sticker onClick={() => removeModel(m)} aria-label={`Remove ${m}`} className="hover:text-destructive material-symbols-outlined text-sm leading-none">close</button>
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <button
+                      data-no-sticker
+                      onClick={() => window.open("#/models", "_blank")}
+                      className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                    >
+                      <span className="material-symbols-outlined text-sm" aria-hidden>leaderboard</span>
+                      Browse top models by category
+                    </button>
+                  </div>
+                </Disclosure>
+                <Disclosure id="diagnostics" icon="bug_report" label="Diagnostics" summary="Which model and key each job is using — copy it when reporting a problem">
+                  <div className="rounded-lg bg-surface-container-high divide-y divide-outline-variant/10 mb-2">
+                    {roleRows.map((r) => (
+                      <div key={r.label} className="flex items-center justify-between gap-3 px-3 py-2">
+                        <span className="text-xs text-on-surface-variant shrink-0">{r.label}</span>
+                        <span className="flex items-center gap-1.5 min-w-0">
+                          <ProviderBadge id={r.id} />
+                          <span className="text-xs font-mono truncate">{localModelId(r.id)}</span>
+                          {!r.usable && (
+                            <span className="material-symbols-outlined text-destructive text-sm shrink-0" title={`No ${providerLabel(modelProvider(r.id))} key saved — these turns will fail`}>error</span>
+                          )}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <pre className="text-[10px] bg-surface-container-highest rounded-lg p-2.5 overflow-x-auto whitespace-pre-wrap">{diagnosticsText}</pre>
                   <Button
                     size="sm"
-                    className="mt-1.5"
-                    onClick={() => {
-                      const target = savedModels.find((m) => isNvidiaModel(m)) || namespacedNvidiaId(NVIDIA_STARTER_MODEL);
-                      if (!savedModels.includes(target)) addModel(target);
-                      else setSelectedModel(target);
-                      toast.success(`Chat now runs on ${describeModel(target)}`);
-                    }}
+                    variant="outline"
+                    className="mt-2"
+                    onClick={() => { void navigator.clipboard?.writeText(diagnosticsText).then(() => toast.success("Diagnostics copied")); }}
                   >
-                    Switch chat to NVIDIA
+                    Copy
                   </Button>
-                )}
-                <Hint>
-                  Pays per token, billed to your OpenRouter account. OpenRouter requires a lifetime top-up
-                  of about $10 before its models will run — <strong>including the ones labelled <code>:free</code></strong>.
-                  NVIDIA below has no such requirement.
-                </Hint>
-              </div>
+                </Disclosure>
+              </Group>
+            </>
+          )}
 
-              <div>
-                <FieldLabel>NVIDIA API Key</FieldLabel>
-                <div className="mt-1.5">
+          {/* ── API keys ── */}
+          {active === "keys" && (
+            <>
+              <Group title="AI providers" footer="You need one of these for cloud chat. NVIDIA and Gemini are free.">
+                <KeyRow
+                  id="key-openrouter"
+                  name="OpenRouter"
+                  purpose="Hundreds of models, paid per use. Also runs images, video and book tools."
+                  saved={!!apiKey}
+                  status={apiKey && orStatus ? (
+                    <span className={orFreeTier ? "text-destructive" : ""}>
+                      {orStatus}
+                      {orFreeTier && !nvidiaKeyLast4 && " Add a free NVIDIA key below to keep chatting."}
+                    </span>
+                  ) : undefined}
+                  more={<>Pays per token, billed to your OpenRouter account. OpenRouter requires a lifetime top-up of about $10 before its models will run — <strong>including the ones labelled <code>:free</code></strong>. NVIDIA has no such requirement.</>}
+                  actions={orFreeTier && nvidiaKeyLast4 && modelProvider(selectedModel) === "openrouter" ? (
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        const target = savedModels.find((m) => isNvidiaModel(m)) || namespacedNvidiaId(NVIDIA_STARTER_MODEL);
+                        if (!savedModels.includes(target)) addModel(target);
+                        else setSelectedModel(target);
+                        toast.success(`Chat now runs on ${describeModel(target)}`);
+                      }}
+                    >
+                      Switch chat to NVIDIA
+                    </Button>
+                  ) : undefined}
+                >
+                  <SecretField value={apiKey} placeholder="sk-or-v1-..." onSave={saveApiKey} />
+                </KeyRow>
+                <KeyRow
+                  id="key-nvidia"
+                  name="NVIDIA"
+                  purpose={<>Free chat, voice and vision — no card. Get one at <a className="text-primary underline" href="https://build.nvidia.com/settings/api-keys" target="_blank" rel="noreferrer">build.nvidia.com</a>.</>}
+                  saved={!!nvidiaKeyLast4}
+                  savedText={nvidiaKeyLast4 ? `…${nvidiaKeyLast4}` : undefined}
+                  status={nvidiaStatus || undefined}
+                  more="Usage is governed by rate limits that vary by model and traffic (NVIDIA retired its credit system), so there's no balance to read — “Test” sends one real request to check. Stored for the relay only; the app never loads it back. Image/video generation and book tools still use your OpenRouter key."
+                  actions={nvidiaKeyLast4 ? (
+                    <Button size="sm" variant="outline" disabled={testingNvidia} onClick={() => void handleTestNvidia()}>
+                      {testingNvidia ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Test"}
+                    </Button>
+                  ) : undefined}
+                >
                   {nvidiaKeyLast4 ? (
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-mono text-on-surface-variant">nvapi-••••••{nvidiaKeyLast4}</span>
-                      <Button size="sm" variant="outline" disabled={testingNvidia} onClick={() => void handleTestNvidia()}>
-                        {testingNvidia ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Test key"}
-                      </Button>
-                      <Button size="sm" variant="destructive" onClick={() => { void saveNvidiaKey(""); }}>Remove</Button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-mono text-on-surface-variant flex-1">nvapi-••••••{nvidiaKeyLast4}</span>
+                      <Button size="sm" variant="ghost" className="text-destructive" onClick={() => { void saveNvidiaKey(""); }}>Remove</Button>
                     </div>
                   ) : (
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <Input
                         type="password"
                         placeholder="nvapi-..."
                         value={nvidiaKeyDraft}
                         onChange={(e) => setNvidiaKeyDraft(e.target.value)}
                         onKeyDown={(e) => { if (e.key === "Enter") void handleSaveNvidiaKey(); }}
-                        className="text-sm font-mono bg-surface-container-high border-none"
+                        className="flex-1 min-w-[12rem] text-sm font-mono bg-surface-container-high border-outline-variant/15"
                       />
-                      <Button size="sm" onClick={() => void handleSaveNvidiaKey()}>Save</Button>
+                      <Button size="sm" onClick={() => void handleSaveNvidiaKey()} disabled={!nvidiaKeyDraft}>Save</Button>
                     </div>
                   )}
-                </div>
-                {nvidiaStatus && <p className="text-xs text-on-surface-variant px-1 mt-1">{nvidiaStatus}</p>}
-                <Hint>
-                  Free — no balance, no card. Generate one at{" "}
-                  <a className="text-primary underline" href="https://build.nvidia.com/settings/api-keys" target="_blank" rel="noreferrer">build.nvidia.com</a>.
-                  Usage is governed by rate limits that vary by model and traffic (NVIDIA retired its credit system), so
-                  there's no balance to read — "Test key" sends one real request to check. Stored for the relay only; the app never loads it back.
-                  Chat, voice and vision can run on NVIDIA; image/video generation and book tools still use your OpenRouter key.
-                </Hint>
-              </div>
-
-              <div>
-                <FieldLabel>Spending</FieldLabel>
-                <div className="mt-1.5 grid gap-1.5">
-                  {LEAN_MODES.map((m) => {
-                    const info = LEAN_MODE_INFO[m];
-                    const active = leanMode === m;
-                    return (
-                      <button
-                        key={m}
-                        onClick={() => { void setLeanMode(m); }}
-                        aria-pressed={active}
-                        className={`text-left rounded-lg border px-4 py-3 transition-colors ${
-                          active
-                            ? "bg-primary-container/20 border-primary-container/50"
-                            : "bg-surface-container-high border-outline-variant/10 hover:border-primary-container/30"
-                        }`}
-                      >
-                        <span className="flex items-center gap-2">
-                          <span
-                            className={`material-symbols-outlined text-base ${active ? "text-primary" : "text-on-surface-variant/40"}`}
-                            aria-hidden
-                          >
-                            {active ? "radio_button_checked" : "radio_button_unchecked"}
-                          </span>
-                          <span className={`text-sm font-semibold ${active ? "text-primary" : "text-foreground"}`}>
-                            {info.label}
-                          </span>
-                          {m === "lean" && <span className="text-[10px] text-on-surface-variant">recommended when watching money</span>}
-                        </span>
-                        <span className="block text-xs text-on-surface-variant mt-0.5 ml-6">{info.summary}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <Hint>
-                  Blocked capabilities are removed from the assistant's tools entirely, so it can't offer or
-                  attempt them — it will say so once and give you the best free version instead. Anything you've
-                  already made stays fully viewable in every mode. Applies to all your devices.
-                  {leanMode !== "full" && " Figure extraction isn’t covered — it only runs when you queue it from a book card, on your OpenRouter key (app credits for admins)."}
-                </Hint>
-              </div>
-              <div>
-                <FieldLabel>Studio tools (video, 3D, masters, blueprints, stage plans)</FieldLabel>
-                <select
-                  value={studioTools}
-                  onChange={(e) => setStudioTools(e.target.value as typeof studioTools)}
-                  className={`${selectCls} mt-1.5`}
+                </KeyRow>
+                <KeyRow
+                  id="key-gemini"
+                  name="Google Gemini"
+                  purpose={<>Free chat with a daily allowance — <a className="text-primary underline" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">aistudio.google.com</a>.</>}
+                  saved={!!geminiApiKey}
+                  more={<>Gemini also generates and edits images, but <strong>image generation needs billing enabled on your Google account</strong> — the free tier is chat and vision only.</>}
                 >
-                  <option value="auto">Auto — join a chat once it turns to studio work</option>
-                  <option value="always">Always</option>
-                  <option value="off">Off</option>
-                </select>
-                <Hint>
-                  These tools add about 10,000 tokens to every message you send, so by default they join a chat only
-                  after you ask for a video, a 3D model or a blueprint (or one is already in the chat), and then stay
-                  on for 12 hours.
-                </Hint>
-              </div>
-              <div>
-                <FieldLabel>Background model (conversation summaries)</FieldLabel>
-                <select value={utilityModel || ""} onChange={(e) => setUtilityModel(e.target.value)} className={`${selectCls} mt-1.5`}>
-                  <option value="">Automatic — a low-cost model on your chat model's provider</option>
-                  <ModelOptions models={savedModels.filter((m) => !isBatchOnlyModel(m) || m === utilityModel)} />
-                </select>
-                <Hint>
-                  Long chats are summarized in the background so older messages don't have to be re-sent. Automatic
-                  uses Gemini 2.5 Flash-Lite on OpenRouter or Gemini, and your chat model on NVIDIA or a free model.
-                  Choosing a model here also uses it for chapter gists and book summaries.
-                </Hint>
-              </div>
-              <div>
-                <FieldLabel>Google Gemini API Key</FieldLabel>
-                <div className="mt-1.5">
-                  <SecretField
-                    value={geminiApiKey}
-                    placeholder="AIza..."
-                    icon="auto_awesome"
-                    onSave={(v) => { setGeminiApiKey(v); toast.success(v ? "Gemini key saved" : "Gemini key removed"); }}
-                  />
-                </div>
-                <Hint>
-                  Free chat with a generous daily allowance —{" "}
-                  <a className="text-primary underline" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">aistudio.google.com/apikey</a>.
-                  Gemini also generates and edits images, but <strong>image generation needs billing enabled on your Google account</strong> —
-                  the free tier is chat and vision only.
-                </Hint>
-              </div>
-              <div>
-                <FieldLabel>Active Chat Model</FieldLabel>
-                <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} className={`${selectCls} mt-1.5`}>
-                  <ModelOptions models={savedModels.filter((m) => (!isEmbeddingModel(m) && !isBatchOnlyModel(m)) || m === selectedModel)} />
-                </select>
-              </div>
+                  <SecretField value={geminiApiKey} placeholder="AIza..." onSave={(v) => { setGeminiApiKey(v); toast.success(v ? "Gemini key saved" : "Gemini key removed"); }} />
+                </KeyRow>
+              </Group>
 
-              <div>
-                <FieldLabel>Saved Models</FieldLabel>
-                {/* Provider is a CHOICE, never something typed: the routing
-                    tag can't be forgotten if it can't be typed. */}
-                <div className="flex gap-2 mt-1.5">
-                  <select
-                    value={newModelProvider}
-                    onChange={(e) => setNewModelProvider(e.target.value as "openrouter" | "nvidia")}
-                    className="bg-surface-container-high border-none rounded-lg text-sm text-primary py-2 px-3 shrink-0"
-                    aria-label="Provider for the model being added"
-                  >
-                    {allProviders().map((p) => (
-                      <option key={p} value={p}>{providerLabel(p)}</option>
-                    ))}
-                  </select>
-                  <Input
-                    type="text"
-                    placeholder="vendor/model"
-                    value={newModelInput}
-                    onChange={(e) => handleModelInputChange(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") handleAddModel(); }}
-                    className="text-sm font-mono bg-surface-container-high border-none"
-                  />
-                  <Button size="sm" onClick={handleAddModel}>Add</Button>
-                </div>
-                <Hint>
-                  The same model name can exist on both services — pick which one should serve it.
-                  Browsing the model list below fills this in for you.
-                </Hint>
-                {(["nvidia", "openrouter"] as const).map((p) => {
-                  const group = savedModels.filter((m) => modelProvider(m) === p);
-                  if (group.length === 0) return null;
-                  return (
-                    <div key={p} className="mt-2.5">
-                      <div className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant/70 mb-1">
-                        {providerLabel(p)}{p === "nvidia" ? " — free" : ""}
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {group.map((m) => {
-                          const embed = isEmbeddingModel(m);
-                          const batchOnly = isBatchOnlyModel(m);
-                          return (
-                            <span
-                              key={m}
-                              title={
-                                embed
-                                  ? "Embedding model — used by Wiki reindex, not Chat"
-                                  : batchOnly
-                                    ? "Batch-pricing variant — OpenRouter serves it only through the asynchronous Batch API, so no live feature here can run it"
-                                    : describeModel(m)
-                              }
-                              className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md ${
-                                m === selectedModel
-                                  ? "bg-primary-container/20 text-primary border border-primary-container/30"
-                                  : embed || batchOnly
-                                    ? "bg-surface-container-highest/50 text-on-surface-variant/60 italic"
-                                    : "bg-surface-container-highest text-on-surface-variant"
-                              }`}
-                            >
-                              <ProviderBadge id={m} />
-                              <button
-                                onClick={() => {
-                                  if (embed) { toast.error("Embedding model — pick it under Notes & library, not Chat."); return; }
-                                  setSelectedModel(m);
-                                }}
-                                className="hover:underline"
-                              >
-                                {localModelId(m)}{embed ? " (embed)" : ""}
-                              </button>
-                              <button onClick={() => removeModel(m)} aria-label={`Remove ${m}`} className="hover:text-destructive ml-0.5 material-symbols-outlined text-xs">close</button>
-                            </span>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-                <button
-                  onClick={() => window.open("#/models", "_blank")}
-                  className="inline-flex items-center gap-1 mt-2 px-1 text-[11px] font-semibold text-primary hover:underline"
+              <Group title="Web search" footer="Either one turns on live web search. Tavily is used when no Burplexity token is set.">
+                <KeyRow
+                  id="key-tavily"
+                  name="Tavily"
+                  purpose={<>Free — 1,000 searches a month, no card. <a className="text-primary underline" href="https://app.tavily.com" target="_blank" rel="noreferrer">app.tavily.com</a></>}
+                  saved={!!tavilyApiKey}
                 >
-                  <span className="material-symbols-outlined text-sm" aria-hidden>leaderboard</span>
-                  Browse top models by category
-                </button>
-              </div>
+                  <SecretField value={tavilyApiKey} placeholder="tvly-..." onSave={(v) => { setTavilyApiKey(v); toast.success(v ? "Tavily key saved" : "Tavily key removed"); }} />
+                </KeyRow>
+                <KeyRow
+                  id="key-burplexity"
+                  name="Burplexity"
+                  purpose="Web search plus background quick search. From your Burplexity app → API Keys."
+                  saved={!!burplexityApiToken}
+                >
+                  <SecretField value={burplexityApiToken} placeholder="pp_..." onSave={(v) => { setBurplexityApiToken(v); toast.success(v ? "Burplexity token saved" : "Burplexity token removed"); }} />
+                </KeyRow>
+              </Group>
 
-              {/* Every model role, in one place. Chat doesn't use ONE model —
-                  Deep Research, voice and image turns each swap in their own,
-                  and a role still pointing at a provider you can't use fails
-                  only on those turns, which reads as random breakage. */}
-              <div>
-                <FieldLabel>All model roles</FieldLabel>
-                <div className="mt-1.5 rounded-xl bg-surface-container-high divide-y divide-outline-variant/10">
-                  {roleRows.map((r) => (
-                    <div key={r.label} className="flex items-center justify-between gap-3 px-3 py-2">
-                      <span className="text-xs text-on-surface-variant shrink-0">{r.label}</span>
-                      <span className="flex items-center gap-1.5 min-w-0">
-                        <ProviderBadge id={r.id} />
-                        <span className="text-xs font-mono truncate">{localModelId(r.id)}</span>
-                        {!r.usable && (
-                          <span className="material-symbols-outlined text-destructive text-sm shrink-0" title={`No ${providerLabel(modelProvider(r.id))} key saved — these turns will fail`}>error</span>
-                        )}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-                {roleRows.some((r) => !r.usable) && (
-                  <p className="text-xs text-destructive px-1 mt-1">
-                    A role above points at a provider with no key. Those turns will fail even if normal chat works.
-                  </p>
-                )}
-                <details className="mt-2">
-                  <summary className="cursor-pointer text-[11px] font-semibold text-primary hover:underline list-none inline-flex items-center gap-1">
-                    <span className="material-symbols-outlined text-sm" aria-hidden>bug_report</span>
-                    Diagnostics
-                  </summary>
-                  <pre className="mt-1.5 text-[10px] bg-surface-container-highest rounded-lg p-2.5 overflow-x-auto whitespace-pre-wrap">{diagnosticsText}</pre>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="mt-1.5"
-                    onClick={() => { void navigator.clipboard?.writeText(diagnosticsText).then(() => toast.success("Diagnostics copied")); }}
-                  >
-                    Copy
-                  </Button>
-                </details>
-              </div>
-            </Section>
+              <Group title="Voices" footer="The fal.ai key for 3D lives with the 3D settings in Images & video.">
+                <KeyRow id="key-inworld" name="Inworld" purpose="Character voices for reading replies aloud." saved={!!inworldApiKey}>
+                  <SecretField value={inworldApiKey} placeholder="Inworld API key…" onSave={saveInworldKey} saveLabel="Save & load voices" />
+                </KeyRow>
+              </Group>
+            </>
+          )}
 
-            {/* ── Voice & Speech ── */}
-            <Section
-              id="voice"
-              icon="record_voice_over"
-              title="Voice & Speech"
-              description="How replies sound, and how hands-free conversations behave."
-            >
-              <div>
-                <FieldLabel>Auto-read replies</FieldLabel>
-                <div className="mt-1.5">
-                  <ToggleRow
-                    text={autoReadReplies ? "On — replies will be read aloud" : "Off"}
-                    checked={autoReadReplies}
-                    onChange={setAutoReadReplies}
-                    ariaLabel="Auto-read assistant replies"
-                  />
-                </div>
-                <Hint>Reads each new assistant reply aloud using the voice and speed below.</Hint>
-              </div>
-              <div>
-                <FieldLabel right={<span className="text-primary normal-case tracking-normal">{ttsRate.toFixed(2)}×</span>}>
-                  Voice Playback Speed
-                </FieldLabel>
-                <div className="bg-surface-container-high rounded-lg py-3 px-4 border border-outline-variant/10 mt-1.5">
-                  <Slider value={[ttsRate]} min={0.5} max={2} step={0.05} onValueChange={(v) => setTtsRate(v[0])} />
-                </div>
-              </div>
-              <div>
-                <FieldLabel right={<span className="text-primary normal-case tracking-normal">{handsFreeTtsRate.toFixed(2)}×</span>}>
-                  Hands-Free Speech Speed
-                </FieldLabel>
-                <div className="bg-surface-container-high rounded-lg py-3 px-4 border border-outline-variant/10 mt-1.5">
-                  <Slider value={[handsFreeTtsRate]} min={0.5} max={2} step={0.05} onValueChange={(v) => setHandsFreeTtsRate(v[0])} />
-                </div>
-                <Hint>Speed for hands-free conversations only — read-aloud buttons use the speed above.</Hint>
-              </div>
-              <div>
-                <FieldLabel>Inworld Voice (TTS upgrade)</FieldLabel>
-                <div className="mt-1.5 space-y-2">
-                  <ToggleRow
-                    text={inworldEnabled ? "Inworld TTS on" : "Browser TTS"}
-                    checked={inworldEnabled}
-                    onChange={setInworldEnabled}
+          {/* ── Voice ── */}
+          {active === "voice" && (
+            <>
+              <Group title="Reading aloud">
+                <Row id="auto-read" label="Read replies aloud" description="Speaks each new reply as it arrives.">
+                  <Switch checked={autoReadReplies} onCheckedChange={setAutoReadReplies} aria-label="Read replies aloud" />
+                </Row>
+                <Row id="tts-rate" label="Reading speed" stack>
+                  <div className="flex items-center gap-3">
+                    <Slider className="flex-1" value={[ttsRate]} min={0.5} max={2} step={0.05} onValueChange={(v) => setTtsRate(v[0])} aria-label="Reading speed" />
+                    <span className="w-12 text-right text-sm tabular-nums text-foreground">{ttsRate.toFixed(2)}×</span>
+                  </div>
+                </Row>
+                <Row
+                  id="inworld"
+                  label="Inworld voice"
+                  description={inworldApiKey
+                    ? "Use an Inworld character voice instead of the browser's."
+                    : <>Needs an Inworld key — <button data-no-sticker className="text-primary underline" onClick={() => goKeys("key-inworld")}>add one</button>.</>}
+                >
+                  <Switch
+                    checked={inworldEnabled && !!inworldApiKey}
+                    onCheckedChange={setInworldEnabled}
                     disabled={!inworldApiKey || !inworldVoiceId}
-                    ariaLabel="Enable Inworld TTS"
+                    aria-label="Use Inworld voice"
                   />
-                  <SecretField value={inworldApiKey} placeholder="Inworld API key…" icon="key" onSave={saveInworldKey} saveLabel="Save & Load Voices" />
-                  {inworldApiKey && (
-                    <div className="flex items-center gap-2">
-                      {loadingVoices ? (
-                        <div className="flex items-center gap-2 text-xs text-on-surface-variant">
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading voices…
-                        </div>
-                      ) : inworldVoices.length > 0 ? (
-                        <select value={inworldVoiceId} onChange={(e) => setInworldVoiceId(e.target.value)} className={`flex-1 ${selectCls}`}>
+                </Row>
+                {inworldApiKey && (
+                  <Row label="Voice">
+                    {loadingVoices ? (
+                      <span className="flex items-center gap-2 text-xs text-on-surface-variant"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading voices…</span>
+                    ) : inworldVoices.length > 0 ? (
+                      <>
+                        <select value={inworldVoiceId} onChange={(e) => setInworldVoiceId(e.target.value)} className={`${selectCls} sm:w-52`} aria-label="Inworld voice">
                           {inworldVoices.map((v) => (
                             <option key={v.voice_id} value={v.voice_id}>
                               {v.name}{v.tags?.length ? ` (${v.tags.join(", ")})` : ""}
                             </option>
                           ))}
                         </select>
-                      ) : (
-                        <Button size="sm" variant="outline" onClick={loadInworldVoices}>Retry loading voices</Button>
-                      )}
-                      {inworldVoices.length > 0 && (
-                        <Button size="sm" variant="outline" onClick={testInworldVoice} disabled={testingVoice || !inworldVoiceId} title="Play a short test phrase">
-                          {testingVoice ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Test voice"}
+                        <Button size="sm" variant="outline" onClick={testInworldVoice} disabled={testingVoice || !inworldVoiceId} aria-label="Play a short test phrase">
+                          {testingVoice ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <span className="material-symbols-outlined text-base">play_arrow</span>}
                         </Button>
-                      )}
-                    </div>
-                  )}
-                  <Hint>When enabled, read-aloud uses an Inworld character voice instead of the browser's built-in TTS.</Hint>
-                </div>
-              </div>
-              <div>
-                <FieldLabel>Voice Model (spoken replies / hands-free)</FieldLabel>
-                <select value={voiceModel || ""} onChange={(e) => setVoiceModel(e.target.value)} className={`${selectCls} mt-1.5`}>
-                  <option value="">Same as Active model</option>
-                  <ModelOptions models={savedModels.filter((m) => !isBatchOnlyModel(m) || m === voiceModel)} />
-                </select>
-                <Hint>Pick a fast model (e.g. <code>google/gemini-2.5-flash-lite</code>) for snappier spoken replies.</Hint>
-              </div>
-              <div>
-                <FieldLabel>Barge-in (interrupt the assistant)</FieldLabel>
-                <div className="mt-1.5">
-                  <ToggleRow
-                    text={bargeInEnabled ? "On — talk over replies to interrupt" : "Off — turn-based (no echo)"}
-                    checked={bargeInEnabled}
-                    onChange={setBargeInEnabled}
-                    ariaLabel="Enable barge-in"
-                  />
-                </div>
-                <Hint>When on, hands-free keeps listening while the assistant speaks and stops it the moment you start talking. Headphones give the most reliable results.</Hint>
-              </div>
-              <div>
-                <FieldLabel>Pocket screen (hands-free, phones)</FieldLabel>
-                <div className="mt-1.5">
-                  <ToggleRow
-                    text={pocketScreen ? "On — dims after 12s untouched, double-tap to wake" : "Off — the screen stays as it is"}
-                    checked={pocketScreen}
-                    onChange={setPocketScreen}
-                    ariaLabel="Enable the hands-free pocket screen"
-                  />
-                </div>
-                <Hint>Hands-free holds the screen awake for the mic, which leaves a bright, touch-live display in your pocket. After 12 seconds untouched this covers it with a near-black layer that swallows stray taps — the BookWorm keeps you company on it. Double-tap to get the screen back.</Hint>
-              </div>
-            </Section>
+                      </>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={loadInworldVoices}>Retry loading voices</Button>
+                    )}
+                  </Row>
+                )}
+              </Group>
 
-            {/* ── Research & Web Search ── */}
-            <Section
-              id="research"
-              icon="science"
-              title="Research & Web Search"
-              description="Deep Research, live web search, and what Counsel is allowed to read."
-            >
-              <div>
-                <FieldLabel>Notebook access</FieldLabel>
-                <div className="mt-1.5">
-                  <ToggleRow
-                    text={accessAllNeurons && isPaid ? "Reading all notebooks at once" : "Reading only the loaded notebook"}
+              <Group title="Hands-free">
+                <Row id="hf-rate" label="Speech speed" description="Hands-free only — read-aloud buttons use the speed above." stack>
+                  <div className="flex items-center gap-3">
+                    <Slider className="flex-1" value={[handsFreeTtsRate]} min={0.5} max={2} step={0.05} onValueChange={(v) => setHandsFreeTtsRate(v[0])} aria-label="Hands-free speech speed" />
+                    <span className="w-12 text-right text-sm tabular-nums text-foreground">{handsFreeTtsRate.toFixed(2)}×</span>
+                  </div>
+                </Row>
+                <Row
+                  id="barge-in"
+                  label="Interrupt by talking"
+                  description={bargeInEnabled ? "Talk over a reply to stop it." : "Turn-based — no echo."}
+                  more="When on, hands-free keeps listening while the assistant speaks and stops it the moment you start talking. Headphones give the most reliable results."
+                >
+                  <Switch checked={bargeInEnabled} onCheckedChange={setBargeInEnabled} aria-label="Interrupt by talking" />
+                </Row>
+                <Row
+                  id="pocket"
+                  label="Pocket screen"
+                  description="On phones, dims after 12s untouched. Double-tap to wake."
+                  more="Hands-free holds the screen awake for the mic, which leaves a bright, touch-live display in your pocket. After 12 seconds untouched this covers it with a near-black layer that swallows stray taps — the BookWorm keeps you company on it."
+                >
+                  <Switch checked={pocketScreen} onCheckedChange={setPocketScreen} aria-label="Pocket screen" />
+                </Row>
+              </Group>
+            </>
+          )}
+
+          {/* ── Research & search ── */}
+          {active === "research" && (
+            <>
+              <Group title="Web search">
+                <Row
+                  id="web-search"
+                  label="Live web search"
+                  description={webSearchBackend ? `On — using ${webSearchBackend}.` : "Off — add a free Tavily key to turn it on."}
+                >
+                  <Button size="sm" variant={webSearchBackend ? "outline" : "default"} onClick={() => goKeys(webSearchBackend ? (burplexityApiToken ? "key-burplexity" : "key-tavily") : "key-tavily")}>
+                    {webSearchBackend ? "Keys" : "Set up"}
+                  </Button>
+                </Row>
+                <Row
+                  id="quick-search"
+                  label="Background quick search"
+                  description={burplexityApiToken
+                    ? "When a message looks like a search, results are fetched and added to the chat."
+                    : "Needs a Burplexity token."}
+                >
+                  <Switch checked={voiceQuickSearch} onCheckedChange={setVoiceQuickSearch} disabled={!burplexityApiToken} aria-label="Background quick search" />
+                </Row>
+              </Group>
+              <Group title="What Counsel reads" footer={<>Research and search models are picked in <button data-no-sticker className="text-primary underline" onClick={() => go("models", "role-deep")}>Models</button>.</>}>
+                <Row
+                  id="all-neurons"
+                  label={<span className="inline-flex items-center gap-1">{!isPaid && <span className="material-symbols-outlined text-sm" aria-hidden>lock</span>}Search all notebooks</span>}
+                  description={accessAllNeurons && isPaid ? "Answers draw on every notebook you have." : `Answers draw only on the loaded notebook — focused and cheaper.${!isPaid ? " Pro feature." : ""}`}
+                >
+                  <Switch
                     checked={accessAllNeurons && isPaid}
-                    locked={!isPaid}
-                    onChange={(v) => {
+                    onCheckedChange={(v) => {
                       if (!isPaid) { openPricing("all-neurons"); return; }
                       setAccessAllNeurons(v);
                       toast.success(v ? "Counsel can now read all your notebooks" : "Counsel reads only the loaded notebook");
                     }}
-                    ariaLabel="Search all notebooks"
+                    aria-label="Search all notebooks"
                   />
-                </div>
-                <Hint>
-                  Off = answers draw only on the notebook you've loaded (focused, cheaper, usually more accurate). On = Counsel searches every notebook you have.{!isPaid && " Pro feature."}
-                </Hint>
-              </div>
-              <div>
-                <FieldLabel>Burplexity API Token (web search)</FieldLabel>
-                <div className="mt-1.5">
-                  <SecretField
-                    value={burplexityApiToken}
-                    placeholder="pp_..."
-                    icon="travel_explore"
-                    onSave={(v) => { setBurplexityApiToken(v); toast.success(v ? "Burplexity token saved" : "Burplexity token removed"); }}
-                  />
-                </div>
-                <Hint>Enables the live <code>web_search</code> tool. Generate at your Burplexity app → API Keys.</Hint>
-              </div>
-              <div>
-                <FieldLabel>Tavily API Key (free web search)</FieldLabel>
-                <div className="mt-1.5">
-                  <SecretField
-                    value={tavilyApiKey}
-                    placeholder="tvly-..."
-                    icon="search"
-                    onSave={(v) => { setTavilyApiKey(v); toast.success(v ? "Tavily key saved" : "Tavily key removed"); }}
-                  />
-                </div>
-                <Hint>
-                  The free option: 1,000 searches a month, no credit card —{" "}
-                  <a className="text-primary underline" href="https://app.tavily.com" target="_blank" rel="noreferrer">app.tavily.com</a>.
-                  Used automatically when no Burplexity token is set, so search keeps working without paying for it.
-                </Hint>
-              </div>
-              <div>
-                <FieldLabel>Deep Research Model</FieldLabel>
-                <select value={deepResearchModel} onChange={(e) => setDeepResearchModel(e.target.value)} className={`${selectCls} mt-1.5`}>
-                  <ModelOptions models={savedModels.filter((m) => !isBatchOnlyModel(m) || m === deepResearchModel)} />
-                </select>
-                <Hint>Used when Deep Research is ON. Pick a strong reasoning model for best results.</Hint>
-              </div>
-              <div>
-                <FieldLabel>Background Quick Search</FieldLabel>
-                <div className="mt-1.5">
-                  <ToggleRow
-                    text={voiceQuickSearch ? "On" : "Off"}
-                    checked={voiceQuickSearch}
-                    onChange={setVoiceQuickSearch}
-                    disabled={!burplexityApiToken}
-                    ariaLabel="Background Quick Search"
-                  />
-                </div>
-                <Hint>
-                  {burplexityApiToken
-                    ? "When a message looks like a search, results are fetched in the background and added to the chat."
-                    : "Requires a Burplexity API token above."}
-                </Hint>
-              </div>
-              <div>
-                <FieldLabel>Quick Search Model (lightweight preferred)</FieldLabel>
-                <select value={voiceQuickSearchModel || selectedModel} onChange={(e) => setVoiceQuickSearchModel(e.target.value)} className={`${selectCls} mt-1.5`}>
-                  <ModelOptions models={savedModels.filter((m) => !isBatchOnlyModel(m) || m === voiceQuickSearchModel)} />
-                </select>
-              </div>
-            </Section>
+                </Row>
+              </Group>
+            </>
+          )}
 
-            {/* ── Images & Vision ── */}
-            <Section
-              id="images"
-              icon="image"
-              title="Images & Vision"
-              description="How the AI generates images and reads the ones you attach."
-            >
-              <div>
-                <FieldLabel>Vision Model (used when you attach an image)</FieldLabel>
-                <select value={visionModel || ""} onChange={(e) => setVisionModel(e.target.value)} className={`${selectCls} mt-1.5`}>
-                  <option value="">Same as Active model</option>
-                  <ModelOptions models={savedModels.filter((m) => !isBatchOnlyModel(m) || m === visionModel)} />
-                </select>
-                <Hint>For best image understanding pick a vision-strong model like <code>google/gemini-2.5-flash</code> (cheap, great at docs/OCR) or <code>google/gemini-2.5-pro</code> (best reasoning). Falls back to your Active model if blank.</Hint>
-              </div>
-              <div>
-                <FieldLabel>Figure Extraction Model (figures from your books)</FieldLabel>
-                <select
-                  value={imageExtractionModel || ""}
-                  onChange={(e) => setImageExtractionModel(e.target.value)}
-                  className={`${selectCls} mt-1.5`}
+          {/* ── Images & video ── */}
+          {active === "images" && (
+            <Group footer={<>Which model reads attached pictures and book figures is set in <button data-no-sticker className="text-primary underline" onClick={() => go("models", "role-vision")}>Models</button>.</>}>
+              <Disclosure id="gen-images" icon="image" label="Image generation" summary="Model, fallback, quality and shape" defaultOpen>
+                <ImageModelsSettings />
+              </Disclosure>
+              <Disclosure id="gen-video" icon="movie" label="Video generation" summary="Model, cost confirmation, length and identity lock">
+                <VideoModelsSettings />
+              </Disclosure>
+              <Disclosure id="gen-3d" icon="view_in_ar" label="3D models" summary="fal.ai key, model, quality and limits">
+                <SplatModelsSettings />
+              </Disclosure>
+            </Group>
+          )}
+
+          {/* ── Memory & library ── */}
+          {active === "memory" && (
+            <>
+              <Group
+                title="Notes"
+                footer={
+                  <Link to="/memory-guide" className="text-primary hover:underline">How notes work</Link>
+                }
+              >
+                <Row
+                  id="memory-mode"
+                  label="Off the record"
+                  description={memoryMode === "recording" ? "Off — Counsel saves notes as you chat." : "On — Counsel reads your notes but saves nothing new."}
+                  more="Also in Counsel's tools and at the top of your notebook. Forgetting a note still works while it's on."
                 >
-                  <option value="">Default — {DEFAULT_FIGURE_MODEL} (built-in)</option>
-                  {/* A non-OpenRouter id saved by an older picker must stay
-                      VISIBLE (the server ignores it and uses the default) —
-                      silently rendering "Default" would hide a setting that
-                      still exists and does nothing. */}
-                  {imageExtractionModel && modelProvider(imageExtractionModel) !== "openrouter" && (
-                    <option value={imageExtractionModel} disabled>
-                      {imageExtractionModel} — saved earlier, but figures need an OpenRouter model; pick one below
-                    </option>
-                  )}
-                  <optgroup label="Recommended — paid (needs your OpenRouter key)">
-                    {FIGURE_MODELS_PAID.map((m) => (<option key={m.id} value={m.id}>{m.label}</option>))}
-                  </optgroup>
-                  <optgroup label="Recommended — free (also needs your OpenRouter key; rate-limited, may train on your data)">
-                    {FIGURE_MODELS_FREE.map((m) => (<option key={m.id} value={m.id}>{m.label}</option>))}
-                  </optgroup>
-                  {(() => {
-                    const known = new Set([...FIGURE_MODELS_PAID, ...FIGURE_MODELS_FREE].map((m) => m.id));
-                    // Figure extraction runs server-side on OpenRouter/gateway
-                    // — NVIDIA ids would be forwarded verbatim and 400.
-                    const extra = savedModels.filter((m) => !known.has(m) && !isEmbeddingModel(m) && modelProvider(m) === "openrouter");
-                    return extra.length > 0 ? (
-                      <optgroup label="Your saved models">
-                        {extra.map((m) => (<option key={m} value={m}>{m}</option>))}
-                      </optgroup>
-                    ) : null;
-                  })()}
-                </select>
-                <Hint>
-                  Reads the figures pulled out of your uploaded documents (road signs, diagrams, charts…), writes a description for each, and files it in your Images tagged with its book, page, and chapter — paired with the matching notebook when the book has any, so chat can show the real picture while explaining the concept. Run it from a book card's <span className="material-symbols-outlined text-xs align-middle">image_search</span> button; described figures are stored forever and cost nothing to reuse. Free models work but are limited to ~20 requests/min and 50–1000/day on OpenRouter.
-                </Hint>
-              </div>
-              <ImageModelsSettings />
-              <VideoModelsSettings />
-              <SplatModelsSettings />
-            </Section>
-
-            {/* ── Notes & library ── */}
-            <Section
-              id="memory"
-              icon="menu_book"
-              title="Notes & library"
-              description="Whether Counsel saves notes, and which model looks after them."
-            >
-              <div>
-                <FieldLabel>Off the record</FieldLabel>
-                <div className="mt-1.5">
-                  <ToggleRow
-                    text={memoryMode === "recording" ? "Off — Counsel saves notes as you chat" : "On — Counsel reads your notes but saves nothing new"}
-                    checked={memoryMode !== "recording"}
-                    onChange={(off) => handleMemoryMode(!off)}
-                    disabled={memoryModeLoading}
-                    ariaLabel="Off the record"
-                  />
-                </div>
-                <Hint>Also in Counsel's tools. Forgetting a note still works while it's on.</Hint>
-              </div>
-              <div>
-                <FieldLabel>Point out contradictions</FieldLabel>
-                <div className="mt-1.5">
-                  <ToggleRow
-                    text={reflexCues ? "On — Counsel tells you when something disagrees with a note" : "Off"}
-                    checked={reflexCues}
-                    onChange={setReflexEnabled}
-                    ariaLabel="Point out contradictions"
-                  />
-                </div>
-                <Hint>Counsel names the note and the page it came from, and asks which is right before changing anything. Notes that may disagree show up under the notebook's amber badge.</Hint>
-              </div>
-              <div>
-                <FieldLabel>Notebook upkeep model</FieldLabel>
-                <select
-                  // An NVIDIA id can only get here via the Admin panel's
-                  // free-text field; wiki ops can't run it, so show (and on
-                  // any change, save) the default rather than an empty control.
-                  value={!wikiModel || isNvidiaModel(wikiModel) ? "__default__" : wikiModel}
-                  onChange={(e) => setWikiModel(e.target.value === "__default__" ? "" : e.target.value)}
-                  className={`${selectCls} mt-1.5`}
+                  <Switch checked={memoryMode !== "recording"} onCheckedChange={(off) => handleMemoryMode(!off)} disabled={memoryModeLoading} aria-label="Off the record" />
+                </Row>
+                <Row
+                  id="reflex"
+                  label="Point out contradictions"
+                  description="Counsel tells you when something you say or read disagrees with one of your notes."
+                  more="It names the note and the page it came from, and asks which is right before changing anything. Notes in an open conflict also get an amber marker in the notebook."
                 >
-                  <option value="__default__">Default (Gemini Flash)</option>
-                  {/* Wiki ops run server-side against OpenRouter only — NVIDIA
-                      models are excluded here so a pick can't silently break
-                      reindexing. */}
-                  <ModelOptions models={savedModels.filter((m) => !isBatchOnlyModel(m))} openrouterOnly />
-                </select>
-                <Hint>Runs the daily tidy-up of your notes. Custom models use OpenRouter and need your API key above (NVIDIA models aren't available here).</Hint>
-                {wikiModel && !apiKey && (
-                  <p className="text-xs text-destructive px-1 mt-1">
-                    No OpenRouter API key found — notebook upkeep will fall back to the default model.
-                  </p>
-                )}
-              </div>
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                <Link to="/memory-guide" className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary hover:underline">
-                  <span className="material-symbols-outlined text-sm" aria-hidden>menu_book</span>
-                  How notes work
-                </Link>
-              </div>
-            </Section>
-
-            {/* ── AI Permissions ── */}
-            <Section
-              id="permissions"
-              icon="shield_person"
-              title="AI Permissions"
-              description="Exactly which tools the AI is allowed to use on your behalf."
-            >
-              <AiPermissionsSettings />
-            </Section>
-
-            {/* ── Tool Foundry ── */}
-            <Section
-              id="foundry"
-              icon="construction"
-              title="Tool Foundry"
-              description="The AI's workshop: it forges reusable tools for itself, stored as notes in its Toolshed — nothing runs without your approval."
-            >
-              <ToolFoundrySettings />
-            </Section>
-
-            {/* ── Program Foundry (VPS) ── */}
-            <Section
-              id="programs"
-              icon="dns"
-              title="Program Foundry"
-              description="Connect your VPS so the AI can forge and run real bash/python/node programs — arbitrary shell in a sealed gVisor sandbox, nothing runs without your per-program approval."
-            >
-              <ProgramRunnerSettings />
-            </Section>
-
-            {/* ── Prompts ── */}
-            <Section
-              id="prompts"
-              icon="history_edu"
-              title="Prompts"
-              description="Reusable prompt presets and standing custom instructions."
-            >
-              <PromptLibrary scopeHint="chat" />
-              <div>
-                <FieldLabel>Legacy Custom Instructions</FieldLabel>
-                <Hint>Used only if no prompt above is active. Prefer the Prompt Library for new prompts.</Hint>
-                <Textarea
-                  value={promptDraft}
-                  onChange={(e) => setPromptDraft(e.target.value)}
-                  rows={3}
-                  placeholder="e.g. Always answer as a no-nonsense literary critic."
-                  className="bg-surface-container-high border-none text-sm mt-1.5"
-                />
-                <div className="flex gap-2 mt-2">
-                  <Button size="sm" onClick={() => { setCustomSystemPrompt(promptDraft); toast.success("Saved"); }}>Save</Button>
-                  {customSystemPrompt && (
-                    <Button size="sm" variant="destructive" onClick={() => { setCustomSystemPrompt(""); setPromptDraft(""); toast.success("Cleared"); }}>Clear</Button>
-                  )}
+                  <Switch checked={reflexCues} onCheckedChange={setReflexEnabled} aria-label="Point out contradictions" />
+                </Row>
+                <div id="set-memory-lens" className="px-4 py-3 cc-set-row">
+                  <MemoryLensSettings />
                 </div>
-              </div>
-              <div>
-                <FieldLabel
-                  right={maxReplySentences > 0
-                    ? <span className="text-primary normal-case tracking-normal">≈{maxReplySentences * 7}s of speech</span>
-                    : undefined}
+              </Group>
+              <Group title="Library">
+                <Row
+                  id="catalog"
+                  label="Catalog new books automatically"
+                  description="Summarises each chapter after upload, so the assistant can find its way around."
+                  more="Off by default because it uses your own model key — roughly one short call per eight chapters, plus one for the book. You can always catalog a book by hand from the book-context picker in Counsel."
                 >
-                  Max Sentences Per Reply
-                </FieldLabel>
-                <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                  {[
-                    { label: "Off", v: 0 },
-                    { label: "Concise · 2", v: 2 },
-                    { label: "Normal · 4", v: 4 },
-                    { label: "Detailed · 8", v: 8 },
-                  ].map((p) => (
-                    <Button
-                      key={p.label}
-                      size="sm"
-                      variant={maxReplySentences === p.v ? "default" : "outline"}
-                      onClick={() => setMaxReplySentences(p.v)}
-                      aria-pressed={maxReplySentences === p.v}
-                    >
-                      {p.label}
-                    </Button>
-                  ))}
-                  <div className="flex items-center gap-1.5">
+                  <Switch checked={autoCatalogOnUpload} onCheckedChange={setAutoCatalogOnUpload} aria-label="Catalog new books automatically" />
+                </Row>
+              </Group>
+            </>
+          )}
+
+          {/* ── Replies & prompts ── */}
+          {active === "prompts" && (
+            <>
+              <Group title="Replies">
+                <Row
+                  id="reply-length"
+                  label="Reply length"
+                  description={maxReplySentences > 0 ? `At most ${maxReplySentences} sentences (≈${maxReplySentences * 7}s of speech).` : "No limit."}
+                  more="A hard limit — the reply is cut at the last full sentence and generation stops there (shorter = cheaper). Bullets count as sentences; code blocks don't. Digest and Deep Research are exempt."
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Choice
+                      ariaLabel="Reply length"
+                      value={[0, 2, 4, 8].includes(maxReplySentences) ? maxReplySentences : -1}
+                      onChange={(v) => setMaxReplySentences(v)}
+                      options={[
+                        { value: 0, label: "Any" },
+                        { value: 2, label: "2" },
+                        { value: 4, label: "4" },
+                        { value: 8, label: "8" },
+                      ]}
+                    />
                     <Input
                       type="number"
                       min={1}
                       max={12}
                       value={maxReplySentences || ""}
-                      placeholder="—"
+                      placeholder="#"
                       onChange={(e) => setMaxReplySentences(Number(e.target.value) || 0)}
-                      className="w-16 h-8 bg-surface-container-high border-none text-sm"
+                      className="w-16 h-9 bg-surface-container-high border-outline-variant/15 text-sm"
                       aria-label="Custom max sentences per reply (1-12)"
                     />
-                    <span className="text-[10px] text-on-surface-variant">custom 1–12</span>
                   </div>
+                </Row>
+              </Group>
+              <Group title="Prompt library">
+                <div id="set-prompt-library" className="px-4 py-3 cc-set-row">
+                  <PromptLibrary scopeHint="chat" />
                 </div>
-                <Hint>A hard limit — the reply is cut at the last full sentence and generation stops there (shorter = cheaper). Bullets count as sentences; code blocks don't. Digest and Deep Research are exempt.</Hint>
-              </div>
-
-              <div>
-                <FieldLabel>Book catalog</FieldLabel>
-                <div className="mt-1.5 flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">Catalog new books automatically</p>
-                    <p className="text-xs text-on-surface-variant">
-                      After an upload finishes detecting chapters, write a one-line summary for each
-                      chapter and a short summary for the book. That catalog is what the assistant
-                      routes on, and what your book cards show.
-                    </p>
-                  </div>
-                  <Switch
-                    checked={autoCatalogOnUpload}
-                    onCheckedChange={setAutoCatalogOnUpload}
-                    aria-label="Catalog new books automatically"
+                <Disclosure
+                  id="legacy-prompt"
+                  icon="history_edu"
+                  label="Older custom instructions"
+                  summary={customSystemPrompt ? "Set — used only when no prompt above is active" : "Not set — prefer the library above"}
+                >
+                  <Textarea
+                    value={promptDraft}
+                    onChange={(e) => setPromptDraft(e.target.value)}
+                    rows={3}
+                    placeholder="e.g. Always answer as a no-nonsense literary critic."
+                    className="bg-surface-container-high border-outline-variant/15 text-sm"
                   />
-                </div>
-                <Hint>Off by default because it uses your own model key — roughly one short call per eight chapters, plus one for the book. You can always catalog a book by hand from the book-context picker in Counsel.</Hint>
-              </div>
+                  <div className="flex gap-2 mt-2">
+                    <Button size="sm" onClick={() => { setCustomSystemPrompt(promptDraft); toast.success("Saved"); }} disabled={promptDraft === (customSystemPrompt || "")}>Save</Button>
+                    {customSystemPrompt && (
+                      <Button size="sm" variant="ghost" className="text-destructive" onClick={() => { setCustomSystemPrompt(""); setPromptDraft(""); toast.success("Cleared"); }}>Clear</Button>
+                    )}
+                  </div>
+                </Disclosure>
+              </Group>
+            </>
+          )}
 
-              <div>
-                <FieldLabel>Memory Lens</FieldLabel>
-                <div className="mt-1.5">
-                  <MemoryLensSettings />
-                </div>
-              </div>
-            </Section>
-
-            {/* ── Appearance ── */}
-            <Section id="appearance" icon="palette" title="Appearance" description="Pick a theme — also available from the palette icon in the header.">
-              <div role="radiogroup" aria-label="Theme" className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {themes.map((t) => {
-                  const active = t.id === themeId;
-                  return (
-                    <button
-                      key={t.id}
-                      role="radio"
-                      aria-checked={active}
-                      onClick={() => setThemeId(t.id)}
-                      className={`flex items-start gap-3 p-3 rounded-xl border text-left transition-all active:scale-[0.98] ${
-                        active
-                          ? "border-primary/50 ring-1 ring-primary/30 bg-primary-container/10"
-                          : "border-outline-variant/20 hover:bg-surface-container-high"
-                      }`}
-                    >
-                      <span className="flex shrink-0 mt-0.5 rounded-md overflow-hidden border border-outline-variant/30">
-                        {t.swatch.map((c, i) => (
-                          <span key={i} style={{ background: c }} className="w-4 h-8 block" />
-                        ))}
-                      </span>
-                      <span className="flex-1 min-w-0">
-                        <span className="flex items-center gap-2">
-                          <span className="font-medium text-sm text-foreground">{t.name}</span>
-                          {active && <Check className="w-3.5 h-3.5 text-primary" />}
-                        </span>
-                        <span className="block text-xs text-on-surface-variant leading-snug mt-0.5">{t.description}</span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Seasonal drift. Deliberately sits under the theme picker and
-                  not beside it: it is a modifier on whichever theme is chosen,
-                  never a theme of its own. */}
-              <div className="mt-3 space-y-2">
-                <ToggleRow
-                  text="Drift with the season"
-                  ariaLabel="Let the theme drift with the season"
-                  checked={seasonal}
-                  onChange={setSeasonal}
-                />
-                <p className="text-xs text-on-surface-variant leading-snug px-1">
-                  Nudges the current theme's accent a few degrees warmer or cooler as the
-                  year turns, and sets the drift of the Showcase view. Lightness is never
-                  changed, so contrast stays exactly where the theme put it.
-                  {seasonal && (
-                    <> Right now: <span className="capitalize text-foreground">{season.season}</span>,{" "}
-                      {Math.round(season.nextTurn.days)} days until {season.nextTurn.name}.</>
-                  )}
-                </p>
-                {seasonal && (
-                  <div role="radiogroup" aria-label="Hemisphere" className="flex items-center gap-2 px-1">
-                    <span className="text-xs text-on-surface-variant">Hemisphere</span>
-                    {([["auto", "Auto"], ["north", "North"], ["south", "South"]] as const).map(([id, label]) => (
+          {/* ── Appearance ── */}
+          {active === "appearance" && (
+            <>
+              <div id="set-theme" className="cc-set-row rounded-xl">
+                <h4 className="px-1 mb-1.5 text-xs font-semibold text-on-surface-variant">Theme</h4>
+                <div role="radiogroup" aria-label="Theme" className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {themes.map((t) => {
+                    const on = t.id === themeId;
+                    return (
                       <button
-                        key={id}
+                        key={t.id}
+                        data-no-sticker
                         role="radio"
-                        aria-checked={hemispherePref === id}
-                        onClick={() => setHemispherePref(id)}
-                        className={`px-2.5 py-1 rounded-lg text-xs transition-colors ${
-                          hemispherePref === id
-                            ? "bg-primary/15 text-primary font-semibold"
-                            : "text-on-surface-variant hover:bg-surface-container-high"
+                        aria-checked={on}
+                        onClick={() => setThemeId(t.id)}
+                        className={`flex items-center gap-3 p-2.5 rounded-xl border text-left transition-all active:scale-[0.98] ${
+                          on
+                            ? "border-primary/50 ring-1 ring-primary/30 bg-primary-container/10"
+                            : "border-outline-variant/15 bg-surface-container-low hover:bg-surface-container-high"
                         }`}
                       >
-                        {label}
+                        <span className="flex shrink-0 rounded-md overflow-hidden border border-outline-variant/30">
+                          {t.swatch.map((c, i) => (
+                            <span key={i} style={{ background: c }} className="w-3.5 h-8 block" />
+                          ))}
+                        </span>
+                        <span className="flex-1 min-w-0">
+                          <span className="flex items-center gap-1.5">
+                            <span className="font-medium text-sm text-foreground truncate">{t.name}</span>
+                            {on && <Check className="w-3.5 h-3.5 text-primary shrink-0" />}
+                          </span>
+                          <span className="block text-xs text-on-surface-variant leading-snug truncate" title={t.description}>{t.description}</span>
+                        </span>
                       </button>
-                    ))}
-                    <span className="text-[11px] text-on-surface-variant/70">
-                      {hemispherePref === "auto" ? `detected ${season.hemisphere}` : ""}
-                    </span>
-                  </div>
-                )}
-              </div>
-            </Section>
-
-            {/* ── Account & Plan ── */}
-            <Section id="account" icon="person" title="Account & Plan">
-              <div className="flex items-center justify-between gap-3 bg-surface-container-high rounded-lg py-3 px-4 border border-outline-variant/10">
-                <div className="min-w-0">
-                  <p className="text-sm text-foreground truncate">{user?.email || "Signed in"}</p>
-                  <p className="text-[11px] text-on-surface-variant capitalize">{isPaid ? `${plan} plan` : "Free plan"}</p>
+                    );
+                  })}
                 </div>
+              </div>
+
+              {/* Seasonal drift is a modifier on whichever theme is chosen,
+                  never a theme of its own — so it sits under the picker. */}
+              <Group>
+                <Row
+                  id="seasonal"
+                  label="Drift with the season"
+                  description={seasonal
+                    ? <>Now: <span className="capitalize">{season.season}</span> · {Math.round(season.nextTurn.days)} days until {season.nextTurn.name}.</>
+                    : "Warms or cools the accent slightly as the year turns."}
+                  more="Nudges the current theme's accent a few degrees warmer or cooler as the year turns, and sets the drift of the Showcase view. Lightness is never changed, so contrast stays exactly where the theme put it."
+                >
+                  <Switch checked={seasonal} onCheckedChange={setSeasonal} aria-label="Drift with the season" />
+                </Row>
+                {seasonal && (
+                  <Row label="Hemisphere" description={hemispherePref === "auto" ? `Detected: ${season.hemisphere}` : undefined}>
+                    <Choice
+                      ariaLabel="Hemisphere"
+                      value={hemispherePref}
+                      onChange={setHemispherePref}
+                      options={[{ value: "auto", label: "Auto" }, { value: "north", label: "North" }, { value: "south", label: "South" }]}
+                    />
+                  </Row>
+                )}
+              </Group>
+            </>
+          )}
+
+          {/* ── Account ── */}
+          {active === "account" && (
+            <Group>
+              <Row id="plan" label={user?.email || "Signed in"} description={<span className="capitalize">{isPaid ? `${plan} plan` : "Free plan"}</span>}>
                 <Button size="sm" variant={isPaid ? "outline" : "default"} onClick={() => openPricing()}>
                   {isPaid ? "Manage plan" : "Upgrade"}
                 </Button>
-              </div>
-              <div>
-                <FieldLabel>Developer API Keys</FieldLabel>
-                <Hint>Keys for the Bookworm API (separate from your OpenRouter key above).</Hint>
-                <div className="mt-1.5 rounded-xl bg-surface-container-high/40 border border-outline-variant/10 p-4">
-                  <ApiKeyManager />
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                <button onClick={() => openSetupWizard(0)} className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary hover:underline">
-                  <span className="material-symbols-outlined text-sm" aria-hidden>school</span>
-                  New here? Run the setup helper
-                </button>
-              </div>
-            </Section>
-          </div>
+              </Row>
+              <Row id="setup" label="Setup helper" description="Walks through keys, models and voice step by step.">
+                <Button size="sm" variant="outline" onClick={() => openSetupWizard(0)}>Run</Button>
+              </Row>
+              <Disclosure id="dev-keys" icon="code" label="Developer API keys" summary="Keys for the Bookworm API — separate from your AI provider keys">
+                <ApiKeyManager />
+              </Disclosure>
+            </Group>
+          )}
+
+          {/* ── Power tools ── */}
+          {active === "permissions" && <AiPermissionsSettings />}
+          {active === "foundry" && <ToolFoundrySettings />}
+          {active === "programs" && <ProgramRunnerSettings />}
         </main>
       </div>
     </div>

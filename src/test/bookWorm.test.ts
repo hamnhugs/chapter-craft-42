@@ -1032,8 +1032,8 @@ describe("it shows up on the pocket screen too", () => {
     expect(SETTINGS).toContain('const POCKET_SCREEN_KEY = "hands_free_pocket_screen"');
     expect(SETTINGS).toContain('localStorage.getItem(POCKET_SCREEN_KEY) !== "false"');
     expect(SETTINGS).toContain("localStorage.setItem(POCKET_SCREEN_KEY, String(pocketScreen))");
-    expect(SETTINGS).toContain("<FieldLabel>Pocket screen (hands-free, phones)</FieldLabel>");
-    expect(SETTINGS).toContain('ariaLabel="Enable the hands-free pocket screen"');
+    expect(SETTINGS).toContain('label="Pocket screen"');
+    expect(SETTINGS).toContain('<Switch checked={pocketScreen} onCheckedChange={setPocketScreen} aria-label="Pocket screen" />');
   });
 
   it("is gated on that setting where it mounts", () => {

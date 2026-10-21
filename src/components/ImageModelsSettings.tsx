@@ -18,9 +18,8 @@ const ImageModelsSettings: React.FC = () => {
   const allModels = Array.from(new Set([...savedImageModels, ...IMAGE_MODELS]));
 
   return (
-    <section className="p-3 md:p-4 rounded-xl bg-surface-container-low flex flex-col gap-4">
+    <section className="flex flex-col gap-4">
       <header className="flex flex-col gap-1">
-        <h3 className="text-sm font-bold text-foreground">Image Generation</h3>
         <p className="text-xs text-on-surface-variant">
           Pick which model the AI uses when generating or editing images. Primary is tried first;
           if it fails the fallback runs automatically. Built-in defaults are always available.
