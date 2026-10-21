@@ -570,6 +570,403 @@
 }
 
 /* =====================================================================
+   BOOKWORM STUDIO — "Neon Desert", the house theme
+   Las Vegas after dark. The palette is the G915 Las Vegas weather theme's:
+   a desert-night indigo canvas, the dusk run from purple through magenta and
+   orange to gold, and the Strip's marquee neon. Colour lives on the EDGES —
+   tube underlines, bulb chases, a sunset on the one button that matters —
+   so the reading surfaces stay calm indigo and every text pair clears WCAG.
+   The live sky in the header ([data-vegas-sky]) is styled by its own file.
+   ===================================================================== */
+:root[data-theme="bookworm-studio"] {
+  --bw-night: #0d0b26;
+  --bw-ink: #07061a;
+  --bw-surface: #17143a;
+  --bw-surface-high: #211d4d;
+  --bw-line: #2e2963;
+  --bw-on: #f4f0ff;
+  --bw-on-variant: #c3bde0;
+  --bw-magenta: #ff3d9a;
+  --bw-cyan: #2ee6ff;
+  --bw-gold: #ffc94d;
+  --bw-orange: #ff6b3d;
+  --bw-violet: #9b5cff;
+  --bw-green: #3dffa0;
+  --bw-dusk: linear-gradient(180deg, #5a1a7a 0%, #b02a86 38%, #ff6b3d 72%, #ffc94d 100%);
+  --bw-sunset: linear-gradient(100deg, #ffc94d 0%, #ff9a52 45%, #ff5fa8 100%);
+  --bw-strip: linear-gradient(90deg, #ff3d9a 0%, #9b5cff 50%, #2ee6ff 100%);
+  /* Marquee bulbs: one lit dot per 10px, slid along by bw-marquee */
+  --bw-bulbs: radial-gradient(circle at 5px 50%, var(--bw-gold) 0 1.6px, rgba(255,201,77,0.25) 2.4px, transparent 3px);
+  --bw-ridge: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 60' preserveAspectRatio='none'%3E%3Cpath d='M0 60V38l18-8 14 6 20-18 18 14 16-6 18 14 20-18 16 8 18-14 18 18 24-6v32z' fill='%2307061a' fill-opacity='.55'/%3E%3Cpath d='M0 60V48l30-6 30 8 35-10 35 9 35-7 35 5v13z' fill='%2307061a'/%3E%3C/svg%3E");
+
+  /* The worm goes lucky-cactus green on the Strip: flat, two tones, a mid
+     luminance that holds its silhouette on navy without an outline. */
+  --worm-body: #4fd69c;
+  --worm-dark: #2fb37f;
+  --worm-pupil: #0d0b26;
+  --worm-mouth: #0d0b26;
+  --worm-tongue: #ff8fc2;
+  --worm-eye: #f4f0ff;
+}
+
+/* Canvas — night sky, darkest overhead, a last trace of dusk at the horizon,
+   and a handful of tiny stars. The app root paints bg-background, so it goes
+   transparent here to let the sky through. */
+[data-theme="bookworm-studio"] body {
+  background:
+    radial-gradient(1px 1px at 12% 18%, rgba(244,240,255,0.32), transparent 60%),
+    radial-gradient(1px 1px at 27% 62%, rgba(244,240,255,0.18), transparent 60%),
+    radial-gradient(1.5px 1.5px at 41% 9%, rgba(255,201,77,0.28), transparent 60%),
+    radial-gradient(1px 1px at 58% 34%, rgba(244,240,255,0.22), transparent 60%),
+    radial-gradient(1px 1px at 69% 76%, rgba(46,230,255,0.18), transparent 60%),
+    radial-gradient(1.5px 1.5px at 83% 14%, rgba(244,240,255,0.3), transparent 60%),
+    radial-gradient(1px 1px at 92% 48%, rgba(244,240,255,0.2), transparent 60%),
+    radial-gradient(1px 1px at 6% 84%, rgba(255,61,154,0.16), transparent 60%),
+    radial-gradient(120% 55% at 50% 118%, rgba(90,26,122,0.42) 0%, rgba(90,26,122,0.12) 45%, transparent 70%),
+    linear-gradient(180deg, #0b0922 0%, var(--bw-night) 55%, #120e30 100%) !important;
+  background-attachment: fixed !important;
+}
+[data-theme="bookworm-studio"] .h-app.bg-background { background: transparent; }
+
+[data-theme="bookworm-studio"] h1,
+[data-theme="bookworm-studio"] h2,
+[data-theme="bookworm-studio"] h3,
+[data-theme="bookworm-studio"] .font-display {
+  font-family: var(--font-headline) !important;
+  letter-spacing: -0.02em;
+}
+
+[data-theme="bookworm-studio"] ::selection {
+  background: rgba(255,61,154,0.42);
+  color: #fff;
+}
+
+[data-theme="bookworm-studio"] *:focus-visible {
+  outline: 2px solid var(--bw-cyan) !important;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(46,230,255,0.18), 0 0 14px rgba(46,230,255,0.35);
+}
+
+[data-theme="bookworm-studio"] ::-webkit-scrollbar { width: 10px; height: 10px; }
+[data-theme="bookworm-studio"] ::-webkit-scrollbar-track { background: transparent; }
+[data-theme="bookworm-studio"] ::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(255,61,154,0.55), rgba(46,230,255,0.55));
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+[data-theme="bookworm-studio"] ::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, var(--bw-magenta), var(--bw-cyan));
+  background-clip: padding-box;
+}
+
+/* Surfaces — indigo glass, a hairline, and a lit top edge like a sign box.
+   Chat bubbles keep their own speech-bubble corners. */
+[data-theme="bookworm-studio"] .bg-card,
+[data-theme="bookworm-studio"] [data-sticker],
+[data-theme="bookworm-studio"] .surface-container,
+[data-theme="bookworm-studio"] .bg-surface-container,
+[data-theme="bookworm-studio"] .bg-surface-container-low,
+[data-theme="bookworm-studio"] .bg-surface-container-high:not(.message-bubble-ai) {
+  border-radius: 14px;
+  border: 1px solid var(--bw-line);
+  background-color: rgba(23,20,58,0.88);
+  box-shadow:
+    inset 0 1px 0 0 rgba(244,240,255,0.07),
+    0 10px 30px -18px rgba(0,0,0,0.75);
+}
+
+[data-theme="bookworm-studio"] [role="dialog"],
+[data-theme="bookworm-studio"] [role="menu"],
+[data-theme="bookworm-studio"] [data-radix-popper-content-wrapper] > * {
+  border-radius: 16px !important;
+  border: 1px solid var(--bw-line) !important;
+  background: rgba(19,16,48,0.96) !important;
+  backdrop-filter: blur(18px) saturate(140%);
+  box-shadow:
+    inset 0 1px 0 0 rgba(244,240,255,0.08),
+    0 0 0 1px rgba(255,61,154,0.08),
+    0 24px 60px -20px rgba(0,0,0,0.85),
+    0 0 40px -10px rgba(155,92,255,0.25) !important;
+}
+[data-theme="bookworm-studio"] [role="menuitem"]:focus,
+[data-theme="bookworm-studio"] [role="menuitem"][data-highlighted],
+[data-theme="bookworm-studio"] [role="option"][data-highlighted] {
+  background: linear-gradient(90deg, rgba(255,61,154,0.16), rgba(155,92,255,0.10)) !important;
+  color: var(--bw-on) !important;
+}
+
+[data-theme="bookworm-studio"] button:not([data-no-sticker]):not([role="tab"]):not([role="menuitem"]) {
+  transition: transform 90ms ease, box-shadow 160ms ease, background-position 400ms ease, filter 160ms ease;
+}
+
+/* The sunset button — the one warm, saturated thing on any screen */
+[data-theme="bookworm-studio"] button.bg-primary,
+[data-theme="bookworm-studio"] button.bg-accent,
+[data-theme="bookworm-studio"] button[data-sticker-btn] {
+  background-image: var(--bw-sunset) !important;
+  background-size: 160% 100%;
+  background-position: 0% 50%;
+  color: var(--bw-ink) !important;
+  border: 0 !important;
+  border-radius: 999px;
+  font-weight: 700;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.45), 0 6px 18px -8px rgba(255,95,168,0.6);
+}
+[data-theme="bookworm-studio"] button.bg-primary:hover,
+[data-theme="bookworm-studio"] button.bg-accent:hover,
+[data-theme="bookworm-studio"] button[data-sticker-btn]:hover {
+  background-position: 100% 50%;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.45), 0 0 0 1px rgba(255,201,77,0.35), 0 8px 26px -6px rgba(255,95,168,0.75);
+}
+[data-theme="bookworm-studio"] button.bg-primary:active,
+[data-theme="bookworm-studio"] button.bg-accent:active,
+[data-theme="bookworm-studio"] button[data-sticker-btn]:active {
+  transform: translateY(1px) scale(0.98);
+  box-shadow: inset 0 2px 6px rgba(7,6,26,0.35);
+}
+[data-theme="bookworm-studio"] button.bg-destructive {
+  background: #ff8a73 !important;
+  color: var(--bw-ink) !important;
+  border-radius: 999px;
+}
+
+/* The violet container token (#9b5cff) holds only 3.9:1 under white text,
+   so anything that fills with it — Add books, picked segments — gets a
+   deeper dusk violet that clears 5.7:1. */
+[data-theme="bookworm-studio"] .bg-primary-container:not(.message-bubble-user) {
+  background: linear-gradient(135deg, #7b3fe4 0%, #6a35d9 100%) !important;
+  color: #fff !important;
+}
+[data-theme="bookworm-studio"] button.bg-primary-container:hover {
+  box-shadow: 0 0 0 1px rgba(155,92,255,0.6), 0 6px 22px -6px rgba(155,92,255,0.7);
+}
+
+/* Switches — the off track is otherwise indigo on indigo */
+[data-theme="bookworm-studio"] [role="switch"][data-state="unchecked"] {
+  background: #2e2963 !important;
+  box-shadow: inset 0 0 0 1px rgba(195,189,224,0.25);
+}
+[data-theme="bookworm-studio"] [role="switch"][data-state="unchecked"] > span {
+  background: var(--bw-on-variant) !important;
+}
+[data-theme="bookworm-studio"] [role="switch"][data-state="checked"] {
+  background: var(--bw-sunset) !important;
+  box-shadow: 0 0 12px -2px rgba(255,95,168,0.6);
+}
+
+[data-theme="bookworm-studio"] input,
+[data-theme="bookworm-studio"] textarea,
+[data-theme="bookworm-studio"] select {
+  background: rgba(7,6,26,0.55) !important;
+  color: var(--bw-on) !important;
+  border: 1px solid var(--bw-line) !important;
+  border-radius: 12px;
+  transition: border-color 140ms ease, box-shadow 160ms ease;
+}
+[data-theme="bookworm-studio"] input::placeholder,
+[data-theme="bookworm-studio"] textarea::placeholder { color: #9d97c4; }
+[data-theme="bookworm-studio"] input:focus,
+[data-theme="bookworm-studio"] textarea:focus,
+[data-theme="bookworm-studio"] select:focus {
+  border-color: var(--bw-cyan) !important;
+  box-shadow: 0 0 0 3px rgba(46,230,255,0.16), 0 0 18px -4px rgba(46,230,255,0.5);
+  outline: none !important;
+}
+[data-theme="bookworm-studio"] input[type="checkbox"],
+[data-theme="bookworm-studio"] input[type="radio"],
+[data-theme="bookworm-studio"] input[type="range"] { accent-color: var(--bw-magenta); }
+
+/* Top app bar — night ink with a hairline; leaves room for the live sky */
+[data-theme="bookworm-studio"] [data-app-header] {
+  background: rgba(7,6,26,0.82) !important;
+  border-bottom: 1px solid rgba(46,41,99,0.9);
+  box-shadow: 0 10px 30px -12px rgba(0,0,0,0.7) !important;
+}
+
+/* Wordmark — "Bookworm" in neon script, STUDIO as a cyan tube label */
+[data-theme="bookworm-studio"] [data-wordmark] {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+[data-theme="bookworm-studio"] [data-wordmark]::before {
+  content: "Bookworm";
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 1.85rem;
+  letter-spacing: 0;
+  padding: 0 0.12em 0.08em 0.02em;
+  background: linear-gradient(95deg, #ffd66b 0%, #ffb25a 40%, #ff5fa8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 6px rgba(255,95,168,0.45)) drop-shadow(0 0 1px rgba(255,201,77,0.6));
+}
+[data-theme="bookworm-studio"] [data-wordmark]::after {
+  content: "STUDIO";
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.62rem;
+  letter-spacing: 0.32em;
+  color: var(--bw-cyan);
+  text-shadow: 0 0 8px rgba(46,230,255,0.6);
+  padding: 0.18rem 0.3rem 0.18rem 0.45rem;
+  border: 1px solid rgba(46,230,255,0.55);
+  border-radius: 4px;
+  box-shadow: 0 0 8px -2px rgba(46,230,255,0.55), inset 0 0 6px -2px rgba(46,230,255,0.5);
+  transform: translateY(-0.3rem);
+}
+
+/* Desktop nav — the sliding pill stays; the active tab gets a neon tube
+   that "strikes" like a sign coming on */
+[data-theme="bookworm-studio"] [data-app-header] nav button.text-accent,
+[data-theme="bookworm-studio"] [data-app-header] nav button[aria-current="page"] {
+  position: relative;
+  color: var(--bw-on) !important;
+}
+[data-theme="bookworm-studio"] [data-app-header] nav button.text-accent .material-symbols-outlined,
+[data-theme="bookworm-studio"] [data-app-header] nav button[aria-current="page"] .material-symbols-outlined {
+  color: var(--bw-magenta);
+  text-shadow: 0 0 10px rgba(255,61,154,0.55);
+}
+[data-theme="bookworm-studio"] [data-app-header] nav button.text-accent::after,
+[data-theme="bookworm-studio"] [data-app-header] nav button[aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  left: 14px; right: 14px; bottom: -4px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--bw-strip);
+  box-shadow: 0 0 8px rgba(255,61,154,0.7), 0 0 14px rgba(46,230,255,0.45);
+  animation: bw-ignite 900ms steps(1, end) 1 both;
+}
+[data-theme="bookworm-studio"] [data-app-header] nav button.text-secondary {
+  color: var(--bw-on-variant) !important;
+}
+[data-theme="bookworm-studio"] [data-app-header] nav button.text-secondary:hover {
+  color: var(--bw-gold) !important;
+}
+@keyframes bw-ignite {
+  0%   { opacity: 0; }
+  10%  { opacity: 1; }
+  18%  { opacity: 0.15; }
+  30%  { opacity: 1; }
+  38%  { opacity: 0.35; }
+  52%  { opacity: 1; }
+  100% { opacity: 1; }
+}
+
+/* Tablet rail + mobile nav — night ink; active = magenta glow pill + tube */
+[data-theme="bookworm-studio"] .cc-rail,
+[data-theme="bookworm-studio"] [data-mobile-nav] {
+  background: rgba(7,6,26,0.86) !important;
+  border-color: rgba(46,41,99,0.9) !important;
+}
+[data-theme="bookworm-studio"] .cc-rail-item[aria-current="page"] .bg-accent\/15,
+[data-theme="bookworm-studio"] [data-mobile-nav] button[aria-current="page"] .bg-accent\/15 {
+  background: linear-gradient(180deg, rgba(255,61,154,0.22), rgba(155,92,255,0.18));
+  box-shadow: inset 0 0 0 1px rgba(255,61,154,0.45), 0 0 14px -3px rgba(255,61,154,0.6);
+  animation: bw-ignite 900ms steps(1, end) 1 both;
+}
+[data-theme="bookworm-studio"] .cc-rail-item[aria-current="page"] .text-accent,
+[data-theme="bookworm-studio"] [data-mobile-nav] button[aria-current="page"] .text-accent {
+  color: #ff7ab8 !important;
+}
+[data-theme="bookworm-studio"] .cc-rail-item[aria-current="page"] .material-symbols-outlined,
+[data-theme="bookworm-studio"] [data-mobile-nav] button[aria-current="page"] .material-symbols-outlined {
+  text-shadow: 0 0 10px rgba(255,61,154,0.6);
+}
+[data-theme="bookworm-studio"] .cc-rail-item:not([aria-current="page"]):hover .material-symbols-outlined {
+  color: var(--bw-gold);
+}
+[data-theme="bookworm-studio"] .cc-rail-split {
+  background: var(--bw-strip) !important;
+  opacity: 0.5;
+}
+
+/* Book cards — a marquee of bulbs chases along the bottom on hover */
+[data-theme="bookworm-studio"] [data-book-card] {
+  position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+  transition: transform 180ms ease, box-shadow 220ms ease;
+}
+[data-theme="bookworm-studio"] [data-book-card]:hover {
+  box-shadow: 0 0 0 1px rgba(255,201,77,0.35), 0 14px 34px -14px rgba(255,61,154,0.45);
+}
+[data-theme="bookworm-studio"] [data-book-card]::after {
+  content: "";
+  position: absolute; left: 0; right: 0; bottom: 0; height: 6px;
+  background: var(--bw-bulbs) 0 50% / 10px 6px repeat-x;
+  opacity: 0;
+  transition: opacity 200ms ease;
+  pointer-events: none;
+}
+[data-theme="bookworm-studio"] [data-book-card]:hover::after {
+  opacity: 1;
+  animation: bw-marquee 600ms steps(4, end) infinite;
+}
+@keyframes bw-marquee {
+  from { background-position: 0 50%; }
+  to   { background-position: 10px 50%; }
+}
+
+/* Cover placeholders — a dusk sky over the desert ridge */
+[data-theme="bookworm-studio"] [data-book-card] [data-book-cover-placeholder] {
+  background: var(--bw-ridge) bottom / 100% 42% no-repeat, var(--bw-dusk) !important;
+}
+[data-theme="bookworm-studio"] [data-book-card] [data-book-cover-placeholder] .material-symbols-outlined {
+  color: #fff3d0 !important;
+  text-shadow: 0 0 10px rgba(255,201,77,0.85), 0 0 22px rgba(255,107,61,0.6);
+}
+[data-theme="bookworm-studio"] [data-book-card] [data-book-cover-overlay] {
+  background: linear-gradient(180deg, transparent 0%, rgba(7,6,26,0.88) 100%) !important;
+}
+
+/* Chat — a thin neon edge says who is talking; the bubble itself stays calm.
+   The user bubble's violet token can't carry white text at 4.5:1, so it is
+   deepened here. */
+[data-theme="bookworm-studio"] .message-bubble-ai {
+  background: rgba(23,20,58,0.92) !important;
+  border: 1px solid var(--bw-line) !important;
+  border-left: 2px solid rgba(46,230,255,0.75) !important;
+  box-shadow: -6px 0 18px -14px rgba(46,230,255,0.9);
+}
+[data-theme="bookworm-studio"] .message-bubble-user {
+  background: linear-gradient(135deg, #4a2596 0%, #5e2a8f 100%) !important;
+  color: #fff !important;
+  border-right: 2px solid rgba(255,61,154,0.85);
+  box-shadow: 6px 0 18px -14px rgba(255,61,154,0.9);
+}
+
+/* Progress — the bulb chase, on a sunset bar */
+[data-theme="bookworm-studio"] [role="progressbar"] {
+  background: rgba(7,6,26,0.6) !important;
+}
+[data-theme="bookworm-studio"] [role="progressbar"] > * {
+  background: var(--bw-bulbs) 0 50% / 10px 100% repeat-x, var(--bw-sunset) !important;
+  animation: bw-marquee 600ms steps(4, end) infinite;
+}
+
+/* Read-along word pill — gold bulb light rather than violet */
+[data-theme="bookworm-studio"] .read-along-pill,
+[data-theme="bookworm-studio"] .read-along-ghost {
+  --ra-fill: var(--bw-gold);
+  --ra-glow: var(--bw-magenta);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="bookworm-studio"] [data-app-header] nav button::after,
+  [data-theme="bookworm-studio"] .cc-rail-item .bg-accent\/15,
+  [data-theme="bookworm-studio"] [data-mobile-nav] .bg-accent\/15,
+  [data-theme="bookworm-studio"] [data-book-card]:hover::after,
+  [data-theme="bookworm-studio"] [role="progressbar"] > * { animation: none !important; }
+}
+
+/* =====================================================================
    AURORA (2026) — liquid-glass slate + chromatic @property accent
    Forward-looking theme. HSL token contract lives in themes.ts; the
    oklch-native pipeline, animated hue, mesh background and glass

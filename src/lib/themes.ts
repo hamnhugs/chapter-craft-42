@@ -1,7 +1,7 @@
 // Theme registry. Each theme defines HSL token overrides applied to :root
 // via the ThemeProvider, plus optional fonts loaded from Google Fonts.
 
-export type ThemeId = "dexters-lab" | "fruit-stripe" | "aurora" | "desolate-lab";
+export type ThemeId = "bookworm-studio" | "dexters-lab" | "fruit-stripe" | "aurora" | "desolate-lab";
 
 export interface ThemeDef {
   id: ThemeId;
@@ -32,6 +32,87 @@ export interface ThemeDef {
 }
 
 export const THEMES: ThemeDef[] = [
+  {
+    id: "bookworm-studio",
+    name: "Bookworm Studio",
+    description: "The house theme — Las Vegas after dark: desert-night indigo, Strip neon, and a live Vegas sky.",
+    // The palette is the Las Vegas keyboard theme's: night-sky indigo, the
+    // dusk run from purple to orange, and the Strip's marquee neon. A desert
+    // year really does swing from cold blue winters to burnt-orange summers,
+    // so the accents may lean with it — the indigo night underneath may not.
+    seasonalAmplitude: 0.55,
+    swatch: ["#0d0b26", "#ff3d9a", "#ffc94d"],
+    fonts: {
+      headline: "'Bricolage Grotesque', 'Plus Jakarta Sans', system-ui, sans-serif",
+      body: "'Plus Jakarta Sans', system-ui, sans-serif",
+      // Neon-sign script, used for the wordmark only (see index.css).
+      display: "'Yellowtail', 'Bricolage Grotesque', cursive",
+      label: "'Plus Jakarta Sans', system-ui, sans-serif",
+      googleFontsHref:
+        "https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Yellowtail&family=JetBrains+Mono:wght@400;500;600&display=swap",
+    },
+    tokens: {
+      // Desert night #0d0b26
+      "--background": "244 55% 10%",
+      // Marquee-bulb white, a touch of lavender #f4f0ff
+      "--foreground": "255 100% 97%",
+      // Card #17143a
+      "--card": "246 49% 15%",
+      "--card-foreground": "255 100% 97%",
+      "--popover": "245 52% 13%",
+      "--popover-foreground": "255 100% 97%",
+      // Marquee gold #ffc94d — the Strip's bulbs
+      "--primary": "42 100% 65%",
+      "--primary-foreground": "244 55% 10%",
+      // Ice-cyan tint #c9f6ff
+      "--secondary": "190 100% 89%",
+      "--secondary-foreground": "244 55% 10%",
+      "--muted": "246 40% 18%",
+      // Muted text #c3bde0
+      "--muted-foreground": "251 35% 81%",
+      // Strip magenta #ff3d9a (ink on it: white fails contrast)
+      "--accent": "331 100% 62%",
+      "--accent-foreground": "244 63% 7%",
+      // Sunset coral #ff8a73
+      "--destructive": "9 100% 73%",
+      "--destructive-foreground": "244 63% 7%",
+      // Hairline #2e2963
+      "--border": "245 41% 28%",
+      "--input": "246 49% 15%",
+      // Neon cyan #2ee6ff
+      "--ring": "187 100% 59%",
+      "--radius": "0.875rem",
+      "--surface-container-lowest": "243 63% 6%",
+      "--surface-container-low": "245 50% 12%",
+      "--surface-container": "246 49% 15%",
+      "--surface-container-high": "245 45% 20%",
+      "--surface-container-highest": "245 42% 25%",
+      "--outline": "250 22% 60%",
+      "--outline-variant": "245 35% 30%",
+      "--on-surface-variant": "251 35% 81%",
+      // Dusk violet #6a35d9 — deep enough for white text (6.7:1)
+      "--primary-container": "263 68% 53%",
+      "--on-primary-container": "0 0% 100%",
+      "--secondary-container": "246 40% 22%",
+      "--on-secondary-container": "190 100% 89%",
+      "--error-container": "345 70% 30%",
+      "--on-error-container": "9 100% 92%",
+      "--tertiary": "187 100% 59%",
+      "--tertiary-container": "263 68% 53%",
+      "--primary-fixed-dim": "42 100% 65%",
+      "--viewer-bg": "244 55% 10%",
+      "--toolbar-bg": "243 63% 6%",
+      "--book-spine": "331 100% 62%",
+      "--sidebar-background": "243 63% 6%",
+      "--sidebar-foreground": "255 100% 97%",
+      "--sidebar-primary": "42 100% 65%",
+      "--sidebar-primary-foreground": "244 55% 10%",
+      "--sidebar-accent": "246 49% 15%",
+      "--sidebar-accent-foreground": "255 100% 97%",
+      "--sidebar-border": "245 41% 22%",
+      "--sidebar-ring": "187 100% 59%",
+    },
+  },
   {
     id: "dexters-lab",
     name: "Dexter's Laboratory",
@@ -291,7 +372,7 @@ export const THEMES: ThemeDef[] = [
   },
 ];
 
-export const DEFAULT_THEME: ThemeId = "dexters-lab";
+export const DEFAULT_THEME: ThemeId = "bookworm-studio";
 
 export function getTheme(id: ThemeId): ThemeDef {
   return THEMES.find((t) => t.id === id) ?? THEMES[0];

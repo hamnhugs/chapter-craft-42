@@ -1,0 +1,179 @@
+/* Bookworm Studio — the live Las Vegas sky in the app bar (VegasSky.tsx).
+   Painted at z -1 inside the header's stacking context: above the header's
+   own background, under every control. */
+
+[data-app-header] { isolation: isolate; }
+
+.vs-sky {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  contain: strict;
+  /* Where the Strip stands across the bar (moves right on desktop, below). */
+  --vs-strip-x: 50%;
+}
+
+.vs-gradient {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(60% 140% at var(--vs-body-x) 115%, var(--vs-glow), transparent 70%),
+    linear-gradient(180deg, var(--vs-top) 0%, var(--vs-mid) 55%, var(--vs-horizon) 100%);
+  transition: background 2s ease;
+}
+
+.vs-cityglow {
+  position: absolute;
+  inset: 0;
+  opacity: calc(0.25 + var(--vs-night) * 0.75);
+  background:
+    radial-gradient(40% 75% at var(--vs-strip-x) 112%, rgb(255 61 154 / 0.34), transparent 72%),
+    radial-gradient(70% 60% at var(--vs-strip-x) 115%, rgb(255 150 60 / 0.22), transparent 78%),
+    radial-gradient(90% 45% at var(--vs-strip-x) 110%, rgb(155 92 255 / 0.18), transparent 80%);
+}
+[data-phase="day"] .vs-cityglow { opacity: 0; }
+
+/* ── Sun and moon ─────────────────────────────────────────────────────── */
+.vs-sun,
+.vs-moon {
+  position: absolute;
+  left: var(--vs-body-x);
+  top: var(--vs-body-y);
+  translate: -50% -50%;
+  border-radius: 50%;
+  opacity: var(--vs-body);
+  transition: left 60s linear, top 60s linear, opacity 2s ease;
+}
+.vs-sun {
+  width: 13px;
+  height: 13px;
+  background: radial-gradient(circle at 40% 40%, #fff3c4, #ffc94d 55%, #ff9a3d);
+  box-shadow: 0 0 10px 3px rgb(255 190 80 / 0.35), 0 0 28px 10px rgb(255 140 40 / 0.14);
+}
+.vs-moon {
+  width: 11px;
+  height: 11px;
+  background: radial-gradient(circle at 35% 35%, #f4f0ff, #c9c4e6 70%);
+  /* A crescent shadow, drawn in the sky's own colour. */
+  box-shadow:
+    inset -3px -1px 0 0 rgb(7 6 26 / 0.55),
+    0 0 12px 3px rgb(201 246 255 / 0.18);
+}
+
+/* ── Clouds and rain ──────────────────────────────────────────────────── */
+.vs-cloud {
+  position: absolute;
+  top: calc(8% + var(--i) * 13%);
+  left: -20%;
+  width: 34%;
+  max-width: 340px;
+  height: 46%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgb(205 205 230 / 0.13), transparent);
+  filter: blur(2px);
+  animation: vs-drift calc(140s + var(--i) * 37s) linear infinite;
+  animation-delay: calc(var(--i) * -41s);
+}
+[data-phase="night"] .vs-cloud,
+[data-phase="twilight"] .vs-cloud { background: radial-gradient(closest-side, rgb(120 110 170 / 0.12), transparent); }
+@keyframes vs-drift { to { translate: 160vw 0; } }
+
+.vs-rain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.18;
+  background: repeating-linear-gradient(105deg, transparent 0 9px, rgb(201 246 255 / 0.55) 9px 10px);
+  background-size: 40px 40px;
+  animation: vs-rain 0.6s linear infinite;
+}
+@keyframes vs-rain { to { background-position: -10px 40px; } }
+
+/* ── The city ─────────────────────────────────────────────────────────── */
+.vs-city {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* With the desktop nav in the middle of the bar (lg+), the Strip moves
+   right, into the open stretch between the nav and the bar's buttons. */
+@media (min-width: 1024px) {
+  /* Wider than the bar and clipped, so the valley still reaches the left
+     edge: the slice centres on the box, and the box's centre sits 22% right. */
+  .vs-city { width: 144%; }
+  .vs-sky { --vs-strip-x: 72%; }
+}
+
+.vs-stars circle {
+  fill: #f4f0ff;
+  opacity: calc(var(--vs-night) * 0.7);
+  animation: vs-twinkle 5.5s ease-in-out infinite;
+}
+@keyframes vs-twinkle { 50% { opacity: calc(var(--vs-night) * 0.15); } }
+
+.vs-beam { opacity: calc(var(--vs-night) * 0.55); }
+
+.vs-ridge { fill: color-mix(in srgb, var(--vs-top) 70%, #07061a); }
+[data-phase="night"] .vs-ridge,
+[data-phase="twilight"] .vs-ridge { fill: #120f33; }
+.vs-blocks rect { fill: #0b0a24; }
+.vs-rim > * { fill: var(--vs-rim); }
+/* After dark the edges catch the Strip's neon instead of the sky. */
+[data-phase="night"] .vs-rim > *,
+[data-phase="twilight"] .vs-rim > * { fill: rgb(255 120 190 / 0.5); }
+.vs-front > * { fill: #05041a; }
+
+.vs-sphere-a { stop-color: #2ee6ff; animation: vs-sphere-a 24s linear infinite; }
+.vs-sphere-b { stop-color: #241a5c; animation: vs-sphere-b 24s linear infinite; }
+.vs-sphere { opacity: calc(0.45 + var(--vs-night) * 0.5); }
+@keyframes vs-sphere-a {
+  0%, 100% { stop-color: #2ee6ff; }
+  25% { stop-color: #9b5cff; }
+  50% { stop-color: #ff3d9a; }
+  75% { stop-color: #ffc94d; }
+}
+@keyframes vs-sphere-b {
+  0%, 100% { stop-color: #1b2a6a; }
+  25% { stop-color: #2b1660; }
+  50% { stop-color: #4a1240; }
+  75% { stop-color: #4a2a12; }
+}
+
+.vs-welcome {
+  fill: rgb(7 6 26 / 0.85);
+  stroke: #ffc94d;
+  stroke-width: 1.4;
+  opacity: calc(0.55 + var(--vs-night) * 0.4);
+}
+
+.vs-beacon { fill: #ff3d9a; animation: vs-beacon 2.4s steps(1) infinite; }
+@keyframes vs-beacon { 50% { opacity: 0.15; } }
+.vs-apex { fill: #f4f0ff; opacity: calc(0.3 + var(--vs-night) * 0.7); }
+
+.vs-lights rect {
+  opacity: 0.35;
+  animation: vs-window 6s ease-in-out infinite;
+}
+[data-phase="night"] .vs-lights rect,
+[data-phase="twilight"] .vs-lights rect { opacity: 0.6; }
+@keyframes vs-window { 50% { opacity: 1; } }
+
+.vs-marquee {
+  stroke-width: 2.4;
+  stroke-dasharray: 3 5;
+  stroke-linecap: round;
+  opacity: 0.55;
+  animation: vs-chase 1.6s linear infinite;
+}
+[data-phase="night"] .vs-marquee,
+[data-phase="twilight"] .vs-marquee { opacity: 0.9; }
+@keyframes vs-chase { to { stroke-dashoffset: -16; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .vs-sky *,
+  .vs-sky *::before,
+  .vs-sky *::after { animation: none !important; transition: none !important; }
+}
