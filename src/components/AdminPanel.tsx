@@ -97,8 +97,11 @@ const AdminPanel: React.FC = () => {
 
   return (
     <div className="flex flex-col h-full overflow-auto">
-      <main className="max-w-7xl mx-auto px-6 py-10 pb-32 w-full">
-        <section className="mb-8">
+      {/* cc-page-main / cc-page-title (index.css) scale the top padding and
+          title with the window, so a 506px-tall laptop window isn't half
+          header. */}
+      <main className="cc-page-main max-w-7xl mx-auto px-4 sm:px-6 py-10 pb-12 w-full">
+        <section className="mb-[clamp(0.75rem,3vh,2rem)]">
           <div className="flex items-center gap-3 mb-1">
             <span className="px-2 py-0.5 bg-secondary-container text-on-secondary-container rounded text-[10px] font-bold tracking-widest uppercase">
               Admin
@@ -107,11 +110,13 @@ const AdminPanel: React.FC = () => {
               <ShieldCheck className="w-3.5 h-3.5" /> Server-verified access — content reads are logged
             </span>
           </div>
-          <h2 className="font-headline font-bold text-5xl text-primary tracking-tight">Mission Control</h2>
+          <h2 className="cc-page-title font-headline font-bold text-5xl text-primary tracking-tight">Mission Control</h2>
         </section>
 
-        {/* Section switcher */}
-        <div className="mb-8 flex items-center gap-1 overflow-x-auto pb-2 hide-scrollbar">
+        {/* Section switcher. Touch swipes the row sideways; with a mouse a
+            hidden-scrollbar row can't be scrolled, so the chips wrap instead
+            (same as Settings). */}
+        <div className="mb-[clamp(1rem,4vh,2rem)] flex items-center gap-1 overflow-x-auto pb-2 hide-scrollbar [@media(pointer:fine)]:flex-wrap">
           {SECTIONS.map((s) => (
             <button
               key={s.id}
@@ -263,9 +268,9 @@ const UsersSection: React.FC<{ users: AdminUserRow[] | null }> = ({ users: initi
           <thead>
             <tr className="bg-surface-container-high text-left text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">
               <th className="px-4 py-3">Email</th>
-              <th className="px-4 py-3">Joined</th>
+              <th className="px-4 py-3 max-md:hidden">Joined</th>
               <th className="px-4 py-3">Last seen</th>
-              <th className="px-4 py-3 text-right">Visits</th>
+              <th className="px-4 py-3 text-right max-md:hidden">Visits</th>
               <th className="px-4 py-3">Role</th>
               <th className="px-4 py-3">Plan</th>
               <th className="px-4 py-3 text-right">Actions</th>
@@ -279,9 +284,9 @@ const UsersSection: React.FC<{ users: AdminUserRow[] | null }> = ({ users: initi
               return (
                 <tr key={u.id} className={i % 2 === 1 ? "bg-surface-container-high/50" : ""}>
                   <td className="px-4 py-3 font-medium text-foreground">{u.email || u.id}</td>
-                  <td className="px-4 py-3 text-on-surface-variant">{new Date(u.created_at).toLocaleDateString()}</td>
+                  <td className="px-4 py-3 text-on-surface-variant max-md:hidden">{new Date(u.created_at).toLocaleDateString()}</td>
                   <td className="px-4 py-3 text-on-surface-variant">{fmtDate(u.last_seen)}</td>
-                  <td className="px-4 py-3 text-right text-on-surface-variant">{u.visits_total}</td>
+                  <td className="px-4 py-3 text-right text-on-surface-variant max-md:hidden">{u.visits_total}</td>
                   <td className="px-4 py-3">
                     {u.is_admin ? (
                       <span className="px-2 py-0.5 rounded-full bg-primary-container text-on-primary-container text-[10px] font-bold uppercase tracking-widest">
@@ -931,7 +936,7 @@ const AuditSection: React.FC<{ audit: AuditLogRow[] | null }> = ({ audit }) => {
       {audit.length === 0 ? (
         <p className="text-sm text-on-surface-variant">Nothing logged yet.</p>
       ) : (
-        <div className="rounded-2xl border border-outline-variant/10 overflow-hidden">
+        <div className="rounded-2xl border border-outline-variant/10 overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-surface-container-high text-left text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">
@@ -945,7 +950,7 @@ const AuditSection: React.FC<{ audit: AuditLogRow[] | null }> = ({ audit }) => {
                 <tr key={row.id} className={i % 2 === 1 ? "bg-surface-container-high/50" : ""}>
                   <td className="px-4 py-2.5 text-on-surface-variant whitespace-nowrap">{fmtDate(row.created_at)}</td>
                   <td className="px-4 py-2.5 font-medium text-foreground">{row.action.replace(/_/g, " ")}</td>
-                  <td className="px-4 py-2.5 text-on-surface-variant text-xs truncate max-w-[280px]">
+                  <td className="px-4 py-2.5 text-on-surface-variant text-xs truncate max-w-[10rem] sm:max-w-[280px]">
                     {String((row.detail as any)?.wiki_name || row.target_id || "—")}
                   </td>
                 </tr>

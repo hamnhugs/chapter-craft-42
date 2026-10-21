@@ -458,7 +458,7 @@ const PdfViewer: React.FC = () => {
         title="Jump to page"
       >
         {!compact && (
-          <span className="font-label text-[10px] uppercase tracking-[0.2em] text-on-surface-variant">Tap to jump</span>
+          <span className="font-label text-[10px] uppercase tracking-[0.2em] text-on-surface-variant [@media(max-height:640px)]:hidden">Tap to jump</span>
         )}
         <span className={`font-headline font-bold text-primary italic ${compact ? "text-sm" : "text-lg"}`}>
           Page {currentPage} of {numPages || "…"}
@@ -472,24 +472,34 @@ const PdfViewer: React.FC = () => {
       style={focused ? { height: "100dvh" } : undefined}
       data-reader-focus={focused || undefined}
     >
-      {/* Pagination toolbar — PDF only */}
+      {/* Pagination toolbar — PDF only. Short windows (a full-screen 2x-scaled
+          1080p laptop is 506px tall) get a slimmer bar without the "Tap to
+          jump" caption; on wide screens the arrows stay near the page instead
+          of drifting to the far edges of the window. */}
       {!isHtmlBook && !focused && (
-        <div className="relative flex items-center justify-between px-2 sm:px-4 h-14 bg-surface-container-low">
-          <button type="button" onClick={goToPrevPage} disabled={!canPrev} className={iconBtn} aria-label="Previous page">
-            <span className="material-symbols-outlined text-primary">arrow_back</span>
-          </button>
-          {pageIndicator(false)}
-          <button type="button" onClick={goToNextPage} disabled={!canNext} className={iconBtn} aria-label="Next page">
-            <span className="material-symbols-outlined text-primary">arrow_forward</span>
-          </button>
+        <div className="relative flex items-center px-2 sm:px-4 h-14 [@media(max-height:640px)]:h-11 bg-surface-container-low">
+          <div className="flex items-center justify-between w-full max-w-4xl mx-auto">
+            <button type="button" onClick={goToPrevPage} disabled={!canPrev} className={iconBtn} aria-label="Previous page">
+              <span className="material-symbols-outlined text-primary">arrow_back</span>
+            </button>
+            {pageIndicator(false)}
+            <button type="button" onClick={goToNextPage} disabled={!canNext} className={iconBtn} aria-label="Next page">
+              <span className="material-symbols-outlined text-primary">arrow_forward</span>
+            </button>
+          </div>
           <div className="absolute inset-x-0 bottom-0 h-0.5 bg-surface-container-highest" aria-hidden>
             <div className="h-full bg-primary/70 transition-[width] duration-300" style={{ width: `${bookProgress}%` }} />
           </div>
         </div>
       )}
 
-      {/* Secondary Toolbar — stays mounted in focus mode (it hosts Read Along) */}
-      <div className={`${focused ? "hidden" : "flex"} items-center justify-start px-4 sm:px-6 py-2.5 bg-surface-container-high overflow-x-auto hide-scrollbar gap-3 border-t border-outline-variant/10 max-sm:[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)] max-sm:pr-10`}>
+      {/* Secondary Toolbar — stays mounted in focus mode (it hosts Read Along).
+          Touch swipes the row sideways (the fade hints there is more). With a
+          mouse a hidden-scrollbar row can't be scrolled, so there the controls
+          wrap instead; labels shorten below xl so a full-screen 956px laptop
+          window holds them on one row. Centred over the page on wide screens
+          (`safe` falls back to start when the row overflows). */}
+      <div className={`${focused ? "hidden" : "flex"} items-center [justify-content:safe_center] px-4 sm:px-6 py-2 [@media(max-height:640px)]:py-1.5 bg-surface-container-high overflow-x-auto hide-scrollbar gap-2 xl:gap-3 [@media(pointer:fine)]:flex-wrap [@media(pointer:fine)]:gap-y-1.5 border-t border-outline-variant/10 max-sm:[@media(pointer:coarse)]:[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)] max-sm:[@media(pointer:coarse)]:pr-10`}>
         {/* Read Along — word-highlighted read-aloud with XP/streaks */}
         <ReadAlong
           mode={isHtmlBook ? "html" : "pdf"}
@@ -515,9 +525,10 @@ const PdfViewer: React.FC = () => {
           onClick={enterFocus}
           className="flex items-center gap-1.5 px-3 py-2 rounded-lg shrink-0 bg-surface-container-highest text-foreground hover:text-primary active:scale-95 transition-all"
           title="Focus mode: just the page (F)"
+          aria-label="Focus mode"
         >
           <span className="material-symbols-outlined text-xl text-primary" aria-hidden>fullscreen</span>
-          <span className="font-label text-sm font-semibold">Focus</span>
+          <span className="font-label text-sm font-semibold max-xl:hidden">Focus</span>
         </button>
 
         {/* Zoom (PDF only) + reading options */}
@@ -588,7 +599,8 @@ const PdfViewer: React.FC = () => {
                 title="Mark this page as the start of a chapter"
               >
                 <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>bolt</span>
-                <span>Chapter Isolation</span>
+                <span className="max-xl:hidden">Chapter Isolation</span>
+                <span className="xl:hidden">Isolate</span>
               </button>
             ) : (
               <>
@@ -621,7 +633,7 @@ const PdfViewer: React.FC = () => {
               value={selectedChapterId || ""}
               onChange={(e) => handleChapterSelect(e.target.value)}
               aria-label={isHtmlBook ? "Jump to section" : "Jump to chapter"}
-              className="text-xs font-body bg-surface-container-highest border-none rounded-lg px-3 h-10 text-foreground focus:ring-1 focus:ring-primary/40"
+              className="w-40 xl:w-56 truncate text-xs font-body bg-surface-container-highest border-none rounded-lg px-3 h-10 text-foreground focus:ring-1 focus:ring-primary/40"
             >
               <option value="">{isHtmlBook ? "Jump to section…" : "Jump to chapter…"}</option>
               {book.chapters.map((ch) => (
