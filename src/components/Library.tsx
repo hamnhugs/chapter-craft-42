@@ -890,13 +890,13 @@ const Library: React.FC = () => {
       onDragOver={(e) => { if (dragCarriesBooks(e)) e.preventDefault(); }}
       className="h-full flex flex-col overflow-auto"
     >
-      <main className="cc-vault-main max-w-7xl mx-auto px-6 py-10 flex flex-col gap-6 w-full">
+      <main className="cc-vault-main cc-page-main max-w-7xl mx-auto px-6 py-10 flex flex-col gap-6 w-full">
         {/* Masthead. What this is and how much is in it on the left; how you
             are looking at it on the right. The tagline that used to sit under
             the title said nothing a reader could use — the count does. */}
         <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
           <div className="min-w-0">
-            <h1 className="cc-vault-title font-headline text-4xl md:text-5xl font-bold tracking-tighter text-primary italic">
+            <h1 className="cc-vault-title cc-page-title font-headline text-4xl md:text-5xl font-bold tracking-tighter text-primary italic">
               My Library
             </h1>
             <p className="mt-1.5 text-sm text-on-surface-variant" aria-live="polite">
