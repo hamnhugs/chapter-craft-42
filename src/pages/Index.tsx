@@ -136,8 +136,13 @@ const DesktopNav: React.FC<{
 };
 
 /**
- * Tablet navigation rail (md–lg). Vertically centered, edge-flush, all
- * destinations visible with icon + label, ≥48px touch targets.
+ * Tablet navigation rail (md–lg). Top-aligned, edge-flush, all destinations
+ * visible with icon + label, ≥48px touch targets. It was vertically centered:
+ * in a window shorter than the stack (a 2x-scaled 1080p laptop gives the app
+ * 956x506), centering overflowed BOTH ends and the top one — Vault — sat above
+ * the scrollable area, unreachable. Top-aligned, an overflow only ever runs
+ * off the bottom, where the rail scrolls; `.cc-rail` also tightens it on short
+ * windows so the whole stack fits (index.css).
  */
 const TabletRail: React.FC<{
   tabs: NavTab[];
@@ -146,18 +151,18 @@ const TabletRail: React.FC<{
 }> = ({ tabs, activeTab, setActiveTab }) => (
   <nav
     aria-label="Main navigation"
-    className="hidden md:flex lg:hidden w-20 shrink-0 flex-col items-center justify-center gap-1 border-r border-border/60 bg-background/85 backdrop-blur-xl py-4"
+    className="cc-rail hidden md:flex lg:hidden w-20 shrink-0 flex-col items-center gap-1 overflow-y-auto hide-scrollbar border-r border-border/60 bg-background/85 backdrop-blur-xl py-3"
   >
     {tabs.map((tab, index) => {
       const isActive = activeTab === tab.id;
       return (
         <React.Fragment key={tab.id}>
-          {index === ZONE_SPLIT && <span className="my-1.5 h-px w-8 bg-border/70" aria-hidden />}
+          {index === ZONE_SPLIT && <span className="cc-rail-split my-1.5 h-px w-8 shrink-0 bg-border/70" aria-hidden />}
           <button
             onClick={() => setActiveTab(tab.id)}
             aria-label={tab.label}
             aria-current={isActive ? "page" : undefined}
-            className={`group flex w-16 flex-col items-center justify-center gap-0.5 rounded-2xl py-2 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/60 ${
+            className={`cc-rail-item group flex w-16 shrink-0 flex-col items-center justify-center gap-0.5 rounded-2xl py-2 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/60 ${
               isActive ? "" : "hover:bg-muted/40"
             }`}
           >
@@ -208,10 +213,10 @@ const Index: React.FC = () => {
   return (
     <div className="flex flex-col h-app bg-background">
       {/* Top App Bar */}
-      <header data-app-header className="sticky top-0 w-full flex items-center justify-between px-6 py-4 bg-background/80 backdrop-blur-xl z-50 shadow-[0px_4px_20px_rgba(0,0,0,0.04),0px_10px_40px_rgba(0,0,0,0.08)]">
+      <header data-app-header className="cc-app-bar sticky top-0 w-full flex items-center justify-between px-4 sm:px-6 py-2 bg-background/80 backdrop-blur-xl z-50 shadow-[0px_4px_20px_rgba(0,0,0,0.04),0px_10px_40px_rgba(0,0,0,0.08)]">
         <div className="flex items-center gap-3">
           <span className="material-symbols-outlined text-accent text-2xl">menu_book</span>
-          <span data-wordmark className="font-display font-bold text-3xl tracking-tight text-primary">​</span>
+          <span data-wordmark className="font-display font-bold text-2xl tracking-tight text-primary">​</span>
         </div>
 
         {/* Desktop nav (lg+) — tablet uses the left rail instead */}
@@ -226,7 +231,7 @@ const Index: React.FC = () => {
                   ? `Counsel is using: ${activeWikis.map((w) => w.name).join(", ")} — press ⌘K to switch`
                   : `Counsel is using: ${activeWiki.name} — press ⌘K to switch`
               }
-              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent/10 hover:bg-accent/20 transition-colors text-xs font-body font-medium text-accent max-w-[200px] truncate"
+              className="hidden sm:inline-flex lg:hidden xl:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent/10 hover:bg-accent/20 transition-colors text-xs font-body font-medium text-accent max-w-[200px] truncate"
             >
               {/* One dot per loaded neuron, overlapping — primary first. */}
               <span className="flex items-center flex-shrink-0" aria-hidden>
