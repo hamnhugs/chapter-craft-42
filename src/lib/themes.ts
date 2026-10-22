@@ -116,17 +116,24 @@ export const THEMES: ThemeDef[] = [
   {
     id: "dexters-lab",
     name: "Dexter's Laboratory",
-    description: "Prismatic Lab — deep violet glass-brutalism with holo-gradient accents.",
+    description: "Prismatic Lab — a boy genius's secret lab: violet glass-brutalism, holo prisms, and a brainwave monitor that watches you read.",
+    // The secret laboratory behind the bookcase: a violet bunker of glass
+    // panels in thick cartoon ink, lit by its instruments — cyan scope
+    // phosphor, lemon lamps, magenta alarms (see index.css, PRISMATIC LAB).
     // Neon on violet: the magenta can lean coral or plum without stopping
     // being the lab's magenta.
     seasonalAmplitude: 0.7,
     swatch: ["#1a0b2e", "#bd00ff", "#00eefc"],
     fonts: {
-      headline: "'Space Grotesk', system-ui, sans-serif",
+      // Cut-corner tech capitals for headings; Space Grotesk stays for reading.
+      headline: "'Chakra Petch', 'Space Grotesk', system-ui, sans-serif",
       body: "'Space Grotesk', system-ui, sans-serif",
-      display: "'Space Grotesk', system-ui, sans-serif",
+      // Chunky cartoon title-card capitals, used for the wordmark only.
+      display: "'Bungee', 'Chakra Petch', system-ui, sans-serif",
+      // Readouts and console labels.
+      label: "'JetBrains Mono', ui-monospace, monospace",
       googleFontsHref:
-        "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap",
+        "https://fonts.googleapis.com/css2?family=Bungee&family=Chakra+Petch:wght@500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap",
     },
     tokens: {
       // Deep violet canvas #1a0b2e
@@ -181,29 +188,37 @@ export const THEMES: ThemeDef[] = [
   {
     id: "fruit-stripe",
     name: "Fruit Stripe",
-    description: "Paper white & ink black with mid-century rainbow accents.",
+    description: "Five-flavour gum wrapper — paper white, ink black, mid-century candy stripes and a wrapper that turns with the hour.",
     // A mid-century rainbow already contains every season; it takes the full
     // swing without anyone noticing a rule was applied.
     seasonalAmplitude: 1,
     swatch: ["#FBFAF6", "#E63946", "#F4C95D"],
     fonts: {
-      headline: "'Inter Tight', 'Inter', system-ui, sans-serif",
-      body: "'Inter', system-ui, sans-serif",
-      display: "'DM Serif Display', Georgia, serif",
+      // Fraunces with its SOFT axis up reads like 1950s packaging type —
+      // chewy, warm, a little wonky (see index.css for the axis settings).
+      headline: "'Fraunces', Georgia, serif",
+      // Figtree: a friendly geometric that stays calm at reading length.
+      body: "'Figtree', 'Inter', system-ui, sans-serif",
+      // Shrikhand — fat retro italic, the gum-wrapper wordmark only.
+      display: "'Shrikhand', 'Fraunces', Georgia, serif",
+      label: "'Figtree', 'Inter', system-ui, sans-serif",
       googleFontsHref:
-        "https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Inter:wght@300;400;500;600;700&family=Inter+Tight:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap",
+        "https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1;1,9..144,300..900,0..100,0..1&family=Figtree:ital,wght@0,300..900;1,300..900&family=Shrikhand&family=JetBrains+Mono:wght@400;500;600&display=swap",
     },
     tokens: {
       // Paper White #FBFAF6
       "--background": "48 33% 97%",
-      // Ink Black #111111
+      // Ink Black #111111 — 18.1:1 on paper
       "--foreground": "0 0% 7%",
       "--card": "0 0% 100%",
       "--card-foreground": "0 0% 7%",
       "--popover": "0 0% 100%",
       "--popover-foreground": "0 0% 7%",
-      // Cherry Red #E63946
-      "--primary": "355 78% 56%",
+      // Cherry Ink #C11F2D. The brand cherry #E63946 holds only 4.2:1 under
+      // white text and 4.0:1 as text on paper, so the TOKEN is a press-ink
+      // deepening of it: white on it 6.0:1, it on paper 5.7:1, on the
+      // stripe-gray surface 4.8:1. #E63946 stays for stripes and edges.
+      "--primary": "355 72% 44%",
       "--primary-foreground": "0 0% 100%",
       // Stripe Gray #E8E6DF
       "--secondary": "45 17% 89%",
@@ -211,10 +226,13 @@ export const THEMES: ThemeDef[] = [
       "--muted": "45 17% 92%",
       // Soft Charcoal #2A2A2A
       "--muted-foreground": "0 0% 16%",
-      // Lemon Yellow #F4C95D
-      "--accent": "44 86% 66%",
-      "--accent-foreground": "0 0% 7%",
-      "--destructive": "355 78% 56%",
+      // Burnt Tangerine #A8470F. The accent is used as TEXT ~40 times
+      // (text-accent), and lemon on paper is 1.6:1, so the accent is the
+      // mid-century burnt orange: 5.6:1 on paper, white on it 5.9:1. Lemon
+      // lives on in the skin (selection, stickers, highlights) as a fill.
+      "--accent": "22 84% 36%",
+      "--accent-foreground": "0 0% 100%",
+      "--destructive": "355 72% 44%",
       "--destructive-foreground": "0 0% 100%",
       // Ink Black borders
       "--border": "0 0% 7%",
@@ -228,81 +246,130 @@ export const THEMES: ThemeDef[] = [
       "--outline": "0 0% 7%",
       "--outline-variant": "0 0% 16%",
       "--on-surface-variant": "0 0% 16%",
-      "--primary-container": "355 78% 56%",
+      // Cherry Ink again — white on it 6.0:1 (user bubbles, Add-books fills)
+      "--primary-container": "355 72% 44%",
       "--on-primary-container": "0 0% 100%",
+      "--secondary-container": "45 60% 90%",
+      "--on-secondary-container": "0 0% 7%",
+      "--tertiary": "110 44% 35%",
+      "--tertiary-container": "105 45% 88%",
+      "--primary-fixed-dim": "355 72% 44%",
       "--viewer-bg": "48 33% 97%",
       "--toolbar-bg": "0 0% 100%",
       "--book-spine": "355 78% 56%",
+      "--sidebar-background": "48 33% 97%",
+      "--sidebar-foreground": "0 0% 7%",
+      "--sidebar-primary": "355 72% 44%",
+      "--sidebar-primary-foreground": "0 0% 100%",
+      "--sidebar-accent": "45 17% 92%",
+      "--sidebar-accent-foreground": "0 0% 7%",
+      "--sidebar-border": "0 0% 7%",
+      "--sidebar-ring": "355 78% 56%",
     },
   },
   {
     id: "aurora",
     name: "Aurora",
-    description: "Liquid-glass slate with a hue-cycling chromatic accent. Apple-Vision-OS frosted glass.",
-    // Its accent is already on a 24s hue cycle, so a slow annual lean on top
-    // of that reads as intent rather than interference.
-    seasonalAmplitude: 0.85,
-    swatch: ["#0e1426", "#9bb4ff", "#f3a7c4"],
+    description: "Polar night under liquid glass — frosted slate, Instrument Serif, and live northern lights that follow tonight's sky.",
+    // The aurora is the year's own clock: it burns brightest at the equinoxes
+    // and the long winter nights. The accent may lean with the season, but
+    // only so far — pulled much further warm, oxygen green turns to olive.
+    seasonalAmplitude: 0.6,
+    swatch: ["#0a0e1a", "#6ff0c0", "#b9a6ff"],
     fonts: {
       headline: "'Instrument Serif', 'Newsreader', Georgia, serif",
-      body: "'Inter', system-ui, sans-serif",
+      body: "'Instrument Sans', 'Inter', system-ui, sans-serif",
+      // The wordmark: Instrument Serif, roman + an aurora-lit italic.
       display: "'Instrument Serif', 'Newsreader', Georgia, serif",
+      label: "'Instrument Sans', 'Inter', system-ui, sans-serif",
       googleFontsHref:
-        "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&display=swap",
+        "https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wdth,wght@0,75..100,400..700;1,75..100,400..700&family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap",
     },
+    // Ratios are against the canvas #0a0e19 unless noted.
     tokens: {
-      // Deep slate-navy canvas
-      "--background": "230 35% 7%",
-      // Warm cream
-      "--foreground": "220 30% 95%",
-      "--card": "230 30% 13%",
-      "--card-foreground": "220 30% 95%",
-      "--popover": "230 35% 11%",
-      "--popover-foreground": "220 30% 95%",
-      "--primary": "220 30% 95%",
-      "--primary-foreground": "230 35% 7%",
-      "--secondary": "220 20% 75%",
-      "--secondary-foreground": "230 35% 7%",
-      "--muted": "230 30% 13%",
-      "--muted-foreground": "220 18% 70%",
-      // Peach pop (overridden by the @property hue cycle where supported)
-      "--accent": "340 85% 70%",
-      "--accent-foreground": "230 35% 7%",
-      "--destructive": "10 90% 70%",
-      "--destructive-foreground": "0 0% 100%",
-      "--border": "225 25% 22%",
-      "--input": "230 30% 13%",
-      "--ring": "340 85% 70%",
-      "--surface-container-lowest": "230 35% 5%",
-      "--surface-container-low": "230 30% 9%",
-      "--surface-container": "230 30% 11%",
-      "--surface-container-high": "230 28% 14%",
-      "--surface-container-highest": "230 25% 18%",
-      "--outline": "225 25% 55%",
-      "--outline-variant": "225 25% 22%",
-      "--on-surface-variant": "220 22% 80%",
-      "--primary-container": "340 85% 70%",
-      "--on-primary-container": "230 35% 7%",
-      "--viewer-bg": "230 35% 7%",
-      "--toolbar-bg": "230 30% 9%",
-      "--book-spine": "340 85% 70%",
+      // Polar night #0a0e19
+      "--background": "229 43% 7%",
+      // Frost white #f2f5fc — 18.6:1
+      "--foreground": "222 60% 97%",
+      // Frosted slate #141c2f (the skin lays glass over it)
+      "--card": "225 40% 13%",
+      "--card-foreground": "222 60% 97%",
+      "--popover": "226 42% 11%",
+      "--popover-foreground": "222 60% 97%",
+      // Primary is frost: header icons, the wordmark fallback, light buttons
+      "--primary": "222 60% 97%",
+      "--primary-foreground": "229 43% 7%",
+      // Mist #d4dbeb — inactive nav; 5.2:1 even over a full-storm aurora
+      "--secondary": "222 35% 88%",
+      "--secondary-foreground": "229 43% 7%",
+      "--muted": "226 36% 15%",
+      // Muted text #aab5cc — 8.9:1 on the canvas, 7.6:1 on a card
+      "--muted-foreground": "221 25% 73%",
+      // Oxygen green #6cf0c8 — the aurora's own line (557.7nm). 14:1.
+      // Leaned a touch toward teal so the cover tones derived from it
+      // (seasonTheme.coverTones, ±48°) run green→teal rather than olive.
+      "--accent": "162 81% 68%",
+      "--accent-foreground": "229 43% 7%",
+      // Coral frost #f98b8b, ink on it 8.4:1
+      "--destructive": "0 90% 76%",
+      "--destructive-foreground": "229 43% 7%",
+      // Hairline #263150
+      "--border": "224 35% 23%",
+      "--input": "226 42% 11%",
+      "--ring": "162 81% 68%",
+      "--radius": "1rem",
+      "--surface-container-lowest": "229 50% 5%",
+      "--surface-container-low": "227 40% 10%",
+      "--surface-container": "225 40% 13%",
+      "--surface-container-high": "224 36% 17%",
+      "--surface-container-highest": "223 32% 21%",
+      "--outline": "222 20% 58%",
+      "--outline-variant": "224 30% 26%",
+      "--on-surface-variant": "221 30% 82%",
+      // Deep aurora violet #4a40a1 — white on it 8.6:1
+      "--primary-container": "246 43% 44%",
+      "--on-primary-container": "0 0% 100%",
+      "--secondary-container": "200 45% 18%",
+      // Ice cyan #b8f0ff on the container — 11:1
+      "--on-secondary-container": "193 100% 86%",
+      "--error-container": "350 55% 26%",
+      "--on-error-container": "0 100% 92%",
+      // Violet #b9a6ff
+      "--tertiary": "253 100% 83%",
+      "--tertiary-container": "246 43% 44%",
+      "--primary-fixed-dim": "162 81% 68%",
+      "--viewer-bg": "229 43% 7%",
+      "--toolbar-bg": "229 50% 5%",
+      "--book-spine": "162 81% 68%",
+      "--sidebar-background": "229 50% 5%",
+      "--sidebar-foreground": "222 60% 97%",
+      "--sidebar-primary": "162 81% 68%",
+      "--sidebar-primary-foreground": "229 43% 7%",
+      "--sidebar-accent": "225 40% 13%",
+      "--sidebar-accent-foreground": "222 60% 97%",
+      "--sidebar-border": "224 35% 20%",
+      "--sidebar-ring": "162 81% 68%",
     },
   },
   {
     id: "desolate-lab",
     name: "Desolate Lab",
-    description: "Isolated terminal — light-absorbing blacks, technical grays, one signal red.",
+    description: "A sealed research annex — light-absorbing blacks, instrument grays, one signal red, and live facility telemetry.",
     // One hue in the whole facility is the entire premise. It may breathe by a
     // few degrees across the year; it may not become a second colour.
     seasonalAmplitude: 0.18,
-    swatch: ["#131313", "#e5e2e1", "#b0564a"],
+    swatch: ["#131313", "#e5e2e1", "#cf6959"],
+    // A four-voice type system, each with one job: a stencil face sprayed on
+    // the annex door (wordmark only), Space Grotesk for headings, IBM Plex
+    // Sans — an engineering-manual face — for anything read at length, and
+    // JetBrains Mono for every label, readout and control.
     fonts: {
       headline: "'Space Grotesk', system-ui, sans-serif",
-      body: "'Space Grotesk', system-ui, sans-serif",
-      display: "'Space Grotesk', system-ui, sans-serif",
+      body: "'IBM Plex Sans', 'Space Grotesk', system-ui, sans-serif",
+      display: "'Big Shoulders Stencil Display', 'Space Grotesk', system-ui, sans-serif",
       label: "'JetBrains Mono', ui-monospace, monospace",
       googleFontsHref:
-        "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap",
+        "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Big+Shoulders+Stencil+Display:wght@700;800&family=JetBrains+Mono:wght@400;500;600&display=swap",
     },
     tokens: {
       // Base charcoal #131313
@@ -323,9 +390,12 @@ export const THEMES: ThemeDef[] = [
       "--muted": "0 3% 11%",
       // Outline #8e9192
       "--muted-foreground": "195 2% 56%",
-      // Signal red (CRITICAL_DEPLETION) — the only hue in the facility
-      "--accent": "8 40% 49%",
-      "--accent-foreground": "0 0% 100%",
+      // Signal red (CRITICAL_DEPLETION) — the only hue in the facility.
+      // #cf6959: lifted from the old #af584b (3.8:1) so text-accent clears
+      // AA — 5.2:1 on the base, 4.8:1 on a panel. Fills carry charcoal ink
+      // (5.2:1); the deep lamp red #9b483b lives in index.css for big fills.
+      "--accent": "8 55% 58%",
+      "--accent-foreground": "0 0% 7%",
       // Error #ffb4ab
       "--destructive": "4 100% 84%",
       "--destructive-foreground": "357 100% 21%",

@@ -159,26 +159,120 @@
 }
 
 /* =====================================================================
-   FRUIT STRIPE THEME — scoped overrides per PRD (chapter_craft_prd.md)
+   FRUIT STRIPE THEME — "Five Flavor", a mid-century gum wrapper
    Paper White canvas, Ink Black structure, mid-century rainbow accents.
+   The whole app is printed like a 1950s stick-of-gum pack: cheap paper with
+   a whisper of halftone, ink keylines, hard offset shadows instead of soft
+   ones (print has no blur), a fat retro wordmark misregistered over a cherry
+   plate, and the five flavours — cherry, tangerine, lemon, lime, melon —
+   printed as diagonal stripes on the EDGES: the app bar's wrapper, the tab
+   marker, the bottom of the one button that matters, the spine of a chat
+   bubble. Reading surfaces stay paper and ink.
+   Two of the brand colours can't carry text, so the TOKENS (themes.ts) use
+   press-ink deepenings: cherry ink #C11F2D (white on it 6.0:1, on paper
+   5.7:1) and burnt tangerine #A8470F (5.6:1 on paper). Ink #111 on paper is
+   18.1:1, charcoal #2A2A2A 13.7:1. The live wrapper in the app bar is
+   styled by src/styles/themes/fruit-stripe-art.css.
    ===================================================================== */
 :root[data-theme="fruit-stripe"] {
   --fs-paper: #FBFAF6;
+  --fs-paper-deep: #F3F0E6;
+  --fs-white: #FFFFFF;
   --fs-ink: #111111;
   --fs-charcoal: #2A2A2A;
+  --fs-pencil: #5C5A55;          /* 6.6:1 on paper — the quietest text we allow */
   --fs-stripe-gray: #E8E6DF;
+  /* The five flavours — brand strength. Edges, fills under ink, never text. */
   --fs-cherry: #E63946;
   --fs-orange: #F4844D;
   --fs-lemon: #F4C95D;
   --fs-lime: #6BBF59;
   --fs-melon: #EE7B9E;
+  /* Press inks — the flavours deep enough to be text on paper (≥ 4.5:1). */
+  --fs-cherry-ink: #C11F2D;      /* 5.7:1 */
+  --fs-orange-ink: #A8470F;      /* 5.6:1 */
+  --fs-lime-ink: #2F7D32;        /* 4.9:1 */
+  --fs-melon-ink: #B83266;       /* 5.5:1 */
+  /* Printed pastels — ~30% of each flavour on paper. Ink on any ≥ 13:1. */
+  --fs-cherry-tint: #F8CDD0;
+  --fs-orange-tint: #FCDCCB;
+  --fs-lemon-tint: #FBEBC2;
+  --fs-lime-tint: #D6EDD0;
+  --fs-melon-tint: #FADAE3;
   --fs-rainbow: linear-gradient(90deg,
     var(--fs-cherry) 0 20%,
     var(--fs-orange) 20% 40%,
     var(--fs-lemon)  40% 60%,
     var(--fs-lime)   60% 80%,
     var(--fs-melon)  80% 100%);
+  --fs-rainbow-v: linear-gradient(180deg,
+    var(--fs-cherry) 0 20%,
+    var(--fs-orange) 20% 40%,
+    var(--fs-lemon)  40% 60%,
+    var(--fs-lime)   60% 80%,
+    var(--fs-melon)  80% 100%);
+  /* The wrapper stripe: five flavours on the diagonal, paper between. */
+  --fs-wrapper: repeating-linear-gradient(118deg,
+    var(--fs-cherry) 0 6px, transparent 6px 10px,
+    var(--fs-orange) 10px 16px, transparent 16px 20px,
+    var(--fs-lemon) 20px 26px, transparent 26px 30px,
+    var(--fs-lime) 30px 36px, transparent 36px 40px,
+    var(--fs-melon) 40px 46px, transparent 46px 50px);
+  --fs-halftone: radial-gradient(circle, rgba(17,17,17,0.09) 0 0.8px, transparent 1.2px);
+  /* Print has no blur: every shadow is a hard ink offset. */
+  --fs-lift-1: 0 2px 0 0 var(--fs-ink);
+  --fs-lift-2: 0 3px 0 0 var(--fs-ink);
+  --fs-lift-3: 3px 4px 0 0 var(--fs-ink);
+
+  /* The worm is a melon stick on paper: two flat tones of one pink, mid
+     luminance so the silhouette holds on paper without an outline. */
+  --worm-body: #EA7596;
+  --worm-dark: #D2567B;
+  --worm-pupil: #111111;
+  --worm-mouth: #111111;
+  --worm-tongue: #E63946;
+  --worm-eye: #FFFFFF;
 }
+
+/* Canvas — paper with tooth: a fine fibre grain and a halftone screen that
+   gathers in the corners like the shading on an old pack. The app root paints
+   bg-background, so it goes transparent to let the paper through. */
+[data-theme="fruit-stripe"] body {
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .07 0 0 0 0 .06 0 0 0 0 .04 0 0 0 .05 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E"),
+    radial-gradient(70% 55% at 100% 100%, rgba(244,201,93,0.10), transparent 70%),
+    radial-gradient(60% 50% at 0% 0%, rgba(238,123,158,0.07), transparent 70%),
+    var(--fs-paper) !important;
+  background-attachment: fixed !important;
+}
+[data-theme="fruit-stripe"] body::before {
+  /* the halftone screen, densest bottom-right, gone by the middle */
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--fs-halftone) 0 0 / 6px 6px;
+  -webkit-mask-image: radial-gradient(60% 55% at 100% 100%, #000, transparent 75%);
+          mask-image: radial-gradient(60% 55% at 100% 100%, #000, transparent 75%);
+}
+[data-theme="fruit-stripe"] .h-app.bg-background { background: transparent; }
+
+/* Type — Fraunces with SOFT up and WONK on: chewy, warm 1950s packaging.
+   Display sizes get the big optical size; body stays Figtree. */
+[data-theme="fruit-stripe"] h1,
+[data-theme="fruit-stripe"] h2,
+[data-theme="fruit-stripe"] h3,
+[data-theme="fruit-stripe"] .font-display,
+[data-theme="fruit-stripe"] .font-headline {
+  font-family: var(--font-headline) !important;
+  font-variation-settings: "SOFT" 100, "WONK" 1;
+  font-optical-sizing: auto;
+  letter-spacing: -0.018em;
+}
+[data-theme="fruit-stripe"] h1,
+[data-theme="fruit-stripe"] h2 { font-weight: 800; }
+[data-theme="fruit-stripe"] .font-label { letter-spacing: 0.04em; }
 
 /* Reading prose — PRD: 1.65 line-height, 68ch max */
 [data-theme="fruit-stripe"] .prose,
@@ -186,394 +280,950 @@
   line-height: 1.65;
   max-width: 68ch;
 }
+[data-theme="fruit-stripe"] .prose :where(h1, h2, h3) { color: var(--fs-ink); }
+[data-theme="fruit-stripe"] .prose :where(a) {
+  color: var(--fs-cherry-ink);
+  text-decoration-color: var(--fs-lemon);
+  text-decoration-thickness: 3px;
+  text-underline-offset: 2px;
+}
+[data-theme="fruit-stripe"] .prose :where(blockquote) {
+  border-left: 4px solid transparent;
+  border-image: var(--fs-rainbow-v) 1;
+  padding-left: 0.9em;
+  font-style: normal;
+}
+[data-theme="fruit-stripe"] mark {
+  background: linear-gradient(transparent 38%, var(--fs-lemon) 38% 88%, transparent 88%);
+  color: inherit;
+}
 
-/* Selection — Lemon Yellow */
+/* Selection — Lemon Yellow (ink on lemon 12:1) */
 [data-theme="fruit-stripe"] ::selection {
   background: var(--fs-lemon);
   color: var(--fs-ink);
 }
 
-/* Focus ring — Cherry Red, 2px */
+/* Focus ring — Cherry Red, 2px, on a lemon halo */
 [data-theme="fruit-stripe"] *:focus-visible {
   outline: 2px solid var(--fs-cherry) !important;
   outline-offset: 2px;
+  box-shadow: 0 0 0 5px rgba(244,201,93,0.55);
 }
 
-/* Scrollbar — ink-black thumb on paper-white track */
+/* Scrollbar — an ink stick on paper; grabbed, it shows its stripes */
 [data-theme="fruit-stripe"] ::-webkit-scrollbar { width: 10px; height: 10px; }
-[data-theme="fruit-stripe"] ::-webkit-scrollbar-track { background: var(--fs-paper); }
+[data-theme="fruit-stripe"] ::-webkit-scrollbar-track { background: transparent; }
 [data-theme="fruit-stripe"] ::-webkit-scrollbar-thumb {
   background: var(--fs-ink);
   border: 2px solid var(--fs-paper);
   border-radius: 6px;
 }
-[data-theme="fruit-stripe"] ::-webkit-scrollbar-thumb:hover { background: var(--fs-cherry); }
+[data-theme="fruit-stripe"] ::-webkit-scrollbar-thumb:hover { background: var(--fs-rainbow-v); }
 
-/* Printed-Sticker cards — 12px radius, 1px ink border, 0 2px 0 #111 shadow */
-[data-theme="fruit-stripe"] .bg-card,
+/* Printed-sticker surfaces — white stock, ink keyline, hard offset shadow.
+   Rows that merely use a surface colour as a highlight (buttons) and chat
+   bubbles are excluded: they get their own treatment below. */
+[data-theme="fruit-stripe"] .bg-card:not(button),
 [data-theme="fruit-stripe"] [data-sticker],
-[data-theme="fruit-stripe"] .surface-container,
-[data-theme="fruit-stripe"] .bg-surface-container,
-[data-theme="fruit-stripe"] .bg-surface-container-low,
-[data-theme="fruit-stripe"] .bg-surface-container-high {
-  border-radius: 12px;
+[data-theme="fruit-stripe"] .surface-container:not(button),
+[data-theme="fruit-stripe"] .bg-surface-container:not(button),
+[data-theme="fruit-stripe"] .bg-surface-container-low:not(button),
+[data-theme="fruit-stripe"] .bg-surface-container-high:not(button):not(.message-bubble-ai) {
+  border-radius: 14px;
   border: 1px solid var(--fs-ink);
-  box-shadow: 0 2px 0 0 var(--fs-ink);
+  box-shadow: var(--fs-lift-2);
 }
 
-/* Dialogs / popovers / dropdowns — heavier sticker shadow */
+/* Dialogs / popovers / dropdowns — the five flavours printed across the top
+   edge like a wrapper's tear strip, heavier offset shadow */
 [data-theme="fruit-stripe"] [role="dialog"],
 [data-theme="fruit-stripe"] [role="menu"],
 [data-theme="fruit-stripe"] [data-radix-popper-content-wrapper] > * {
-  border-radius: 12px !important;
-  border: 1px solid var(--fs-ink) !important;
-  box-shadow: 0 4px 0 0 var(--fs-ink) !important;
-  background: #fff !important;
+  border-radius: 14px !important;
+  border: 1.5px solid var(--fs-ink) !important;
+  box-shadow: 4px 5px 0 0 var(--fs-ink) !important;
+  background: var(--fs-rainbow) top / 100% 5px no-repeat, var(--fs-white) !important;
+}
+[data-theme="fruit-stripe"] [role="tooltip"] {
+  background: var(--fs-ink) !important;
+  color: var(--fs-paper) !important;
+  border-radius: 8px !important;
+  box-shadow: 2px 2px 0 0 var(--fs-cherry) !important;
+}
+[data-theme="fruit-stripe"] [role="menuitem"]:focus,
+[data-theme="fruit-stripe"] [role="menuitem"][data-highlighted],
+[data-theme="fruit-stripe"] [role="option"][data-highlighted] {
+  background: var(--fs-lemon-tint) !important;
+  color: var(--fs-ink) !important;
+  box-shadow: inset 3px 0 0 var(--fs-cherry);
 }
 
-/* Buttons — sticker shadow + press-down */
+/* Buttons — sticker press-down */
 [data-theme="fruit-stripe"] button:not([data-no-sticker]):not([role="tab"]):not([role="menuitem"]) {
-  border-radius: 10px;
-  transition: transform 80ms ease, box-shadow 80ms ease;
+  transition: transform 90ms ease, box-shadow 90ms ease, background-size 220ms ease, filter 140ms ease;
 }
+
+/* THE gum stick — the one button that matters. Cherry ink, ink keyline, a
+   hard ink shadow, and the five flavours printed along its bottom edge like
+   the stripe on a stick of gum; the stripe thickens when you reach for it.
+   White on cherry ink 6.0:1. */
 [data-theme="fruit-stripe"] button.bg-primary,
-[data-theme="fruit-stripe"] button.bg-destructive,
-[data-theme="fruit-stripe"] button.bg-accent,
 [data-theme="fruit-stripe"] button[data-sticker-btn] {
-  border: 1px solid var(--fs-ink);
-  box-shadow: 0 2px 0 0 var(--fs-ink);
+  background:
+    var(--fs-rainbow) bottom / 100% 3px no-repeat,
+    var(--fs-cherry-ink) !important;
+  color: var(--fs-white) !important;
+  border: 1.5px solid var(--fs-ink) !important;
+  box-shadow: var(--fs-lift-2);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  opacity: 1 !important;
+}
+[data-theme="fruit-stripe"] button.bg-primary:not(:disabled):hover,
+[data-theme="fruit-stripe"] button[data-sticker-btn]:not(:disabled):hover {
+  background-size: 100% 6px, auto;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 0 0 var(--fs-ink);
+}
+[data-theme="fruit-stripe"] button.bg-accent,
+[data-theme="fruit-stripe"] button.bg-destructive {
+  border: 1.5px solid var(--fs-ink);
+  box-shadow: var(--fs-lift-2);
 }
 [data-theme="fruit-stripe"] button.bg-primary:active,
 [data-theme="fruit-stripe"] button.bg-destructive:active,
 [data-theme="fruit-stripe"] button.bg-accent:active,
 [data-theme="fruit-stripe"] button[data-sticker-btn]:active {
-  transform: translateY(2px);
-  box-shadow: 0 0 0 0 var(--fs-ink);
+  transform: translateY(3px) !important;
+  box-shadow: 0 0 0 0 var(--fs-ink) !important;
+}
+[data-theme="fruit-stripe"] button.bg-primary:disabled,
+[data-theme="fruit-stripe"] button[data-sticker-btn]:disabled {
+  background: var(--fs-stripe-gray) !important;
+  color: var(--fs-pencil) !important;
+  border-color: var(--fs-pencil) !important;
+  box-shadow: none;
 }
 
-/* Inputs / textareas — crisp 1px ink border */
+/* Filled containers (Add books, picked segments) — cherry ink, white 6.0:1 */
+[data-theme="fruit-stripe"] button.bg-primary-container {
+  border: 1.5px solid var(--fs-ink);
+  box-shadow: var(--fs-lift-1);
+}
+
+/* Switches — a gum stick that turns lime when on */
+[data-theme="fruit-stripe"] [role="switch"] {
+  box-shadow: inset 0 0 0 1.5px var(--fs-ink) !important;
+}
+[data-theme="fruit-stripe"] [role="switch"][data-state="unchecked"],
+[data-theme="fruit-stripe"] [role="switch"][aria-checked="false"] {
+  background: var(--fs-stripe-gray) !important;
+}
+[data-theme="fruit-stripe"] [role="switch"][data-state="checked"],
+[data-theme="fruit-stripe"] [role="switch"][aria-checked="true"] {
+  background: var(--fs-lime) !important;
+}
+[data-theme="fruit-stripe"] [role="switch"] > span {
+  background: var(--fs-white) !important;
+  box-shadow: 0 0 0 1.5px var(--fs-ink) !important;
+}
+
+/* Inputs / textareas — white stock, ink keyline; focus inks a lemon edge */
 [data-theme="fruit-stripe"] input,
 [data-theme="fruit-stripe"] textarea,
 [data-theme="fruit-stripe"] select {
-  border: 1px solid var(--fs-ink) !important;
-  border-radius: 8px;
-  background: #fff;
+  border: 1.5px solid var(--fs-ink) !important;
+  border-radius: 10px;
+  background: var(--fs-white);
+  color: var(--fs-ink);
+  transition: box-shadow 140ms ease;
 }
+[data-theme="fruit-stripe"] input::placeholder,
+[data-theme="fruit-stripe"] textarea::placeholder { color: #6B6862; } /* 5.5:1 on white */
+[data-theme="fruit-stripe"] input:focus,
+[data-theme="fruit-stripe"] textarea:focus,
+[data-theme="fruit-stripe"] select:focus {
+  box-shadow: 3px 3px 0 0 var(--fs-lemon), 3px 3px 0 1.5px var(--fs-ink);
+  outline: none !important;
+}
+[data-theme="fruit-stripe"] input[type="checkbox"],
+[data-theme="fruit-stripe"] input[type="radio"],
+[data-theme="fruit-stripe"] input[type="range"] { accent-color: var(--fs-cherry-ink); }
 
-/* Top app header — 1px ink bottom border (Stripe Bar is rendered separately) */
+/* Top app header — paper under the live wrapper; the Stripe Bar is rendered
+   just below it by Index.tsx */
 [data-theme="fruit-stripe"] [data-app-header] {
   background: var(--fs-paper) !important;
-  border-bottom: 1px solid var(--fs-ink);
+  border-bottom: 1.5px solid var(--fs-ink);
   box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+[data-theme="fruit-stripe"] [data-app-header] > div > .material-symbols-outlined.text-accent {
+  color: var(--fs-ink) !important;
+  font-variation-settings: "FILL" 1;
 }
 
-/* Active nav tab — replace amber underline with the Stripe Bar */
+/* Wordmark — "BookWorm" in fat retro italic, ink printed over a slightly
+   misregistered cherry plate, with a lemon flavour tag beside it. */
+[data-theme="fruit-stripe"] [data-wordmark] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  line-height: 1;
+  white-space: nowrap;
+  letter-spacing: 0 !important;
+}
+[data-theme="fruit-stripe"] [data-wordmark]::before {
+  content: "BookWorm";
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 1.5rem;
+  color: var(--fs-ink);
+  text-shadow: 2px 2px 0 var(--fs-cherry);
+  padding: 0.04em 0.08em 0.16em 0;
+  animation: fs-register 7s steps(1, end) infinite;
+}
+[data-theme="fruit-stripe"] [data-wordmark]::after {
+  content: "5 FLAVORS";
+  font-family: var(--font-body);
+  font-weight: 800;
+  font-size: 0.56rem;
+  letter-spacing: 0.18em;
+  color: var(--fs-ink);                       /* ink on lemon 12:1 */
+  background: var(--fs-lemon);
+  border: 1.5px solid var(--fs-ink);
+  border-radius: 999px;
+  padding: 0.22rem 0.42rem 0.2rem 0.55rem;
+  box-shadow: 1.5px 1.5px 0 0 var(--fs-ink);
+  transform: rotate(-5deg) translateY(-0.15rem);
+}
+/* The plate drifts out of register by a pixel and back — cheap print. */
+@keyframes fs-register {
+  0%, 70%, 100% { text-shadow: 2px 2px 0 var(--fs-cherry); }
+  80%           { text-shadow: 3px 1.5px 0 var(--fs-cherry); }
+  90%           { text-shadow: 1.5px 2.5px 0 var(--fs-cherry); }
+}
+@media (max-width: 520px) {
+  [data-theme="fruit-stripe"] [data-wordmark]::after { display: none; }
+}
+
+/* Desktop nav — five tabs, five flavours. The sliding pill becomes a gum
+   stick in the active tab's flavour; under the label a striped marker
+   unwraps from the left. Active text is ink (≥ 13:1 on every tint). */
+[data-theme="fruit-stripe"] [data-app-header] nav {
+  --fs-tab: var(--fs-cherry);
+  --fs-tab-tint: var(--fs-cherry-tint);
+}
+[data-theme="fruit-stripe"] [data-app-header] nav:has(> button:nth-of-type(5n+2)[aria-current="page"]) { --fs-tab: var(--fs-orange); --fs-tab-tint: var(--fs-orange-tint); }
+[data-theme="fruit-stripe"] [data-app-header] nav:has(> button:nth-of-type(5n+3)[aria-current="page"]) { --fs-tab: var(--fs-lemon);  --fs-tab-tint: var(--fs-lemon-tint); }
+[data-theme="fruit-stripe"] [data-app-header] nav:has(> button:nth-of-type(5n+4)[aria-current="page"]) { --fs-tab: var(--fs-lime);   --fs-tab-tint: var(--fs-lime-tint); }
+[data-theme="fruit-stripe"] [data-app-header] nav:has(> button:nth-of-type(5n+5)[aria-current="page"]) { --fs-tab: var(--fs-melon);  --fs-tab-tint: var(--fs-melon-tint); }
+[data-theme="fruit-stripe"] [data-app-header] nav > span[aria-hidden]:first-child {
+  background: var(--fs-tab-tint) !important;
+  box-shadow: inset 0 0 0 1.5px var(--fs-ink), 0 2px 0 0 var(--fs-ink) !important;
+  --tw-ring-shadow: 0 0 #0000;
+}
 [data-theme="fruit-stripe"] [data-app-header] nav button.text-accent,
 [data-theme="fruit-stripe"] [data-app-header] nav button[aria-current="page"] {
+  color: var(--fs-ink) !important;
   border-bottom-color: transparent !important;
   position: relative;
+  font-weight: 700;
+}
+[data-theme="fruit-stripe"] [data-app-header] nav button[aria-current="page"] .material-symbols-outlined {
+  color: var(--fs-ink);
 }
 [data-theme="fruit-stripe"] [data-app-header] nav button.text-accent::after,
 [data-theme="fruit-stripe"] [data-app-header] nav button[aria-current="page"]::after {
   content: "";
   position: absolute;
-  left: 0; right: 0; bottom: -6px;
-  height: 4px;
-  background: var(--fs-rainbow);
-  transform: skewX(-12deg);
-}
-
-/* Mobile bottom nav — ink top border */
-[data-theme="fruit-stripe"] [data-mobile-nav] {
-  background: var(--fs-paper) !important;
-  border-top: 1px solid var(--fs-ink);
-}
-[data-theme="fruit-stripe"] [data-mobile-nav] button { color: var(--fs-charcoal); }
-[data-theme="fruit-stripe"] [data-mobile-nav] button.bg-accent {
-  background: var(--fs-cherry) !important;
-  color: #fff !important;
+  left: 12px; right: 12px; bottom: -7px;
+  height: 5px;
+  background:
+    repeating-linear-gradient(118deg, var(--fs-tab) 0 5px, var(--fs-ink) 5px 6.5px);
   border: 1px solid var(--fs-ink);
-  box-shadow: 0 2px 0 0 var(--fs-ink);
+  border-radius: 1px;
+  transform: skewX(-14deg);
+  transform-origin: left center;
+  animation: fs-unwrap 420ms cubic-bezier(.3,1.5,.5,1) both;
+}
+@keyframes fs-unwrap {
+  from { clip-path: inset(0 100% 0 0); }
+  to   { clip-path: inset(0 0 0 0); }
 }
 [data-theme="fruit-stripe"] [data-app-header] nav button.text-secondary {
   color: var(--fs-charcoal) !important;
 }
-
-/* Book card placeholders — paper diagonal stripe pattern */
-[data-theme="fruit-stripe"] [data-book-card] [data-book-cover-placeholder] {
-  background: repeating-linear-gradient(135deg,
-    var(--fs-paper) 0 14px,
-    var(--fs-stripe-gray) 14px 28px) !important;
-  border-bottom: 1px solid var(--fs-ink);
+[data-theme="fruit-stripe"] [data-app-header] nav button.text-secondary:hover {
+  color: var(--fs-cherry-ink) !important;
+  background: transparent !important;
 }
-[data-theme="fruit-stripe"] [data-book-card] [data-book-cover-placeholder] .material-symbols-outlined {
+[data-theme="fruit-stripe"] [data-app-header] nav > span.w-px {
+  background: var(--fs-ink) !important;
+  transform: skewX(-14deg);
+}
+/* Header chip (text-accent on accent/10) and icon buttons */
+[data-theme="fruit-stripe"] [data-app-header] .bg-accent\/10 {
+  background: var(--fs-white) !important;
+  box-shadow: inset 0 0 0 1px var(--fs-ink);
   color: var(--fs-ink) !important;
-  opacity: 0.55;
-}
-[data-theme="fruit-stripe"] [data-book-card] [data-book-cover-overlay] { display: none; }
-
-/* Chat bubbles — Melon left edge (AI), Cherry right edge (user) */
-[data-theme="fruit-stripe"] .message-bubble-ai {
-  border-left: 3px solid var(--fs-melon);
-}
-[data-theme="fruit-stripe"] .message-bubble-user {
-  border-right: 3px solid var(--fs-cherry);
 }
 
-/* Loading progress — rainbow diagonal stripes */
-[data-theme="fruit-stripe"] [role="progressbar"] > * {
-  background-image: var(--fs-rainbow) !important;
-  background-size: 200% 100%;
-  animation: fs-progress 2s linear infinite;
+/* Tablet rail + mobile nav — paper, ink keyline; active = a gum stick pill
+   in its own flavour with an ink icon */
+[data-theme="fruit-stripe"] .cc-rail,
+[data-theme="fruit-stripe"] [data-mobile-nav] {
+  background: var(--fs-paper) !important;
+  border-color: var(--fs-ink) !important;
+  backdrop-filter: none !important;
 }
-@keyframes fs-progress {
-  from { background-position: 0% 0; }
-  to { background-position: 200% 0; }
+[data-theme="fruit-stripe"] [data-mobile-nav] { border-top: 1.5px solid var(--fs-ink); }
+[data-theme="fruit-stripe"] .cc-rail { --fs-tab-tint: var(--fs-cherry-tint); }
+[data-theme="fruit-stripe"] .cc-rail-item:nth-of-type(5n+2) { --fs-tab-tint: var(--fs-orange-tint); }
+[data-theme="fruit-stripe"] .cc-rail-item:nth-of-type(5n+3) { --fs-tab-tint: var(--fs-lemon-tint); }
+[data-theme="fruit-stripe"] .cc-rail-item:nth-of-type(5n+4) { --fs-tab-tint: var(--fs-lime-tint); }
+[data-theme="fruit-stripe"] .cc-rail-item:nth-of-type(5n+5) { --fs-tab-tint: var(--fs-melon-tint); }
+[data-theme="fruit-stripe"] .cc-rail-item[aria-current="page"] .bg-accent\/15,
+[data-theme="fruit-stripe"] [data-mobile-nav] button[aria-current="page"] .bg-accent\/15 {
+  background: var(--fs-tab-tint, var(--fs-lemon-tint));
+  box-shadow: inset 0 0 0 1.5px var(--fs-ink), 0 2px 0 0 var(--fs-ink);
 }
+[data-theme="fruit-stripe"] .cc-rail-item[aria-current="page"] .text-accent,
+[data-theme="fruit-stripe"] [data-mobile-nav] button[aria-current="page"] .text-accent {
+  color: var(--fs-ink) !important;
+  font-weight: 700;
+}
+[data-theme="fruit-stripe"] .cc-rail-item:not([aria-current="page"]):hover .material-symbols-outlined {
+  color: var(--fs-cherry-ink);
+}
+[data-theme="fruit-stripe"] .cc-rail-split {
+  background: var(--fs-rainbow) !important;
+  height: 3px !important;
+}
+[data-theme="fruit-stripe"] [data-mobile-nav] button { color: var(--fs-charcoal); }
+[data-theme="fruit-stripe"] [data-mobile-nav] button.bg-accent {
+  background: var(--fs-cherry-ink) !important;
+  color: var(--fs-white) !important;
+  border: 1.5px solid var(--fs-ink);
+  box-shadow: var(--fs-lift-1);
+}
+/* --secondary is the stripe-gray FILL; anywhere it is used as text
+   (inactive rail/nav icons) it prints in pencil instead — 6.6:1 on paper */
+[data-theme="fruit-stripe"] .text-secondary { color: var(--fs-pencil) !important; }
 
-/* Wordmark — use DM Serif Display via --font-display */
-[data-theme="fruit-stripe"] .font-display,
-[data-theme="fruit-stripe"] [data-wordmark] {
-  font-family: var(--font-display) !important;
-  letter-spacing: -0.01em;
-}
-
-/* Soften book cards' hover into rainbow reveal */
+/* Book cards — stickers. Hover peels one up off the page: it lifts, tilts a
+   hair, the hard shadow grows, and the wrapper stripe slides in at the foot. */
 [data-theme="fruit-stripe"] [data-book-card] {
   position: relative;
   overflow: hidden;
+  background: var(--fs-white) !important;
+  border: 1.5px solid var(--fs-ink) !important;
+  border-radius: 14px !important;
+  box-shadow: var(--fs-lift-2) !important;
+  transition: transform 160ms cubic-bezier(.3,1.4,.5,1), box-shadow 160ms ease !important;
+}
+[data-theme="fruit-stripe"] [data-book-card]:hover {
+  transform: translateY(-3px) rotate(-0.6deg) !important;
+  box-shadow: var(--fs-lift-3) !important;
 }
 [data-theme="fruit-stripe"] [data-book-card]::after {
   content: "";
-  position: absolute; left: 0; right: 0; bottom: 0; height: 4px;
+  position: absolute; left: 0; right: 0; bottom: 0; height: 5px;
   background: var(--fs-rainbow);
-  transform: translateY(4px) skewX(-12deg);
+  border-top: 1px solid var(--fs-ink);
+  transform: translateY(6px);
   transition: transform 180ms ease;
+  pointer-events: none;
 }
-[data-theme="fruit-stripe"] [data-book-card]:hover::after {
-  transform: translateY(0) skewX(-12deg);
+[data-theme="fruit-stripe"] [data-book-card]:hover::after { transform: translateY(0); }
+
+/* Cover placeholders — each card a stick of a different flavour: candy
+   stripes on paper, the glyph on a round white label. Cycles through the
+   five flavours down the grid. */
+[data-theme="fruit-stripe"] [data-book-card] { --fs-flavor: var(--fs-cherry); --fs-flavor-tint: var(--fs-cherry-tint); }
+[data-theme="fruit-stripe"] :nth-child(5n+2) > [data-book-card],
+[data-theme="fruit-stripe"] [data-book-card]:nth-child(5n+2) { --fs-flavor: var(--fs-orange); --fs-flavor-tint: var(--fs-orange-tint); }
+[data-theme="fruit-stripe"] :nth-child(5n+3) > [data-book-card],
+[data-theme="fruit-stripe"] [data-book-card]:nth-child(5n+3) { --fs-flavor: var(--fs-lemon); --fs-flavor-tint: var(--fs-lemon-tint); }
+[data-theme="fruit-stripe"] :nth-child(5n+4) > [data-book-card],
+[data-theme="fruit-stripe"] [data-book-card]:nth-child(5n+4) { --fs-flavor: var(--fs-lime); --fs-flavor-tint: var(--fs-lime-tint); }
+[data-theme="fruit-stripe"] :nth-child(5n+5) > [data-book-card],
+[data-theme="fruit-stripe"] [data-book-card]:nth-child(5n+5) { --fs-flavor: var(--fs-melon); --fs-flavor-tint: var(--fs-melon-tint); }
+[data-theme="fruit-stripe"] [data-book-card] [data-book-cover-placeholder] {
+  background:
+    repeating-linear-gradient(118deg, var(--fs-flavor) 0 7px, transparent 7px 24px),
+    var(--fs-flavor-tint) !important;
+  border-bottom: 1.5px solid var(--fs-ink);
+}
+[data-theme="fruit-stripe"] [data-book-card] [data-book-cover-placeholder] .material-symbols-outlined {
+  color: var(--fs-ink) !important;
+  font-size: 1.6rem !important;
+  width: 3rem; height: 3rem;
+  display: grid; place-items: center;
+  background: var(--fs-white);
+  border: 1.5px solid var(--fs-ink);
+  border-radius: 999px;
+  box-shadow: var(--fs-lift-1);
+  position: relative; z-index: 1;
+}
+[data-theme="fruit-stripe"] [data-book-card] [data-book-cover-overlay] { display: none; }
+
+/* Chat — the text sits on calm white stock. The AI's bubble has the five
+   flavours as a printed spine; yours is a cherry-ink sticker (white 6.0:1). */
+[data-theme="fruit-stripe"] .message-bubble-ai {
+  /* the spine sits inset, clear of the bubble's rounded corners */
+  background: var(--fs-rainbow-v) 12px 50% / 4px calc(100% - 30px) no-repeat, var(--fs-white) !important;
+  border: 1px solid var(--fs-ink) !important;
+  border-left: 1px solid var(--fs-ink) !important;
+  padding-left: calc(1.25rem + 12px) !important;
+  box-shadow: var(--fs-lift-1);
+  color: var(--fs-ink);
+}
+[data-theme="fruit-stripe"] .message-bubble-user {
+  background: var(--fs-cherry-ink) !important;
+  color: var(--fs-white) !important;
+  border: 1.5px solid var(--fs-ink);
+  box-shadow: var(--fs-lift-2);
+}
+
+/* Loading progress — candy stripes rolling along an ink-keyed track */
+[data-theme="fruit-stripe"] [role="progressbar"] {
+  background: var(--fs-stripe-gray) !important;
+  box-shadow: inset 0 0 0 1px rgba(17,17,17,0.35);
+}
+[data-theme="fruit-stripe"] [role="progressbar"] > * {
+  /* five flavours shoulder to shoulder on the diagonal; one horizontal
+     period is 30px / sin(118deg) = 33.98px */
+  background: repeating-linear-gradient(118deg,
+    var(--fs-cherry) 0 6px, var(--fs-orange) 6px 12px, var(--fs-lemon) 12px 18px,
+    var(--fs-lime) 18px 24px, var(--fs-melon) 24px 30px) !important;
+  background-size: 33.98px 100% !important;
+  box-shadow: inset -1.5px 0 0 var(--fs-ink);
+  animation: fs-progress 1.4s linear infinite;
+}
+@keyframes fs-progress {
+  from { background-position: 0 0; }
+  to { background-position: 33.98px 0; }
+}
+
+/* Read-along word pill — a lemon highlighter with a cherry edge */
+[data-theme="fruit-stripe"] .read-along-pill,
+[data-theme="fruit-stripe"] .read-along-ghost {
+  --ra-fill: var(--fs-lemon);
+  --ra-glow: var(--fs-cherry);
+}
+
+/* Wordmark font for any other .font-display wordmarks */
+[data-theme="fruit-stripe"] [data-wordmark] { font-family: var(--font-display) !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="fruit-stripe"] [data-wordmark]::before,
+  [data-theme="fruit-stripe"] [data-app-header] nav button::after,
+  [data-theme="fruit-stripe"] [role="progressbar"] > * { animation: none !important; }
+  [data-theme="fruit-stripe"] [data-book-card],
+  [data-theme="fruit-stripe"] [data-book-card]::after { transition: none !important; }
+  [data-theme="fruit-stripe"] [data-book-card]:hover { transform: none !important; }
 }
 
 /* =====================================================================
-   PRISMATIC LAB (Dexter's Lab) — scoped overrides
-   Deep violet glass-brutalism with holo-gradient accents.
+   PRISMATIC LAB (Dexter's Lab) — a boy genius's secret laboratory
+   Behind the bookcase, after bedtime: a deep-violet bunker of riveted glass
+   panels outlined in thick cartoon ink, lit only by its instruments —
+   cyan oscilloscope phosphor, lemon warning lamps, magenta alarms, and the
+   holo prism that splits them all. The ink outline + hard offset shadow is
+   the cartoon's line art; the glass is the lab. Colour lives on the EDGES
+   (scope traces, lamp dots, the one holo key that matters), so reading
+   surfaces stay calm violet and every text pair clears WCAG AA — the pairs
+   and their ratios are listed in components/themes/DextersLabSignal.ts and
+   checked by src/test/dextersLab.test.ts.
+   The brainwave monitor in the header ([data-dexters-lab-art]) is styled by
+   styles/themes/dexters-lab-art.css.
    ===================================================================== */
 :root[data-theme="dexters-lab"] {
-  --dl-ink: #150629;
-  --dl-violet: #bd00ff;
-  --dl-cyan: #00eefc;
-  --dl-magenta: #e7006e;
-  --dl-lemon: #f8d878;
-  --dl-surface: #27183b;
+  --dl-ink: #0c0219;          /* the cartoon's ink line: outlines, hard shadows */
+  --dl-night: #1a0b2e;        /* canvas */
+  --dl-surface: #27183b;      /* panel glass */
   --dl-surface-high: #322346;
-  --dl-on: #eddcff;
-  --dl-on-variant: #d4c0d7;
-  --dl-holo: linear-gradient(135deg, #bd00ff 0%, #00eefc 50%, #f8d878 100%);
-  --dl-hazard: repeating-linear-gradient(45deg, #bd00ff 0 10px, #150629 10px 20px);
+  --dl-line: #4a2f6b;         /* hairlines between panels */
+  --dl-on: #eddcff;           /* 12.7:1 on surface */
+  --dl-on-variant: #d4c0d7;   /*  9.6:1 on surface */
+  --dl-dim: #a996b8;          /*  6.0:1 on surface, 7.1:1 on ink */
+  --dl-violet: #bd00ff;       /* fills only: 3.6:1 as text */
+  --dl-violet-deep: #7a12c4;  /* carries white at 7.8:1 */
+  --dl-lavender: #ecb2ff;
+  --dl-cyan: #00eefc;         /* 12.9:1 on canvas */
+  --dl-cyan-soft: #5ff3ff;
+  --dl-magenta: #e7006e;      /* fills: white 4.5:1 */
+  --dl-pink: #ff5cad;         /* magenta as text: 6.5:1 on canvas, 5.8:1 on surface */
+  --dl-lemon: #f8d878;
+  /* Text-safe holo (each stop ≥7:1 on surface); the saturated one is for fills. */
+  --dl-holo: linear-gradient(100deg, #e08bff 0%, #5ff3ff 55%, #f8d878 100%);
+  --dl-holo-fill: linear-gradient(90deg, #bd00ff 0%, #00eefc 55%, #f8d878 100%);
+  --dl-holo-key: linear-gradient(100deg, #ecb2ff 0%, #5ff3ff 55%, #f8d878 100%);
+  --dl-hazard: repeating-linear-gradient(-45deg, #f8d878 0 6px, #150629 6px 12px);
+  /* Four brass rivets, one per corner — for the heavy panels (dialogs) */
+  --dl-rivets:
+    radial-gradient(circle at 9px 9px, #9d8ba0 0 1.6px, #150629 2.2px, transparent 2.8px),
+    radial-gradient(circle at calc(100% - 9px) 9px, #9d8ba0 0 1.6px, #150629 2.2px, transparent 2.8px),
+    radial-gradient(circle at 9px calc(100% - 9px), #9d8ba0 0 1.6px, #150629 2.2px, transparent 2.8px),
+    radial-gradient(circle at calc(100% - 9px) calc(100% - 9px), #9d8ba0 0 1.6px, #150629 2.2px, transparent 2.8px);
+
+  /* The worm is a glowing lab specimen: phosphor cyan, two flat tones, ink
+     features — and it already wears the genius's glasses (--worm-frame). */
+  --worm-body: #5ce1e6;
+  --worm-dark: #2bb5c4;
+  --worm-pupil: #150629;
+  --worm-mouth: #150629;
+  --worm-tongue: #ff8fc8;
+  --worm-eye: #f6eeff;
+  --worm-frame: #150629;
 }
 
-/* Selection — violet bg */
+/* Canvas — lab blueprint: a faint graph-paper grid under two pools of
+   instrument light (violet overhead-left, cyan bench-right). The app root
+   paints bg-background, so it goes transparent to let the grid through. */
+[data-theme="dexters-lab"] body {
+  background:
+    radial-gradient(70% 55% at 8% -10%, rgba(189,0,255,0.20), transparent 70%),
+    radial-gradient(60% 50% at 105% 110%, rgba(0,238,252,0.10), transparent 70%),
+    linear-gradient(90deg, rgba(237,220,255,0.035) 1px, transparent 1px) 0 0 / 32px 32px,
+    linear-gradient(0deg, rgba(237,220,255,0.035) 1px, transparent 1px) 0 0 / 32px 32px,
+    linear-gradient(180deg, #1c0b33 0%, var(--dl-night) 45%, #160828 100%) !important;
+  background-attachment: fixed !important;
+}
+[data-theme="dexters-lab"] .h-app.bg-background { background: transparent; }
+
+/* Type — Chakra Petch's cut corners for headings, Space Grotesk for reading,
+   JetBrains Mono for anything that is a measurement. */
+[data-theme="dexters-lab"] h1,
+[data-theme="dexters-lab"] h2,
+[data-theme="dexters-lab"] h3,
+[data-theme="dexters-lab"] .font-display {
+  font-family: var(--font-headline) !important;
+  letter-spacing: -0.01em;
+}
+/* Big display titles get the prism (text-safe stops, ≥7.3:1 on surface). */
+[data-theme="dexters-lab"] .font-display.font-bold.text-foreground:not(.tabular-nums) {
+  background: var(--dl-holo);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 10px rgba(0,238,252,0.18));
+  padding-bottom: 0.06em;
+}
+/* Numbers are instrument readouts: mono phosphor */
+[data-theme="dexters-lab"] .font-display.tabular-nums {
+  font-family: 'JetBrains Mono', ui-monospace, monospace !important;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--dl-cyan-soft) !important;
+  text-shadow: 0 0 10px rgba(0,238,252,0.35);
+}
+/* The accent token (#e7006e) is a fill colour — as text it is 4.1:1, so
+   accent-coloured text uses the lighter lab pink instead (6.5:1). */
+[data-theme="dexters-lab"] .text-accent { color: var(--dl-pink) !important; }
+
 [data-theme="dexters-lab"] ::selection {
   background: var(--dl-violet);
-  color: #fff;
+  color: #fff;               /* 4.6:1 */
 }
 
-/* Focus ring — cyan 2px */
 [data-theme="dexters-lab"] *:focus-visible {
   outline: 2px solid var(--dl-cyan) !important;
   outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(0,238,252,0.16), 0 0 14px rgba(0,238,252,0.35);
 }
 
-/* Scrollbar — violet thumb on ink track */
+/* Scrollbar — a holo tube in an ink channel */
 [data-theme="dexters-lab"] ::-webkit-scrollbar { width: 10px; height: 10px; }
-[data-theme="dexters-lab"] ::-webkit-scrollbar-track { background: var(--dl-ink); }
+[data-theme="dexters-lab"] ::-webkit-scrollbar-track { background: rgba(21,6,41,0.6); }
 [data-theme="dexters-lab"] ::-webkit-scrollbar-thumb {
-  background: var(--dl-violet);
+  background: linear-gradient(180deg, #bd00ff, #00eefc);
   border: 2px solid var(--dl-ink);
-  border-radius: 4px;
+  border-radius: 3px;
 }
-[data-theme="dexters-lab"] ::-webkit-scrollbar-thumb:hover { background: var(--dl-magenta); }
+[data-theme="dexters-lab"] ::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #ff5cad, #f8d878); }
 
-/* Glass-Brutalism cards — 3px ink border + offset block shadow */
+/* Surfaces — glass-brutalism: violet glass, a 2px ink outline, a hard ink
+   shadow (the cartoon's line art) and a lit top edge (the glass).
+   Chat bubbles keep their own shapes. */
 [data-theme="dexters-lab"] .bg-card,
 [data-theme="dexters-lab"] [data-sticker],
 [data-theme="dexters-lab"] .surface-container,
 [data-theme="dexters-lab"] .bg-surface-container,
 [data-theme="dexters-lab"] .bg-surface-container-low,
-[data-theme="dexters-lab"] .bg-surface-container-high {
-  border-radius: 0.25rem;
-  border: 3px solid var(--dl-ink);
-  box-shadow: 4px 4px 0 0 var(--dl-ink);
-  background-color: var(--dl-surface);
+[data-theme="dexters-lab"] .bg-surface-container-high:not(.message-bubble-ai) {
+  border-radius: 6px;
+  border: 2px solid var(--dl-ink);
+  background-color: rgba(39,24,59,0.92);
+  box-shadow:
+    inset 0 1px 0 0 rgba(237,220,255,0.08),
+    inset 0 0 0 1px rgba(74,47,107,0.55),
+    4px 4px 0 0 var(--dl-ink);
 }
 
-/* Dialogs / popovers / menus — heavier block shadow + blur */
+/* Dialogs / popovers / menus — heavy riveted panels */
 [data-theme="dexters-lab"] [role="dialog"],
 [data-theme="dexters-lab"] [role="menu"],
 [data-theme="dexters-lab"] [data-radix-popper-content-wrapper] > * {
-  border-radius: 0.25rem !important;
+  border-radius: 8px !important;
   border: 3px solid var(--dl-ink) !important;
-  box-shadow: 6px 6px 0 0 var(--dl-ink), 0 0 24px rgba(0,238,252,0.15) !important;
-  background: var(--dl-surface) !important;
-  backdrop-filter: blur(12px);
+  background: var(--dl-rivets), rgba(35,20,56,0.97) !important;
+  backdrop-filter: blur(14px) saturate(140%);
+  box-shadow:
+    inset 0 1px 0 0 rgba(237,220,255,0.1),
+    inset 0 0 0 1px rgba(74,47,107,0.7),
+    6px 6px 0 0 var(--dl-ink),
+    0 0 40px -8px rgba(0,238,252,0.25) !important;
+}
+/* Small popovers would show rivets on their text; menus keep a plain panel. */
+[data-theme="dexters-lab"] [role="menu"],
+[data-theme="dexters-lab"] [data-radix-popper-content-wrapper] > * {
+  background: rgba(35,20,56,0.97) !important;
+}
+[data-theme="dexters-lab"] [role="menuitem"]:focus,
+[data-theme="dexters-lab"] [role="menuitem"][data-highlighted],
+[data-theme="dexters-lab"] [role="option"][data-highlighted] {
+  background: linear-gradient(90deg, rgba(0,238,252,0.16), rgba(189,0,255,0.10)) !important;
+  color: var(--dl-on) !important;
+  box-shadow: inset 2px 0 0 var(--dl-cyan);
 }
 
-/* Buttons — base treatment */
-[data-theme="dexters-lab"] button:not([data-no-sticker]):not([role="tab"]):not([role="menuitem"]) {
-  border-radius: 0.25rem;
+/* Buttons — lab-console labels: uppercase, tracked. List rows opt out with
+   data-no-sticker; left-aligned rows (text-left) are treated as lists too. */
+[data-theme="dexters-lab"] button:not([data-no-sticker]):not([role="tab"]):not([role="menuitem"]):not(.text-left) {
+  border-radius: 6px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   font-weight: 700;
-  transition: transform 80ms ease, box-shadow 120ms ease;
+  transition: transform 80ms ease, box-shadow 120ms ease, background-position 650ms ease, filter 160ms ease;
 }
 
-/* Holo-gradient primary / accent / destructive */
+/* THE HOLO KEY — the one primary action on a screen is a chunky mechanical
+   key: prism face, ink outline, hard shadow. A sheen sweeps it on hover and
+   it physically presses in. Ink text on every stop ≥10:1. */
 [data-theme="dexters-lab"] button.bg-primary,
 [data-theme="dexters-lab"] button.bg-accent,
-[data-theme="dexters-lab"] button.bg-destructive,
 [data-theme="dexters-lab"] button[data-sticker-btn] {
-  background-image: var(--dl-holo) !important;
-  background-size: 200% 200%;
-  color: #fff !important;
-  border: 3px solid var(--dl-ink) !important;
-  box-shadow: 4px 4px 0 0 var(--dl-ink);
+  background-image:
+    linear-gradient(100deg, transparent 38%, rgba(255,255,255,0.65) 50%, transparent 62%),
+    var(--dl-holo-key) !important;
+  background-size: 260% 100%, 100% 100% !important;
+  background-position: 120% 0, 0 0 !important;
+  background-repeat: no-repeat !important;
+  color: var(--dl-ink) !important;
+  border: 2px solid var(--dl-ink) !important;
+  border-radius: 6px !important;
+  font-weight: 700;
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.55),
+    inset 0 -3px 0 rgba(21,6,41,0.18),
+    4px 4px 0 0 var(--dl-ink),
+    0 0 22px -6px rgba(0,238,252,0.55);
 }
 [data-theme="dexters-lab"] button.bg-primary:hover,
 [data-theme="dexters-lab"] button.bg-accent:hover,
-[data-theme="dexters-lab"] button.bg-destructive:hover,
 [data-theme="dexters-lab"] button[data-sticker-btn]:hover {
-  box-shadow: 4px 4px 0 0 var(--dl-ink), 0 0 18px rgba(0,238,252,0.55);
-  background-position: 100% 100%;
+  background-position: -20% 0, 0 0 !important;
+  opacity: 1;
+  box-shadow:
+    inset 0 2px 0 rgba(255,255,255,0.55),
+    inset 0 -3px 0 rgba(21,6,41,0.18),
+    5px 5px 0 0 var(--dl-ink),
+    0 0 28px -4px rgba(0,238,252,0.7);
+  transform: translate(-1px, -1px);
 }
 [data-theme="dexters-lab"] button.bg-primary:active,
 [data-theme="dexters-lab"] button.bg-accent:active,
-[data-theme="dexters-lab"] button.bg-destructive:active,
 [data-theme="dexters-lab"] button[data-sticker-btn]:active {
-  transform: translate(2px, 2px);
-  box-shadow: 0 0 0 0 var(--dl-ink);
+  transform: translate(4px, 4px);
+  box-shadow: inset 0 2px 6px rgba(21,6,41,0.35), 0 0 0 0 var(--dl-ink);
+}
+/* Destructive — the big red (well, magenta) alarm button, hazard trim */
+[data-theme="dexters-lab"] button.bg-destructive {
+  background: var(--dl-magenta) !important;
+  color: #fff !important;                       /* 4.5:1 */
+  border: 2px solid var(--dl-ink) !important;
+  box-shadow: inset 0 -3px 0 rgba(21,6,41,0.3), 3px 3px 0 0 var(--dl-ink);
+}
+[data-theme="dexters-lab"] button.bg-destructive:active { transform: translate(3px, 3px); box-shadow: none; }
+
+/* Violet container fills — the token (#bd00ff) holds white at only 4.56:1,
+   so fills deepen to a 7.8:1 violet with an ink edge. */
+[data-theme="dexters-lab"] .bg-primary-container:not(.message-bubble-user) {
+  background: linear-gradient(135deg, #8a16d8 0%, var(--dl-violet-deep) 100%) !important;
+  color: #fff !important;
+}
+[data-theme="dexters-lab"] button.bg-primary-container {
+  border: 2px solid var(--dl-ink);
+  box-shadow: 3px 3px 0 0 var(--dl-ink);
+}
+[data-theme="dexters-lab"] button.bg-primary-container:hover {
+  box-shadow: 3px 3px 0 0 var(--dl-ink), 0 0 18px -4px rgba(189,0,255,0.8);
 }
 
-/* Inputs — violet bg + cyan bottom border, expands on focus */
+/* Switches — a lab toggle: ink channel off, phosphor on */
+[data-theme="dexters-lab"] [role="switch"] {
+  border: 2px solid var(--dl-ink) !important;
+}
+[data-theme="dexters-lab"] [role="switch"][data-state="unchecked"] {
+  background: var(--dl-line) !important;
+}
+[data-theme="dexters-lab"] [role="switch"][data-state="unchecked"] > span {
+  background: var(--dl-on-variant) !important;
+}
+[data-theme="dexters-lab"] [role="switch"][data-state="checked"] {
+  background: var(--dl-holo-fill) !important;
+  box-shadow: 0 0 12px -2px rgba(0,238,252,0.6);
+}
+[data-theme="dexters-lab"] [role="switch"][data-state="checked"] > span {
+  background: #fff !important;
+  box-shadow: 0 0 0 2px var(--dl-ink);
+}
+
+/* Inputs — an ink well with a phosphor baseline; focus lights the whole
+   frame. Text 13.4:1 on ink; placeholder 7.1:1. */
 [data-theme="dexters-lab"] input,
 [data-theme="dexters-lab"] textarea,
 [data-theme="dexters-lab"] select {
-  background: var(--dl-surface) !important;
+  background: rgba(21,6,41,0.72) !important;
   color: var(--dl-on) !important;
-  border: 1px solid transparent !important;
-  border-bottom: 1px solid var(--dl-cyan) !important;
-  border-radius: 0.25rem;
-  transition: border-color 120ms ease;
+  border: 1px solid var(--dl-line) !important;
+  border-bottom: 2px solid rgba(0,238,252,0.65) !important;
+  border-radius: 6px;
+  transition: border-color 120ms ease, box-shadow 160ms ease;
 }
+[data-theme="dexters-lab"] input::placeholder,
+[data-theme="dexters-lab"] textarea::placeholder { color: var(--dl-dim); }
 [data-theme="dexters-lab"] input:focus,
 [data-theme="dexters-lab"] textarea:focus,
 [data-theme="dexters-lab"] select:focus {
-  border: 3px solid var(--dl-cyan) !important;
+  border-color: var(--dl-cyan) !important;
+  box-shadow: 0 0 0 3px rgba(0,238,252,0.16), 0 0 18px -4px rgba(0,238,252,0.55);
   outline: none !important;
 }
+[data-theme="dexters-lab"] input[type="checkbox"],
+[data-theme="dexters-lab"] input[type="radio"],
+[data-theme="dexters-lab"] input[type="range"] { accent-color: var(--dl-cyan); }
 
-/* Top app header — ink bg + 3px violet-ink bottom border */
+/* Top app bar — ink console; the brainwave monitor paints itself behind */
 [data-theme="dexters-lab"] [data-app-header] {
-  background: var(--dl-ink) !important;
-  border-bottom: 3px solid var(--dl-ink);
-  box-shadow: 0 4px 0 0 var(--dl-ink), 0 8px 24px rgba(0,0,0,0.5) !important;
-  backdrop-filter: none;
+  background: rgba(21,6,41,0.9) !important;
+  border-bottom: 2px solid var(--dl-ink);
+  box-shadow: 0 4px 0 0 rgba(21,6,41,0.85), 0 12px 28px -10px rgba(0,0,0,0.7) !important;
 }
 
-/* Active tab — replace amber underline with 4px holo bar */
+/* Wordmark — "BOOKWORM" in Bungee's chunky title-card capitals with a prism
+   face, and a lemon LAB sticker slapped on beside it */
+[data-theme="dexters-lab"] [data-wordmark] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+[data-theme="dexters-lab"] [data-wordmark]::before {
+  content: "Bookworm";
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 1.32rem;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  background: var(--dl-holo);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(2px 2px 0 var(--dl-ink)) drop-shadow(0 0 8px rgba(0,238,252,0.35));
+}
+[data-theme="dexters-lab"] [data-wordmark]::after {
+  content: "LAB";
+  font-family: var(--font-label);
+  font-weight: 800;
+  font-size: 0.6rem;
+  letter-spacing: 0.22em;
+  color: var(--dl-ink);                          /* 13.8:1 on lemon */
+  background: var(--dl-lemon);
+  padding: 0.22rem 0.28rem 0.2rem 0.5rem;
+  border: 2px solid var(--dl-ink);
+  border-radius: 3px;
+  box-shadow: 2px 2px 0 0 var(--dl-cyan);
+  transform: rotate(-6deg) translateY(-0.12rem);
+}
+
+/* Desktop nav — the sliding pill becomes a lit console bay; the active tab
+   gets its status lamp lit and a holo bar underneath */
+[data-theme="dexters-lab"] [data-app-header] nav > span.rounded-full[aria-hidden] {
+  border-radius: 6px !important;
+  background: rgba(0,238,252,0.07) !important;
+  box-shadow: inset 0 0 0 1px rgba(0,238,252,0.35), 0 0 16px -6px rgba(0,238,252,0.6);
+}
+[data-theme="dexters-lab"] [data-app-header] nav button {
+  border-radius: 6px !important;
+  font-size: 0.78rem;
+}
 [data-theme="dexters-lab"] [data-app-header] nav button.text-accent,
 [data-theme="dexters-lab"] [data-app-header] nav button[aria-current="page"] {
-  border-bottom-color: transparent !important;
   position: relative;
   color: var(--dl-on) !important;
+  border-bottom-color: transparent !important;
+}
+[data-theme="dexters-lab"] [data-app-header] nav button.text-accent .material-symbols-outlined,
+[data-theme="dexters-lab"] [data-app-header] nav button[aria-current="page"] .material-symbols-outlined {
+  color: var(--dl-cyan);
+  text-shadow: 0 0 10px rgba(0,238,252,0.65);
 }
 [data-theme="dexters-lab"] [data-app-header] nav button.text-accent::after,
 [data-theme="dexters-lab"] [data-app-header] nav button[aria-current="page"]::after {
   content: "";
   position: absolute;
-  left: 0; right: 0; bottom: -6px;
-  height: 4px;
-  background: var(--dl-holo);
-  box-shadow: 0 0 12px rgba(0,238,252,0.5);
+  left: 10px; right: 10px; bottom: -5px;
+  height: 3px;
+  border-radius: 1px;
+  background: var(--dl-holo-fill);
+  box-shadow: 0 0 10px rgba(0,238,252,0.6);
+  transform-origin: left;
+  animation: dl-charge 420ms cubic-bezier(.2,.8,.3,1) 1 both;
 }
 [data-theme="dexters-lab"] [data-app-header] nav button.text-secondary {
   color: var(--dl-on-variant) !important;
 }
+[data-theme="dexters-lab"] [data-app-header] nav button.text-secondary:hover {
+  color: var(--dl-lemon) !important;
+}
+@keyframes dl-charge {
+  from { transform: scaleX(0); opacity: 0.4; }
+  to   { transform: scaleX(1); opacity: 1; }
+}
 
-/* Mobile bottom nav */
+/* Tablet rail + mobile nav — ink console; active = phosphor bay */
+[data-theme="dexters-lab"] .cc-rail,
 [data-theme="dexters-lab"] [data-mobile-nav] {
-  background: var(--dl-ink) !important;
-  border-top: 3px solid var(--dl-ink);
+  background: rgba(21,6,41,0.92) !important;
+  border-color: var(--dl-ink) !important;
 }
-[data-theme="dexters-lab"] [data-mobile-nav] button { color: var(--dl-on-variant); }
-[data-theme="dexters-lab"] [data-mobile-nav] button.bg-accent {
-  background: var(--dl-magenta) !important;
-  color: #fff !important;
-  border: 3px solid var(--dl-ink);
-  box-shadow: 3px 3px 0 0 var(--dl-ink);
-  border-radius: 0.25rem;
+[data-theme="dexters-lab"] .cc-rail { border-right-width: 2px !important; }
+[data-theme="dexters-lab"] [data-mobile-nav] { border-top: 2px solid var(--dl-ink) !important; }
+[data-theme="dexters-lab"] .cc-rail-item[aria-current="page"] .bg-accent\/15,
+[data-theme="dexters-lab"] [data-mobile-nav] button[aria-current="page"] .bg-accent\/15 {
+  border-radius: 6px;
+  background: rgba(0,238,252,0.12);
+  box-shadow: inset 0 0 0 1px rgba(0,238,252,0.5), 0 0 14px -4px rgba(0,238,252,0.7);
 }
-
-/* Book card placeholders — hazard stripes */
-[data-theme="dexters-lab"] [data-book-card] [data-book-cover-placeholder] {
-  background: var(--dl-hazard) !important;
-  border-bottom: 3px solid var(--dl-ink);
-}
-[data-theme="dexters-lab"] [data-book-card] [data-book-cover-placeholder] .material-symbols-outlined {
+[data-theme="dexters-lab"] .cc-rail-item[aria-current="page"] .text-accent,
+[data-theme="dexters-lab"] [data-mobile-nav] button[aria-current="page"] .text-accent {
   color: var(--dl-cyan) !important;
-  text-shadow: 0 0 8px rgba(0,238,252,0.7);
 }
-[data-theme="dexters-lab"] [data-book-card] [data-book-cover-overlay] {
-  background: linear-gradient(180deg, transparent 0%, rgba(21,6,41,0.85) 100%) !important;
+[data-theme="dexters-lab"] .cc-rail-item[aria-current="page"] .material-symbols-outlined,
+[data-theme="dexters-lab"] [data-mobile-nav] button[aria-current="page"] .material-symbols-outlined {
+  text-shadow: 0 0 10px rgba(0,238,252,0.65);
 }
-
-/* Chat bubbles — cyan AI edge, magenta user edge */
-[data-theme="dexters-lab"] .message-bubble-ai {
-  border-left: 3px solid var(--dl-cyan);
+[data-theme="dexters-lab"] .cc-rail-item:not([aria-current="page"]):hover .material-symbols-outlined {
+  color: var(--dl-lemon);
 }
-[data-theme="dexters-lab"] .message-bubble-user {
-  border-right: 3px solid var(--dl-magenta);
-}
-
-/* Progress bars — holo shimmer */
-[data-theme="dexters-lab"] [role="progressbar"] > * {
-  background-image: var(--dl-holo) !important;
-  background-size: 200% 100%;
-  animation: dl-progress 2s linear infinite;
-}
-@keyframes dl-progress {
-  from { background-position: 0% 0; }
-  to { background-position: 200% 0; }
+[data-theme="dexters-lab"] .cc-rail-split {
+  background: var(--dl-hazard) !important;
+  height: 3px !important;
+  opacity: 0.7;
 }
 
-/* Wordmark — neon holographic headline */
-[data-theme="dexters-lab"] .font-display,
-[data-theme="dexters-lab"] [data-wordmark] {
-  font-family: var(--font-display) !important;
-  text-transform: uppercase;
-  letter-spacing: -0.02em;
-  font-weight: 700;
-  background: var(--dl-holo);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 0 6px rgba(0,238,252,0.45));
-}
-
-/* Book card hover — holo reveal */
+/* Book cards — specimens under glass. Hover lifts the card off the bench
+   and a scanner beam passes down the cover. */
 [data-theme="dexters-lab"] [data-book-card] {
   position: relative;
   overflow: hidden;
-  border-radius: 0.25rem;
+  border-radius: 6px;
+  transition: transform 140ms ease, box-shadow 160ms ease;
+}
+[data-theme="dexters-lab"] [data-book-card]:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 0 var(--dl-ink), 0 0 0 2px rgba(0,238,252,0.45), 0 0 26px -6px rgba(0,238,252,0.5);
 }
 [data-theme="dexters-lab"] [data-book-card]::after {
   content: "";
-  position: absolute; left: 0; right: 0; bottom: 0; height: 4px;
-  background: var(--dl-holo);
-  transform: translateY(4px);
-  transition: transform 180ms ease;
+  position: absolute;
+  left: 0; right: 0; top: 0;
+  height: 28%;
+  background: linear-gradient(180deg, transparent 0%, rgba(0,238,252,0.10) 70%, rgba(95,243,255,0.75) 96%, transparent 100%);
+  transform: translateY(-110%);
+  opacity: 0;
+  pointer-events: none;
 }
 [data-theme="dexters-lab"] [data-book-card]:hover::after {
-  transform: translateY(0);
+  opacity: 1;
+  animation: dl-scan 1.2s cubic-bezier(.4,0,.6,1) 1 both;
+}
+@keyframes dl-scan {
+  from { transform: translateY(-110%); }
+  to   { transform: translateY(380%); opacity: 0; }
+}
+
+/* Cover placeholders — a blueprint: phosphor grid on deep violet with a
+   holo glow, the icon burning cyan in the middle */
+[data-theme="dexters-lab"] [data-book-card] [data-book-cover-placeholder] {
+  background:
+    radial-gradient(60% 50% at 50% 45%, rgba(189,0,255,0.45), transparent 70%),
+    linear-gradient(90deg, rgba(0,238,252,0.14) 1px, transparent 1px) 0 0 / 14px 14px,
+    linear-gradient(0deg, rgba(0,238,252,0.14) 1px, transparent 1px) 0 0 / 14px 14px,
+    linear-gradient(160deg, #2b0f4f 0%, #150629 100%) !important;
+  border-bottom: 2px solid var(--dl-ink);
+}
+[data-theme="dexters-lab"] [data-book-card] [data-book-cover-placeholder] .material-symbols-outlined {
+  color: var(--dl-cyan-soft) !important;
+  text-shadow: 0 0 10px rgba(0,238,252,0.85), 0 0 24px rgba(189,0,255,0.6);
+}
+[data-theme="dexters-lab"] [data-book-card] [data-book-cover-overlay] {
+  background: linear-gradient(180deg, transparent 0%, rgba(21,6,41,0.9) 100%) !important;
+}
+
+/* Chat — a phosphor edge says who is talking; the bubble stays calm.
+   AI: cyan, like a terminal. User: deep violet glass (white 7.8:1) with a
+   magenta edge. */
+[data-theme="dexters-lab"] .message-bubble-ai {
+  background: rgba(39,24,59,0.94) !important;
+  border: 1px solid var(--dl-line) !important;
+  border-left: 3px solid var(--dl-cyan) !important;
+  box-shadow: -6px 0 18px -14px rgba(0,238,252,0.9), 3px 3px 0 0 var(--dl-ink);
+}
+[data-theme="dexters-lab"] .message-bubble-user {
+  background: linear-gradient(135deg, #6a10ad 0%, var(--dl-violet-deep) 100%) !important;
+  color: #fff !important;
+  border: 1px solid var(--dl-ink);
+  border-right: 3px solid var(--dl-magenta);
+  box-shadow: 6px 0 18px -14px rgba(231,0,110,0.9), 3px 3px 0 0 var(--dl-ink);
+}
+
+/* Progress — a holo charge bar in an ink tube, with a light ticking along */
+[data-theme="dexters-lab"] [role="progressbar"] {
+  background: rgba(21,6,41,0.8) !important;
+  box-shadow: inset 0 0 0 1px rgba(74,47,107,0.8);
+}
+[data-theme="dexters-lab"] [role="progressbar"] > *,
+[data-theme="dexters-lab"] .h-\[3px\] > .bg-primary {
+  background:
+    linear-gradient(90deg, transparent 0 40%, rgba(255,255,255,0.75) 50%, transparent 60% 100%) 0 0 / 200% 100% no-repeat,
+    var(--dl-holo-fill) !important;
+  box-shadow: 0 0 8px -1px rgba(0,238,252,0.6);
+  animation: dl-progress 2.4s linear infinite;
+}
+@keyframes dl-progress {
+  from { background-position: 150% 0, 0 0; }
+  to   { background-position: -150% 0, 0 0; }
+}
+
+/* Read-along word pill — phosphor cyan rather than violet */
+[data-theme="dexters-lab"] .read-along-pill,
+[data-theme="dexters-lab"] .read-along-ghost {
+  --ra-fill: var(--dl-cyan);
+  --ra-glow: var(--dl-violet);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="dexters-lab"] [data-app-header] nav button::after,
+  [data-theme="dexters-lab"] [data-book-card]:hover::after,
+  [data-theme="dexters-lab"] [role="progressbar"] > *,
+  [data-theme="dexters-lab"] .h-\[3px\] > .bg-primary { animation: none !important; }
+  [data-theme="dexters-lab"] [data-book-card]:hover { transform: none; }
 }
 
 /* =====================================================================
@@ -974,137 +1624,572 @@
 }
 
 /* =====================================================================
-   AURORA (2026) — liquid-glass slate + chromatic @property accent
-   Forward-looking theme. HSL token contract lives in themes.ts; the
-   oklch-native pipeline, animated hue, mesh background and glass
-   surfaces live here. Everything degrades cleanly on older engines.
+   AURORA (2026) — "Polar Night Observatory"
+   Liquid glass in an observatory on the tundra, the northern lights over
+   the treeline. The canvas is polar-night navy; every surface is frosted
+   slate glass with a specular top edge; type is Instrument Serif for voice
+   and Instrument Sans for reading. Colour comes only from the aurora —
+   oxygen green, ice teal, nitrogen violet, a rose crown — and, as in the
+   sky, it lives on the EDGES: the hairline under the app bar, the spine of
+   a chat bubble, the light pooled under the active tab, the inside of the
+   one liquid button that matters. Reading surfaces stay calm frosted slate.
+   The accent hue drifts (@property --aurora-hue) through the aurora's own
+   gamut only, green → teal → violet → rose and back, on the few small
+   elements that carry it; the root itself never animates, so the drift
+   costs a handful of tiny repaints, not a whole-page style recalc.
+   backdrop-filter is kept to chrome (app bar, rail, bottom nav, dialogs,
+   menus) — never on cards or chat, which live in long scrolling lists.
+   The live aurora in the header ([data-app-header] .au-sky) is styled by
+   src/styles/themes/aurora-art.css. Contrast ratios noted inline.
    ===================================================================== */
 
 /* Registered animated custom property — typed as an angle so the browser
-   can interpolate the accent hue smoothly. Unsupported engines ignore it
-   and fall back to the static --accent token from themes.ts. */
+   interpolates the accent hue smoothly. Unsupported engines ignore it and
+   fall back to the static --accent token (oxygen green) from themes.ts. */
 @property --aurora-hue {
   syntax: '<angle>';
   inherits: true;
-  initial-value: 220deg;
+  initial-value: 160deg;
 }
 @keyframes aurora-hue-cycle {
-  from { --aurora-hue: 220deg; }
-  to   { --aurora-hue: 580deg; }
+  0%   { --aurora-hue: 160deg; }  /* oxygen green */
+  35%  { --aurora-hue: 200deg; }  /* ice teal */
+  70%  { --aurora-hue: 290deg; }  /* nitrogen violet */
+  100% { --aurora-hue: 345deg; }  /* rose crown */
 }
 
 :root[data-theme="aurora"] {
-  /* oklch-native tokens — consume directly (no hsl() wrapper) */
-  --aur-ink:      oklch(0.18 0.04 260);
-  --aur-paper:    oklch(0.95 0.02  90);
-  --aur-glass:    oklch(0.26 0.04 260 / 0.55);
-  --aur-glass-hi: oklch(0.32 0.05 260 / 0.65);
-  --aur-line:     oklch(0.50 0.04 260 / 0.35);
-  --aur-mint:     oklch(0.86 0.13 175);
-  --aur-cyan:     oklch(0.78 0.13 210);
-  --aur-lilac:    oklch(0.78 0.16 295);
-  --aur-peach:    oklch(0.82 0.14  50);
-  --aur-rose:     oklch(0.74 0.20  20);
+  --aurora-hue: 160deg;
 
-  /* Animated chromatic accent driven by the registered @property hue */
-  --aur-accent: oklch(0.78 0.16 var(--aurora-hue));
+  /* Palette */
+  --aur-night: #0a0e19;          /* canvas */
+  --aur-ink: #060914;            /* deepest ink, text on light fills */
+  --aur-slate: #141c2f;          /* card */
+  --aur-slate-hi: #1b2540;       /* raised glass */
+  --aur-line: rgba(170, 190, 255, 0.14);
+  --aur-line-hi: rgba(200, 215, 255, 0.24);
+  --aur-frost: #f2f5fc;          /* text — 18.6:1 on night, 16:1 on slate */
+  --aur-mist: #c4cde2;           /* secondary text — 12:1 on night, 10:1 on slate */
+  --aur-green: #6ff0c0;          /* 557.7nm oxygen — 14:1 on night */
+  --aur-teal: #5fd9e6;
+  --aur-ice: #b8f0ff;
+  --aur-violet: #b9a6ff;         /* 9.4:1 on night */
+  --aur-rose: #f3a7c4;
+  --aur-red: #ff5d7a;
 
-  /* Five-stop chromatic mesh, oklch stops so in-between colours stay
-     perceptually uniform as the hue cycles. */
-  --aur-mesh:
-    radial-gradient(at 20% 20%, oklch(0.78 0.16 var(--aurora-hue))                  0%, transparent 50%),
-    radial-gradient(at 80% 30%, oklch(0.76 0.15 calc(var(--aurora-hue) + 80deg))    0%, transparent 55%),
-    radial-gradient(at 70% 80%, oklch(0.74 0.17 calc(var(--aurora-hue) + 160deg))   0%, transparent 50%),
-    radial-gradient(at 20% 90%, oklch(0.72 0.18 calc(var(--aurora-hue) + 240deg))   0%, transparent 60%),
-    var(--aur-ink);
+  /* Back-compat names (the shared read-along rule reads --aur-accent) */
+  --aur-paper: var(--aur-frost);
+  --aur-mint: var(--aur-green);
+  --aur-cyan: var(--aur-ice);
+  --aur-lilac: var(--aur-violet);
 
-  animation: aurora-hue-cycle 24s linear infinite;
+  /* The drifting accent: bright enough for ink text (≥ 9:1) at every hue. */
+  --aur-accent: oklch(0.86 0.12 var(--aurora-hue));
+
+  /* The aurora as a gradient — used for hairlines, spines, fills */
+  --aur-ribbon: linear-gradient(90deg, #6ff0c0 0%, #5fd9e6 34%, #b9a6ff 68%, #f3a7c4 100%);
+  /* The liquid button's interior: the same ribbon, lifted to pastel so ink
+     sits on it at ≥ 9.9:1 (darkest stop #bfb0ff). */
+  --aur-liquid: linear-gradient(100deg, #9af6d3 0%, #9fe9f4 30%, #bfb0ff 62%, #f7bfd6 84%, #9af6d3 100%);
+  --aur-specular: linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.14) 46%, rgba(255,255,255,0) 54%);
+  --aur-glass: linear-gradient(180deg, rgba(30, 40, 68, 0.80) 0%, rgba(20, 28, 47, 0.86) 100%);
+  --aur-glass-hi: rgba(22, 30, 54, 0.72);
+
+  /* Cover placeholder: the lights over a spruce treeline */
+  --aur-treeline: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 40' preserveAspectRatio='none'%3E%3Cpath fill='%23040713' d='M0 40V34L0 35L4 12L7 35L7 35L12 17L16 35L15 33L20 16L24 33L23 34L26 20L30 34L31 33L35 11L39 33L38 33L41 9L43 33L42 35L46 31L51 35L50 34L53 9L57 34L58 33L62 18L66 33L64 33L66 13L69 33L69 34L72 11L75 34L73 35L77 24L80 35L78 35L82 32L86 35L84 33L88 23L91 33L92 35L95 29L98 35L96 33L99 11L103 33L102 35L107 32L111 35L108 34L111 9L114 34L115 33L118 18L122 33L119 33L122 7L125 33L123 33L127 17L132 33L131 33L135 16L139 33L139 33L142 10L145 33L144 33L149 11L153 33L152 34L154 30L157 34L158 34L162 30L166 34L166 33L169 17L173 33L171 34L176 29L180 34L178 35L181 12L184 35L182 34L186 29L191 34L190 34L194 19L197 34L197 34L201 9L204 34V40Z'/%3E%3C/svg%3E");
+  --aur-cover:
+    var(--aur-treeline) bottom / 100% 34% no-repeat,
+    repeating-linear-gradient(90deg, rgba(255,255,255,0) 0 6px, rgba(220,255,240,0.05) 6px 7px),
+    radial-gradient(70% 55% at 30% 52%, rgba(111,240,192,0.62) 0%, rgba(111,240,192,0.16) 45%, transparent 72%),
+    radial-gradient(55% 45% at 72% 30%, rgba(185,166,255,0.5) 0%, transparent 70%),
+    radial-gradient(40% 30% at 60% 8%, rgba(255,93,122,0.28) 0%, transparent 70%),
+    linear-gradient(180deg, #050816 0%, #0b1430 58%, #13234a 100%);
+
+  /* The worm in polar light: glacier mint, flat two tones, ink features. */
+  --worm-body: #8fe6c8;
+  --worm-dark: #5cc3a7;
+  --worm-pupil: #0a0e19;
+  --worm-mouth: #0a0e19;
+  --worm-tongue: #f3a7c4;
+  --worm-eye: #f2f5fc;
 }
 
-/* Drifting chromatic mesh as the page canvas */
+/* Canvas — polar night: darkest overhead, two faint aurora glows high in the
+   sky, a few stars, and a cold blue lift at the horizon. Static: the living
+   aurora is the header's job. The app root goes transparent to let it show. */
 [data-theme="aurora"] body {
-  background: var(--aur-mesh) !important;
-  background-attachment: fixed;
+  background:
+    radial-gradient(1px 1px at 9% 14%, rgba(242,245,252,0.38), transparent 60%),
+    radial-gradient(1px 1px at 23% 41%, rgba(242,245,252,0.2), transparent 60%),
+    radial-gradient(1.4px 1.4px at 37% 7%, rgba(184,240,255,0.32), transparent 60%),
+    radial-gradient(1px 1px at 56% 27%, rgba(242,245,252,0.24), transparent 60%),
+    radial-gradient(1px 1px at 71% 66%, rgba(185,166,255,0.22), transparent 60%),
+    radial-gradient(1.4px 1.4px at 86% 11%, rgba(242,245,252,0.34), transparent 60%),
+    radial-gradient(1px 1px at 94% 44%, rgba(242,245,252,0.2), transparent 60%),
+    radial-gradient(1px 1px at 4% 77%, rgba(111,240,192,0.2), transparent 60%),
+    radial-gradient(60% 38% at 18% -6%, rgba(111,240,192,0.13) 0%, transparent 70%),
+    radial-gradient(55% 34% at 82% -8%, rgba(185,166,255,0.12) 0%, transparent 70%),
+    radial-gradient(120% 50% at 50% 120%, rgba(40,70,140,0.32) 0%, transparent 70%),
+    linear-gradient(180deg, #070a14 0%, var(--aur-night) 50%, #0d1428 100%) !important;
+  background-attachment: fixed !important;
+}
+[data-theme="aurora"] .h-app.bg-background { background: transparent; }
+
+/* Type — Instrument Serif has one weight; never let the browser fake a bold
+   of it. Headings speak in the serif at its own weight, slightly tight. */
+[data-theme="aurora"] h1,
+[data-theme="aurora"] h2,
+[data-theme="aurora"] h3,
+[data-theme="aurora"] .font-headline,
+[data-theme="aurora"] .font-display {
+  font-family: var(--font-headline) !important;
+  font-weight: 400 !important;
+  font-synthesis: none;
+  letter-spacing: -0.008em;
+}
+[data-theme="aurora"] h1 { letter-spacing: -0.015em; }
+[data-theme="aurora"] h1 em,
+[data-theme="aurora"] h2 em { font-style: italic; color: var(--aur-green); }
+[data-theme="aurora"] .font-label {
+  font-family: var(--font-label);
+  font-stretch: 92%;
+  letter-spacing: 0.06em;
+}
+[data-theme="aurora"] code,
+[data-theme="aurora"] kbd,
+[data-theme="aurora"] .font-mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+
+[data-theme="aurora"] ::selection {
+  background: rgba(185, 166, 255, 0.42);
+  color: #ffffff;
 }
 
-/* Liquid-glass cards — the surfaces the app actually paints */
+/* Focus — a ring of oxygen green with a soft halo, like light on glass */
+[data-theme="aurora"] *:focus-visible {
+  outline: 2px solid var(--aur-green) !important;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 5px rgba(111, 240, 192, 0.14), 0 0 18px rgba(111, 240, 192, 0.3);
+}
+
+[data-theme="aurora"] ::-webkit-scrollbar { width: 10px; height: 10px; }
+[data-theme="aurora"] ::-webkit-scrollbar-track { background: transparent; }
+[data-theme="aurora"] ::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(111,240,192,0.38), rgba(185,166,255,0.38));
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+[data-theme="aurora"] ::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, var(--aur-green), var(--aur-violet));
+  background-clip: padding-box;
+}
+
+/* Surfaces — frosted slate glass: a lit top edge, a hairline, depth below.
+   No backdrop-filter: these live in scrolling lists, and over a canvas of
+   soft gradients a translucent slate reads exactly like blurred glass. */
 [data-theme="aurora"] .bg-card,
 [data-theme="aurora"] [data-aur-glass],
+[data-theme="aurora"] [data-sticker],
+[data-theme="aurora"] .surface-container,
 [data-theme="aurora"] .bg-surface-container,
 [data-theme="aurora"] .bg-surface-container-low,
-[data-theme="aurora"] .bg-surface-container-high {
+[data-theme="aurora"] .bg-surface-container-high:not(.message-bubble-ai) {
   background: var(--aur-glass) !important;
   border: 1px solid var(--aur-line);
   border-radius: 18px;
-  backdrop-filter: blur(28px) saturate(180%);
-  -webkit-backdrop-filter: blur(28px) saturate(180%);
   box-shadow:
-    inset 0 1px 0 0 color-mix(in oklab, white 18%, transparent),
-    inset 0 0 0 1px color-mix(in oklab, white 4%, transparent),
-    0 24px 60px -24px color-mix(in oklab, black 70%, transparent);
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.09),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.015),
+    0 18px 44px -26px rgba(0, 0, 0, 0.85);
 }
 
-/* Dialogs / popovers / menus — brighter glass */
+/* Dialogs / popovers / menus — real liquid glass (chrome, not lists): a
+   deeper blur, a specular top edge, and a thread of aurora along the top. */
 [data-theme="aurora"] [role="dialog"],
 [data-theme="aurora"] [role="menu"],
 [data-theme="aurora"] [data-radix-popper-content-wrapper] > * {
-  background: var(--aur-glass-hi) !important;
-  border: 1px solid var(--aur-line) !important;
-  border-radius: 18px !important;
-  backdrop-filter: blur(32px) saturate(180%);
-  -webkit-backdrop-filter: blur(32px) saturate(180%);
+  background:
+    linear-gradient(90deg, transparent 4%, rgba(111,240,192,0.7) 22%, rgba(95,217,230,0.7) 45%, rgba(185,166,255,0.7) 70%, rgba(243,167,196,0.6) 88%, transparent 98%) top / 100% 1px no-repeat,
+    var(--aur-glass-hi) !important;
+  border: 1px solid var(--aur-line-hi) !important;
+  border-radius: 20px !important;
+  backdrop-filter: blur(30px) saturate(170%);
+  -webkit-backdrop-filter: blur(30px) saturate(170%);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.1),
+    0 30px 70px -24px rgba(0, 0, 0, 0.9),
+    0 0 60px -20px rgba(111, 240, 192, 0.18) !important;
+}
+[data-theme="aurora"] [role="menuitem"]:focus,
+[data-theme="aurora"] [role="menuitem"][data-highlighted],
+[data-theme="aurora"] [role="option"][data-highlighted] {
+  background: linear-gradient(90deg, rgba(111,240,192,0.15), rgba(185,166,255,0.1)) !important;
+  color: var(--aur-frost) !important;
+  border-radius: 10px;
 }
 
-/* Chromatic glass primary buttons */
+[data-theme="aurora"] button:not([data-no-sticker]):not([role="tab"]):not([role="menuitem"]) {
+  transition: transform 180ms cubic-bezier(.2,.8,.2,1), box-shadow 240ms ease, background-position 700ms cubic-bezier(.2,.8,.2,1), filter 180ms ease;
+}
+
+/* The liquid button — a glass capsule with the aurora inside it. A specular
+   highlight across the top half, the ribbon lifted to pastel beneath, a
+   coloured glow pooling under it. Hover pours the colour along. Ink text on
+   the darkest stop: 9.9:1. */
 [data-theme="aurora"] button.bg-primary,
 [data-theme="aurora"] button.bg-accent,
 [data-theme="aurora"] button[data-sticker-btn] {
-  background:
-    radial-gradient(120% 120% at 30% 0%, color-mix(in oklab, white 24%, transparent), transparent 60%),
-    var(--aur-accent) !important;
+  background-image: var(--aur-specular), var(--aur-liquid) !important;
+  background-size: 100% 100%, 220% 100% !important;
+  background-position: 0 0, 0% 50%;
   color: var(--aur-ink) !important;
-  border: 1px solid color-mix(in oklab, white 28%, transparent) !important;
+  border: 1px solid rgba(255, 255, 255, 0.45) !important;
+  border-radius: 999px;
+  font-weight: 600;
   box-shadow:
-    inset 0 1px 0 0 color-mix(in oklab, white 40%, transparent),
-    0 8px 24px -8px color-mix(in oklab, var(--aur-accent) 65%, transparent);
-  transition: transform 180ms cubic-bezier(.2,.8,.2,1), box-shadow 220ms ease;
+    inset 0 1px 0 rgba(255, 255, 255, 0.75),
+    inset 0 -2px 6px rgba(80, 60, 160, 0.18),
+    0 8px 22px -10px rgba(111, 240, 192, 0.6),
+    0 4px 18px -8px rgba(185, 166, 255, 0.55);
 }
 [data-theme="aurora"] button.bg-primary:hover,
-[data-theme="aurora"] button.bg-accent:hover {
+[data-theme="aurora"] button.bg-accent:hover,
+[data-theme="aurora"] button[data-sticker-btn]:hover {
+  background-position: 0 0, 100% 50%;
   transform: translateY(-1px);
   box-shadow:
-    inset 0 1px 0 0 color-mix(in oklab, white 40%, transparent),
-    0 14px 32px -8px color-mix(in oklab, var(--aur-accent) 75%, transparent);
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    inset 0 -2px 6px rgba(80, 60, 160, 0.18),
+    0 0 0 4px rgba(185, 166, 255, 0.12),
+    0 14px 30px -10px rgba(111, 240, 192, 0.7),
+    0 6px 26px -6px rgba(185, 166, 255, 0.6);
 }
 [data-theme="aurora"] button.bg-primary:active,
-[data-theme="aurora"] button.bg-accent:active { transform: translateY(0); }
-
-/* Selection + focus */
-[data-theme="aurora"] ::selection {
-  background: color-mix(in oklab, var(--aur-accent) 60%, transparent);
-  color: var(--aur-paper);
+[data-theme="aurora"] button.bg-accent:active,
+[data-theme="aurora"] button[data-sticker-btn]:active {
+  transform: translateY(0) scale(0.98);
+  box-shadow: inset 0 2px 8px rgba(6, 9, 20, 0.3), 0 4px 12px -8px rgba(111, 240, 192, 0.6);
 }
-[data-theme="aurora"] *:focus-visible {
-  outline: 2px solid var(--aur-cyan) !important;
-  outline-offset: 3px;
-  border-radius: 6px;
+[data-theme="aurora"] button.bg-destructive {
+  background: #f98b8b !important;    /* ink on it 8.4:1 */
+  color: var(--aur-ink) !important;
+  border-radius: 999px;
 }
 
-/* Active nav tab — chromatic accent bar instead of amber underline */
+/* Filled containers (Add books, picked segments) — the deep violet of a
+   storm's lower hem. White on it: 8.6:1. */
+[data-theme="aurora"] .bg-primary-container:not(.message-bubble-user) {
+  background: linear-gradient(135deg, #3f4fa6 0%, #4a40a1 55%, #5a3f9e 100%) !important;
+  color: #fff !important;
+}
+[data-theme="aurora"] button.bg-primary-container:hover {
+  box-shadow: 0 0 0 1px rgba(185, 166, 255, 0.5), 0 8px 24px -8px rgba(185, 166, 255, 0.6);
+}
+
+/* Switches */
+[data-theme="aurora"] [role="switch"][data-state="unchecked"] {
+  background: #24304f !important;
+  box-shadow: inset 0 0 0 1px rgba(196, 205, 226, 0.22);
+}
+[data-theme="aurora"] [role="switch"][data-state="unchecked"] > span {
+  background: var(--aur-mist) !important;
+}
+[data-theme="aurora"] [role="switch"][data-state="checked"] {
+  background: var(--aur-ribbon) !important;
+  box-shadow: 0 0 14px -2px rgba(111, 240, 192, 0.55);
+}
+[data-theme="aurora"] [role="switch"][data-state="checked"] > span {
+  background: #ffffff !important;
+  box-shadow: 0 1px 3px rgba(6, 9, 20, 0.4);
+}
+
+/* Inputs — inset wells of night glass; focus draws the aurora along the rim */
+[data-theme="aurora"] input,
+[data-theme="aurora"] textarea,
+[data-theme="aurora"] select {
+  background: rgba(6, 9, 20, 0.55) !important;
+  color: var(--aur-frost) !important;
+  border: 1px solid var(--aur-line-hi) !important;
+  border-radius: 14px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+  transition: border-color 160ms ease, box-shadow 200ms ease;
+}
+[data-theme="aurora"] input::placeholder,
+[data-theme="aurora"] textarea::placeholder { color: #8f9ab5; } /* 6.6:1 */
+[data-theme="aurora"] input:focus,
+[data-theme="aurora"] textarea:focus,
+[data-theme="aurora"] select:focus {
+  border-color: rgba(111, 240, 192, 0.8) !important;
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.35),
+    0 0 0 3px rgba(111, 240, 192, 0.14),
+    0 0 22px -6px rgba(185, 166, 255, 0.55);
+  outline: none !important;
+}
+[data-theme="aurora"] input[type="checkbox"],
+[data-theme="aurora"] input[type="radio"],
+[data-theme="aurora"] input[type="range"] { accent-color: var(--aur-green); }
+
+/* Top app bar — night glass over the live aurora, with the aurora's own
+   thread for a bottom edge. */
+[data-theme="aurora"] [data-app-header] {
+  background: rgba(9, 13, 28, 0.78) !important;
+  border-bottom: 1px solid transparent;
+  border-image: linear-gradient(90deg, rgba(111,240,192,0.05) 0%, rgba(111,240,192,0.55) 20%, rgba(95,217,230,0.5) 45%, rgba(185,166,255,0.55) 72%, rgba(243,167,196,0.05) 100%) 1;
+  box-shadow: 0 14px 36px -16px rgba(0, 0, 0, 0.8) !important;
+}
+/* Header controls stay legible over the lights (see auroraSky.test.ts). */
+[data-theme="aurora"] [data-app-header] > div > .material-symbols-outlined.text-accent {
+  color: var(--aur-green) !important;
+  text-shadow: 0 0 12px rgba(111, 240, 192, 0.45);
+}
+
+/* Wordmark — "Chapter" in Instrument Serif roman, "Craft" in its italic,
+   lit from inside by the aurora (pastel stops, ≥ 4.5:1 even over a full
+   storm, and the wordmark is large text). */
+[data-theme="aurora"] [data-wordmark] {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.28em;
+  line-height: 1;
+  white-space: nowrap;
+  font-family: var(--font-display) !important;
+  font-weight: 400 !important;
+  font-synthesis: none;
+}
+[data-theme="aurora"] [data-wordmark]::before,
+[data-theme="aurora"] [data-wordmark]::after {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 1.75rem;
+  letter-spacing: -0.01em;
+  padding-bottom: 0.06em;
+}
+[data-theme="aurora"] [data-wordmark]::before {
+  content: "Chapter";
+  color: var(--aur-frost);
+  text-shadow: 0 0 18px rgba(184, 240, 255, 0.25);
+}
+[data-theme="aurora"] [data-wordmark]::after {
+  content: "Craft";
+  font-style: italic;
+  padding-right: 0.12em;
+  background: linear-gradient(95deg, #c9fbe6 0%, #b8f0ff 30%, #e0d6ff 62%, #ffd6e4 82%, #c9fbe6 100%) 0 50% / 240% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 8px rgba(111, 240, 192, 0.35));
+  animation: aur-shimmer 22s ease-in-out infinite alternate;
+}
+@keyframes aur-shimmer {
+  from { background-position: 0% 50%; }
+  to   { background-position: 100% 50%; }
+}
+@media (max-width: 420px) {
+  [data-theme="aurora"] [data-wordmark]::before,
+  [data-theme="aurora"] [data-wordmark]::after { font-size: 1.45rem; }
+}
+
+/* Desktop nav — the sliding pill becomes a glass capsule; the active tab
+   gets a pool of aurora light rising beneath it, and a thread of the
+   drifting accent along its foot. Inactive mist #d4dbeb holds 5.2:1 over
+   the brightest the header's aurora can get. */
+[data-theme="aurora"] [data-app-header] nav > span[aria-hidden].absolute {
+  background: linear-gradient(180deg, rgba(255,255,255,0.09), rgba(255,255,255,0.03)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 0 0 1px rgba(200, 215, 255, 0.14) !important;
+  --tw-ring-color: transparent;
+}
+[data-theme="aurora"] [data-app-header] nav button.text-secondary {
+  color: hsl(var(--secondary)) !important;
+}
+[data-theme="aurora"] [data-app-header] nav button.text-secondary:hover {
+  color: #c9fbe6 !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+}
 [data-theme="aurora"] [data-app-header] nav button.text-accent,
 [data-theme="aurora"] [data-app-header] nav button[aria-current="page"] {
-  border-bottom-color: transparent !important;
   position: relative;
-  color: var(--aur-paper) !important;
+  border-bottom-color: transparent !important;
+  color: var(--aur-frost) !important;
+}
+[data-theme="aurora"] [data-app-header] nav button.text-accent .material-symbols-outlined,
+[data-theme="aurora"] [data-app-header] nav button[aria-current="page"] .material-symbols-outlined {
+  color: var(--aur-green);
+  text-shadow: 0 0 12px rgba(111, 240, 192, 0.55);
+}
+[data-theme="aurora"] [data-app-header] nav button.text-accent::before,
+[data-theme="aurora"] [data-app-header] nav button[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  left: 8%; right: 8%; bottom: -2px;
+  height: 70%;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(60% 80% at 50% 100%, rgba(111, 240, 192, 0.24), rgba(185, 166, 255, 0.1) 55%, transparent 80%);
+  pointer-events: none;
+  transform-origin: 50% 100%;
+  animation: aur-rise 1100ms cubic-bezier(.2,.8,.2,1) 1 both;
 }
 [data-theme="aurora"] [data-app-header] nav button.text-accent::after,
 [data-theme="aurora"] [data-app-header] nav button[aria-current="page"]::after {
   content: "";
   position: absolute;
-  left: 0; right: 0; bottom: -6px;
-  height: 3px;
+  left: 16px; right: 16px; bottom: -3px;
+  height: 2px;
   border-radius: 2px;
-  background: linear-gradient(90deg, var(--aur-mint), var(--aur-lilac));
+  background: linear-gradient(90deg, transparent, var(--aur-accent) 25%, oklch(0.84 0.13 calc(var(--aurora-hue) + 70deg)) 75%, transparent);
+  box-shadow: 0 0 10px var(--aur-accent);
+  /* Re-declared here so it follows this element's own drifting hue. */
+  --aur-accent: oklch(0.86 0.12 var(--aurora-hue));
+  animation: aurora-hue-cycle 30s ease-in-out infinite alternate, aur-rise 1100ms cubic-bezier(.2,.8,.2,1) 1 both;
+}
+@keyframes aur-rise {
+  from { opacity: 0; transform: scaleY(0.3); }
+  to   { opacity: 1; transform: scaleY(1); }
+}
+
+/* Tablet rail + mobile nav — night glass; the active item is a glass
+   capsule with an aurora rim. */
+[data-theme="aurora"] .cc-rail,
+[data-theme="aurora"] [data-mobile-nav] {
+  background: rgba(9, 13, 28, 0.8) !important;
+  border-color: rgba(170, 190, 255, 0.14) !important;
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+}
+[data-theme="aurora"] .cc-rail-item[aria-current="page"] .bg-accent\/15,
+[data-theme="aurora"] [data-mobile-nav] button[aria-current="page"] .bg-accent\/15 {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.12), rgba(255,255,255,0.03)),
+    linear-gradient(120deg, rgba(111,240,192,0.22), rgba(185,166,255,0.2));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 0 0 1px rgba(111, 240, 192, 0.35),
+    0 0 18px -4px rgba(111, 240, 192, 0.5);
+  animation: aur-rise 900ms cubic-bezier(.2,.8,.2,1) 1 both;
+}
+[data-theme="aurora"] .cc-rail-item[aria-current="page"] .text-accent,
+[data-theme="aurora"] [data-mobile-nav] button[aria-current="page"] .text-accent {
+  color: var(--aur-green) !important;
+}
+[data-theme="aurora"] .cc-rail-item[aria-current="page"] .material-symbols-outlined,
+[data-theme="aurora"] [data-mobile-nav] button[aria-current="page"] .material-symbols-outlined {
+  text-shadow: 0 0 12px rgba(111, 240, 192, 0.55);
+}
+[data-theme="aurora"] .cc-rail-item:not([aria-current="page"]):hover .material-symbols-outlined {
+  color: var(--aur-ice);
+}
+[data-theme="aurora"] .cc-rail-split {
+  background: var(--aur-ribbon) !important;
+  opacity: 0.45;
+}
+
+/* Book cards — glass that catches the light: on hover a thread of aurora
+   runs along the top edge and the rim takes a cold glow. */
+[data-theme="aurora"] [data-book-card] {
+  position: relative;
+  overflow: hidden;
+  border-radius: 18px;
+  transition: transform 220ms cubic-bezier(.2,.8,.2,1), box-shadow 260ms ease;
+}
+[data-theme="aurora"] [data-book-card]:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 0 0 1px rgba(111, 240, 192, 0.3),
+    0 18px 40px -18px rgba(95, 217, 230, 0.45),
+    0 10px 30px -16px rgba(185, 166, 255, 0.4);
+}
+[data-theme="aurora"] [data-book-card]::after {
+  content: "";
+  position: absolute; left: 0; right: 0; top: 0; height: 2px;
+  background: linear-gradient(90deg, transparent 0%, #6ff0c0 20%, #5fd9e6 40%, #b9a6ff 60%, #f3a7c4 80%, transparent 100%) 0 0 / 200% 100%;
+  box-shadow: 0 0 12px rgba(111, 240, 192, 0.6);
+  opacity: 0;
+  transition: opacity 260ms ease;
+  pointer-events: none;
+  z-index: 20;
+}
+[data-theme="aurora"] [data-book-card]:hover::after {
+  opacity: 1;
+  animation: aur-thread 3.2s linear infinite;
+}
+@keyframes aur-thread {
+  from { background-position: 0% 0; }
+  to   { background-position: 200% 0; }
+}
+
+/* Cover placeholders — the lights over the treeline */
+[data-theme="aurora"] [data-book-card] [data-book-cover-placeholder] {
+  background: var(--aur-cover) !important;
+}
+[data-theme="aurora"] [data-book-card] [data-book-cover-placeholder] .material-symbols-outlined {
+  color: #eafff6 !important;
+  text-shadow: 0 0 12px rgba(111, 240, 192, 0.9), 0 0 26px rgba(185, 166, 255, 0.55);
+}
+[data-theme="aurora"] [data-book-card] [data-book-cover-overlay] {
+  background: linear-gradient(180deg, transparent 0%, rgba(6, 9, 20, 0.88) 100%) !important;
+}
+
+/* Chat — the bubbles stay calm, opaque slate (no blur: chat scrolls); a
+   spine of aurora says who is talking. Assistant: green into violet on the
+   left. You: deep polar violet (white on it 9.3:1) with a rose spine. */
+[data-theme="aurora"] .message-bubble-ai {
+  background:
+    linear-gradient(180deg, rgba(111,240,192,0.9), rgba(95,217,230,0.8) 50%, rgba(185,166,255,0.85)) left / 2px 100% no-repeat,
+    linear-gradient(180deg, #19223a 0%, #151d31 100%) !important;
+  border: 1px solid var(--aur-line) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    -8px 0 22px -16px rgba(111, 240, 192, 0.8);
+}
+[data-theme="aurora"] .message-bubble-user {
+  background:
+    linear-gradient(180deg, rgba(243,167,196,0.9), rgba(185,166,255,0.85)) right / 2px 100% no-repeat,
+    linear-gradient(135deg, #2f3f8f 0%, #433a92 60%, #4f3a8c 100%) !important;
+  color: #fff !important;
+  border: 1px solid rgba(185, 166, 255, 0.28) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    8px 0 22px -16px rgba(243, 167, 196, 0.8);
+}
+
+/* Progress — the aurora with light running through it */
+[data-theme="aurora"] [role="progressbar"] {
+  background: rgba(6, 9, 20, 0.6) !important;
+  box-shadow: inset 0 0 0 1px rgba(170, 190, 255, 0.1);
+}
+[data-theme="aurora"] [role="progressbar"] > * {
+  background:
+    linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.55) 50%, transparent 100%) -60% 0 / 50% 100% no-repeat,
+    var(--aur-ribbon) !important;
+  box-shadow: 0 0 10px -2px rgba(111, 240, 192, 0.7);
+  animation: aur-run 2.8s cubic-bezier(.4,0,.2,1) infinite;
+}
+@keyframes aur-run {
+  from { background-position: -60% 0, 0 0; }
+  to   { background-position: 160% 0, 0 0; }
+}
+
+/* Read-along word pill — the drifting accent, cycling slowly while it reads */
+[data-theme="aurora"] .read-along-pill,
+[data-theme="aurora"] .read-along-ghost {
+  --aur-accent: oklch(0.86 0.12 var(--aurora-hue));
+  animation: aurora-hue-cycle 30s ease-in-out infinite alternate;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="aurora"] [data-wordmark]::after,
+  [data-theme="aurora"] [data-app-header] nav button::before,
+  [data-theme="aurora"] [data-app-header] nav button::after,
+  [data-theme="aurora"] .cc-rail-item .bg-accent\/15,
+  [data-theme="aurora"] [data-mobile-nav] .bg-accent\/15,
+  [data-theme="aurora"] [data-book-card]:hover::after,
+  [data-theme="aurora"] [role="progressbar"] > *,
+  [data-theme="aurora"] .read-along-pill,
+  [data-theme="aurora"] .read-along-ghost { animation: none !important; }
+  [data-theme="aurora"] [data-book-card]:hover { transform: none; }
 }
 
 /* =====================================================================
@@ -1439,10 +2524,62 @@ html.cc-media-overlay-open .message-bubble-user {
   contain: none !important;
 }
 
-/* ============================================================
-   DESOLATE LAB — industrial minimalism / isolated terminal.
-   Sharp corners, no shadows, tonal layering, CRT glass overlay.
-   ============================================================ */
+/* =====================================================================
+   DESOLATE LAB — "Annex 07", a sealed research facility
+   The lab after everyone left. Light-absorbing blacks in a strict tonal
+   ladder (void → base → panel → raised), instrument grays, sharp 0px
+   corners, no shadows, and exactly one hue in the building: signal red,
+   which marks the single thing that needs you — the active tab, the
+   operator's own words, a fault. Richness comes from texture, type and
+   instrumentation instead of colour: film grain and a drafting grid on the
+   canvas, a stencilled wordmark, mono readouts on every control, corner
+   brackets that target what you point at, hazard striping on the one
+   button that matters. The live telemetry strip in the header
+   ([data-desolate-art]) is styled by src/styles/themes/desolate-lab-art.css.
+
+   Text pairs (WCAG 2.x):
+     phosphor #e5e2e1 on base #131313 14.4 · panel #1c1b1b 13.4 · raised #2a2a2a 11.1
+     steel    #8e9192 on base 5.9 · panel 5.4 · raised 4.5 · void #0b0b0b 6.2
+     signal   #cf6959 on base 5.2 · panel 4.8 · void 5.5   (text-accent)
+     charcoal #131313 on white 18.6 · on phosphor 14.4 · on signal 5.2
+   ===================================================================== */
+:root[data-theme="desolate-lab"] {
+  --dlab-void: #0b0b0b;
+  --dlab-base: #131313;
+  --dlab-panel: #1c1b1b;
+  --dlab-raised: #2a2a2a;
+  --dlab-rule: #444748;
+  --dlab-steel: #8e9192;
+  --dlab-fog: #c4c7c8;
+  --dlab-phosphor: #e5e2e1;
+  --dlab-white: #ffffff;
+  --dlab-signal: #cf6959;
+  --dlab-signal-hot: #dd8b7e;
+  /* One 7px tile of 45° hazard striping, charcoal on white — no yellow,
+     the facility has one hue and it is not that one. */
+  --dlab-hazard: linear-gradient(-45deg, #131313 25%, transparent 25% 50%, #131313 50% 75%, transparent 75%);
+  /* Targeting brackets: four 9px L-corners drawn as background layers. */
+  --dlab-brackets:
+    linear-gradient(#e5e2e1, #e5e2e1) 0 0 / 9px 1px no-repeat,
+    linear-gradient(#e5e2e1, #e5e2e1) 0 0 / 1px 9px no-repeat,
+    linear-gradient(#e5e2e1, #e5e2e1) 100% 0 / 9px 1px no-repeat,
+    linear-gradient(#e5e2e1, #e5e2e1) 100% 0 / 1px 9px no-repeat,
+    linear-gradient(#e5e2e1, #e5e2e1) 0 100% / 9px 1px no-repeat,
+    linear-gradient(#e5e2e1, #e5e2e1) 0 100% / 1px 9px no-repeat,
+    linear-gradient(#e5e2e1, #e5e2e1) 100% 100% / 9px 1px no-repeat,
+    linear-gradient(#e5e2e1, #e5e2e1) 100% 100% / 1px 9px no-repeat;
+  /* Film grain: fractal noise, white at 5% alpha, one 160px tile. */
+  --dlab-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .055 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+
+  /* The worm is the last specimen in the annex: bone-grey, two tones, and
+     its tongue the facility's one red. 9.4:1 against the base. */
+  --worm-body: #b9b8b8;
+  --worm-dark: #8e9192;
+  --worm-pupil: #131313;
+  --worm-mouth: #131313;
+  --worm-tongue: #cf6959;
+  --worm-eye: #e5e2e1;
+}
 
 /* Sharp shape language: every element 0px radius (square pips per spec) */
 [data-theme="desolate-lab"] *,
@@ -1456,6 +2593,19 @@ html.cc-media-overlay-open .message-bubble-user {
   box-shadow: none !important;
 }
 
+/* Canvas — the base charcoal under a drafting grid, a little film grain, and
+   a faint pool of overhead light. The app root paints bg-background, so it
+   goes transparent here to let the texture through. */
+[data-theme="desolate-lab"] body {
+  background:
+    var(--dlab-grain),
+    linear-gradient(90deg, rgb(255 255 255 / 0.022) 1px, transparent 1px) 0 0 / 48px 48px,
+    linear-gradient(0deg, rgb(255 255 255 / 0.022) 1px, transparent 1px) 0 0 / 48px 48px,
+    radial-gradient(90% 70% at 50% 0%, #1a1a1a 0%, var(--dlab-base) 62%, #0e0e0e 100%) !important;
+  background-attachment: fixed !important;
+}
+[data-theme="desolate-lab"] .h-app.bg-background { background: transparent; }
+
 /* Selection — white on the void */
 [data-theme="desolate-lab"] ::selection {
   background: hsl(0 0% 100%);
@@ -1468,7 +2618,17 @@ html.cc-media-overlay-open .message-bubble-user {
   outline-offset: 2px;
 }
 
-/* Terminal chrome: buttons, tabs, menu items speak in mono uppercase */
+/* ── Type system ─────────────────────────────────────────────────────────
+   Display (stencil) → wordmark only. Headline (Space Grotesk) → h1–h3 and
+   .font-display, tight and dense. Body (IBM Plex Sans) → everything read at
+   length. Label (JetBrains Mono) → every control, chip and micro-label. */
+[data-theme="desolate-lab"] h1,
+[data-theme="desolate-lab"] h2,
+[data-theme="desolate-lab"] h3,
+[data-theme="desolate-lab"] .font-display:not([data-wordmark]) {
+  font-family: var(--font-headline) !important;
+  letter-spacing: -0.035em;
+}
 [data-theme="desolate-lab"] button,
 [data-theme="desolate-lab"] [role="tab"],
 [data-theme="desolate-lab"] [role="menuitem"],
@@ -1476,24 +2636,28 @@ html.cc-media-overlay-open .message-bubble-user {
 [data-theme="desolate-lab"] label,
 [data-theme="desolate-lab"] .font-label {
   font-family: var(--font-label);
+  letter-spacing: 0.02em;
+}
+/* Short chrome speaks in caps; long button text (a book title in a list,
+   a suggested question) stays in mixed case so it can still be read. */
+[data-theme="desolate-lab"] [role="tab"],
+[data-theme="desolate-lab"] label,
+[data-theme="desolate-lab"] .font-label,
+[data-theme="desolate-lab"] [data-app-header] nav button,
+[data-theme="desolate-lab"] button.bg-primary,
+[data-theme="desolate-lab"] button.bg-accent,
+[data-theme="desolate-lab"] button[data-sticker-btn] {
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
-
-/* Headlines — tight, dense, industrial */
-[data-theme="desolate-lab"] h1,
-[data-theme="desolate-lab"] h2,
-[data-theme="desolate-lab"] h3 {
-  letter-spacing: -0.03em;
+/* Every small-caps micro-label becomes an instrument legend */
+[data-theme="desolate-lab"] .uppercase {
+  font-family: var(--font-label);
+  letter-spacing: 0.12em;
 }
-
-/* Inputs — thin-stroke boxes, mono entry */
-[data-theme="desolate-lab"] input,
-[data-theme="desolate-lab"] textarea,
-[data-theme="desolate-lab"] select {
-  border: 1px solid hsl(var(--outline-variant)) !important;
-  background: hsl(var(--surface-container-lowest));
-  caret-color: hsl(0 0% 100%);
+/* Hairline icons — drawn, not filled */
+[data-theme="desolate-lab"] .material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
 }
 
 /* Ultra-thin, non-rounded scrollbars — a gray line against the dark */
@@ -1505,7 +2669,9 @@ html.cc-media-overlay-open .message-bubble-user {
 }
 [data-theme="desolate-lab"] ::-webkit-scrollbar-thumb:hover { background: hsl(195 2% 56%); }
 
-/* CRT glass: scanlines + vignette + a lone pulsing signal at center */
+/* CRT glass: fine scanlines + a vignette that breathes very slowly. Kept
+   light enough (≈6% darkening on one line in three) that reading surfaces
+   lose nothing measurable; no colour of its own. */
 [data-theme="desolate-lab"] body::before {
   content: "";
   position: fixed;
@@ -1519,7 +2685,7 @@ html.cc-media-overlay-open .message-bubble-user {
     transparent 1px,
     transparent 3px
   );
-  opacity: 0.35;
+  opacity: 0.28;
 }
 [data-theme="desolate-lab"] body::after {
   content: "";
@@ -1528,8 +2694,8 @@ html.cc-media-overlay-open .message-bubble-user {
   z-index: 2147483000;
   pointer-events: none;
   background:
-    radial-gradient(ellipse 70% 60% at 50% 45%, rgba(60, 90, 120, 0.10) 0%, transparent 60%),
-    radial-gradient(ellipse 120% 100% at 50% 50%, transparent 55%, rgba(0, 0, 0, 0.55) 100%);
+    radial-gradient(ellipse 70% 60% at 50% 40%, rgba(255, 255, 255, 0.025) 0%, transparent 60%),
+    radial-gradient(ellipse 120% 100% at 50% 50%, transparent 58%, rgba(0, 0, 0, 0.5) 100%);
   animation: desolate-signal 8s ease-in-out infinite;
 }
 @keyframes desolate-signal {
@@ -1537,17 +2703,313 @@ html.cc-media-overlay-open .message-bubble-user {
   50% { opacity: 1; }
 }
 
-/* Honour reduced-motion: freeze the signal pulse */
-@media (prefers-reduced-motion: reduce) {
-  [data-theme="desolate-lab"] body::after { animation: none !important; }
+/* ── App bar ─────────────────────────────────────────────────────────── */
+[data-theme="desolate-lab"] [data-app-header] {
+  background: var(--dlab-void) !important;
+  border-bottom: 1px solid var(--dlab-raised);
+  backdrop-filter: none !important;
 }
 
-/* Desolate Lab dialogs/overlays — heavy black glass, 1px structural border */
+/* Wordmark — BOOKWORM stencilled on the annex door, and a plate with the
+   facility's designation and its one red marker. */
+[data-theme="desolate-lab"] [data-wordmark] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+[data-theme="desolate-lab"] [data-wordmark]::before {
+  content: "BOOKWORM";
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.6rem;
+  letter-spacing: 0.07em;
+  color: var(--dlab-phosphor);
+  transform: translateY(0.04em);
+}
+[data-theme="desolate-lab"] [data-wordmark]::after {
+  content: "ANNEX\00a0\00b7\00a0 07";
+  font-family: var(--font-label);
+  font-weight: 500;
+  font-size: 0.58rem;
+  letter-spacing: 0.2em;
+  color: var(--dlab-fog);
+  padding: 0.28rem 0.45rem 0.28rem 1.05rem;
+  border: 1px solid var(--dlab-rule);
+  background: linear-gradient(var(--dlab-signal), var(--dlab-signal)) 0.42rem 50% / 5px 5px no-repeat, var(--dlab-base);
+}
+
+/* Desktop nav — the sliding pill becomes a targeting reticle; the active
+   tab reads white with a red icon and a signal rule that scans in. */
+[data-theme="desolate-lab"] [data-app-header] nav > span.absolute {
+  background: var(--dlab-brackets) !important;
+  opacity: 0.7;
+}
+[data-theme="desolate-lab"] [data-app-header] nav button[aria-current="page"] {
+  position: relative;
+  color: var(--dlab-white) !important;
+}
+[data-theme="desolate-lab"] [data-app-header] nav button[aria-current="page"] .material-symbols-outlined {
+  color: var(--dlab-signal);
+}
+[data-theme="desolate-lab"] [data-app-header] nav button[aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  left: 12px; right: 12px; bottom: -3px;
+  height: 2px;
+  background: var(--dlab-signal);
+  transform-origin: left center;
+  animation: dlab-scan-in 420ms steps(6, end) 1 both;
+}
+[data-theme="desolate-lab"] [data-app-header] nav button:not([aria-current="page"]) {
+  color: var(--dlab-steel) !important;
+}
+[data-theme="desolate-lab"] [data-app-header] nav button:not([aria-current="page"]):hover {
+  color: var(--dlab-phosphor) !important;
+  background: transparent !important;
+}
+@keyframes dlab-scan-in {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
+/* Tablet rail + mobile nav — void panels; active = raised plate, red tick */
+[data-theme="desolate-lab"] .cc-rail,
+[data-theme="desolate-lab"] [data-mobile-nav] {
+  background: var(--dlab-void) !important;
+  border-color: var(--dlab-raised) !important;
+}
+[data-theme="desolate-lab"] .cc-rail-item[aria-current="page"] .bg-accent\/15,
+[data-theme="desolate-lab"] [data-mobile-nav] button[aria-current="page"] .bg-accent\/15 {
+  background: linear-gradient(var(--dlab-signal), var(--dlab-signal)) 0 0 / 2px 100% no-repeat, var(--dlab-raised) !important;
+}
+[data-theme="desolate-lab"] .cc-rail-item[aria-current="page"] .text-accent,
+[data-theme="desolate-lab"] [data-mobile-nav] button[aria-current="page"] .text-accent {
+  color: var(--dlab-white) !important;
+}
+[data-theme="desolate-lab"] .cc-rail-item[aria-current="page"] .material-symbols-outlined,
+[data-theme="desolate-lab"] [data-mobile-nav] button[aria-current="page"] .material-symbols-outlined {
+  color: var(--dlab-signal) !important;
+}
+[data-theme="desolate-lab"] .cc-rail-split { background: var(--dlab-rule) !important; }
+
+/* ── Controls ─────────────────────────────────────────────────────────── */
+[data-theme="desolate-lab"] button:not([role="tab"]):not([role="menuitem"]) {
+  transition: background-color 120ms linear, color 120ms linear, outline-color 120ms linear;
+}
+
+/* The ENGAGE plate — the one primary button on a screen. A white plate with
+   a strip of hazard striping down its left edge; on hover the stripes crawl
+   (armed) and a reticle ring stands off it. */
+[data-theme="desolate-lab"] button.bg-primary,
+[data-theme="desolate-lab"] button[data-sticker-btn] {
+  background: var(--dlab-hazard) 0 0 / 7px 7px repeat-y, var(--dlab-white) !important;
+  color: var(--dlab-base) !important;
+  border: 0 !important;
+  font-family: var(--font-label);
+  font-weight: 600;
+  padding-left: max(1.5rem, 20px);
+}
+[data-theme="desolate-lab"] button.bg-primary:hover,
+[data-theme="desolate-lab"] button[data-sticker-btn]:hover {
+  background-color: var(--dlab-phosphor) !important;
+  outline: 1px solid var(--dlab-phosphor);
+  outline-offset: 3px;
+  opacity: 1;
+  animation: dlab-armed 700ms linear infinite;
+}
+[data-theme="desolate-lab"] button.bg-primary:active,
+[data-theme="desolate-lab"] button[data-sticker-btn]:active {
+  transform: translateY(1px);
+}
+@keyframes dlab-armed {
+  from { background-position: 0 0, 0 0; }
+  to   { background-position: 0 7px, 0 0; }
+}
+[data-theme="desolate-lab"] button.bg-accent {
+  font-weight: 600;
+  color: var(--dlab-base) !important;
+}
+
+/* Switches — off is a dark slot with a grey slider; on is lit white */
+[data-theme="desolate-lab"] [role="switch"][data-state="unchecked"] {
+  background: var(--dlab-raised) !important;
+  border-color: var(--dlab-rule) !important;
+}
+[data-theme="desolate-lab"] [role="switch"][data-state="unchecked"] > span {
+  background: var(--dlab-steel) !important;
+}
+[data-theme="desolate-lab"] [role="switch"][data-state="checked"] {
+  background: var(--dlab-phosphor) !important;
+}
+[data-theme="desolate-lab"] [role="switch"][data-state="checked"] > span {
+  background: var(--dlab-base) !important;
+}
+
+/* Tabs (Radix) — active gets the signal rule underneath */
+[data-theme="desolate-lab"] [role="tab"][data-state="active"] {
+  color: var(--dlab-white) !important;
+  background-image: linear-gradient(var(--dlab-signal), var(--dlab-signal));
+  background-size: 100% 2px;
+  background-position: 0 100%;
+  background-repeat: no-repeat;
+}
+
+/* Inputs — thin-stroke boxes on the void; focus arms them: white stroke and
+   a red edge on the left, caret in signal red. Placeholder 6.2:1. */
+[data-theme="desolate-lab"] input,
+[data-theme="desolate-lab"] textarea,
+[data-theme="desolate-lab"] select {
+  border: 1px solid hsl(var(--outline-variant)) !important;
+  background-color: var(--dlab-void) !important;
+  color: var(--dlab-phosphor);
+  caret-color: var(--dlab-signal);
+  transition: border-color 120ms linear;
+}
+[data-theme="desolate-lab"] input::placeholder,
+[data-theme="desolate-lab"] textarea::placeholder { color: var(--dlab-steel); opacity: 1; }
+[data-theme="desolate-lab"] input:focus,
+[data-theme="desolate-lab"] textarea:focus,
+[data-theme="desolate-lab"] select:focus {
+  border-color: var(--dlab-phosphor) !important;
+  background-image: linear-gradient(var(--dlab-signal), var(--dlab-signal));
+  background-size: 2px 100%;
+  background-repeat: no-repeat;
+  outline: none !important;
+}
+[data-theme="desolate-lab"] input[type="checkbox"],
+[data-theme="desolate-lab"] input[type="radio"],
+[data-theme="desolate-lab"] input[type="range"] { accent-color: var(--dlab-phosphor); }
+
+/* Dialogs/overlays — heavy black glass, 1px structural border, a heavier
+   rule along the top like the lid of an instrument case. */
 [data-theme="desolate-lab"] [role="dialog"],
 [data-theme="desolate-lab"] [role="menu"],
 [data-theme="desolate-lab"] [data-radix-popper-content-wrapper] > * {
   border: 1px solid hsl(210 3% 27%) !important;
+  border-top: 2px solid var(--dlab-steel) !important;
   background: hsl(0 0% 5%) !important;
+}
+[data-theme="desolate-lab"] [role="menuitem"]:focus,
+[data-theme="desolate-lab"] [role="menuitem"][data-highlighted],
+[data-theme="desolate-lab"] [role="option"][data-highlighted] {
+  background: linear-gradient(var(--dlab-signal), var(--dlab-signal)) 0 0 / 2px 100% no-repeat, var(--dlab-raised) !important;
+  color: var(--dlab-white) !important;
+}
+
+/* Progress — a segmented instrument meter, not a smooth bar */
+[data-theme="desolate-lab"] [role="progressbar"] {
+  background: var(--dlab-raised) !important;
+}
+[data-theme="desolate-lab"] [role="progressbar"] > * {
+  background: repeating-linear-gradient(90deg, var(--dlab-phosphor) 0 5px, transparent 5px 7px) !important;
+}
+
+/* ── Book cards — specimen drawers ───────────────────────────────────────
+   Flat panels on a structural rule. They do not float on hover (nothing in
+   the annex floats): a reticle closes on the card and one scan pass runs
+   down it. */
+[data-theme="desolate-lab"] [data-book-card] {
+  background: var(--dlab-panel) !important;
+  border: 1px solid var(--dlab-raised);
+  transform: none !important;
+  transition: border-color 140ms linear;
+}
+[data-theme="desolate-lab"] [data-book-card]:hover { border-color: var(--dlab-rule); }
+[data-theme="desolate-lab"] [data-book-card]::before {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  z-index: 20;
+  pointer-events: none;
+  background: var(--dlab-brackets);
+  opacity: 0;
+  transition: opacity 120ms linear, inset 160ms steps(3, end);
+}
+[data-theme="desolate-lab"] [data-book-card]:hover::before { opacity: 0.85; inset: 6px; }
+[data-theme="desolate-lab"] [data-book-card]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 19;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent 0 calc(100% - 28px), rgb(229 226 225 / 0.05) calc(100% - 28px), rgb(229 226 225 / 0.28) calc(100% - 1px), transparent 100%);
+  transform: translateY(-100%);
+  opacity: 0;
+}
+[data-theme="desolate-lab"] [data-book-card]:hover::after {
+  animation: dlab-scan 900ms cubic-bezier(0.3, 0, 0.4, 1) 1 both;
+}
+@keyframes dlab-scan {
+  0%   { transform: translateY(-100%); opacity: 1; }
+  90%  { opacity: 1; }
+  100% { transform: translateY(100%); opacity: 0; }
+}
+
+/* Cover placeholders — an empty specimen plate: hatch, grid, and a legend */
+[data-theme="desolate-lab"] [data-book-card] [data-book-cover-placeholder] {
+  background:
+    repeating-linear-gradient(-45deg, rgb(255 255 255 / 0.03) 0 1px, transparent 1px 7px),
+    linear-gradient(90deg, rgb(255 255 255 / 0.04) 1px, transparent 1px) 0 0 / 20px 20px,
+    linear-gradient(0deg, rgb(255 255 255 / 0.04) 1px, transparent 1px) 0 0 / 20px 20px,
+    #161616 !important;
+  border-bottom: 1px solid var(--dlab-raised);
+}
+[data-theme="desolate-lab"] [data-book-card] [data-book-cover-placeholder] .material-symbols-outlined {
+  color: var(--dlab-steel) !important;
+}
+[data-theme="desolate-lab"] [data-book-card] [data-book-cover-placeholder]::after {
+  content: "NO PLATE ON FILE";
+  position: absolute;
+  left: 10px;
+  bottom: 8px;
+  font-family: var(--font-label);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: var(--dlab-steel);
+}
+[data-theme="desolate-lab"] [data-book-card] [data-book-cover-overlay] {
+  background: linear-gradient(180deg, transparent 0%, rgb(11 11 11 / 0.9) 100%) !important;
+}
+
+/* ── Chat — a transcript log ─────────────────────────────────────────────
+   The station's replies on a panel with a steel rule; the operator's own
+   words on a raised plate marked with the signal edge. Calm, no texture. */
+[data-theme="desolate-lab"] .message-bubble-ai {
+  background: var(--dlab-panel) !important;
+  color: var(--dlab-phosphor) !important;
+  border: 1px solid var(--dlab-raised) !important;
+  border-left: 2px solid var(--dlab-steel) !important;
+}
+[data-theme="desolate-lab"] .message-bubble-user {
+  background: var(--dlab-raised) !important;
+  color: var(--dlab-phosphor) !important;
+  border: 1px solid var(--dlab-rule) !important;
+  border-right: 2px solid var(--dlab-signal) !important;
+}
+
+/* Read-along word pill — phosphor light rather than a coloured glow */
+[data-theme="desolate-lab"] .read-along-pill,
+[data-theme="desolate-lab"] .read-along-ghost {
+  --ra-fill: var(--dlab-phosphor);
+  --ra-glow: var(--dlab-steel);
+}
+
+/* Half tiles: the designation plate yields before the controls do */
+@media (max-width: 420px) {
+  [data-theme="desolate-lab"] [data-wordmark]::after { display: none; }
+  [data-theme="desolate-lab"] [data-wordmark]::before { font-size: 1.35rem; }
+}
+
+/* Honour reduced-motion: freeze the signal pulse, scans and crawl */
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="desolate-lab"] body::after,
+  [data-theme="desolate-lab"] [data-app-header] nav button::after,
+  [data-theme="desolate-lab"] button.bg-primary:hover,
+  [data-theme="desolate-lab"] button[data-sticker-btn]:hover { animation: none !important; }
+  [data-theme="desolate-lab"] [data-book-card]::after { display: none; }
+  [data-theme="desolate-lab"] [data-book-card]::before { transition: none; }
 }
 
 /* ── Read-along (Read tab) ───────────────────────────────────────────────

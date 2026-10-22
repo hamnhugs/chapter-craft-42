@@ -1,0 +1,232 @@
+/* Dexter's Laboratory — the brainwave monitor in the app bar (DextersLabArt.tsx).
+   Painted at z -1 inside the header's stacking context: above the header's
+   own background, under every control.
+
+   Driven by three inputs set from JS:
+     --dl-energy   0..1, the reader's activity (written on .dl-art directly)
+     data-band     alpha | beta (energy above/below BETA_AT)
+     data-shift    day | dusk | night (local clock; night = secret lab)       */
+
+[data-app-header] { isolation: isolate; }
+
+.dl-art {
+  --dl-energy: 0;
+  --dl-room: 1;           /* how lit the room is */
+  --dl-instruments: 0.8;  /* how bright the instruments burn */
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  contain: strict;
+}
+.dl-art[data-shift="dusk"]  { --dl-room: 0.7; --dl-instruments: 0.9; }
+.dl-art[data-shift="night"] { --dl-room: 0.4; --dl-instruments: 1; }
+
+/* ── The glass: ink panel, oscilloscope graticule, a lamp on each side ───── */
+.dl-glass {
+  position: absolute;
+  inset: 0;
+  background:
+    /* major graticule: every 48px */
+    linear-gradient(90deg, rgb(0 238 252 / calc(0.03 + var(--dl-room) * 0.08)) 1px, transparent 1px) 0 0 / 48px 100%,
+    /* minor graticule: every 12px, fainter */
+    linear-gradient(90deg, rgb(237 220 255 / 0.035) 1px, transparent 1px) 0 0 / 12px 100%,
+    linear-gradient(0deg, rgb(237 220 255 / 0.035) 1px, transparent 1px) 0 50% / 100% 12px,
+    /* centre line of the scope */
+    linear-gradient(180deg, transparent calc(72% - 0.5px), rgb(0 238 252 / 0.14) calc(72% - 0.5px), rgb(0 238 252 / 0.14) calc(72% + 0.5px), transparent calc(72% + 0.5px)),
+    radial-gradient(45% 170% at 0% 0%, rgb(189 0 255 / calc(0.03 + var(--dl-room) * 0.24)), transparent 70%),
+    radial-gradient(30% 150% at 42% 100%, rgb(0 238 252 / calc(0.16 - var(--dl-room) * 0.1)), transparent 70%),
+    radial-gradient(35% 160% at 100% 100%, rgb(0 238 252 / calc(0.04 + var(--dl-room) * 0.06)), transparent 70%),
+    linear-gradient(180deg, #1d0a36 0%, #150629 100%);
+  transition: background 2s ease;
+}
+
+/* A slow holographic scan band crossing the bar */
+.dl-sweep {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 22%;
+  min-width: 140px;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgb(189 0 255 / 0.10) 35%,
+    rgb(0 238 252 / 0.14) 50%,
+    rgb(248 216 120 / 0.08) 65%,
+    transparent 100%);
+  mix-blend-mode: screen;
+  transform: translateX(-100%);
+  animation: dl-sweep 11s cubic-bezier(.45,.05,.55,.95) infinite;
+}
+@keyframes dl-sweep {
+  0%, 12% { transform: translateX(-100%); }
+  70%, 100% { transform: translateX(calc(100vw + 100%)); }
+}
+
+/* ── The scope trace ─────────────────────────────────────────────────────── */
+/* The trace rides the lower band of the bar, under the nav labels' baseline,
+   and is masked out behind the wordmark (left) and the bar's buttons (right)
+   so every piece of header text sits on plain ink. */
+.dl-scope {
+  position: absolute;
+  inset: 50% 0 6% 0;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, transparent 262px, #000 330px, #000 calc(100% - 380px), transparent calc(100% - 330px));
+          mask-image: linear-gradient(90deg, transparent 0, transparent 262px, #000 330px, #000 calc(100% - 380px), transparent calc(100% - 330px));
+}
+.dl-amp {
+  position: absolute;
+  inset: 0;
+  transform: scaleY(calc(0.5 + var(--dl-energy) * 0.5));
+  transition: transform 450ms cubic-bezier(.2,.8,.3,1);
+}
+.dl-trace {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 200%;
+  animation: dl-scroll 9s linear infinite;
+}
+.dl-trace svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.dl-trace path {
+  fill: none;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.dl-trace-calm path {
+  stroke: #5ff3ff;
+  filter: drop-shadow(0 0 3px rgb(0 238 252 / 0.85));
+}
+.dl-trace-calm { opacity: calc((0.5 + var(--dl-instruments) * 0.3) * (1 - var(--dl-energy) * 0.75)); }
+.dl-trace-hot path {
+  stroke: #ff5cad;
+  stroke-width: 1.4;
+  filter: drop-shadow(0 0 3px rgb(255 92 173 / 0.9));
+}
+.dl-trace-hot {
+  opacity: calc(var(--dl-energy) * 0.85);
+  animation-duration: 4.5s;
+}
+@keyframes dl-scroll { to { transform: translateX(-50%); } }
+
+/* ── The bench ───────────────────────────────────────────────────────────── */
+/* It stands right after the LAB sticker, in the open stretch before the
+   bar's buttons. That stretch exists from ~900px until the desktop nav moves
+   into the middle of the bar at lg; a half tile has no room for it at all. */
+.dl-bench {
+  position: absolute;
+  bottom: 0;
+  left: 356px;
+  height: 100%;
+  max-height: 60px;
+  width: auto;
+  aspect-ratio: 176 / 56;
+  opacity: calc(0.62 + var(--dl-instruments) * 0.38);
+  transition: opacity 2s ease;
+}
+@media (max-width: 899px), (min-width: 1024px) { .dl-bench { display: none; } }
+
+.dl-benchglow { opacity: calc(0.35 + var(--dl-instruments) * 0.5 + var(--dl-energy) * 0.3); }
+
+.dl-glassline {
+  fill: rgb(237 220 255 / 0.05);
+  stroke: rgb(237 220 255 / 0.62);
+  stroke-width: 1.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.dl-liquid { opacity: 0.88; }
+.dl-stand, .dl-rack, .dl-dial {
+  fill: none;
+  stroke: #4a2f6b;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+.dl-dial { stroke: rgb(0 238 252 / 0.35); stroke-width: 1; stroke-dasharray: 1 3; }
+
+.dl-bubbles circle {
+  fill: rgb(237 220 255 / 0.85);
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: dl-bubble 2.6s ease-in infinite;
+}
+@keyframes dl-bubble {
+  0%   { transform: translateY(0) scale(0.6); opacity: 0; }
+  15%  { opacity: 0.95; }
+  80%  { opacity: 0.7; }
+  100% { transform: translateY(-34px) scale(1.15); opacity: 0; }
+}
+/* When the reader gets going, so does the chemistry. */
+.dl-art[data-band="beta"] .dl-bubbles circle { animation-duration: 1.3s; }
+
+.dl-panel {
+  fill: #1d0a36;
+  stroke: #4a2f6b;
+  stroke-width: 1.2;
+}
+.dl-screen {
+  fill: #0d0420;
+  stroke: rgb(0 238 252 / 0.35);
+  stroke-width: 0.8;
+}
+.dl-readout {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 6.4px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  transition: opacity 300ms ease;
+}
+.dl-readout-alpha { fill: #5ff3ff; }
+.dl-readout-beta  { fill: #ff8fc8; opacity: 0; }
+.dl-art[data-band="beta"] .dl-readout-alpha { opacity: 0; }
+.dl-art[data-band="beta"] .dl-readout-beta  { opacity: 1; }
+
+.dl-lamps rect {
+  fill: #f8d878;
+  opacity: 0.25;
+  animation: dl-lamp 3.2s steps(1, end) infinite;
+}
+.dl-lamps rect:nth-child(2n) { fill: #5ff3ff; animation-duration: 2.3s; }
+.dl-lamps rect:nth-child(3n) { fill: #ff5cad; animation-duration: 4.1s; }
+@keyframes dl-lamp {
+  0%, 38%  { opacity: 0.25; }
+  40%, 72% { opacity: 1; }
+  74%, 100% { opacity: 0.4; }
+}
+/* The secret-lab lamp: dark by day, a slow magenta pulse after bedtime. */
+.dl-secret { fill: #4a2f6b; }
+.dl-art[data-shift="night"] .dl-secret {
+  fill: #ff3d8f;
+  animation: dl-secret 2.8s ease-in-out infinite;
+}
+@keyframes dl-secret {
+  50% { fill: #7a0040; }
+}
+
+/* ── The rail: a holo bus along the bottom with a data packet riding it ──── */
+.dl-rail {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #bd00ff 0%, #00eefc 50%, #f8d878 100%);
+  opacity: 0.55;
+}
+.dl-rail::after {
+  content: "";
+  position: absolute;
+  top: -1px; bottom: -1px; left: 0;
+  width: 90px;
+  background: radial-gradient(closest-side, #ffffff, rgb(0 238 252 / 0.6) 45%, transparent);
+  filter: blur(0.5px);
+  animation: dl-packet 6.5s cubic-bezier(.6,0,.4,1) infinite;
+}
+@keyframes dl-packet {
+  from { transform: translateX(-100px); }
+  to   { transform: translateX(100vw); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dl-art *,
+  .dl-art *::before,
+  .dl-art *::after { animation: none !important; transition: none !important; }
+  .dl-sweep { display: none; }
+}

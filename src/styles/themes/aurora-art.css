@@ -1,0 +1,203 @@
+/* Aurora — the northern lights in the app bar (AuroraArt.tsx).
+   Painted at z -1 inside the header's stacking context: above the header's
+   own glass, under every control. Every moving part is transform/opacity
+   only, so the compositor runs it without repainting the bar.
+
+   Curtain alphas here mirror CURTAIN_ALPHA in components/themes/auroraSky.ts
+   (0.3 / 0.15 / 0.12), and the .au-lights mask mirrors TEXT_BAND (0.55).
+   The test there proves the header's text keeps 4.5:1 over the brightest
+   pixel the three can stack to in the text band at full storm — raise one
+   here and the test must be raised with it. */
+
+[data-app-header] { isolation: isolate; }
+
+.au-sky {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  contain: strict;
+  --au-strength: 0.5;
+  --au-night: 1;
+  --au-crown: 0;
+  --au-hem: 0;
+  --au-twilight: 0;
+  --au-tempo: 1;
+}
+
+/* ── Sky: polar night, lifting to a cold slate by day, a lilac-rose band at
+   the horizon through twilight ─────────────────────────────────────────── */
+.au-gradient,
+.au-gradient::before,
+.au-gradient::after {
+  position: absolute;
+  inset: 0;
+}
+.au-gradient {
+  /* Day: cold slate blue (#121c36 → #18274a). Still dark enough that every
+     header text colour clears 7:1 on it. */
+  background: linear-gradient(180deg, #111a33 0%, #17244a 100%);
+}
+.au-gradient::before {
+  content: "";
+  /* Night: the bar's ink, BAR_INK (9,13,28) at the lower edge. */
+  background: linear-gradient(180deg, #05081a 0%, #090d1c 100%);
+  opacity: var(--au-night);
+  transition: opacity 2s ease;
+}
+.au-gradient::after {
+  content: "";
+  background:
+    radial-gradient(70% 160% at 72% 130%, rgb(255 140 170 / 0.16), transparent 70%),
+    radial-gradient(90% 140% at 35% 135%, rgb(150 110 230 / 0.2), transparent 72%);
+  opacity: var(--au-twilight);
+  transition: opacity 2s ease;
+}
+
+/* ── Stars — two sparse fields, the second twinkling out of phase ──────── */
+.au-stars {
+  position: absolute;
+  inset: 0;
+  opacity: calc(var(--au-night) * 0.85);
+  background:
+    radial-gradient(1px 1px at 4% 22%, #f2f5fc 50%, transparent 100%),
+    radial-gradient(1px 1px at 13% 64%, #c9d4ff 50%, transparent 100%),
+    radial-gradient(1.2px 1.2px at 27% 14%, #ffffff 50%, transparent 100%),
+    radial-gradient(1px 1px at 38% 48%, #dfe7ff 50%, transparent 100%),
+    radial-gradient(1px 1px at 52% 18%, #f2f5fc 50%, transparent 100%),
+    radial-gradient(1.2px 1.2px at 63% 36%, #ffffff 50%, transparent 100%),
+    radial-gradient(1px 1px at 77% 12%, #c9d4ff 50%, transparent 100%),
+    radial-gradient(1px 1px at 88% 52%, #f2f5fc 50%, transparent 100%),
+    radial-gradient(1px 1px at 96% 26%, #ffffff 50%, transparent 100%);
+}
+.au-stars--b {
+  background:
+    radial-gradient(1px 1px at 8% 44%, #ffffff 50%, transparent 100%),
+    radial-gradient(1px 1px at 21% 30%, #dfe7ff 50%, transparent 100%),
+    radial-gradient(1px 1px at 45% 10%, #ffffff 50%, transparent 100%),
+    radial-gradient(1px 1px at 58% 58%, #c9d4ff 50%, transparent 100%),
+    radial-gradient(1px 1px at 71% 24%, #ffffff 50%, transparent 100%),
+    radial-gradient(1px 1px at 92% 8%, #dfe7ff 50%, transparent 100%);
+  animation: au-twinkle 5.5s ease-in-out infinite alternate;
+}
+@keyframes au-twinkle {
+  from { opacity: calc(var(--au-night) * 0.15); }
+  to   { opacity: calc(var(--au-night) * 0.8); }
+}
+
+/* ── Curtains ─────────────────────────────────────────────────────────── */
+/* The text band (21%–79% of the bar) is held to TEXT_BAND of the curtains'
+   alpha; the bright lower edges live below it, the crowns above. */
+.au-lights {
+  position: absolute;
+  inset: 0;
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 12%, rgb(0 0 0 / 0.55) 20%, rgb(0 0 0 / 0.55) 80%, #000 88%, #000 100%);
+  mask-image: linear-gradient(180deg, #000 0%, #000 12%, rgb(0 0 0 / 0.55) 20%, rgb(0 0 0 / 0.55) 80%, #000 88%, #000 100%);
+}
+/* The luminous band the curtains stand in: oxygen green along the bottom
+   (GLOW_ALPHA), a violet sky-glow at the top that warms to rose in storms.
+   Both stay out of the text band by construction. */
+.au-glow {
+  position: absolute;
+  inset: 0 -20%;
+  background:
+    linear-gradient(180deg, transparent 76%, rgb(111 240 192 / 0.5) 92%, rgb(111 240 192 / 0.3) 100%),
+    radial-gradient(40% 120% at 30% 100%, rgb(95 217 230 / 0.35), transparent 70%),
+    radial-gradient(35% 120% at 75% 100%, rgb(111 240 192 / 0.3), transparent 70%),
+    linear-gradient(0deg, transparent 80%, rgb(185 166 255 / 0.22) 100%);
+  opacity: calc(var(--au-strength));
+  animation: au-glow-drift 70s ease-in-out infinite alternate;
+  transition: opacity 2s ease;
+}
+.au-glow::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(0deg, transparent 80%, rgb(255 93 122 / 0.3) 100%);
+  opacity: var(--au-crown);
+}
+@keyframes au-glow-drift {
+  from { translate: -8% 0; }
+  to   { translate: 8% 0; }
+}
+.au-curtain {
+  position: absolute;
+  top: 0;
+  left: -10%;
+  width: 220%;
+  height: 100%;
+  overflow: visible;
+  transform-origin: 50% 100%;
+  /* Typical nights sit at 0.6–0.85 of the cap; a full storm reaches it. */
+  --au-a: calc(var(--au-cap) * (0.35 + 0.65 * var(--au-strength)));
+  opacity: var(--au-a);
+  filter: blur(0.4px);
+  will-change: translate, scale, opacity;
+  animation:
+    au-drift calc(var(--au-period) / var(--au-tempo)) ease-in-out infinite alternate,
+    au-sway calc(var(--au-period) * 0.23 / var(--au-tempo)) ease-in-out infinite alternate,
+    au-breathe calc(var(--au-period) * 0.11) ease-in-out infinite alternate;
+  transition: opacity 2s ease;
+}
+.au-curtain--a { --au-cap: 0.3;  --au-period: 96s;  animation-delay: -31s, -7s, -3s; }
+.au-curtain--b { --au-cap: 0.15; --au-period: 128s; animation-delay: -77s, -19s, -8s;  animation-direction: alternate-reverse, alternate, alternate; }
+.au-curtain--c { --au-cap: 0.12; --au-period: 160s; animation-delay: -12s, -40s, -11s; }
+
+@keyframes au-drift {
+  from { translate: 0 0; }
+  to   { translate: -42% 0; }
+}
+@keyframes au-sway {
+  from { scale: 1 0.9; }
+  to   { scale: 1 1.08; }
+}
+@keyframes au-breathe {
+  from { opacity: calc(var(--au-a) * 0.62); }
+  to   { opacity: var(--au-a); }
+}
+
+/* Each ray fades upward from a sharp lower edge. Red crown at the top only in
+   storms; violet nitrogen hem below the edge as the display intensifies. */
+.au-stop-crown { stop-color: rgb(255 93 122); stop-opacity: calc(var(--au-crown) * 0.75); }
+.au-stop-fade  { stop-opacity: 0.1; }
+.au-stop-core  { stop-opacity: 0.7; }
+.au-stop-edge  { stop-opacity: 1; }
+.au-stop-hem   { stop-color: rgb(176 124 255); stop-opacity: calc(var(--au-hem) * 0.8); }
+
+.au-curtain--a .au-stop-fade,
+.au-curtain--a .au-stop-core { stop-color: rgb(79 240 168); }
+.au-curtain--a .au-stop-edge { stop-color: rgb(140 255 205); }
+.au-curtain--b .au-stop-fade,
+.au-curtain--b .au-stop-core { stop-color: rgb(63 216 224); }
+.au-curtain--b .au-stop-edge { stop-color: rgb(130 236 248); }
+.au-curtain--c .au-stop-fade,
+.au-curtain--c .au-stop-core { stop-color: rgb(169 139 255); }
+.au-curtain--c .au-stop-edge { stop-color: rgb(200 182 255); }
+
+/* By day the curtains are only a pastel memory behind the slate. */
+.au-sky[data-phase="day"] .au-curtain { filter: blur(2px) saturate(0.7); }
+
+/* ── Spruce treeline — ink on ink, a horizon for the lights to stand over ─ */
+.au-treeline {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+}
+.au-treeline path {
+  fill: #03050d;
+  fill-opacity: 0.9;
+}
+
+/* Narrow bars (phones, half tiles): fewer, slower folds read better. */
+@media (max-width: 640px) {
+  .au-curtain--c { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .au-sky *,
+  .au-sky *::before,
+  .au-sky *::after { animation: none !important; transition: none !important; }
+}

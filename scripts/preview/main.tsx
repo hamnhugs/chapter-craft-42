@@ -75,12 +75,12 @@ async function main() {
   } else if (view === "header") {
     // The app bar as Index.tsx draws it, for the Bookworm Studio Vegas sky
     // (add &vegasSky=day|dusk|night|<ISO> &vegasWeather=clear|cloudy|rain).
-    const { default: VegasSky } = await import("@/components/VegasSky");
+    const { default: HeaderArt } = await import("@/components/themes/HeaderArt");
     const btn = "text-primary p-2 rounded-lg flex items-center";
     el = (
       <div className="min-h-screen bg-background">
         <header data-app-header className="cc-app-bar sticky top-0 w-full flex items-center justify-between px-4 sm:px-6 py-2 bg-background/80 backdrop-blur-xl z-50">
-          <VegasSky />
+          <HeaderArt themeId={(new URLSearchParams(location.search).get("theme") as any) || "bookworm-studio"} />
           <div className="flex items-center gap-3">
             <span className="material-symbols-outlined text-accent text-2xl">menu_book</span>
             <span data-wordmark className="font-display font-bold text-2xl tracking-tight text-primary">​</span>
@@ -98,7 +98,7 @@ async function main() {
         </header>
         <div className="p-6 max-w-3xl mx-auto text-foreground font-body">
           <h1 className="font-headline text-3xl font-bold mb-2">Good evening</h1>
-          <p className="text-muted-foreground">The sky above is Las Vegas, right now.</p>
+          <p className="text-muted-foreground">The bar above is this theme's living backdrop.</p>
         </div>
       </div>
     );

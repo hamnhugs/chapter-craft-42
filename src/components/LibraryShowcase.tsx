@@ -406,6 +406,7 @@ const LibraryShowcase: React.FC<{
                   <li key={p.id}>
                     <button
                       data-active={isActive}
+                      data-no-sticker
                       aria-current={isActive ? "true" : undefined}
                       onClick={() => select(i)}
                       onDoubleClick={() => onOpenBook(p.id)}
