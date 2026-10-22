@@ -10,7 +10,7 @@
  *   chromium --headless --screenshot=out.png --window-size=1280,900 \
  *     "http://localhost:5199/scripts/preview/index.html?view=showcase&theme=aurora"
  *
- *   ?view=showcase|pocket  &theme=<id>  &state=listening|thinking|speaking
+ *   ?view=showcase|pocket|header  &theme=<id>  &state=listening|thinking|speaking
  *   &caption=1 (pocket: show a reply)   &empty=1 (showcase: sparse book)
  */
 import React from "react";
@@ -72,6 +72,36 @@ async function main() {
       ? { id: "m1", from: (state === "thinking" ? "user" : "assistant") as "user" | "assistant", text: state === "thinking" ? "What does he mean by the emissary usurping the master?" : REPLY }
       : null;
     el = <PocketScreen active state={state} caption={caption} />;
+  } else if (view === "header") {
+    // The app bar as Index.tsx draws it, for the Bookworm Studio Vegas sky
+    // (add &vegasSky=day|dusk|night|<ISO> &vegasWeather=clear|cloudy|rain).
+    const { default: HeaderArt } = await import("@/components/themes/HeaderArt");
+    const btn = "text-primary p-2 rounded-lg flex items-center";
+    el = (
+      <div className="min-h-screen bg-background">
+        <header data-app-header className="cc-app-bar sticky top-0 w-full flex items-center justify-between px-4 sm:px-6 py-2 bg-background/80 backdrop-blur-xl z-50">
+          <HeaderArt themeId={(new URLSearchParams(location.search).get("theme") as any) || "bookworm-studio"} />
+          <div className="flex items-center gap-3">
+            <span className="material-symbols-outlined text-accent text-2xl">menu_book</span>
+            <span data-wordmark className="font-display font-bold text-2xl tracking-tight text-primary">​</span>
+          </div>
+          <nav className="hidden lg:flex items-center gap-6 font-body text-sm">
+            {["Counsel", "Vault", "Read", "Notebooks", "Settings"].map((t, i) => (
+              <button key={t} className={i === 0 ? "text-accent border-b-2 border-accent pb-1" : "text-secondary"} aria-current={i === 0 ? "page" : undefined}>{t}</button>
+            ))}
+          </nav>
+          <div className="flex items-center gap-2">
+            <span className="hidden sm:inline-flex items-center px-2.5 py-1 rounded-full bg-accent/10 text-xs text-accent">Marketing shelf</span>
+            <button className={btn}><span className="material-symbols-outlined">workspace_premium</span></button>
+            <button className={btn}><span className="material-symbols-outlined">palette</span></button>
+          </div>
+        </header>
+        <div className="p-6 max-w-3xl mx-auto text-foreground font-body">
+          <h1 className="font-headline text-3xl font-bold mb-2">Good evening</h1>
+          <p className="text-muted-foreground">The bar above is this theme's living backdrop.</p>
+        </div>
+      </div>
+    );
   } else {
     const { default: LibraryShowcase } = await import("@/components/LibraryShowcase");
     el = (

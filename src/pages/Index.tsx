@@ -9,7 +9,7 @@ import WikiQuickSwitcher from "@/components/WikiQuickSwitcher";
 import ThemeSwitcher from "@/components/ThemeSwitcher";
 import ConflictNotifier from "@/components/ConflictNotifier";
 import StripeBar from "@/components/fruit-stripe/StripeBar";
-import VegasSky from "@/components/VegasSky";
+import HeaderArt from "@/components/themes/HeaderArt";
 import PricingDialog, { PlanBadgeButton } from "@/components/PricingDialog";
 import SetupWizard from "@/components/SetupWizard";
 import AdBanner from "@/components/ads/AdBanner";
@@ -207,7 +207,6 @@ const Index: React.FC = () => {
   const activeBook = getActiveBook();
   const { themeId } = useTheme();
   const isFruitStripe = themeId === "fruit-stripe";
-  const isBookwormStudio = themeId === "bookworm-studio";
   useVisitTracker();
 
   const viewerLabel = activeBook?.title || tabs.find((t) => t.id === "viewer")!.label;
@@ -216,8 +215,8 @@ const Index: React.FC = () => {
     <div className="flex flex-col h-app bg-background">
       {/* Top App Bar */}
       <header data-app-header className="cc-app-bar sticky top-0 w-full flex items-center justify-between px-4 sm:px-6 py-2 bg-background/80 backdrop-blur-xl z-50 shadow-[0px_4px_20px_rgba(0,0,0,0.04),0px_10px_40px_rgba(0,0,0,0.08)]">
-        {/* Bookworm Studio: the live Las Vegas sky behind the bar's contents. */}
-        {isBookwormStudio && <VegasSky />}
+        {/* Each theme's living backdrop behind the bar's contents (Bookworm Studio: the live Vegas sky). */}
+        <HeaderArt themeId={themeId} />
         <div className="flex items-center gap-3">
           <span className="material-symbols-outlined text-accent text-2xl">menu_book</span>
           <span data-wordmark className="font-display font-bold text-2xl tracking-tight text-primary">​</span>
