@@ -86,11 +86,11 @@
     @apply border-border;
   }
 
-  /* Sizes are rem-based, so this scales the whole UI to what one Ctrl+minus
-     (90%) looks like. Mouse/trackpad screens only: phones keep 16px so iOS
+  /* Sizes are rem-based, so this scales the whole UI down a notch past one Ctrl+minus
+     (85%). Mouse/trackpad screens only: phones keep 16px so iOS
      doesn't zoom into inputs under 16px. */
   @media (pointer: fine) {
-    html { font-size: 90%; }
+    html { font-size: 85%; }
   }
 
   body {
