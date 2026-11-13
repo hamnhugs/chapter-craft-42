@@ -25,11 +25,6 @@ import { bookHaystack, matchesAll, tokenize } from "@/lib/librarySearch";
 import { seekLibrary, SEEK_FETCH_CAP, type SeekOutcome } from "@/lib/librarySeek";
 
 import LibraryList from "@/components/LibraryList";
-import LibraryShowcase from "@/components/LibraryShowcase";
-
-// The 3D mind map pulls in three.js (~300KB gzip); lazy-load so that chunk is
-// only fetched when the user actually toggles the graph view on.
-const LibraryGraph = lazy(() => import("@/components/LibraryGraph"));
 
 // YouTube import (the former Reel tab) — lazy so its chunk loads only when
 // the dialog opens.
@@ -98,7 +93,7 @@ const MAX_UPLOAD_ATTEMPTS = 3;
 const MAX_CONCURRENT_UPLOADS = 3;
 
 
-type ViewMode = "cards" | "list" | "showcase" | "graph";
+type ViewMode = "cards" | "list";
 const VIEW_KEY = "vault_view_mode";
 /**
  * Everything below is state the Vault used to throw away.
@@ -122,11 +117,9 @@ const RESURFACE_DISMISS_KEY = "vault_resurface_dismissed_day";
  *  already see — resurfacing needs a library big enough to forget things in. */
 const RESURFACE_MIN_BOOKS = 6;
 
-/** The views besides the cards, offered from the "more" menu. */
+/** The view besides the cards, offered from the "more" menu. */
 const OTHER_VIEWS: { id: ViewMode; icon: string; label: string; hint: string }[] = [
   { id: "list", icon: "view_list", label: "View as a list", hint: "A table you can sort by column" },
-  { id: "showcase", icon: "play_circle", label: "Showcase", hint: "One book at a time, full screen" },
-  { id: "graph", icon: "hub", label: "Mind map", hint: "Books linked by category and tag" },
 ];
 
 
@@ -193,7 +186,7 @@ const Library: React.FC = () => {
     // Cards — shelves included — are the default. The old Shelves view is
     // gone, so a stored "shelves" lands on the cards too.
     const v = localStorage.getItem(VIEW_KEY);
-    return v === "list" || v === "graph" || v === "showcase" ? v : "cards";
+    return v === "list" ? v : "cards";
   });
   useEffect(() => {
     try { localStorage.setItem(SORT_KEY, sortBy); } catch { /* private mode */ }
@@ -985,19 +978,6 @@ const Library: React.FC = () => {
             ) : (
               <span className="flex-1" />
             )}
-            {books.length > 1 && view === "showcase" && (
-              <button
-                onClick={() => setSortBy((v) => (v === "date" ? "name" : "date"))}
-                title={sortBy === "date" ? "Sorted by date added — switch to A–Z" : "Sorted A–Z — switch to date added"}
-                aria-label={sortBy === "date" ? "Sort: recently added. Switch to by name" : "Sort: by name. Switch to recently added"}
-                className="cc-tap-44 shrink-0 flex items-center gap-1.5 px-3 py-3 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all"
-              >
-                <span className="material-symbols-outlined text-lg leading-none" aria-hidden>
-                  {sortBy === "date" ? "schedule" : "sort_by_alpha"}
-                </span>
-                <span className="hidden md:inline">{sortBy === "date" ? "Recent" : "A–Z"}</span>
-              </button>
-            )}
             {/* Add: one click to the file picker, the arrow for YouTube. */}
             <div className="shrink-0 flex items-stretch rounded-xl">
               <button
@@ -1050,13 +1030,12 @@ const Library: React.FC = () => {
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-60">
-                {/* Three other ways to look at the same books. Rarely used,
-                    so they live here instead of on a five-icon switch. */}
+                {/* The other way to look at the same books. Rarely used,
+                    so it lives here instead of on a switch. */}
                 {OTHER_VIEWS.map((v) => (
                   <DropdownMenuItem
                     key={v.id}
                     onSelect={() => setView(view === v.id ? "cards" : v.id)}
-                    onMouseEnter={() => { if (v.id === "graph") void import("@/components/LibraryGraph"); }}
                   >
                     <span className="material-symbols-outlined text-base mr-2" aria-hidden>{view === v.id ? "check" : v.icon}</span>
                     <span className="flex flex-col">
@@ -1276,7 +1255,7 @@ const Library: React.FC = () => {
           className="hidden"
         />
 
-        {/* Shelves / list / 3D mind map (search filters all views the same way) */}
+        {/* Cards / list (search filters both views the same way) */}
         {booksError ? (
           /* A failed read used to be indistinguishable from an empty library:
              the only trace was a console.error, and the upsell stayed up
@@ -1328,19 +1307,6 @@ const Library: React.FC = () => {
               Clear search
             </button>
           </div>
-        ) : view === "graph" ? (
-          <LazyErrorBoundary title="The mind map couldn't load" hint="Check your connection and try toggling it again.">
-            <Suspense
-              fallback={
-                <div className="flex flex-col items-center justify-center h-[60vh] min-h-[min(420px,60dvh)] rounded-2xl bg-surface-container-low border border-outline-variant/10 text-on-surface-variant">
-                  <span className="material-symbols-outlined text-4xl animate-spin mb-3">progress_activity</span>
-                  <p className="text-sm">Loading mind map…</p>
-                </div>
-              }
-            >
-              <LibraryGraph books={filteredBooks} onOpenBook={(id) => requestBookLoad(id)} />
-            </Suspense>
-          </LazyErrorBoundary>
         ) : view === "cards" ? (
           <LibraryDeck
             books={filteredBooks}
@@ -1350,13 +1316,6 @@ const Library: React.FC = () => {
             softDelete={softDelete}
             busyByBook={busyByBook}
             handlers={cardHandlers}
-            highlight={(text) => <Highlight text={text} query={query} />}
-          />
-        ) : view === "showcase" ? (
-          <LibraryShowcase
-            books={filteredBooks}
-            shelves={shelves}
-            onOpenBook={(id) => requestBookLoad(id)}
             highlight={(text) => <Highlight text={text} query={query} />}
           />
         ) : (
@@ -1379,7 +1338,7 @@ const Library: React.FC = () => {
             to get past on the way to a book. One line, in the
             reader's case — it is a quotation, not a control label, so it opts
             out of the themes that capitalise every button. */}
-        {resurfaced && view !== "graph" && (
+        {resurfaced && (
           <div className="flex items-center gap-3 rounded-xl pl-4 pr-1.5 py-1.5 bg-surface-container-low/60 border border-outline-variant/10">
             <span className="material-symbols-outlined text-on-surface-variant/70 text-lg" aria-hidden>
               auto_stories

@@ -2208,9 +2208,9 @@
  * This sits on the SHELVES VIEW's root, deliberately not on `<main>`.
  * `container-type` applies layout containment, and layout containment makes an
  * element a containing block for `position: fixed` descendants — which would
- * capture LibraryGraph's `fixed inset-0 z-[100]` expanded mind map and paint
- * "fullscreen" as main's 32,000px-tall box, clipped by the Vault's own
- * `overflow-auto`. Chromium 148 measured as NOT confining it (a `fixed`
+ * capture a `fixed inset-0 z-[100]` fullscreen overlay (the since-removed mind
+ * map had one) and paint "fullscreen" as main's 32,000px-tall box, clipped by
+ * the Vault's own `overflow-auto`. Chromium 148 measured as NOT confining it (a `fixed`
  * `inset: 0` probe inside `main` reported the full 375x812 viewport), so this
  * has never been a live bug here — but the spec says it should, engines
  * disagree, and the repo has already shipped this exact failure once with

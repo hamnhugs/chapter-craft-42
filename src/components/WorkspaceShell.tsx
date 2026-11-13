@@ -40,8 +40,8 @@
  *      name assembled by concatenation is never emitted into the stylesheet
  *      and the overlay silently loses `position: fixed`.
  *
- * The repo already ships this pattern correctly in three places —
- * `MediaFrame.tsx:307`, `LibraryGraph.tsx:271`, `NeuronGraph.tsx:320` —
+ * The repo already ships this pattern correctly in two places —
+ * `MediaFrame.tsx:307`, `NeuronGraph.tsx:320` —
  * all `expanded ? "fixed inset-0 z-[100] …"` on
  * the SAME node. `MediaFrame.tsx:9-13` states the rationale verbatim for its
  * WebGL context; ours is a browsing context, and browsing contexts are worse:
@@ -115,8 +115,8 @@ export interface WorkspaceShellProps {
  *            which is why its width budget reserves only a peek strip.
  *   full   — the whole viewport.
  *
- * `z-[100]` is the repo's "owns the whole screen" layer (`MediaFrame.tsx:307`,
- * `LibraryGraph.tsx:271`), and it sits correctly below `PocketScreen`'s
+ * `z-[100]` is the repo's "owns the whole screen" layer (`MediaFrame.tsx:307`),
+ * and it sits correctly below `PocketScreen`'s
  * `z-[200]`. The scrim takes `z-[99]`, one below the panel.
  *
  * `min-w-0` is on every one of them. In `dock` today's column has none and is

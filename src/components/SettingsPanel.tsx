@@ -1311,7 +1311,7 @@ const SettingsPanel: React.FC = () => {
                   description={seasonal
                     ? <>Now: <span className="capitalize">{season.season}</span> · {Math.round(season.nextTurn.days)} days until {season.nextTurn.name}.</>
                     : "Warms or cools the accent slightly as the year turns."}
-                  more="Nudges the current theme's accent a few degrees warmer or cooler as the year turns, and sets the drift of the Showcase view. Lightness is never changed, so contrast stays exactly where the theme put it."
+                  more="Nudges the current theme's accent a few degrees warmer or cooler as the year turns. Lightness is never changed, so contrast stays exactly where the theme put it."
                 >
                   <Switch checked={seasonal} onCheckedChange={setSeasonal} aria-label="Drift with the season" />
                 </Row>
