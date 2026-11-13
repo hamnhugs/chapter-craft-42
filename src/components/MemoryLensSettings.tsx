@@ -61,7 +61,7 @@ const MemoryLensSettings: React.FC = () => {
                     setMuted((prev) => prev.filter((x) => x.id !== m.id));
                     toast.success("Image can auto-show again");
                   }}
-                  className="text-[10px] font-bold uppercase tracking-widest text-primary hover:underline"
+                  className="text-xs font-medium text-primary hover:underline"
                 >
                   Unmute
                 </button>

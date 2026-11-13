@@ -69,13 +69,12 @@ const VideoModelsSettings: React.FC = () => {
     ? clipCostLabel(selected, { duration: effDuration, resolution: effResolution, audio: videoGenerateAudio })
     : "";
 
-  const selectCls = "w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40";
-  const labelCls = "text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1";
+  const selectCls = "w-full bg-surface-container-high border border-outline-variant/15 rounded-lg text-sm text-foreground py-2 px-3 focus:ring-1 focus:ring-primary/40";
+  const labelCls = "text-xs font-medium text-on-surface-variant px-1";
 
   return (
-    <section className="p-3 md:p-4 rounded-xl bg-surface-container-low flex flex-col gap-4">
+    <section className="flex flex-col gap-4">
       <header className="flex flex-col gap-1">
-        <h3 className="text-sm font-bold text-foreground">Video Generation</h3>
         <p className="text-xs text-on-surface-variant">
           Pick which model the AI uses for <code className="text-[11px]">generate_video</code>. Video is billed per
           second to your OpenRouter key and costs far more than an image — set defaults and a confirm threshold below.
@@ -128,7 +127,7 @@ const VideoModelsSettings: React.FC = () => {
 
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <button
-          type="button" role="switch" aria-checked={videoGenerateAudio}
+          type="button" data-no-sticker role="switch" aria-checked={videoGenerateAudio}
           onClick={() => setVideoGenerateAudio(!videoGenerateAudio)}
           className="flex items-center gap-2.5 text-left"
         >
@@ -176,7 +175,7 @@ const VideoModelsSettings: React.FC = () => {
           </div>
         </div>
         <button
-          type="button" role="switch" aria-checked={videoQcEnabled}
+          type="button" data-no-sticker role="switch" aria-checked={videoQcEnabled}
           onClick={() => setVideoQcEnabled(!videoQcEnabled)}
           className="flex items-center gap-2.5 text-left"
         >

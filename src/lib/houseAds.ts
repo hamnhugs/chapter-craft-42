@@ -17,8 +17,8 @@ export const HOUSE_ADS: HouseAd[] = [
   {
     id: "neurons",
     icon: "neurology",
-    headline: "One neuron is lonely",
-    body: "Pro unlocks unlimited neurons — grow a whole brain from your library.",
+    headline: "One notebook is lonely",
+    body: "Pro unlocks unlimited notebooks — one for every subject you read about.",
     cta: "Upgrade — $4.99/mo",
     gradient: ["#7C3AED", "#2563EB"],
   },

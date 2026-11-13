@@ -150,7 +150,7 @@ const CaptureQuoteDialog: React.FC<CaptureQuoteDialogProps> = ({ open, onClose, 
 
   const handleSave = async () => {
     if (!activeWikiId) {
-      toast.error("Load a neuron first — the card needs a wiki to live in.");
+      toast.error("Open a notebook first — the note needs somewhere to go.");
       return;
     }
     if (!title.trim()) return;
@@ -230,7 +230,7 @@ const CaptureQuoteDialog: React.FC<CaptureQuoteDialogProps> = ({ open, onClose, 
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle className="font-display">Save quote to neuron</DialogTitle>
+          <DialogTitle className="font-display">Save quote to notebook</DialogTitle>
         </DialogHeader>
         <div className="space-y-3 py-1">
           <blockquote className="border-l-2 border-primary/40 pl-3 text-sm text-on-surface-variant max-h-24 overflow-y-auto whitespace-pre-wrap">

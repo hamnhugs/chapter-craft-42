@@ -176,11 +176,11 @@ describe("focusEpoch", () => {
 });
 
 describe("describeLoad", () => {
-  const names = { shelf: (id: string) => `Shelf ${id}`, book: (id: string) => `Book ${id}`, wiki: (id: string) => `Neuron ${id}` };
+  const names = { shelf: (id: string) => `Shelf ${id}`, book: (id: string) => `Book ${id}`, wiki: (id: string) => `Notebook ${id}` };
   it("names what was replaced and what was kept", () => {
     const prev: FocusState = { selection: { shelfId: "s1", bookIds: [], excludedIds: [] }, activeBookId: "b1", wikiIds: ["w1"] };
     const out = applyLoad(prev, { kind: "shelf", shelfId: "s2", neurons: { kind: "keep" } });
-    expect(describeLoad(prev, out, names)).toBe('Loaded shelf "Shelf s2", replacing shelf "Shelf s1". Kept neuron "Neuron w1".');
+    expect(describeLoad(prev, out, names)).toBe('Loaded shelf "Shelf s2", replacing shelf "Shelf s1". Kept notebook "Notebook w1".');
   });
   it("says when nothing changed", () => {
     const prev: FocusState = { selection: { shelfId: "s1", bookIds: [], excludedIds: [] }, activeBookId: null, wikiIds: ["w1"] };
@@ -190,6 +190,6 @@ describe("describeLoad", () => {
   it("narrates a book opened alongside a shelf without claiming a replacement", () => {
     const prev: FocusState = { selection: { shelfId: "s1", bookIds: [], excludedIds: [] }, activeBookId: null, wikiIds: ["w1", "w2"] };
     const out = applyLoad(prev, { kind: "book", bookId: "b3", neurons: { kind: "keep" }, alongside: true });
-    expect(describeLoad(prev, out, names)).toBe('Opened "Book b3" in the reader. Kept neuron "Neuron w1" (+1).');
+    expect(describeLoad(prev, out, names)).toBe('Opened "Book b3" in the reader. Kept notebook "Notebook w1" (+1).');
   });
 });

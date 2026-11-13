@@ -51,7 +51,9 @@ describe("nothing stacks under the composer", () => {
   });
 
   it("keeps the context strips to a single scrolling line", () => {
-    expect(count(CHAT_PANEL, "flex flex-nowrap overflow-x-auto hide-scrollbar items-center")).toBe(2);
+    // Two in the composer (pinned files, loaded books) and the notebook row
+    // above the transcript, which wrapped onto extra rows in short windows.
+    expect(count(CHAT_PANEL, "flex flex-nowrap overflow-x-auto hide-scrollbar items-center")).toBe(3);
   });
 
   it("defaults loaded books to collapsed, so the bar does not grow with context", () => {
@@ -129,7 +131,7 @@ describe("the tools sheet", () => {
   });
 
   it("carries the controls the chip row used to hold", () => {
-    for (const label of ["Neurons", "Books", "Files", "Notes", "Deep Research", "Read Aloud", "Settings"]) {
+    for (const label of ["Notebooks", "Off the record", "Books", "Files", "Voice notes", "Deep Research", "Read Aloud", "Settings"]) {
       expect(SHEET).toContain(`label="${label}"`);
     }
     expect(SHEET).toContain("<PromptSwitcher");

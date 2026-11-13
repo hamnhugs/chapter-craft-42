@@ -3,6 +3,7 @@ import { useChatSettings } from "@/hooks/useChatSettings";
 import { IMAGE_MODELS, IMAGE_ASPECT_RATIOS } from "@/lib/imageGen";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
+import ImagesPanel from "@/components/ImagesPanel";
 
 const ImageModelsSettings: React.FC = () => {
   const {
@@ -13,36 +14,42 @@ const ImageModelsSettings: React.FC = () => {
     setImageQuality, setImageSize,
   } = useChatSettings();
   const [newModel, setNewModel] = useState("");
+  const [imagesOpen, setImagesOpen] = useState(false);
   const allModels = Array.from(new Set([...savedImageModels, ...IMAGE_MODELS]));
 
   return (
-    <section className="p-3 md:p-4 rounded-xl bg-surface-container-low flex flex-col gap-4">
+    <section className="flex flex-col gap-4">
       <header className="flex flex-col gap-1">
-        <h3 className="text-sm font-bold text-foreground">Image Generation</h3>
         <p className="text-xs text-on-surface-variant">
           Pick which model the AI uses when generating or editing images. Primary is tried first;
           if it fails the fallback runs automatically. Built-in defaults are always available.
         </p>
+        <div>
+          <Button variant="outline" size="sm" onClick={() => setImagesOpen(true)}>
+            View all generated images
+          </Button>
+          <ImagesPanel open={imagesOpen} onOpenChange={setImagesOpen} />
+        </div>
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="flex flex-col gap-1.5">
-          <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Primary Image Model</label>
+          <label className="text-xs font-medium text-on-surface-variant px-1">Primary Image Model</label>
           <select
             value={imageModelPrimary}
             onChange={(e) => setImageModelPrimary(e.target.value)}
-            className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40"
+            className="w-full bg-surface-container-high border border-outline-variant/15 rounded-lg text-sm text-foreground py-2 px-3 focus:ring-1 focus:ring-primary/40"
           >
             <option value="">Auto (use built-in default)</option>
             {allModels.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
         </div>
         <div className="flex flex-col gap-1.5">
-          <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Fallback Image Model</label>
+          <label className="text-xs font-medium text-on-surface-variant px-1">Fallback Image Model</label>
           <select
             value={imageModelFallback}
             onChange={(e) => setImageModelFallback(e.target.value)}
-            className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40"
+            className="w-full bg-surface-container-high border border-outline-variant/15 rounded-lg text-sm text-foreground py-2 px-3 focus:ring-1 focus:ring-primary/40"
           >
             <option value="">None</option>
             {allModels.map((m) => <option key={m} value={m}>{m}</option>)}
@@ -52,11 +59,11 @@ const ImageModelsSettings: React.FC = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="flex flex-col gap-1.5">
-          <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Quality</label>
+          <label className="text-xs font-medium text-on-surface-variant px-1">Quality</label>
           <select
             value={imageQuality}
             onChange={(e) => setImageQuality(e.target.value)}
-            className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40"
+            className="w-full bg-surface-container-high border border-outline-variant/15 rounded-lg text-sm text-foreground py-2 px-3 focus:ring-1 focus:ring-primary/40"
           >
             <option value="">Auto</option>
             <option value="standard">Standard</option>
@@ -64,11 +71,11 @@ const ImageModelsSettings: React.FC = () => {
           </select>
         </div>
         <div className="flex flex-col gap-1.5">
-          <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Default Aspect</label>
+          <label className="text-xs font-medium text-on-surface-variant px-1">Default Aspect</label>
           <select
             value={imageSize}
             onChange={(e) => setImageSize(e.target.value)}
-            className="w-full bg-surface-container-high border-none rounded-lg text-sm text-primary py-2.5 px-4 appearance-none focus:ring-1 focus:ring-primary/40"
+            className="w-full bg-surface-container-high border border-outline-variant/15 rounded-lg text-sm text-foreground py-2 px-3 focus:ring-1 focus:ring-primary/40"
           >
             <option value="">Auto (1:1)</option>
             {IMAGE_ASPECT_RATIOS.map((r) => <option key={r} value={r}>{r}</option>)}
@@ -77,7 +84,7 @@ const ImageModelsSettings: React.FC = () => {
       </div>
 
       <div className="flex flex-col gap-2">
-        <label className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant px-1">Saved Image Models</label>
+        <label className="text-xs font-medium text-on-surface-variant px-1">Saved Image Models</label>
         <div className="flex flex-wrap gap-1.5">
           {savedImageModels.length === 0 && (
             <span className="text-xs text-on-surface-variant italic">No custom image models saved yet.</span>

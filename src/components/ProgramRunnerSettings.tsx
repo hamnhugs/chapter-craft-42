@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Switch } from "@/components/ui/switch";
+import { Disclosure, Group, Pill, Row } from "@/components/settings/SettingsUI";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useChatSettings } from "@/hooks/useChatSettings";
@@ -166,7 +167,7 @@ const ScheduleControl: React.FC<{ program: AgentProgramRow; schedule?: ProgramSc
     </div>
     {liveTail && (
       <div className="mt-1 rounded border border-outline/30 bg-black/20 p-2">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-on-surface-variant">
+        <p className="text-xs font-medium text-on-surface-variant">
           Live output{lastCron?.progress_at ? ` · ${new Date(lastCron.progress_at).toLocaleTimeString()}` : ""}
         </p>
         <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-snug text-on-surface">{liveTail}</pre>
@@ -299,29 +300,22 @@ const ProgramRunnerSettings: React.FC = () => {
       )}
 
       {/* ── Master switches ── */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-on-surface">Forge new programs</p>
-          <p className="text-xs text-on-surface-variant">Let the AI write bash/python/node programs for your VPS. Nothing runs without your per-program approval.</p>
-        </div>
-        <Switch checked={forgeOn} onCheckedChange={(v) => setChatToolPermission("forge_program", v)} aria-label="Allow forging programs" />
-      </div>
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-on-surface">Run approved programs</p>
-          <p className="text-xs text-on-surface-variant">Let the AI execute programs you've approved on your connected runner.</p>
-        </div>
-        <Switch checked={runOn} onCheckedChange={(v) => setChatToolPermission("run_program", v)} aria-label="Allow running programs" />
-      </div>
+      <Group>
+        <Row label="Forge new programs" description="The AI may write bash, Python or Node programs. Each one needs your approval.">
+          <Switch checked={forgeOn} onCheckedChange={(v) => setChatToolPermission("forge_program", v)} aria-label="Allow forging programs" />
+        </Row>
+        <Row label="Run approved programs" description="On your connected runner only.">
+          <Switch checked={runOn} onCheckedChange={(v) => setChatToolPermission("run_program", v)} aria-label="Allow running programs" />
+        </Row>
 
       {/* ── Runner connection ── */}
-      <div className="rounded-lg border border-outline/40 p-3 flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <p className="text-sm font-semibold text-on-surface">VPS runner</p>
-          <span className={`text-[11px] font-medium ${programRunnerConfigured ? "text-emerald-500" : "text-on-surface-variant"}`}>
-            {programRunnerConfigured ? "connected" : "not connected"}
-          </span>
-        </div>
+      <Disclosure
+        icon="dns"
+        label={<span className="flex items-center gap-2">VPS runner {programRunnerConfigured ? <Pill tone="ok">Connected</Pill> : <Pill>Not connected</Pill>}</span>}
+        summary={programRunnerConfigured ? url || "Runner saved" : "Connect your server so approved programs can run"}
+        defaultOpen={false}
+      >
+      <div className="flex flex-col gap-3">
         <p className="text-xs text-on-surface-variant">
           Deploy the runner from <code>vps-runner/</code> onto your Hostinger box (Docker + gVisor), then paste its HTTPS URL and one signing key pair here. Program secrets are configured on the VPS itself — their values never enter this app.
         </p>
@@ -361,10 +355,13 @@ const ProgramRunnerSettings: React.FC = () => {
         </div>
       </div>
 
+      </Disclosure>
+      </Group>
+
       {/* ── Programs list ── */}
       {programs.length > 0 && (
         <div className="flex flex-col gap-2">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Your programs</p>
+          <p className="text-xs font-medium text-on-surface-variant">Your programs</p>
           {schedulesReady === true && (
             <p className="text-[10px] text-on-surface-variant">
               Scheduler {cronOk?.last_tick_at

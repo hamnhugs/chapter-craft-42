@@ -1302,7 +1302,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const switchedTo = presets.find((p) => p.id === decision.promptId);
             const broughtContext = !!switchedTo && hasContextBindings(switchedTo);
             const why = broughtContext
-              ? `${decision.why} Its neurons weren't loaded — switch to it yourself if you want those too.`
+              ? `${decision.why} Its notebooks weren't loaded — switch to it yourself if you want those too.`
               : decision.why;
             turnPrompt = { block: routed.block, used: { ...routed.used, source: "auto", why, replacedId }, bindings: null };
             turnPromptBlock = routed.block;
@@ -1442,7 +1442,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // below the streaming bubble, because both report their refusal by
       // writing into it.
       if (isEmbeddingModel(model)) {
-        const msg = `"${model}" is an embedding model — pick a chat model in Settings (it's only valid for Wiki reindex).`;
+        const msg = `"${model}" is an embedding model — pick a chat model in Settings (it's only valid for Notebook reindex).`;
         toast.error(msg);
         assistantText = `❌ ${msg}`;
         updateAssistant();

@@ -70,6 +70,11 @@ interface AppState {
   getActiveBookId: () => string | null;
   getShelves: () => BookFolder[];
   setActiveTab: (tab: TabId) => void;
+  /** The notebook the Notebooks view shows when opened from the list. Null =
+   *  show Counsel's loaded set. Viewing never changes what Counsel has loaded. */
+  viewedWikiId: string | null;
+  /** Open one notebook to read, leaving Counsel's loaded set alone. */
+  openNotebook: (wikiId: string) => void;
   addChapter: (bookId: string, chapter: Chapter) => Promise<void>;
   /** Bulk insert (one request per 100 rows, one state patch). */
   addChapters: (bookId: string, chapters: Chapter[]) => Promise<void>;
@@ -93,6 +98,13 @@ interface AppState {
   shelves: BookFolder[];
   /** True until the first roster load settles (success or failure). */
   shelvesLoading: boolean;
+  /** True until the first book read settles, either way. The Vault must not
+   *  say "your library is empty" while it is still finding out. */
+  booksLoading: boolean;
+  /** Set when the book read failed, so the Vault can offer a retry instead of
+   *  showing an empty-library upsell forever. */
+  booksError: string | null;
+  retryLoadBooks: () => void;
   createShelf: (name: string) => Promise<BookFolder>;
   renameShelf: (id: string, name: string) => Promise<void>;
   /** Deletes the shelf AND drops it from every book's folderIds. The DB
@@ -236,6 +248,18 @@ const getStoragePathsForBook = (userId: string, bookId: string, fileName: string
   return primaryPath === legacyPath ? [primaryPath] : [primaryPath, legacyPath];
 };
 
+/**
+ * Release a blob URL if that is what this is.
+ *
+ * `fileData` holds one of three things depending on how the book arrived: a
+ * blob: URL, a base64 data: URL, or "". Only the first owns memory, and only
+ * the first may be revoked.
+ */
+function revokeBlobUrl(fileData: string | undefined): void {
+  if (!fileData || !fileData.startsWith("blob:")) return;
+  try { URL.revokeObjectURL(fileData); } catch { /* already gone */ }
+}
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // books / shelves / activeBookId each keep a SYNCHRONOUS mirror. The
   // setter wrappers apply a functional update themselves, against the mirror,
@@ -261,6 +285,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setShelvesState(next);
   }, []);
   const [shelvesLoading, setShelvesLoading] = useState(true);
+  // The Vault used to branch on `books.length === 0` alone. Since `books`
+  // starts empty and is only filled after a paged Supabase read, every cold
+  // open showed the empty-library upsell for the length of that read — and a
+  // failed read showed it forever, with the only trace a console.error. A
+  // library that is loading, a library that failed to load, and a library
+  // with no books in it are three different things and now say so.
+  const [booksLoading, setBooksLoading] = useState(true);
+  const [booksError, setBooksError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const retryLoadBooks = useCallback(() => {
+    setBooksError(null);
+    setBooksLoading(true);
+    setLoadAttempt((n) => n + 1);
+  }, []);
   const [activeBookId, setActiveBookIdState] = useState<string | null>(null);
   const activeBookIdRef = useRef<string | null>(null);
   const setActiveBookId = useCallback((u: string | null | ((prev: string | null) => string | null)) => {
@@ -310,7 +348,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // flushSync forces React to commit the new tab inside the transition's
   // snapshot callback. Falls back to a plain update on older engines or when
   // the user prefers reduced motion.
-  const navigateTab = useCallback((tab: TabId) => {
+  const [viewedWikiId, setViewedWikiId] = useState<string | null>(null);
+  const navigateTab = useCallback((tab: TabId, viewWikiId: string | null = null) => {
+    // Every other way into the notebook view shows the loaded set.
+    if (tab === "wiki") setViewedWikiId(viewWikiId);
     const doc = document as Document & {
       startViewTransition?: (cb: () => void) => unknown;
     };
@@ -323,13 +364,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setActiveTab(tab);
     }
   }, []);
+  const openNotebook = useCallback((wikiId: string) => navigateTab("wiki", wikiId), [navigateTab]);
+  // The public setter takes only the tab, so nothing can pass a view id by accident.
+  const setTab = useCallback((tab: TabId) => navigateTab(tab), [navigateTab]);
 
   const refreshWikis = useCallback(async () => {
     if (!user) { setWikis([]); setActiveWikiId(null); setActiveWikiIds([]); activeWikiIdsRef.current = []; return; }
     try {
       let [list, active] = await Promise.all([fetchWikis(), fetchActiveWikiIds()]);
       if (list.length === 0) {
-        const created = await createWiki({ name: "My 1st Neuron", description: "Your default neuron — extracted knowledge lives here." });
+        const created = await createWiki({ name: "My notes", description: "Your first notebook — Counsel saves notes here." });
         await loadWikiApi(created.id);
         list = [created]; active = { primary: created.id, set: [created.id], setPersisted: true };
       }
@@ -363,7 +407,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       setWikis(list);
       commitActiveSet(set);
-    } catch (err) { console.error("Failed to load wikis:", err); }
+    } catch (err) { console.error("Failed to load notebooks:", err); }
   }, [user, commitActiveSet]);
 
   useEffect(() => { refreshWikis(); }, [refreshWikis]);
@@ -401,7 +445,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const setActiveNeurons = useCallback(async (wikiIds: string[]) => {
     const ids = Array.from(new Set(wikiIds)).slice(0, MAX_ACTIVE_NEURONS);
-    if (ids.length === 0) throw new Error("No neurons to load — they may have been deleted.");
+    if (ids.length === 0) throw new Error("No notebooks to load — they may have been deleted.");
     await applyActiveSet(ids);
   }, [applyActiveSet]);
 
@@ -413,7 +457,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       next = current.filter((id) => id !== wikiId);
     } else {
       if (current.length >= MAX_ACTIVE_NEURONS) {
-        throw new Error(`You can load up to ${MAX_ACTIVE_NEURONS} neurons at once — unload one first.`);
+        throw new Error(`You can load up to ${MAX_ACTIVE_NEURONS} notebooks at once — unload one first.`);
       }
       next = [...current, wikiId];
     }
@@ -444,7 +488,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       try {
         await applyActiveSet(next.wikiIds);
       } catch (err) {
-        neuronError = err instanceof Error ? err.message : "Couldn't load the neuron";
+        neuronError = err instanceof Error ? err.message : "Couldn't load the notebook";
       }
     }
     if (changed.selection) bookContextStore.set(next.selection);
@@ -469,7 +513,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return;
     }
     const err = await writeFocus(prev, focusChanged(next, prev));
-    toast(err ? `Restored the books; the neuron did not change: ${err}` : "Restored the previous focus.");
+    toast(err ? `Restored the books; the notebook did not change: ${err}` : "Restored the previous focus.");
   }, [writeFocus]);
 
   const loadFocus = useCallback(async (
@@ -484,7 +528,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ? { next: { ...outcome.next, wikiIds: prev.wikiIds }, changed: { ...outcome.changed, wikiIds: false } }
       : outcome;
     const summary = describeLoad(prev, effective, focusNames()) +
-      (neuronError ? ` The neuron did not change: ${neuronError}` : "");
+      (neuronError ? ` The notebook did not change: ${neuronError}` : "");
     if (opts.navigate !== false) {
       if (action.kind === "book") navigateTab("viewer");
       else if (action.kind === "shelf" || action.kind === "books") navigateTab("chat");
@@ -519,8 +563,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setBooks([]);
       setActiveBookId(null);
       setMultiShelf(false);
+      // Signed out is a settled state, not a pending one.
+      setBooksLoading(false);
+      setBooksError(null);
       return;
     }
+    setBooksLoading(true);
+    setBooksError(null);
 
     let cancelled = false;
 
@@ -580,6 +629,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       if (bookRows.error) {
         console.error("Failed to load books:", bookRows.error);
+        setBooksError(bookRows.error.message || "Could not reach your library.");
+        setBooksLoading(false);
         return;
       }
 
@@ -610,6 +661,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // The library (and the chat's view of it) is usable from here on, even
       // if chapters never arrive.
       setBooks(dbBooks);
+      setBooksError(null);
+      setBooksLoading(false);
       const initialIds = new Set(dbBooks.map((b) => b.id));
 
       // Chapters and shelf membership load concurrently and patch state
@@ -782,7 +835,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       cancelled = true;
       supabase.removeChannel(channel);
     };
-  }, [user]);
+    // loadAttempt lets the Vault's Try again button re-run this whole read.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, loadAttempt]);
 
 
   // Allow the once-per-session restore to run again when the account changes.
@@ -933,6 +988,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       const cachedFileUrl = sourceFile ? URL.createObjectURL(sourceFile) : book.fileData;
+      if (sourceFile) revokeBlobUrl(book.fileData);
 
       setBooks((prev) => {
         const existingIndex = prev.findIndex((b) => b.id === finalBookId);
@@ -1506,7 +1562,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const url = URL.createObjectURL(data);
 
         setBooks((prev) =>
-          prev.map((b) => (b.id === bookId ? { ...b, fileData: url } : b))
+          prev.map((b) => {
+            if (b.id !== bookId) return b;
+            // A blob URL pins the whole file in memory until it is revoked,
+            // and nothing revoked these: every PDF opened in a session stayed
+            // resident, often tens of megabytes each, until a page reload.
+            // That is the mechanism behind "it gets slower the longer I use
+            // it". Replacing a book's file drops the one it is replacing.
+            revokeBlobUrl(b.fileData);
+            return { ...b, fileData: url };
+          })
         );
 
         return url;
@@ -1662,7 +1727,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         getBooks: () => booksRef.current,
         getActiveBookId: () => activeBookIdRef.current,
         getShelves: () => shelvesRef.current,
-        setActiveTab: navigateTab,
+        setActiveTab: setTab,
+        viewedWikiId,
+        openNotebook,
         addChapter,
         addChapters,
         updateChapter,
@@ -1681,6 +1748,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         purgeBook,
         emptyTrash,
         membershipLoaded,
+        booksLoading,
+        booksError,
+        retryLoadBooks,
         shelves,
         shelvesLoading,
         createShelf,

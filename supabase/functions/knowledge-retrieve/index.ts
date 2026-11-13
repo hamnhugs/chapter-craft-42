@@ -32,7 +32,7 @@
 //     }],
 //     edges: [{ source_entry_id, target_entry_id, relationship, edge_class }],
 //     query_embedded: boolean,
-//     search: "v2" | "legacy",                                       (new)
+//     search: "v2",
 //     scoped_wiki_ids: string[] | null,                              (new)
 //     dropped: { seeds_below_cosine: number, below_relative_floor: number } (new)
 //     routing?: {                                                           (new)
@@ -42,15 +42,12 @@
 //     } | null       // null = routing off, migration unapplied, or no
 //                    // routing-enabled prompts. NEVER an error to the caller.
 //   }
-//   Nodes are living entries only (superseded / archived / expired excluded)
-//   on BOTH paths, so the client-side filterSupersededNodes pass is redundant
-//   (harmless) against this deployment.
+//   Nodes are living entries only (superseded / archived / expired excluded).
 //
 // Pipeline: embed once → hybrid_search_knowledge_v2 (scope + liveness inside
 // the SQL, OR-semantics full text, raw cosine) → get_neighbors_v2 (bounded,
 // scoped, cosine per neighbour) → fuseRetrieval (floors + salience blend,
-// _shared/retrieval-rank.ts) → edges among the returned nodes. Falls back to
-// the v1 RPCs + post-filters when migration 20260917130500 isn't applied.
+// _shared/retrieval-rank.ts) → edges among the returned nodes.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { embedBatch, embedQuery, EMBEDDING_MODEL_ID } from "../_shared/embed.ts";
@@ -63,11 +60,6 @@ const corsHeaders = {
 
 const NEIGHBOR_ROW_CAP = 40;
 const NEIGHBOR_CONTENT_CHARS = 600;
-
-const isMissingRpc = (error: unknown) => {
-  const code = (error as any)?.code;
-  return code === "PGRST202" || code === "42883";
-};
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -101,8 +93,8 @@ serve(async (req) => {
     // 1. Embed query — once, whatever the number of wikis.
     const qVec = await embedQuery(query);
 
-    // 2. Hybrid search, v2 first.
-    let search: "v2" | "legacy" = "v2";
+    // 2. Hybrid search (scope + liveness inside the SQL).
+    const search = "v2" as const;
     let seeds: SeedRow[] = [];
     {
       const { data, error } = await supabase.rpc("hybrid_search_knowledge_v2", {
@@ -112,17 +104,11 @@ serve(async (req) => {
         filter_wiki_ids: wikiIds,
         active_embedding_model: EMBEDDING_MODEL_ID,
       });
-      if (!error) {
-        seeds = (data || []) as SeedRow[];
-      } else if (isMissingRpc(error)) {
-        search = "legacy";
-      } else {
+      if (error) {
         console.error("hybrid_search_knowledge_v2 failed:", error.message);
-        search = "legacy";
+        return json({ error: error.message }, 500);
       }
-    }
-    if (search === "legacy") {
-      seeds = await legacySeeds(supabase, user.id, query, qVec, matchN, wikiIds);
+      seeds = (data || []) as SeedRow[];
     }
 
     const emptyResponse = (dropped = 0) => json({
@@ -138,21 +124,17 @@ serve(async (req) => {
     let neighbors: NeighborRow[] = [];
     if (walkable.length > 0 && walkDepth > 0) {
       const seedIds = walkable.map((s) => s.id);
-      if (search === "v2") {
-        const { data, error } = await supabase.rpc("get_neighbors_v2", {
-          seed_ids: seedIds,
-          depth: walkDepth,
-          classes: ["structural"],
-          filter_wiki_ids: wikiIds,
-          max_rows: NEIGHBOR_ROW_CAP,
-          content_chars: NEIGHBOR_CONTENT_CHARS,
-          query_embedding: (qVec as any) ?? null,
-        });
-        if (error) console.warn("get_neighbors_v2 failed:", error.message);
-        neighbors = (data || []) as NeighborRow[];
-      } else {
-        neighbors = await legacyNeighbors(supabase, seedIds, walkDepth, wikiIds);
-      }
+      const { data, error } = await supabase.rpc("get_neighbors_v2", {
+        seed_ids: seedIds,
+        depth: walkDepth,
+        classes: ["structural"],
+        filter_wiki_ids: wikiIds,
+        max_rows: NEIGHBOR_ROW_CAP,
+        content_chars: NEIGHBOR_CONTENT_CHARS,
+        query_embedding: (qVec as any) ?? null,
+      });
+      if (error) console.warn("get_neighbors_v2 failed:", error.message);
+      neighbors = (data || []) as NeighborRow[];
     }
 
     // 4. Fuse: floors, graph boost, salience blend, cut to limit.
@@ -320,99 +302,6 @@ async function routePrompts(
     active_similarity: activePromptId ? (scored.find((s) => s.id === activePromptId)?.similarity ?? null) : null,
     top_memory_score: topMemory,
   };
-}
-
-// ── Legacy path (migration 20260917130500 not applied) ──────────────────────
-// v1 hybrid search is global, so scope + liveness are post-filters, and meta
-// (vibrancy/confidence/wiki) comes from one extra batched select. No cosine is
-// available, so only the relative floor applies.
-
-async function allowedIds(supabase: any, ids: string[], wikiIds: string[] | null): Promise<Map<string, any>> {
-  const out = new Map<string, any>();
-  if (ids.length === 0) return out;
-  const cols = "id, wiki_id, vibrancy, confidence, superseded_by, archived, valid_to";
-  let { data, error } = await supabase.from("knowledge_entries").select(cols).in("id", ids);
-  if (error && (error as any).code === "42703") {
-    ({ data, error } = await supabase.from("knowledge_entries").select("id, wiki_id, vibrancy, confidence").in("id", ids));
-  }
-  if (error) return out;
-  let bridged = new Set<string>();
-  if (wikiIds) {
-    const { data: b } = await supabase.from("entry_bridges").select("entry_id").in("wiki_id", wikiIds).in("entry_id", ids);
-    bridged = new Set(((b || []) as any[]).map((r) => r.entry_id));
-  }
-  const nowMs = Date.now();
-  for (const r of (data || []) as any[]) {
-    if (r.superseded_by || r.archived === true) continue;
-    if (r.valid_to && new Date(r.valid_to).getTime() <= nowMs) continue;
-    if (wikiIds && r.wiki_id && !wikiIds.includes(r.wiki_id) && !bridged.has(r.id)) continue;
-    out.set(r.id, r);
-  }
-  return out;
-}
-
-async function legacySeeds(
-  supabase: any,
-  userId: string,
-  query: string,
-  qVec: number[] | null,
-  matchN: number,
-  wikiIds: string[] | null,
-): Promise<SeedRow[]> {
-  // Over-fetch: the scope filter below runs AFTER the global top-N.
-  const pool = wikiIds ? Math.min(50, matchN * 2) : matchN;
-  let rows: any[] = [];
-  if (qVec) {
-    const { data, error } = await supabase.rpc("hybrid_search_knowledge", {
-      query_text: query,
-      query_embedding: qVec as any,
-      match_count: pool,
-    });
-    if (!error && data) rows = data;
-  }
-  if (rows.length === 0) {
-    const { data } = await supabase
-      .from("knowledge_entries")
-      .select("id, title, content, entry_type, tags, source_book_id")
-      .eq("user_id", userId)
-      .textSearch("tsv", query, { type: "websearch", config: "english" })
-      .limit(pool);
-    rows = (data || []).map((r: any, i: number) => ({ ...r, score: 1 / (50 + i) }));
-  }
-  const meta = await allowedIds(supabase, rows.map((r) => r.id), wikiIds);
-  return rows
-    .filter((r) => meta.has(r.id))
-    .slice(0, matchN)
-    .map((r) => ({
-      ...r,
-      similarity: null,
-      wiki_id: meta.get(r.id)?.wiki_id ?? null,
-      vibrancy: meta.get(r.id)?.vibrancy,
-      confidence: meta.get(r.id)?.confidence,
-    }));
-}
-
-async function legacyNeighbors(
-  supabase: any,
-  seedIds: string[],
-  depth: number,
-  wikiIds: string[] | null,
-): Promise<NeighborRow[]> {
-  const { data } = await supabase.rpc("get_neighbors", { seed_ids: seedIds, depth, classes: ["structural"] });
-  const rows = ((data || []) as any[]).filter((n) => n.hop > 0).slice(0, NEIGHBOR_ROW_CAP * 2);
-  const meta = await allowedIds(supabase, rows.map((n) => n.entry_id), wikiIds);
-  return rows
-    .filter((n) => meta.has(n.entry_id))
-    .sort((a, b) => a.hop - b.hop)
-    .slice(0, NEIGHBOR_ROW_CAP)
-    .map((n) => ({
-      ...n,
-      content: (n.content || "").slice(0, NEIGHBOR_CONTENT_CHARS),
-      similarity: null,
-      wiki_id: meta.get(n.entry_id)?.wiki_id ?? null,
-      vibrancy: meta.get(n.entry_id)?.vibrancy,
-      confidence: meta.get(n.entry_id)?.confidence,
-    }));
 }
 
 function json(body: unknown, status = 200) {

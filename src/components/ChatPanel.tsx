@@ -5,10 +5,12 @@ import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import { getMemoryMode, setMemoryMode } from "@/lib/knowledgeApi";
 import ReactMarkdown from "react-markdown";
 import { safeUrlTransform, safeMarkdownComponents } from "@/lib/markdownSafety";
 import { focusComposer, isTouchPrimary } from "@/lib/focusPolicy";
 import PocketScreen from "@/components/PocketScreen";
+import { resolvePocketCaption } from "@/lib/sprite/pocketCaption";
 import { LensImageFrame, MemoryChips } from "@/components/MemoryLensStrip";
 import ToolApprovalCard from "@/components/ToolApprovalCard";
 import ProgramApprovalCard from "@/components/ProgramApprovalCard";
@@ -24,14 +26,15 @@ import { isEmbeddingModel } from "@/lib/utils";
 import { describeModel } from "@/lib/providers/registry";
 import { useDictation } from "@/hooks/useDictation";
 import { requestSettingsSection } from "@/lib/settingsNav";
-import VoiceNotesPanel, { appendVoiceNote } from "@/components/VoiceNotesPanel";
+import VoiceNotesPanel, { appendVoiceNote, deleteVoiceNote } from "@/components/VoiceNotesPanel";
+import { classifyNotePress, NOTE_PRESS } from "@/lib/notePress";
 // Lazy: ResponseBlocks pulls recharts (~large) but only renders when a model emits chart blocks
 const ResponseBlocks = React.lazy(() => import("@/components/ResponseBlocks"));
 import GeneratedImage from "@/components/GeneratedImage";
 import VideoBubble from "@/components/VideoBubble";
 import SplatBubble from "@/components/SplatBubble";
 import MediaReveal from "@/components/MediaReveal";
-import WorkingMemoryPanel from "@/components/WorkingMemoryPanel";
+import { openNote } from "@/lib/openPassage";
 import WorkspaceShell from "@/components/WorkspaceShell";
 import ToolStatusPanel from "@/components/ToolStatusPanel";
 import PromptSwitcher from "@/components/PromptSwitcher";
@@ -44,6 +47,8 @@ import { bookContextStore, selectContextBooks } from "@/lib/chatBooks";
 import { focusBookId } from "@/lib/counselFocus";
 import BookContextPicker from "@/components/BookContextPicker";
 import CounselToolsSheet from "@/components/CounselToolsSheet";
+import BookWorm from "@/components/BookWorm";
+import { useBookWorm } from "@/hooks/useBookWorm";
 import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations, isSearchRateLimited } from "@/lib/chatTools";
 import { useDownloadableTtsId, downloadTtsAudio } from "@/lib/ttsAudioCache";
 import { fileToDownscaledDataUrl, isAcceptedImage, uploadChatImage, registerUploadedImage, removeUploadedChatImage, type PendingChatImage } from "@/lib/imageUpload";
@@ -75,6 +80,9 @@ const ChatPanel: React.FC = () => {
   } = useReadAloud();
   // Configured in the Settings tab; re-read here on mount (tab switches remount this panel).
   const [bargeInEnabled] = useState(() => localStorage.getItem("hands_free_barge_in") === "true");
+  // Defaults ON: the pocket screen shipped before it was a setting, so an
+  // absent key has to mean enabled or every existing user silently loses it.
+  const [pocketScreenEnabled] = useState(() => localStorage.getItem("hands_free_pocket_screen") !== "false");
   const handsFree = useHandsFree({
     onUtterance: (text) => sendMessage(text, { voiceMode: true, modelOverride: voiceModel || undefined }),
     // Hands-free has its own speech speed (read-aloud buttons keep ttsRate).
@@ -204,6 +212,28 @@ const ChatPanel: React.FC = () => {
 
   // ---- Voice features absorbed from the former Echo (Voice) tab ----
   const [notesPanelOpen, setNotesPanelOpen] = useState(false);
+
+  // Off the record: Counsel still reads notes but saves nothing new
+  // (user_settings.is_recording_mode = false, enforced in the save tools).
+  // Read on mount — Counsel remounts each time its tab opens, and Settings
+  // can flip it too.
+  const [offTheRecord, setOffTheRecord] = useState(false);
+  useEffect(() => {
+    let live = true;
+    getMemoryMode().then((m) => { if (live) setOffTheRecord(m === "retrieval"); }).catch(() => { /* default stands */ });
+    return () => { live = false; };
+  }, []);
+  const toggleOffTheRecord = async () => {
+    const next = !offTheRecord;
+    setOffTheRecord(next);
+    try {
+      await setMemoryMode(next ? "retrieval" : "recording");
+      toast.success(next ? "Off the record — Counsel won't save new notes" : "Saving notes again");
+    } catch (e: any) {
+      setOffTheRecord(!next);
+      toast.error(e?.message || "Couldn't change that setting");
+    }
+  };
   const [toolsOpen, setToolsOpen] = useState(false);
   // Configured in the Settings tab; read-only here.
   const [voiceQuickSearch] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_KEY) === "true");
@@ -302,6 +332,59 @@ const ChatPanel: React.FC = () => {
       const base = inputBeforeDictationRef.current;
       setInput((base ? base + " " : "") + text);
     },
+  });
+
+  // The BookWorm. Every signal it reads is state this panel already had; the
+  // derivation, the timers and the discourse-boundary edge detection all live
+  // in the hook. See src/lib/sprite/wormAnimator.ts for why it stops moving.
+  // While the pocket guard is up it covers the whole screen, so the
+  // transcript's worm would be animating where nobody can see it. The pocket
+  // screen owns the visible one for as long as it is armed.
+  const [pocketArmed, setPocketArmed] = useState(false);
+
+  // What the pocket screen shows under the worm. The ordering lives in
+  // lib/sprite/pocketCaption.ts; this only gathers the signals. Note it is the
+  // whole assistant message, not `speakProgress.text` — the point of that
+  // screen is reading the answer AFTER the voice has finished, so a fragment
+  // that disappears with the audio was the wrong thing to show.
+  const pocketCaption = useMemo(() => {
+    let lastUserText: string | null = null;
+    let lastUserId: string | null = null;
+    let assistantText: string | null = null;
+    let assistantId: string | null = null;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (!assistantText && m.role === "assistant" && m.content?.trim()) {
+        assistantText = m.content;
+        assistantId = m.id ?? `a${i}`;
+      }
+      if (!lastUserText && m.role === "user" && m.content?.trim()) {
+        lastUserText = m.content;
+        lastUserId = m.id ?? `u${i}`;
+      }
+      if (assistantText && lastUserText) break;
+    }
+    return resolvePocketCaption({
+      handsFreeActive: handsFree.active,
+      state: handsFree.state,
+      interim: handsFree.interim,
+      assistantText,
+      assistantId,
+      lastUserText,
+      lastUserId,
+    });
+  }, [handsFree.active, handsFree.state, handsFree.interim, messages]);
+  const lastMsg = messages[messages.length - 1];
+  const worm = useBookWorm({
+    isLoading,
+    lastId: lastMsg?.id,
+    lastRole: lastMsg?.role,
+    lastText: lastMsg?.content || "",
+    input,
+    speakingId,
+    speakChunk: speakProgress?.index ?? null,
+    listening: handsFree.state === "listening" || dictation.isListening,
+    working: deepSearching || pendingSearchCount > 0,
   });
   const handleMicToggle = () => {
     if (!dictation.supported) { toast.error("Voice input not supported in this browser."); return; }
@@ -543,22 +626,67 @@ const ChatPanel: React.FC = () => {
   }, []);
 
   // ----- Long-press a bubble to save it as a note (touch) -----
+  // Rules live in `classifyNotePress` (pure, unit-tested); this just gathers
+  // the sample. See src/lib/notePress.ts for why 500ms was the wrong number.
   const longPressTimer = useRef<number | null>(null);
   const longPressFiredRef = useRef(false);
-  const startLongPress = (text: string) => {
+  const pressRef = useRef({ x: 0, y: 0, movedPx: 0, maxPointers: 0, scrolled: false });
+
+  const hasSelection = () => !!window.getSelection()?.toString().trim();
+
+  const startLongPress = (text: string, e: React.TouchEvent) => {
     longPressFiredRef.current = false;
     if (longPressTimer.current) window.clearTimeout(longPressTimer.current);
+    const t = e.touches[0];
+    pressRef.current = {
+      x: t?.clientX ?? 0,
+      y: t?.clientY ?? 0,
+      movedPx: 0,
+      maxPointers: e.touches.length,
+      scrolled: false,
+    };
     longPressTimer.current = window.setTimeout(async () => {
+      longPressTimer.current = null;
+      const p = pressRef.current;
+      // Re-checked at fire time, not at arm time: the finger has had the whole
+      // hold to drift, add a second touch, or start the transcript moving.
+      const verdict = classifyNotePress({
+        movedPx: p.movedPx,
+        maxPointers: p.maxPointers,
+        selecting: hasSelection(),
+        scrolled: p.scrolled,
+        heldMs: NOTE_PRESS.holdMs,
+      });
+      if (verdict !== "save") return;
       longPressFiredRef.current = true;
+      // Buzz on commit, so the hand knows it happened without looking.
+      try { (navigator as any).vibrate?.(30); } catch { /* no-op */ }
       const note = await appendVoiceNote(text);
-      if (note) {
-        try { (navigator as any).vibrate?.(30); } catch { /* no-op */ }
-        toast.success("Saved to notes");
-        setNotesPanelOpen(true);
-      }
-    }, 500);
+      if (!note) return;
+      // Deliberately does NOT open the notes panel any more. A save is a small
+      // thing; burying the transcript under a panel made every misfire cost a
+      // dismissal, and the toast already says where the note went.
+      toast.success("Saved to voice notes", {
+        duration: NOTE_PRESS.undoMs,
+        action: {
+          label: "Undo",
+          onClick: async () => {
+            const gone = await deleteVoiceNote(note.id);
+            toast[gone ? "success" : "error"](gone ? "Voice note removed" : "Could not remove that voice note");
+          },
+        },
+      });
+    }, NOTE_PRESS.holdMs);
+  };
+  const trackLongPress = (e: React.TouchEvent) => {
+    const p = pressRef.current;
+    p.maxPointers = Math.max(p.maxPointers, e.touches.length);
+    const t = e.touches[0];
+    if (t) p.movedPx = Math.max(p.movedPx, Math.hypot(t.clientX - p.x, t.clientY - p.y));
+    if (p.movedPx > NOTE_PRESS.slopPx || p.maxPointers > 1) cancelLongPress();
   };
   const cancelLongPress = () => {
+    pressRef.current.scrolled = true;
     if (longPressTimer.current) { window.clearTimeout(longPressTimer.current); longPressTimer.current = null; }
   };
   const saveBubbleToNotes = async (text: string) => {
@@ -754,13 +882,14 @@ const ChatPanel: React.FC = () => {
    */
   const activeModes = useMemo(() => {
     const m: string[] = [];
+    if (offTheRecord) m.push("Off the record");
     if (chatDeepResearch && isPaid) m.push("Deep Research");
     if (autoReadReplies) m.push("Read Aloud");
     if (contextBooks.length) m.push(`${contextBooks.length} book${contextBooks.length === 1 ? "" : "s"}`);
     if (focusedItems.length) m.push(`${focusedItems.length} pinned`);
     if (workspaceOpen) m.push("Files");
     return m;
-  }, [chatDeepResearch, isPaid, autoReadReplies, contextBooks.length, focusedItems.length, workspaceOpen]);
+  }, [offTheRecord, chatDeepResearch, isPaid, autoReadReplies, contextBooks.length, focusedItems.length, workspaceOpen]);
   const activeModeCount = activeModes.length;
 
   const handsFreeStateLabel =
@@ -941,7 +1070,7 @@ const ChatPanel: React.FC = () => {
           book that is NOT on the loaded shelf, both are named, so the screen
           never implies the AI is reading what the user is reading. */}
       {selectedBook && (
-        <div className="px-4 pt-3 pb-0.5 flex items-center gap-2 text-xs font-body text-on-surface-variant">
+        <div className="cc-counsel-px cc-counsel-context pt-3 pb-0.5 flex items-center gap-2 text-xs font-body text-on-surface-variant">
           <span className="material-symbols-outlined text-sm text-primary-container" aria-hidden>
             auto_stories
           </span>
@@ -951,7 +1080,7 @@ const ChatPanel: React.FC = () => {
         </div>
       )}
       {!selectedBook && readerBook && loadedLabel && (
-        <div className="px-4 pt-3 pb-0.5 flex items-center gap-2 text-xs font-body text-on-surface-variant" data-testid="reader-vs-focus">
+        <div className="cc-counsel-px cc-counsel-context pt-3 pb-0.5 flex items-center gap-2 text-xs font-body text-on-surface-variant" data-testid="reader-vs-focus">
           <span className="material-symbols-outlined text-sm text-primary-container" aria-hidden>
             auto_stories
           </span>
@@ -964,17 +1093,19 @@ const ChatPanel: React.FC = () => {
 
       {/* Loaded-neuron chips — the set Counsel reads from. Secondary chips
           can be unloaded inline; "+" opens the ⌘K switcher; 2+ loaded shows
-          a save-as-chain affordance (Linear-style: save at point of use). */}
+          a save-as-chain affordance (Linear-style: save at point of use).
+          One line that scrolls, like the composer's strips: wrapping grew a
+          row per few notebooks, taken from a 506px-tall transcript. */}
       {activeWikis.length > 0 && (
-        <div className="px-4 pt-3 pb-1 flex items-center gap-1.5 flex-wrap text-xs font-body text-on-surface-variant">
+        <div className="cc-counsel-px cc-counsel-context pt-3 pb-1 flex flex-nowrap overflow-x-auto hide-scrollbar items-center gap-1.5 text-xs font-body text-on-surface-variant [&>*]:shrink-0">
           <span className="mr-0.5">
-            {activeWikis.length > 1 ? "Loaded neurons:" : "Your Knowledge Neuron:"}
+            {activeWikis.length > 1 ? "Open notebooks:" : "Notebook:"}
           </span>
           {activeWikis.map((w, i) => (
             <span
               key={w.id}
               className="inline-flex items-center gap-1.5 pl-2 pr-1.5 py-0.5 rounded-full bg-surface-container-high border border-outline-variant/20 max-w-[160px]"
-              title={i === 0 ? `${w.name} — primary (new knowledge is saved here)` : w.name}
+              title={i === 0 ? `${w.name} — new notes are saved here` : w.name}
             >
               <span
                 className="w-2 h-2 rounded-full flex-shrink-0"
@@ -983,14 +1114,14 @@ const ChatPanel: React.FC = () => {
               />
               <span className="font-semibold text-primary truncate">{w.name}</span>
               {i === 0 && activeWikis.length > 1 && (
-                <span className="text-[9px] font-bold uppercase tracking-widest text-on-surface-variant">primary</span>
+                <span className="text-[9px] font-bold uppercase tracking-widest text-on-surface-variant">saves here</span>
               )}
               {i > 0 && (
                 <button
-                  onClick={() => toggleNeuronInSession(w.id).catch((e: any) => toast.error(e.message || "Couldn't unload"))}
+                  onClick={() => toggleNeuronInSession(w.id).catch((e: any) => toast.error(e.message || "Couldn't remove that notebook"))}
                   className="rounded-full hover:bg-surface-container-highest p-0.5 leading-none"
-                  title={`Unload "${w.name}"`}
-                  aria-label={`Unload ${w.name}`}
+                  title={`Stop using "${w.name}"`}
+                  aria-label={`Stop using ${w.name}`}
                 >
                   <span className="material-symbols-outlined text-[12px] block">close</span>
                 </button>
@@ -998,9 +1129,10 @@ const ChatPanel: React.FC = () => {
             </span>
           ))}
           <button
-            onClick={() => window.dispatchEvent(new CustomEvent("open-neuron-switcher"))}
+            onClick={() => window.dispatchEvent(new CustomEvent("open-neuron-switcher", { detail: { mode: "add" } }))}
             className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full border border-dashed border-outline-variant/40 hover:border-primary/50 hover:text-primary transition-colors"
-            title="Load another neuron alongside (⌘K)"
+            title="Add another notebook for Counsel"
+            aria-label="Add another notebook for Counsel"
           >
             <span className="material-symbols-outlined text-[14px]">add</span>
           </button>
@@ -1008,10 +1140,10 @@ const ChatPanel: React.FC = () => {
             <button
               onClick={() => import("@/components/ChainDialog").then((m) => m.openChainDialog({ prefillIds: activeWikiIds }))}
               className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-outline-variant/40 hover:border-primary/50 hover:text-primary transition-colors"
-              title="Save these neurons as a chain"
+              title="Save these notebooks as a set you can switch to in one step"
             >
               <span className="material-symbols-outlined text-[14px]">link</span>
-              <span className="text-[10px] font-bold uppercase tracking-widest">Save chain</span>
+              <span className="text-[10px] font-bold uppercase tracking-widest">Save as set</span>
             </button>
           )}
         </div>
@@ -1037,8 +1169,17 @@ const ChatPanel: React.FC = () => {
       <div className="sr-only" aria-live="polite" aria-atomic="false">{srAnnounce}</div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-hidden">
-        <div ref={messagesContainerRef} role="log" aria-label="Conversation with The Librarian" aria-live="off" onScroll={() => { if (Date.now() >= programmaticScrollUntilRef.current) lastTranscriptInteractionRef.current = Date.now(); }} onPointerDown={() => { lastTranscriptInteractionRef.current = Date.now(); }} onWheel={() => { lastTranscriptInteractionRef.current = Date.now(); }} onTouchMove={() => { lastTranscriptInteractionRef.current = Date.now(); }} className="h-full overflow-auto px-4 py-6 space-y-6 hide-scrollbar [overflow-anchor:none]">
+      <div className="flex-1 overflow-hidden relative">
+        {/* The BookWorm sits on the floor of the transcript, above the
+            composer and below the text. `relative` on the parent is what it
+            anchors to; pointer-events are off inside the component, so it can
+            never eat a tap meant for a bubble behind it. */}
+        {worm.enabled && !pocketArmed && (
+          <div className="absolute bottom-0 right-1 z-10 pointer-events-none select-none">
+            <BookWorm ref={worm.ref} mood={worm.mood} voiceSource={worm.voiceSource} onPet={worm.onPet} size={64} className="w-[52px] sm:w-16 h-auto" />
+          </div>
+        )}
+        <div ref={messagesContainerRef} role="log" aria-label="Conversation with The Librarian" aria-live="off" onScroll={() => { cancelLongPress(); if (Date.now() >= programmaticScrollUntilRef.current) lastTranscriptInteractionRef.current = Date.now(); }} onPointerDown={() => { lastTranscriptInteractionRef.current = Date.now(); }} onWheel={() => { lastTranscriptInteractionRef.current = Date.now(); }} onTouchMove={() => { lastTranscriptInteractionRef.current = Date.now(); }} className="cc-counsel-log cc-counsel-px h-full overflow-auto py-6 space-y-6 hide-scrollbar [overflow-anchor:none]">
 
         {messages.length > 0 && hasEarlier && (
           <div className="flex justify-center">
@@ -1070,10 +1211,15 @@ const ChatPanel: React.FC = () => {
           </div>
         )}
 
-        {messages.length > 0 && <WorkingMemoryPanel />}
 
+        {/* `ml-auto`, not `self-end`: the log is a block, not a flex column,
+            so `self-end` did nothing and user bubbles stopped at 85% of the
+            width instead of the right edge. `min-w-0` + `max-w-full` on the
+            bubble stop a code block or a long URL from sizing it to its
+            unbroken width (the whole transcript scrolled sideways on a tiled
+            window); the <pre> scrolls inside the bubble instead. */}
         {messages.map((msg, i) => (
-          <div key={msg.id || i} data-bubble-id={bubbleId(msg, i)} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"} max-w-[85%] ${msg.role === "user" ? "self-end" : ""} group`}>
+          <div key={msg.id || i} data-bubble-id={bubbleId(msg, i)} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"} max-w-[85%] min-w-0 ${msg.role === "user" ? "ml-auto" : ""} group`}>
             <div className="flex items-center gap-2 mb-2 mx-4">
               {msg.role === "assistant" && <span className="material-symbols-outlined text-primary-container text-lg">auto_stories</span>}
               <span className={`font-headline font-bold text-sm tracking-wide ${msg.role === "user" ? "text-primary" : "text-secondary"}`}>
@@ -1093,14 +1239,19 @@ const ChatPanel: React.FC = () => {
             {msg.role === "assistant" && msg.usedMemories && msg.usedMemories.length > 0 && (
               <details className="mb-2 ml-4">
                 <summary className="cursor-pointer list-none inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md bg-primary-container/20 text-on-surface-variant hover:bg-primary-container/30 transition-colors">
-                  <span className="material-symbols-outlined text-xs">neurology</span>
-                  Drew on {msg.usedMemories.length} {msg.usedMemories.length === 1 ? "memory" : "memories"}
+                  <span className="material-symbols-outlined text-xs">menu_book</span>
+                  Used {msg.usedMemories.length} {msg.usedMemories.length === 1 ? "note" : "notes"}
                 </summary>
                 <div className="mt-1.5 flex flex-wrap gap-1.5">
                   {msg.usedMemories.map((m) => (
-                    <span key={m.id} className="text-[11px] px-2 py-0.5 rounded-md bg-surface-container-high text-on-surface-variant border border-outline-variant/20">
+                    <button
+                      key={m.id}
+                      onClick={() => openNote({ setActiveTab }, m.id)}
+                      title="Open this note"
+                      className="text-[11px] px-2 py-0.5 rounded-md bg-surface-container-high text-on-surface-variant border border-outline-variant/20 hover:text-primary hover:border-primary/40 transition-colors"
+                    >
                       {m.title}
-                    </span>
+                    </button>
                   ))}
                 </div>
               </details>
@@ -1185,15 +1336,15 @@ const ChatPanel: React.FC = () => {
               </details>
             )}
             <div
-              className={`relative group ${msg.role === "user" ? "message-bubble-user bg-primary-container text-on-primary-container" : "message-bubble-ai bg-surface-container-high text-foreground border-l-2 border-primary-container/20"} p-5 shadow-sm leading-relaxed select-text`}
+              className={`relative group max-w-full min-w-0 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto ${msg.role === "user" ? "message-bubble-user bg-primary-container text-on-primary-container" : "message-bubble-ai bg-surface-container-high text-foreground border-l-2 border-primary-container/20"} p-5 shadow-sm leading-relaxed select-text`}
               style={{ WebkitTouchCallout: "none" } as React.CSSProperties}
-              onTouchStart={() => startLongPress(msg.content)}
+              onTouchStart={(e) => startLongPress(msg.content, e)}
               // The fired flag must be CONSUMED here, not just read: media frames
               // stop touchstart propagation (so startLongPress never re-arms and
               // resets it), and a stale true would preventDefault — i.e. kill —
               // every later tap on their buttons.
               onTouchEnd={(e) => { if (longPressFiredRef.current) { e.preventDefault(); longPressFiredRef.current = false; } cancelLongPress(); }}
-              onTouchMove={cancelLongPress}
+              onTouchMove={trackLongPress}
               onTouchCancel={cancelLongPress}
               onContextMenu={(e) => { if (longPressFiredRef.current) e.preventDefault(); }}
             >
@@ -1369,7 +1520,7 @@ const ChatPanel: React.FC = () => {
           and a manual resume mid-verification would transcribe the
           assistant's own audio as the next turn). */}
       {miniPlayerVisible && speakProgress && (
-        <div className="mx-4 mb-2 flex items-center gap-1 rounded-2xl bg-surface-container-high border border-outline-variant/30 shadow-lg px-2 py-1.5">
+        <div className="cc-counsel-mx mb-2 flex items-center gap-1 rounded-2xl bg-surface-container-high border border-outline-variant/30 shadow-lg px-2 py-1.5">
           <button
             onClick={scrollToSpeakingBubble}
             title="Show this message in the conversation"
@@ -1423,19 +1574,27 @@ const ChatPanel: React.FC = () => {
       )}
 
       {/* Pocket screen: hands-free touch guard on phones (arms after idle) */}
-      <PocketScreen active={handsFree.active} state={handsFree.state} />
+      <PocketScreen
+          active={handsFree.active && pocketScreenEnabled}
+          state={handsFree.state}
+          caption={pocketCaption}
+          wormEnabled={worm.enabled}
+          voiceSource={worm.voiceSource}
+          speakChunk={speakProgress?.index ?? null}
+          onArmedChange={setPocketArmed}
+        />
 
       {/* Book-context picker (Books button + shelf "Chat with this shelf") */}
       <BookContextPicker open={booksPickerOpen} onOpenChange={setBooksPickerOpen} />
 
       {/* Input Area */}
-      <div className="px-4 pb-4 pt-2">
+      <div className="cc-counsel-composer px-4 pb-4 pt-2">
         {/* The ring is the state signal that survives typing. The `+` badge and
             the named summary in the placeholder are both gone or unread once
             the user starts a message; this stays, and it is why a bare count
             was never allowed to be the whole disclosure. */}
         <div
-          className={`bg-surface-container-low/90 backdrop-blur-xl p-3 rounded-2xl shadow-2xl border flex flex-col gap-2 max-w-4xl mx-auto transition-shadow ${
+          className={`bg-surface-container-low/90 backdrop-blur-xl p-3 rounded-2xl shadow-2xl border flex flex-col gap-2 max-w-[var(--cc-counsel-col)] mx-auto transition-shadow ${
             handsFree.active
               ? "border-primary/40 ring-1 ring-primary/40"
               : activeModeCount > 0
@@ -1841,10 +2000,10 @@ const ChatPanel: React.FC = () => {
         onOpenChange={setToolsOpen}
         readingLabel={
           accessAllNeurons && isPaid
-            ? "Reading: all neurons"
+            ? "Reading: all notebooks"
             : activeWikis.length > 1
-              ? `Reading: ${activeWikis.length} neurons`
-              : `Reading: ${activeWiki?.name || "no neuron"}`
+              ? `Reading: ${activeWikis.length} notebooks`
+              : `Reading: ${activeWiki?.name || "no notebook"}`
         }
         onAttachImage={() => fileInputRef.current?.click()}
         onOpenResearchSettings={() => openSettings("research")}
@@ -1855,6 +2014,8 @@ const ChatPanel: React.FC = () => {
         onToggleWorkspace={() => setWorkspaceOpen((v) => !v)}
         notesOpen={notesPanelOpen}
         onToggleNotes={() => setNotesPanelOpen((v) => !v)}
+        offTheRecord={offTheRecord}
+        onToggleOffTheRecord={() => void toggleOffTheRecord()}
         deepResearch={chatDeepResearch}
         deepResearchAllowed={isPaid}
         onToggleDeepResearch={() => {
@@ -1870,6 +2031,8 @@ const ChatPanel: React.FC = () => {
         onManagePrompts={() => openSettings("prompts")}
         onOpenSettings={() => openSettings()}
         canClear={messages.length > 0}
+        wormEnabled={worm.enabled}
+        onToggleWorm={() => worm.setEnabled(!worm.enabled)}
         onClear={() => { stopSpeaking(); clearChat(); }}
       />
     </div>

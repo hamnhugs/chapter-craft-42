@@ -47,6 +47,9 @@ export interface CounselToolsSheetProps {
   onToggleWorkspace: () => void;
   notesOpen: boolean;
   onToggleNotes: () => void;
+  /** Counsel reads notes but saves nothing new. */
+  offTheRecord: boolean;
+  onToggleOffTheRecord: () => void;
 
   /** Modes */
   deepResearch: boolean;
@@ -64,6 +67,19 @@ export interface CounselToolsSheetProps {
   onOpenSettings: () => void;
   canClear: boolean;
   onClear: () => void;
+
+  /** The BookWorm's visibility.
+   *
+   *  This control is not optional. WCAG 2.2 SC 2.2.2 wants a mechanism to
+   *  pause, stop or hide motion that starts automatically and runs past five
+   *  seconds; the worm settles inside that window by itself, which is the
+   *  primary conformance story, but the working group is explicit that
+   *  prefers-reduced-motion alone is not a substitute for a real control — and
+   *  on Android that query is derived from a single OS toggle that pre-Android-9
+   *  devices never report at all. So: a visible, keyboard-reachable, persisted
+   *  switch, reached the same way as everything else on this bar. */
+  wormEnabled: boolean;
+  onToggleWorm: () => void;
 }
 
 /** One row in the sheet. A 48px-tall target — Material 3's figure, and above
@@ -151,10 +167,18 @@ const CounselToolsSheet: React.FC<CounselToolsSheetProps> = (p) => {
 
         <Group title="Context">
           <Row
-            icon={sym("neurology")}
-            label="Neurons"
+            icon={sym("menu_book")}
+            label="Notebooks"
             detail={p.readingLabel}
             onClick={andClose(p.onOpenResearchSettings)}
+          />
+          <Row
+            icon={sym("visibility_off", p.offTheRecord)}
+            label="Off the record"
+            detail={p.offTheRecord ? "Counsel reads your notes but saves nothing new" : "Counsel saves notes as you chat"}
+            state={p.offTheRecord ? "ON" : "OFF"}
+            active={p.offTheRecord}
+            onClick={p.onToggleOffTheRecord}
           />
           <Row
             icon={sym("auto_stories", p.contextBookCount > 0)}
@@ -173,7 +197,7 @@ const CounselToolsSheet: React.FC<CounselToolsSheetProps> = (p) => {
           />
           <Row
             icon={sym("sticky_note_2", p.notesOpen)}
-            label="Notes"
+            label="Voice notes"
             state={p.notesOpen ? "OPEN" : undefined}
             active={p.notesOpen}
             onClick={andClose(p.onToggleNotes)}
@@ -221,6 +245,14 @@ const CounselToolsSheet: React.FC<CounselToolsSheetProps> = (p) => {
         </Group>
 
         <Group title="Session">
+          <Row
+            icon={sym(p.wormEnabled ? "pets" : "visibility_off", p.wormEnabled)}
+            label="Companion"
+            detail="The bookworm that reacts to the conversation"
+            state={p.wormEnabled ? "ON" : "OFF"}
+            active={p.wormEnabled}
+            onClick={p.onToggleWorm}
+          />
           <Row icon={sym("tune")} label="Settings" onClick={andClose(p.onOpenSettings)} />
           {p.canClear && (
             <Row icon={sym("delete")} label="Clear conversation" onClick={andClose(p.onClear)} />

@@ -421,9 +421,9 @@ describe("a tool whose executor needs someone else's switch leaves the roster wi
 
   it("names the switch that actually fired, never one that is already on", () => {
     const viaDep = computeToolGates(withInput({ permissions: { [DEP_ON]: false } })).get(DEP_TOOL)!;
-    expect(viaDep.fix).toContain("Edit memory entries");
+    expect(viaDep.fix).toContain("Edit notes");
     const viaOwn = computeToolGates(withInput({ permissions: { [DEP_TOOL]: false } })).get(DEP_TOOL)!;
-    expect(viaOwn.fix).not.toContain("Edit memory entries");
+    expect(viaOwn.fix).not.toContain("Edit notes");
   });
 
   it("only depends on a switch that really is total — default-allow still holds", () => {

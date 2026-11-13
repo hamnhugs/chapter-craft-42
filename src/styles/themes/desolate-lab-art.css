@@ -1,0 +1,239 @@
+/* Desolate Lab — the facility telemetry strip in the app bar
+   (DesolateLabArt.tsx). Painted at z -1 inside the header's stacking context:
+   above the header's own background, under every control.
+
+   Ink on the strip (all against the plate/void, #0b0b0b):
+     readout value  #e5e2e1  16.0:1
+     readout label  #8e9192   6.2:1
+     alarm value    #dd8b7e   7.6:1   (signal red, lifted — same 8° hue)
+   The trace, grid and ruler are decoration at deliberately low contrast. */
+
+[data-app-header] { isolation: isolate; }
+
+.dla-art {
+  --dla-void: #0b0b0b;
+  --dla-steel: #8e9192;
+  --dla-phosphor: #e5e2e1;
+  --dla-signal: #cf6959;
+  --dla-signal-hot: #dd8b7e;
+  --dla-power: 1;            /* lights follow the cycle outside, below */
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  contain: strict;
+  container-type: size;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.025) 0%, transparent 40%),
+    linear-gradient(180deg, #101010 0%, var(--dla-void) 100%);
+}
+.dla-art[data-cycle="evening"] { --dla-power: 0.8; }
+.dla-art[data-cycle="dawn"]    { --dla-power: 0.65; }
+.dla-art[data-cycle="night"]   { --dla-power: 0.5; }
+
+/* Graticule: minor divisions every 24px, majors every 120px, and a dashed
+   centre line — the scope face the trace is drawn on. */
+.dla-grid {
+  position: absolute;
+  inset: 0;
+  opacity: calc(0.35 + var(--dla-power) * 0.65);
+  background:
+    repeating-linear-gradient(90deg, transparent 0 8px, rgb(142 145 146 / 0.16) 8px 12px) 0 50% / 100% 1px no-repeat,
+    linear-gradient(90deg, rgb(255 255 255 / 0.055) 1px, transparent 1px) 0 0 / 120px 100%,
+    linear-gradient(90deg, rgb(255 255 255 / 0.025) 1px, transparent 1px) 0 0 / 24px 100%;
+}
+
+/* The trace: a dim persisted copy, always there… */
+.dla-trace {
+  /* a strip-chart band along the bottom of the bar, under the readout */
+  position: absolute;
+  left: 0;
+  bottom: 6px;
+  width: 100%;
+  height: 18px;
+  overflow: visible;
+}
+/* The scope keeps the trace (and its beam) out from behind the wordmark and
+   the right-hand controls: it fades in after the designation plate and out
+   before the buttons. One static mask, so the sweep stays compositor-only. */
+.dla-scope {
+  position: absolute;
+  inset: 0;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0 23%, #000 31% 69%, transparent 77%);
+  mask-image: linear-gradient(90deg, transparent 0 23%, #000 31% 69%, transparent 77%);
+}
+.dla-trace path {
+  fill: none;
+  stroke: var(--dla-steel);
+  stroke-width: 1;
+  stroke-linejoin: round;
+  opacity: calc(0.22 + var(--dla-power) * 0.2);
+}
+
+/* …and the phosphor beam: a window that sweeps left to right, carrying an
+   un-dimmed copy of the trace that counter-moves so it stays registered.
+   Two compositor transforms, no repaint. The mask leaves a fading tail
+   behind the head, like P31 phosphor decaying. */
+.dla-beam {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 20%;
+  overflow: hidden;
+  transform: translateX(-100%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, rgb(0 0 0 / 0.25) 45%, #000 94%, transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0%, rgb(0 0 0 / 0.25) 45%, #000 94%, transparent 100%);
+  animation: dla-sweep 11s linear infinite;
+}
+.dla-beam::after {
+  /* the beam head itself: a hairline of light */
+  content: "";
+  position: absolute;
+  top: 50%;
+  bottom: 4px;
+  right: 6%;
+  width: 1px;
+  background: linear-gradient(180deg, transparent, rgb(229 226 225 / 0.6), transparent);
+}
+.dla-beam-inner {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 500%;
+  transform: translateX(20%);
+  animation: dla-sweep-inner 11s linear infinite;
+}
+.dla-trace-lit path {
+  stroke: var(--dla-phosphor);
+  stroke-width: 1.5;
+  opacity: calc(0.6 + var(--dla-power) * 0.4);
+}
+@keyframes dla-sweep {
+  0%   { transform: translateX(-100%); }
+  70%  { transform: translateX(500%); }
+  100% { transform: translateX(500%); }
+}
+@keyframes dla-sweep-inner {
+  0%   { transform: translateX(20%); }
+  70%  { transform: translateX(-100%); }
+  100% { transform: translateX(-100%); }
+}
+
+/* Ruler along the bottom edge: ticks every 12px, majors every 60px, and the
+   one event on the trace marked in signal red. */
+.dla-ruler {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 5px;
+  border-top: 0;
+  background:
+    linear-gradient(90deg, rgb(142 145 146 / 0.32) 1px, transparent 1px) 0 100% / 60px 5px repeat-x,
+    linear-gradient(90deg, rgb(142 145 146 / 0.18) 1px, transparent 1px) 0 100% / 12px 3px repeat-x;
+}
+.dla-event {
+  position: absolute;
+  bottom: 0;
+  width: 2px;
+  height: 7px;
+  margin-left: -1px;
+  background: var(--dla-signal);
+  opacity: calc(0.55 + var(--dla-power) * 0.45);
+}
+
+/* The readout: an inset instrument plate that pages through channels. Fixed
+   width so paging never shifts it; it sits a little left of centre, in the
+   gap between the wordmark and the bar's right-hand controls. */
+.dla-readout {
+  position: absolute;
+  top: 48%;
+  left: 47%;
+  translate: -50% -50%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 244px;
+  height: 20px;
+  padding: 0 10px 0 9px;
+  background: rgb(11 11 11 / 0.92);
+  border: 1px solid #2a2a2a;
+  border-left: 1px solid #444748;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.dla-lamp {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  background: var(--dla-signal);
+  animation: dla-standby 4s steps(1, end) infinite;
+}
+.dla-page {
+  display: flex;
+  gap: 7px;
+  min-width: 0;
+  animation: dla-settle 320ms steps(4, end) both;
+}
+.dla-label { color: var(--dla-steel); }
+/* Page indicator: one square per channel, the live one lit */
+.dla-pips {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+.dla-pips > span {
+  width: 4px;
+  height: 4px;
+  background: #444748;
+}
+.dla-pips > span[data-on] { background: var(--dla-phosphor); }
+.dla-value { color: var(--dla-phosphor); }
+.dla-page[data-alarm] .dla-value,
+.dla-page[data-alarm] .dla-label { color: var(--dla-signal-hot); }
+
+/* Standby beacon: a short wink every four seconds */
+@keyframes dla-standby {
+  0%   { opacity: 1; }
+  10%  { opacity: 0.22; }
+  100% { opacity: 0.22; }
+}
+/* Offline: the lamp stops winking and alarms */
+.dla-art[data-uplink="lost"] .dla-lamp {
+  background: var(--dla-signal-hot);
+  animation: dla-alarm 1s steps(1, end) infinite;
+}
+@keyframes dla-alarm {
+  0%  { opacity: 1; }
+  50% { opacity: 0.15; }
+}
+/* A new page settles in like a phosphor refresh */
+@keyframes dla-settle {
+  0%   { opacity: 0; }
+  25%  { opacity: 0.7; }
+  50%  { opacity: 0.3; }
+  100% { opacity: 1; }
+}
+
+/* Only where the bar has room: hidden in half tiles (the wordmark and the
+   controls need every pixel) and on wide screens, where the desktop nav
+   takes the middle of the bar. */
+@container (max-width: 899px) { .dla-readout { display: none; } }
+@container (min-width: 1024px) { .dla-readout { display: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .dla-beam { display: none; }
+  .dla-lamp, .dla-page { animation: none !important; }
+  .dla-lamp { opacity: 0.9; }
+  .dla-trace path { opacity: calc(0.3 + var(--dla-power) * 0.2); }
+}
+
+@media (forced-colors: active) {
+  .dla-art { display: none; }
+}

@@ -88,8 +88,8 @@ const MAX_DERIVED_ARGS = 12;
 // reused anywhere. Unknown names degrade to the name with underscores opened
 // out, so a new capability is never silently dropped from the card.
 const CAPABILITY_PHRASE: Record<string, string> = {
-  memory_search: "reads your memory entries",
-  memory_get: "reads one memory entry by id",
+  memory_search: "reads your notes",
+  memory_get: "reads one note by id",
   books_list: "lists the user's books",
   books_get_chapter_text: "reads chapter text",
   images_list: "lists the user's library images",

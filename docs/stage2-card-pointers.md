@@ -1,5 +1,9 @@
 # Stage 2 — Cards become pointers
 
+> **Status 2026-10-20:** finished by the memory redesign — retrieval now serves
+> pointer-shaped notes (summary + anchor) by default, with an always-loaded
+> notes index. See `docs/memory-redesign.md`.
+
 Design for the Card Catalog redesign's Stage 2 (report §4.2/§4.3/§7): locators on
 `knowledge_entries`, a dereference tool (`read_span`), an exact-text seek tool
 (`search_book_text`) that closes the measured E2 quote gap, card-shaped retrieval,

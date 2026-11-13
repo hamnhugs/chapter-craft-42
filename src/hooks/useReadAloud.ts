@@ -8,6 +8,7 @@ import {
   completeTtsCapture,
   discardTtsCapture,
 } from "@/lib/ttsAudioCache";
+import { attachVoiceTap, noteWordBoundary, resumeVoiceTap } from "@/lib/sprite/voiceTap";
 
 // Unified read-aloud for the merged Chat ("Talk") surface.
 //
@@ -486,7 +487,15 @@ export function useReadAloud(): ReadAloudController {
             setSpeakingId(id);
             setProgress({ id, index: idx, total: chunks.length, text: chunks[idx], mode: "browser" });
           };
-          u.onboundary = bumpHeartbeat;
+          u.onboundary = (e: SpeechSynthesisEvent) => {
+            bumpHeartbeat();
+            // These word events used to be dropped on the floor. On the browser
+            // voice there is no waveform to analyse, so they are the only
+            // sync signal that exists — they drive the BookWorm's mouth.
+            // Sentence boundaries would gape once per sentence, so skip them.
+            if (e.name === "sentence") return;
+            noteWordBoundary(e.charLength);
+          };
           if (idx === chunks.length - 1) {
             const fin = () => {
               if (!live()) return;
@@ -626,7 +635,18 @@ export function useReadAloud(): ReadAloudController {
             audio.addEventListener("timeupdate", bumpHeartbeat);
             audio.addEventListener("playing", bumpHeartbeat);
             audioRef.current = audio;
+            // The BookWorm's mouth is driven by this element's real waveform.
+            // Here, at creation, is the only correct moment to tap it:
+            // createMediaElementSource is once-per-element for the lifetime of
+            // the document, and this element is created lazily and then reused
+            // by every session forever (terminate() only pauses and clears
+            // src, it never nulls the ref). attachVoiceTap connects
+            // ctx.destination before it does anything else, so a failure here
+            // costs a still mouth, never silent audio.
+            attachVoiceTap(audio);
           }
+          // Cheap no-op unless the autoplay policy suspended the context.
+          resumeVoiceTap();
           audio.src = url;
           audio.playbackRate = rate;
           if (startAt > 0) {

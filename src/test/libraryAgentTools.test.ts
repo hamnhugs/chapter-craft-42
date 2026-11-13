@@ -146,7 +146,7 @@ const run = (name: string, args: unknown, deps: unknown) => executeChatTool(name
 
 beforeEach(() => {
   db.log = [];
-  db.wikis = [{ id: "w1", name: "Neuron One" }, { id: "w2", name: "Neuron Two" }];
+  db.wikis = [{ id: "w1", name: "Notebook One" }, { id: "w2", name: "Notebook Two" }];
   bookContextStore.init(null);
   bookContextStore.set({ shelfId: null, bookIds: [], excludedIds: [] });
 });
@@ -165,12 +165,12 @@ describe("set_active_book is a READER verb", () => {
 });
 
 describe("set_loaded_books — the tool twin of the load dialog", () => {
-  it("loads a shelf by name through loadFocus, keeping the neuron by default", async () => {
+  it("loads a shelf by name through loadFocus, keeping the notebook by default", async () => {
     const { deps, calls } = makeDeps();
     const { result } = await run("set_loaded_books", { shelf: "summer reading" }, deps);
     expect(calls).toEqual([["loadFocus", { kind: "shelf", shelfId: "s2", neurons: { kind: "keep" } }]]);
     expect(result).toMatchObject({ ok: true, loaded: { shelf: { id: "s2", name: "Summer Reading", book_count: 0 } }, reader_untouched: true });
-    expect(String((result as any).note)).toContain("Kept the current neuron");
+    expect(String((result as any).note)).toContain("Kept the current notebook");
   });
   it("refuses zero or two of shelf / book_ids / none", async () => {
     const { deps, calls } = makeDeps();
@@ -178,14 +178,14 @@ describe("set_loaded_books — the tool twin of the load dialog", () => {
     expect(((await run("set_loaded_books", { shelf: "s1", none: true }, deps)).result as any).error).toMatch(/exactly one/);
     expect(calls).toEqual([]);
   });
-  it("the neuron branch honours the switch_wiki permission and validates ids", async () => {
+  it("the notebook branch honours the switch_wiki permission and validates ids", async () => {
     const { deps, calls } = makeDeps({ permissionsSnapshot: { switch_wiki: false } });
     const off = await run("set_loaded_books", { shelf: "s1", wiki_ids: ["w1"] }, deps);
     expect((off.result as any).error).toMatch(/switch_wiki/);
     expect(calls).toEqual([]);
     const { deps: d2, calls: c2 } = makeDeps();
     const bad = await run("set_loaded_books", { shelf: "s1", wiki_ids: ["nope"] }, d2);
-    expect((bad.result as any).error).toMatch(/Unknown neuron/);
+    expect((bad.result as any).error).toMatch(/Unknown notebook/);
     expect(c2).toEqual([]);
     const ok = await run("set_loaded_books", { book_ids: ["Dune", "b1"], chain_id: "chain1" }, d2);
     expect(c2).toEqual([["loadFocus", { kind: "books", bookIds: ["b3", "b1"], neurons: { kind: "chain", ids: ["w1", "w2"] } }]]);

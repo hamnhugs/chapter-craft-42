@@ -83,9 +83,9 @@ const bookNoText: any = { ...book, chapters: [{ ...book.chapters[0], textContent
 // sentences, voice vs text, both chapter-text branches, and the Foundry.
 const SCENARIOS: Array<[string, Partial<Opts>]> = [
   ["defaults", {}],
-  ["one named neuron", { activeNeurons: [{ id: "n1", name: "Marine" }] }],
-  ["all neurons + voice", { voiceMode: true, allNeurons: true, activeNeurons: [{ id: "n1", name: "Marine" }], reflex: false, maxReplySentences: 3 }],
-  ["two neurons + deep research", { books: [book], selectedBook: book, deepResearch: true, activeNeurons: [{ id: "n1", name: "Marine" }, { id: "n2", name: "Botany" }] }],
+  ["one named notebook", { activeNeurons: [{ id: "n1", name: "Marine" }] }],
+  ["all notebooks + voice", { voiceMode: true, allNeurons: true, activeNeurons: [{ id: "n1", name: "Marine" }], reflex: false, maxReplySentences: 3 }],
+  ["two notebooks + deep research", { books: [book], selectedBook: book, deepResearch: true, activeNeurons: [{ id: "n1", name: "Marine" }, { id: "n2", name: "Botany" }] }],
   ["chapter text not loaded", { books: [bookNoText], selectedBook: bookNoText }],
   ["question does not touch the book", { books: [book], selectedBook: book, latestUserQuery: "vvv qqq zzz" }],
   ["foundry on", { foundryTools: true }],
@@ -241,7 +241,7 @@ describe("Lean Mode's block is gated too — and it is the LAST thing in the pro
     // …and the block stops listing artifacts among the free things too. (The
     // Workspace sentence's "rendered HTML/SVG artifacts" describes what the
     // store HOLDS, not a capability this turn has, so it legitimately stays.)
-    expect(prompt).toContain("Everything free is untouched: memory and neurons, books, structured blocks, and");
+    expect(prompt).toContain("Everything free is untouched: memory and notebooks, books, structured blocks, and");
     // The rest of the step survives, including the sheet it should reach for first.
     expect(prompt).toContain("reach for create_blueprint_sheet FIRST");
     expect(prompt).toContain("describe the shot concretely, or find something already in their library that fits.");
@@ -455,8 +455,12 @@ describe("the additive contract: omitting offeredTools changes nothing", () => {
   // reflex / provenance rules (they now ride with retrieved memories) or the
   // "If disabled in Settings" boilerplate; Deep Research instructions were
   // rewritten (not in this fixed input). -2,502 chars.
-  const BASELINE_LENGTH = 23103;
-  const BASELINE_DIGEST = "60b65160";
+  // Re-captured 2026-10-20 (memory redesign): neurons/chains/wikis are
+  // "notebooks"/"saved sets" in every model-facing sentence, the curating
+  // block names notes and asks for a one-line summary, and one sentence tells
+  // the model which words to use with the user (+230).
+  const BASELINE_LENGTH = 23333;
+  const BASELINE_DIGEST = "f596db16";
   const fnv1a = (s: string) => {
     let h = 0x811c9dc5;
     for (let i = 0; i < s.length; i++) {
@@ -700,19 +704,39 @@ describe("Stage 2: the retrieval clip tiers", () => {
    *  fence header's own marker mentions cannot skew it. */
   const bodyChars = (prompt: string) => (prompt.match(/L/g) || []).length;
 
-  it("a POINTER card clips small (read_span serves the passage); an UNANCHORED note keeps the pre-Stage-2 size", async () => {
+  it("full mode: a POINTER card clips small (read_span serves the passage); an UNANCHORED note keeps the pre-Stage-2 size", async () => {
     retrievalPayload = { nodes: [node("anchored")], edges: [] };
     cardPointersPayload = new Map([["anchored", { locators: [loc], aliases: [], author: "assistant" }]]) as any;
-    const pointer = await build({ latestUserQuery: "q", offeredTools: ALL_TOOLS });
+    const pointer = await build({ latestUserQuery: "q", offeredTools: ALL_TOOLS, memoryContext: "full" });
 
     retrievalPayload = { nodes: [node("plain")], edges: [] };
     cardPointersPayload = new Map();
-    const unanchored = await build({ latestUserQuery: "q", offeredTools: ALL_TOOLS });
+    const unanchored = await build({ latestUserQuery: "q", offeredTools: ALL_TOOLS, memoryContext: "full" });
 
     // The legacy corpus is 100% unanchored on day one — it must not shrink.
     expect(unanchored.prompt).toContain("L".repeat(4000));
     expect(pointer.prompt).not.toContain("L".repeat(1300));
     expect(bodyChars(pointer.prompt)).toBeLessThan(bodyChars(unanchored.prompt));
+  });
+
+  it("pointer mode (default): the top note carries its text, the rest only their one-line summary", async () => {
+    retrievalPayload = { nodes: [node("first"), node("second"), node("third")], edges: [] };
+    cardPointersPayload = new Map([["second", { locators: [], aliases: [], author: null, hook: "Second note in one line" }]]) as any;
+    const r = await build({ latestUserQuery: "q", offeredTools: ALL_TOOLS });
+    expect(r.turnContext).toContain("L".repeat(1200));
+    expect(r.turnContext).not.toContain("L".repeat(1300));
+    expect(r.turnContext).toContain("Second note in one line");
+    expect(r.turnContext).toContain("[summary only — 5000 chars in the note; search_wiki with entry_id opens it]");
+    // One body, two summaries: far below what three full bodies would cost.
+    expect(bodyChars(r.turnContext)).toBeLessThan(1600);
+  });
+
+  it("pointer mode names no tool the turn doesn't carry", async () => {
+    retrievalPayload = { nodes: [node("first"), node("second")], edges: [] };
+    cardPointersPayload = new Map();
+    const r = await build({ latestUserQuery: "q", offeredTools: ALL_TOOLS.filter((t: string) => t !== "search_wiki") });
+    expect(r.turnContext).toContain("[summary only — 5000 chars in the note]");
+    expect(r.turnContext).not.toContain("search_wiki");
   });
 });
 
@@ -723,8 +747,8 @@ describe("per-turn context is split from the cacheable prompt", () => {
       edges: [],
     };
     const r = await build({ latestUserQuery: "when are spring tides?", offeredTools: ALL_TOOLS });
-    expect(r.stablePrompt).not.toContain("Retrieved Knowledge");
-    expect(r.turnContext).toContain("Retrieved Knowledge");
+    expect(r.stablePrompt).not.toContain("Notes related to this message");
+    expect(r.turnContext).toContain("Notes related to this message");
     expect(r.turnContext).toContain("Spring tides");
     expect(r.prompt).toBe(`${r.stablePrompt}\n\n${r.turnContext}`);
     // Same stable prompt for a different question: that is the cache hit.
@@ -741,8 +765,8 @@ describe("per-turn context is split from the cacheable prompt", () => {
   });
 });
 
-describe("multi-neuron retrieval uses one scoped call when the function supports it", () => {
-  it("labels nodes by neuron from the single call's wiki_id", async () => {
+describe("multi-notebook retrieval uses one scoped call when the function supports it", () => {
+  it("labels nodes by notebook from the single call's wiki_id", async () => {
     retrievalPayload = {
       nodes: [{ id: "e1", title: "Kelp forests", content: "Kelp.", score: 1, hop: 0, wiki_id: "n2" }],
       edges: [],
@@ -754,6 +778,6 @@ describe("multi-neuron retrieval uses one scoped call when the function supports
       activeNeurons: [{ id: "n1", name: "Marine" }, { id: "n2", name: "Botany" }],
       offeredTools: ALL_TOOLS,
     });
-    expect(r.turnContext).toContain("neuron: Botany");
+    expect(r.turnContext).toContain("notebook: Botany");
   });
 });

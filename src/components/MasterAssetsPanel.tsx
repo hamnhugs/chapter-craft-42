@@ -577,7 +577,7 @@ const MasterAssetsPanel: React.FC<MasterAssetsPanelProps> = ({ open, onOpenChang
             <section className="rounded-xl border border-destructive/30 p-3">
               <p className={`${LABEL_CLS} mb-1.5 !text-destructive`}>Delete master</p>
               <p className="text-[11px] text-on-surface-variant mb-2">
-                Removes the bundle only — its images, splat and memory entry are kept.
+                Removes the bundle only — its images, splat and note are kept.
                 Type <span className="font-mono font-semibold">@{selected.name}</span> to
                 confirm.
               </p>

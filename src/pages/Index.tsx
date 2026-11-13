@@ -9,6 +9,7 @@ import WikiQuickSwitcher from "@/components/WikiQuickSwitcher";
 import ThemeSwitcher from "@/components/ThemeSwitcher";
 import ConflictNotifier from "@/components/ConflictNotifier";
 import StripeBar from "@/components/fruit-stripe/StripeBar";
+import HeaderArt from "@/components/themes/HeaderArt";
 import PricingDialog, { PlanBadgeButton } from "@/components/PricingDialog";
 import SetupWizard from "@/components/SetupWizard";
 import AdBanner from "@/components/ads/AdBanner";
@@ -30,7 +31,7 @@ const SettingsPanel = React.lazy(() => import("@/components/SettingsPanel"));
 
 // Navigation — Craft Workshop theme
 // Workflow reads left-to-right: Vault → Read → Counsel (intake & processing)
-//                                  then → Neuron → ​BRAIN (knowledge building)
+//                                  then → Notebooks (what Counsel remembers)
 //
 // Adaptive navigation (Material 3 window size classes + Apple HIG + NN/g):
 //  - Mobile  (<md):   bottom bar — 3 primary tabs + a "More" sheet
@@ -43,8 +44,10 @@ const tabs = [
   { id: "library" as const, icon: "archive", label: "Vault" },
   { id: "viewer" as const, icon: "auto_stories", label: "Read" },
   { id: "chat" as const, icon: "psychology", label: "Counsel" },
-  { id: "wiki" as const, icon: "menu_book", label: "Neuron" },
-  { id: "wikis" as const, icon: "collections_bookmark", label: "​BRAIN" },
+  // "wiki" (one open notebook) and "wikis" (the list) are two views of ONE
+  // destination: the nav shows only "Notebooks" and lights up for both.
+  { id: "wiki" as const, icon: "menu_book", label: "Notebook" },
+  { id: "wikis" as const, icon: "menu_book", label: "Notebooks" },
   { id: "settings" as const, icon: "settings", label: "Settings" },
 ];
 
@@ -70,15 +73,14 @@ const DesktopNav: React.FC<{
   activeTab: string;
   setActiveTab: (id: NavTabId) => void;
   viewerLabel: string;
-  neuronLabel: string;
-}> = ({ tabs, activeTab, setActiveTab, viewerLabel, neuronLabel }) => {
+}> = ({ tabs, activeTab, setActiveTab, viewerLabel }) => {
   const refs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [pill, setPill] = useState<{ left: number; width: number } | null>(null);
 
   useLayoutEffect(() => {
     const el = refs.current[activeTab];
     setPill(el ? { left: el.offsetLeft, width: el.offsetWidth } : null);
-  }, [activeTab, viewerLabel, neuronLabel]);
+  }, [activeTab, viewerLabel]);
 
   useEffect(() => {
     const measure = () => {
@@ -124,7 +126,7 @@ const DesktopNav: React.FC<{
                 {tab.icon}
               </span>
               <span className="truncate max-w-[160px]">
-                {tab.id === "viewer" ? viewerLabel : tab.id === "wiki" ? neuronLabel : tab.label}
+                {tab.id === "viewer" ? viewerLabel : tab.label}
               </span>
             </button>
           </React.Fragment>
@@ -135,8 +137,13 @@ const DesktopNav: React.FC<{
 };
 
 /**
- * Tablet navigation rail (md–lg). Vertically centered, edge-flush, all
- * destinations visible with icon + label, ≥48px touch targets.
+ * Tablet navigation rail (md–lg). Top-aligned, edge-flush, all destinations
+ * visible with icon + label, ≥48px touch targets. It was vertically centered:
+ * in a window shorter than the stack (a 2x-scaled 1080p laptop gives the app
+ * 956x506), centering overflowed BOTH ends and the top one — Vault — sat above
+ * the scrollable area, unreachable. Top-aligned, an overflow only ever runs
+ * off the bottom, where the rail scrolls; `.cc-rail` also tightens it on short
+ * windows so the whole stack fits (index.css).
  */
 const TabletRail: React.FC<{
   tabs: NavTab[];
@@ -145,18 +152,18 @@ const TabletRail: React.FC<{
 }> = ({ tabs, activeTab, setActiveTab }) => (
   <nav
     aria-label="Main navigation"
-    className="hidden md:flex lg:hidden w-20 shrink-0 flex-col items-center justify-center gap-1 border-r border-border/60 bg-background/85 backdrop-blur-xl py-4"
+    className="cc-rail hidden md:flex lg:hidden w-20 shrink-0 flex-col items-center gap-1 overflow-y-auto hide-scrollbar border-r border-border/60 bg-background/85 backdrop-blur-xl py-3"
   >
     {tabs.map((tab, index) => {
       const isActive = activeTab === tab.id;
       return (
         <React.Fragment key={tab.id}>
-          {index === ZONE_SPLIT && <span className="my-1.5 h-px w-8 bg-border/70" aria-hidden />}
+          {index === ZONE_SPLIT && <span className="cc-rail-split my-1.5 h-px w-8 shrink-0 bg-border/70" aria-hidden />}
           <button
             onClick={() => setActiveTab(tab.id)}
             aria-label={tab.label}
             aria-current={isActive ? "page" : undefined}
-            className={`group flex w-16 flex-col items-center justify-center gap-0.5 rounded-2xl py-2 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/60 ${
+            className={`cc-rail-item group flex w-16 shrink-0 flex-col items-center justify-center gap-0.5 rounded-2xl py-2 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/60 ${
               isActive ? "" : "hover:bg-muted/40"
             }`}
           >
@@ -190,41 +197,44 @@ const Index: React.FC = () => {
   const { isAdmin } = useIsAdmin();
   useAutoSleepCycle();
   const [moreOpen, setMoreOpen] = useState(false);
-  const visibleTabs: NavTab[] = isAdmin ? [...tabs, ADMIN_TAB] : tabs;
+  const visibleTabs: NavTab[] = (isAdmin ? [...tabs, ADMIN_TAB] : tabs).filter((t) => t.id !== "wiki");
+  // One "Notebooks" destination: it lights up for the list and for an open
+  // notebook, and always lands on the list.
+  const navActiveTab = activeTab === "wiki" ? "wikis" : activeTab;
+  const navSelect = (id: NavTabId) => setActiveTab(id);
   const moreTabs = visibleTabs.filter((t) => !PRIMARY_IDS.includes(t.id as any));
-  const moreActive = moreTabs.some((t) => t.id === activeTab);
+  const moreActive = moreTabs.some((t) => t.id === navActiveTab);
   const activeBook = getActiveBook();
   const { themeId } = useTheme();
   const isFruitStripe = themeId === "fruit-stripe";
   useVisitTracker();
 
   const viewerLabel = activeBook?.title || tabs.find((t) => t.id === "viewer")!.label;
-  // Like the Read tab, the Neuron tab takes on the loaded wiki's name
-  // (CSS-truncated in the nav, same as the book title).
-  const neuronLabel = activeWiki?.name || tabs.find((t) => t.id === "wiki")!.label;
 
   return (
     <div className="flex flex-col h-app bg-background">
       {/* Top App Bar */}
-      <header data-app-header className="sticky top-0 w-full flex items-center justify-between px-6 py-4 bg-background/80 backdrop-blur-xl z-50 shadow-[0px_4px_20px_rgba(0,0,0,0.04),0px_10px_40px_rgba(0,0,0,0.08)]">
+      <header data-app-header className="cc-app-bar sticky top-0 w-full flex items-center justify-between px-4 sm:px-6 py-2 bg-background/80 backdrop-blur-xl z-50 shadow-[0px_4px_20px_rgba(0,0,0,0.04),0px_10px_40px_rgba(0,0,0,0.08)]">
+        {/* Each theme's living backdrop behind the bar's contents (Bookworm Studio: the live Vegas sky). */}
+        <HeaderArt themeId={themeId} />
         <div className="flex items-center gap-3">
           <span className="material-symbols-outlined text-accent text-2xl">menu_book</span>
-          <span data-wordmark className="font-display font-bold text-3xl tracking-tight text-primary">​</span>
+          <span data-wordmark className="font-display font-bold text-2xl tracking-tight text-primary">​</span>
         </div>
 
         {/* Desktop nav (lg+) — tablet uses the left rail instead */}
-        <DesktopNav tabs={visibleTabs} activeTab={activeTab} setActiveTab={setActiveTab} viewerLabel={viewerLabel} neuronLabel={neuronLabel} />
+        <DesktopNav tabs={visibleTabs} activeTab={navActiveTab} setActiveTab={navSelect} viewerLabel={viewerLabel} />
 
         <div className="flex items-center gap-2">
           {activeWiki && (
             <button
-              onClick={() => setActiveTab("wikis")}
+              onClick={() => setActiveTab("wiki")}
               title={
                 activeWikis.length > 1
-                  ? `Loaded neurons: ${activeWikis.map((w) => w.name).join(", ")} — press ⌘K to switch`
-                  : `Active neuron: ${activeWiki.name} — press ⌘K to switch`
+                  ? `Counsel is using: ${activeWikis.map((w) => w.name).join(", ")} — press ⌘K to switch`
+                  : `Counsel is using: ${activeWiki.name} — press ⌘K to switch`
               }
-              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent/10 hover:bg-accent/20 transition-colors text-xs font-body font-medium text-accent max-w-[200px] truncate"
+              className="hidden sm:inline-flex lg:hidden xl:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent/10 hover:bg-accent/20 transition-colors text-xs font-body font-medium text-accent max-w-[200px] truncate"
             >
               {/* One dot per loaded neuron, overlapping — primary first. */}
               <span className="flex items-center flex-shrink-0" aria-hidden>
@@ -258,7 +268,7 @@ const Index: React.FC = () => {
 
       {/* Tablet rail + content */}
       <div className="flex flex-1 overflow-hidden">
-        <TabletRail tabs={visibleTabs} activeTab={activeTab} setActiveTab={setActiveTab} />
+        <TabletRail tabs={visibleTabs} activeTab={navActiveTab} setActiveTab={navSelect} />
 
         {/* Clearance for the fixed bottom nav, which is `h-16` (4rem) PLUS
             `env(safe-area-inset-bottom)` — see the <nav> below. A flat `pb-20`
@@ -386,12 +396,12 @@ const Index: React.FC = () => {
               </SheetHeader>
               <div className="mt-4 grid grid-cols-3 gap-3">
                 {moreTabs.map((tab) => {
-                  const isActive = activeTab === tab.id;
+                  const isActive = navActiveTab === tab.id;
                   return (
                     <button
                       key={tab.id}
                       onClick={() => {
-                        setActiveTab(tab.id);
+                        navSelect(tab.id);
                         setMoreOpen(false);
                       }}
                       className={`flex flex-col items-center justify-center gap-2 h-24 rounded-2xl border bg-card transition-colors active:scale-95 ${

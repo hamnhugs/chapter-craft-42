@@ -41,7 +41,9 @@ interface Hit {
 const EntryLocatorPanel: React.FC<{
   entry: KnowledgeEntry;
   onLocatorsChanged: (locators: CardLocator[]) => void;
-}> = ({ entry, onLocatorsChanged }) => {
+  /** Only the "Find in book" assist — the caller already lists the anchors. */
+  assistOnly?: boolean;
+}> = ({ entry, onLocatorsChanged, assistOnly }) => {
   const { books, activeBookId, loadChapterTextStrict } = useApp();
   const locators = useMemo(() => parseLocators((entry as any).locators), [entry]);
   const [finding, setFinding] = useState(false);
@@ -189,9 +191,9 @@ const EntryLocatorPanel: React.FC<{
   };
 
   return (
-    <div className="border-t border-outline-variant/10 pt-6">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">Book anchors</h3>
+    <div className={assistOnly ? "" : "border-t border-outline-variant/10 pt-6"}>
+      <div className={`flex items-center mb-3 ${assistOnly ? "justify-start" : "justify-between"}`}>
+        {!assistOnly && <h3 className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">Book anchors</h3>}
         {/* Stays available while the card has room — a card cites as many
             passages as it needs, and the first anchor must not close the
             door on the second (review finding). */}
@@ -202,7 +204,7 @@ const EntryLocatorPanel: React.FC<{
           </Button>
         )}
       </div>
-      {locators.length > 0 && (
+      {!assistOnly && locators.length > 0 && (
         <div className="space-y-2 mb-3">
           {locators.map((l, i) => (
             <div key={`${l.chapter_id}:${l.char_start}`} className="p-3 rounded-xl bg-surface-container-high text-sm">
@@ -218,7 +220,7 @@ const EntryLocatorPanel: React.FC<{
           ))}
         </div>
       )}
-      {locators.length === 0 && !finding && (
+      {!assistOnly && locators.length === 0 && !finding && (
         <p className="text-sm text-on-surface-variant">
           This card doesn't point into any book yet. Anchoring it to the passage it came from lets the
           assistant read the exact wording it cites.

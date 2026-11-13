@@ -18,7 +18,7 @@ const PaymentSuccess: React.FC = () => {
       </span>
       <h1 className="font-headline text-4xl text-foreground">You're all set</h1>
       <p className="text-on-surface-variant text-sm max-w-sm">
-        Everything is open right now — no payment needed. Unlimited neurons,
+        Everything is open right now — no payment needed. Unlimited notebooks,
         Deep Research, and every Pro feature are yours to use.
       </p>
       <Button asChild size="lg" className="mt-2">

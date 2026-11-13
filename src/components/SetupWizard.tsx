@@ -44,8 +44,8 @@ export function openSetupWizard(step = 0) {
 const TOUR_ROWS: { icon: string; name: string; metaphor: string; real: string }[] = [
   { icon: "archive", name: "The Vault", metaphor: "Your bookshelf.", real: "Upload PDFs and EPUBs — they live here." },
   { icon: "psychology", name: "Counsel", metaphor: "Your reading companion.", real: "Chat (or talk) with an AI about any book." },
-  { icon: "menu_book", name: "Neurons", metaphor: "Pockets of knowledge.", real: "As you chat and save, the AI builds a neuron — its memory of a topic." },
-  { icon: "collections_bookmark", name: "The BRAIN", metaphor: "All your neurons together.", real: "Switch neurons anytime — or load a few together as a chain." },
+  { icon: "auto_stories", name: "Read", metaphor: "Your reading desk.", real: "Open a book, highlight what matters, ask about any page." },
+  { icon: "menu_book", name: "Notebooks", metaphor: "Notes that know their page.", real: "Counsel keeps short notes as you read and chat, each linked to the page it came from — plus three recall questions a day." },
 ];
 
 const SetupWizard: React.FC = () => {
@@ -214,7 +214,7 @@ const SetupWizard: React.FC = () => {
             <div className="space-y-1">
               <h2 className="font-headline font-bold text-3xl text-foreground">Welcome to Bookworm Studio</h2>
               <p className="text-sm text-on-surface-variant">
-                Read books, talk them over with an AI, and grow a brain of everything you learn. Here's the
+                Read books, talk them over with an AI, and keep notes on everything you learn. Here's the
                 whole loop in four pieces:
               </p>
             </div>
@@ -232,7 +232,7 @@ const SetupWizard: React.FC = () => {
               ))}
             </div>
             <p className="text-xs text-on-surface-variant text-center">
-              Vault → Counsel → Neurons. Read, talk, remember.
+              Vault → Counsel → Notebooks. Read, talk, remember.
             </p>
           </div>
         )}
@@ -360,7 +360,7 @@ const SetupWizard: React.FC = () => {
             </div>
 
             <p className="text-[11px] text-on-surface-variant">
-              You can skip this — your Vault works without it — but Counsel and Neurons need a key to think.
+              You can skip this — your Vault works without it — but Counsel and Notebooks need a key to think.
             </p>
           </div>
         )}
@@ -451,7 +451,7 @@ const SetupWizard: React.FC = () => {
               {[
                 { icon: "upload_file", text: "Drop a PDF or EPUB into the Vault." },
                 { icon: "forum", text: "Open Counsel and ask anything about it." },
-                { icon: "history_edu", text: 'Tell Counsel what to remember — and watch your first neuron grow.' },
+                { icon: "history_edu", text: 'Tell Counsel what to remember — and watch your first notebook grow.' },
               ].map((s, i) => (
                 <div key={s.icon} className="flex items-center gap-3 p-3 rounded-xl bg-surface-container-high">
                   <span className="font-headline font-bold text-primary">{i + 1}</span>

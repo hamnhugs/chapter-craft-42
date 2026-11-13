@@ -325,13 +325,14 @@ export interface WriteCardFieldsResult {
  *  PostgREST schema-cache lag: retriable, never a mode flip. */
 export async function writeCardFields(
   entryId: string,
-  fields: { locators?: CardLocator[]; aliases?: string[]; author?: "user" | "assistant" },
+  fields: { locators?: CardLocator[]; aliases?: string[]; author?: "user" | "assistant"; hook?: string | null },
 ): Promise<WriteCardFieldsResult> {
   if (cardSchemaKnownMissing()) return { written: false, missingSchema: true };
   const payload: Record<string, unknown> = {};
   if (fields.locators !== undefined) payload.locators = fields.locators;
   if (fields.aliases !== undefined) payload.aliases = fields.aliases;
   if (fields.author !== undefined) payload.author = fields.author;
+  if (fields.hook !== undefined) payload.hook = fields.hook;
   if (Object.keys(payload).length === 0) return { written: true, missingSchema: false };
   const { error } = await supabase
     .from("knowledge_entries")

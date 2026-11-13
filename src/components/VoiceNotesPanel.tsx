@@ -62,6 +62,17 @@ export async function appendVoiceNote(text: string): Promise<VoiceNote | null> {
   };
 }
 
+/**
+ * Undo for an accidental save. Returns false if the row is already gone or the
+ * delete failed, so the caller can say so rather than silently claiming it.
+ */
+export async function deleteVoiceNote(id: string): Promise<boolean> {
+  const { error } = await supabase.from("notes").delete().eq("id", id);
+  if (error) return false;
+  window.dispatchEvent(new CustomEvent("voice-notes-changed"));
+  return true;
+}
+
 async function migrateLegacyLocalNotes() {
   try {
     if (localStorage.getItem(LEGACY_MIGRATED_KEY)) return;

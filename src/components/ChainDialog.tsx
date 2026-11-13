@@ -102,7 +102,7 @@ const ChainDialog: React.FC = () => {
     setSelectedIds((prev) => {
       if (prev.includes(wikiId)) return prev.filter((id) => id !== wikiId);
       if (prev.length >= MAX_ACTIVE_NEURONS) {
-        toast.info(`A chain can hold up to ${MAX_ACTIVE_NEURONS} neurons — 2–3 related ones work best.`);
+        toast.info(`A saved set can hold up to ${MAX_ACTIVE_NEURONS} notebooks — 2–3 related ones work best.`);
         return prev;
       }
       return [...prev, wikiId];
@@ -117,15 +117,15 @@ const ChainDialog: React.FC = () => {
     try {
       if (editing) {
         await updateChain(editing.id, { name: name.trim(), description: desc.trim(), cover_color: color }, selectedIds);
-        toast.success(`Chain "${name.trim()}" updated`);
+        toast.success(`Saved set "${name.trim()}" updated`);
       } else {
         await createChain({ name: name.trim(), description: desc.trim(), cover_color: color, wikiIds: selectedIds });
-        toast.success(`Chain "${name.trim()}" saved — activate it from the BRAIN tab or ⌘K`);
+        toast.success(`Saved set "${name.trim()}" saved — open it any time from ⌘K`);
       }
       emitChainsChanged();
       setOpen(false);
     } catch (err: any) {
-      toast.error(isChainsMigrationMissing(err) ? CHAINS_MIGRATION_MESSAGE : err.message || "Failed to save chain");
+      toast.error(isChainsMigrationMissing(err) ? CHAINS_MIGRATION_MESSAGE : err.message || "Couldn't save the set");
     } finally {
       setSubmitting(false);
     }
@@ -133,11 +133,11 @@ const ChainDialog: React.FC = () => {
 
   const handleDelete = async () => {
     if (!editing) return;
-    if (!confirm(`Delete the chain "${editing.name}"? The neurons inside it are not affected.`)) return;
+    if (!confirm(`Delete the saved set "${editing.name}"? The notebooks inside it are not affected.`)) return;
     setDeleting(true);
     try {
       await deleteChain(editing.id);
-      toast.success("Chain deleted");
+      toast.success("Saved set deleted");
       emitChainsChanged();
       setOpen(false);
     } catch (err: any) {
@@ -152,11 +152,11 @@ const ChainDialog: React.FC = () => {
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="font-display">
-            {editing ? "Edit chain" : "New neuron chain"}
+            {editing ? "Edit saved set" : "New saved set"}
           </DialogTitle>
           <DialogDescription>
-            A chain is a named set of neurons that load together in one click.
-            Pick 2–{MAX_ACTIVE_NEURONS} related neurons — the first becomes the
+            A saved set is a few notebooks you open together in one click.
+            Pick 2–{MAX_ACTIVE_NEURONS} related notebooks — the first becomes the
             primary, where new knowledge is saved.
           </DialogDescription>
         </DialogHeader>
@@ -181,7 +181,7 @@ const ChainDialog: React.FC = () => {
             <Textarea
               value={desc}
               onChange={(e) => setDesc(e.target.value)}
-              placeholder="What do you study with this chain?"
+              placeholder="What do you study with this saved set?"
               rows={2}
               maxLength={280}
             />
@@ -207,7 +207,7 @@ const ChainDialog: React.FC = () => {
 
           <div>
             <label className="text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-2 block">
-              Neurons ({selectedIds.length}/{MAX_ACTIVE_NEURONS} — click to add in order)
+              Notebooks ({selectedIds.length}/{MAX_ACTIVE_NEURONS} — click to add in order)
             </label>
             <div className="max-h-[36vh] overflow-auto -mx-1 px-1 py-1 space-y-1">
               {sortedWikis.map((wiki) => {
@@ -240,13 +240,13 @@ const ChainDialog: React.FC = () => {
               })}
               {sortedWikis.length === 0 && (
                 <p className="text-sm text-muted-foreground py-4 text-center">
-                  No neurons yet — create some in the BRAIN tab first.
+                  No notebooks yet — create some in the Notebooks tab first.
                 </p>
               )}
             </div>
             {selectedIds.length === 1 && (
               <p className="text-[11px] text-muted-foreground mt-1">
-                Pick at least one more — a chain needs 2+ neurons.
+                Pick at least one more — a saved set needs 2+ notebooks.
               </p>
             )}
           </div>
@@ -267,7 +267,7 @@ const ChainDialog: React.FC = () => {
             Cancel
           </Button>
           <Button onClick={handleSave} disabled={!canSave}>
-            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : editing ? "Save changes" : "Save chain"}
+            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : editing ? "Save changes" : "Save set"}
           </Button>
         </DialogFooter>
       </DialogContent>

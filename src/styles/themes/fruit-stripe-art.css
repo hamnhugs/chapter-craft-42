@@ -1,0 +1,135 @@
+/* Fruit Stripe — the gum-wrapper app bar (FruitStripeArt.tsx).
+   Painted at z -1 inside the header's isolated stacking context: above the
+   header's paper, under every control. */
+
+[data-theme="fruit-stripe"] [data-app-header] { isolation: isolate; }
+
+.fsa {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  contain: strict;
+  /* Where the wrapper "window" opens: clear of the wordmark on the left and
+     the chip + buttons on the right. Tuned per width below. */
+  --fsa-left: 200px;
+  --fsa-right: 132px;
+  --fsa-fade: 56px;
+  /* The starburst's track (start, length) — the same window by default. */
+  --fsa-a: calc(var(--fsa-left) + 14px);
+  --fsa-span: calc(100% - var(--fsa-left) - var(--fsa-right) - 28px);
+}
+
+.fsa-window {
+  position: absolute;
+  inset: 0;
+  -webkit-mask-image: linear-gradient(90deg,
+    transparent 0, transparent var(--fsa-left),
+    #000 calc(var(--fsa-left) + var(--fsa-fade)),
+    #000 calc(100% - var(--fsa-right) - var(--fsa-fade)),
+    transparent calc(100% - var(--fsa-right)), transparent 100%);
+          mask-image: linear-gradient(90deg,
+    transparent 0, transparent var(--fsa-left),
+    #000 calc(var(--fsa-left) + var(--fsa-fade)),
+    #000 calc(100% - var(--fsa-right) - var(--fsa-fade)),
+    transparent calc(100% - var(--fsa-right)), transparent 100%);
+}
+
+/* One period wider than the bar, slid left by exactly one period and
+   looped: a seamless, compositor-only drift. */
+.fsa-stripes {
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  width: calc(100% + var(--fsa-period) * 2);
+  animation: fsa-drift 48s linear infinite;
+  will-change: transform;
+}
+@keyframes fsa-drift {
+  from { transform: translateX(0); }
+  to   { transform: translateX(calc(var(--fsa-period) * -1)); }
+}
+
+/* A halftone screen over the print — ink dots, larger at the bottom edge
+   like a mid-century shaded panel. Multiply keeps the paper paper. */
+.fsa-halftone {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle at 50% 50%, rgba(17,17,17,0.22) 0 0.9px, transparent 1.3px);
+  background-size: 5px 5px;
+  -webkit-mask-image: linear-gradient(180deg, transparent 15%, #000 100%);
+          mask-image: linear-gradient(180deg, transparent 15%, #000 100%);
+  mix-blend-mode: multiply;
+  opacity: 0.55;
+}
+
+/* After hours the press runs dimmer: paler stripes, the dots carry it. */
+.fsa[data-night] .fsa-stripes { opacity: 0.62; }
+.fsa[data-night] .fsa-halftone { opacity: 0.8; }
+
+/* ── The atomic starburst — walks the bar with the day ─────────────────── */
+.fsa-star {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--fsa-a) + var(--fsa-span) * var(--fsa-p));
+  translate: -50% -50%;
+  overflow: visible;
+  transition: left 60s linear;
+}
+.fsa-star-rays line {
+  stroke: #111;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+}
+.fsa-star-rays {
+  transform-origin: 0 0;
+  animation: fsa-spin 90s linear infinite;
+}
+.fsa-star-core {
+  fill: var(--fsa-lead);
+  stroke: #111;
+  stroke-width: 1.2;
+}
+.fsa-star { animation: fsa-twinkle 9s ease-in-out infinite; }
+@keyframes fsa-spin { to { transform: rotate(360deg); } }
+@keyframes fsa-twinkle {
+  0%, 84%, 100% { scale: 1; }
+  90% { scale: 1.28; }
+  95% { scale: 0.94; }
+}
+
+/* ── Fitting the window to the bar ────────────────────────────────────── */
+/* Half tiles / phones: short wordmark, two buttons. */
+@media (max-width: 520px) {
+  .fsa { --fsa-left: 222px; --fsa-right: 96px; --fsa-fade: 34px; }
+}
+/* The "Marketing shelf" chip appears at sm. */
+@media (min-width: 640px) {
+  .fsa { --fsa-right: 250px; }
+}
+/* Wordmark + "5 FLAVORS" tag from sm up. */
+@media (min-width: 521px) {
+  .fsa { --fsa-left: 300px; }
+}
+/* Desktop nav at lg sits in the middle: the wrapper runs under it (tab
+   labels are ink/charcoal on pastel, ≥ 11:1). Between lg and 1280 there is
+   no gap between the tag and the first tab, so the starburst sits out;
+   wider, it walks only in that gap. */
+@media (min-width: 1024px) {
+  .fsa { --fsa-right: 200px; }
+  .fsa-star { display: none; }
+}
+@media (min-width: 1280px) {
+  .fsa {
+    --fsa-a: 334px;
+    --fsa-span: calc(50% - 334px - 226px);
+  }
+  .fsa-star { display: block; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fsa-stripes,
+  .fsa-star,
+  .fsa-star-rays { animation: none !important; }
+  .fsa-star { transition: none; }
+}

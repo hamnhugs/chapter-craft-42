@@ -43,7 +43,7 @@ export function usePromptBindings() {
     const names = (p.neuron_ids || [])
       .map((id) => wikis.find((w) => w.id === id)?.name)
       .filter((n): n is string => !!n);
-    if (names.length > 0) parts.push(names.length === 1 ? `loads ${names[0]}` : `loads ${names.length} neurons`);
+    if (names.length > 0) parts.push(names.length === 1 ? `loads ${names[0]}` : `loads ${names.length} notebooks`);
     const book = p.book_id ? books.find((b) => b.id === p.book_id) : null;
     if (book) parts.push(`opens ${book.title}`);
     return parts.join(" · ");
@@ -73,11 +73,11 @@ export function usePromptBindings() {
             .filter(Boolean);
           done.push(`loaded ${names.join(", ")}`);
         } catch (e) {
-          toast.error(`Couldn't load the neurons for "${p.name}": ${String((e as Error)?.message || e)}`);
+          toast.error(`Couldn't load the notebooks for "${p.name}": ${String((e as Error)?.message || e)}`);
         }
       }
       if (missing > 0) {
-        done.push(`${missing} of its neurons ${missing === 1 ? "is" : "are"} gone or locked`);
+        done.push(`${missing} of its notebooks ${missing === 1 ? "is" : "are"} gone or locked`);
       }
     }
 
