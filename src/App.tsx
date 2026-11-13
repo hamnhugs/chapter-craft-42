@@ -45,6 +45,10 @@ const NotFound = lazy(() => import("./pages/NotFound"));
  */
 const WorkspaceLab = import.meta.env.DEV ? lazy(() => import("./pages/WorkspaceLab")) : null;
 
+/** Dev-only look at the arena shell and the card collection without a
+ *  session (#/arena-lab). Same gate, same reasoning as WorkspaceLab above. */
+const ArenaLab = import.meta.env.DEV ? lazy(() => import("./pages/ArenaLab")) : null;
+
 const queryClient = new QueryClient();
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -81,6 +85,7 @@ const App = () => (
                     React Router skips non-element children, so this line has no
                     effect there. */}
                 {WorkspaceLab && <Route path="/workspace-lab" element={<WorkspaceLab />} />}
+                {ArenaLab && <Route path="/arena-lab" element={<ArenaLab />} />}
                 <Route
                   path="/memory-guide"
                   element={

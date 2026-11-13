@@ -19,6 +19,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { isEntitled } from "../_shared/entitled.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -197,16 +198,8 @@ serve(async (req) => {
     } else {
       // Gateway spends the app's credits — Pro feature (admins exempt),
       // mirroring the auto-structure gate.
-      const { data: adminFlag } = await supabase.rpc("is_admin");
-      if (!adminFlag) {
-        const { data: subRow } = await supabase
-          .from("subscribers")
-          .select("subscribed")
-          .eq("user_id", user.id)
-          .maybeSingle();
-        if (!subRow?.subscribed) {
-          return json({ error: "Figure extraction without your own OpenRouter key is a Pro feature — add a key in Settings → AI Models & Keys, or upgrade." }, 402);
-        }
+      if (!(await isEntitled(supabase, { openAccess: false }))) {
+        return json({ error: "Figure extraction without your own OpenRouter key is a Pro feature — add a key in Settings → AI Models & Keys, or upgrade." }, 402);
       }
       const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
       if (!LOVABLE_API_KEY) return json({ error: "AI not configured" }, 500);

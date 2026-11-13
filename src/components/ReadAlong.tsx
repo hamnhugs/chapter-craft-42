@@ -723,7 +723,7 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
 
   const dock = active && !focusMode && createPortal(
     <div
-      className="fixed left-1/2 -translate-x-1/2 bottom-24 md:bottom-6 z-40 w-[min(94vw,560px)]"
+      className="fixed left-1/2 -translate-x-1/2 bottom-[calc(var(--cc-dock-h)+2rem)] z-40 w-[min(94vw,560px)]"
       role="region"
       aria-label="Read-along controls"
     >

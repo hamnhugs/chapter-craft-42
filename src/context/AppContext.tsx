@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { BookDocument, Chapter } from "@/types/library";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { coverUrlNow, isCoverMarker, signCovers, saveCover, removeCover } from "@/lib/bookCovers";
 import { Wiki, fetchWikis, fetchActiveWikiIds, loadWiki as loadWikiApi, loadWikiSet, createWiki, sessionActiveWikiIds } from "@/lib/wikisApi";
 import { fetchShelfMembership, applyShelfDelta, type ShelfDelta } from "@/lib/shelfMembership";
 import { listFolders, createFolder, renameFolder, deleteFolder, type BookFolder } from "@/lib/bookFolders";
@@ -12,7 +13,7 @@ import { bookContextStore } from "@/lib/chatBooks";
 import { ASSISTANT_TAG, mergeReservedTags } from "@/lib/bookProvenance";
 import { MAX_ACTIVE_NEURONS } from "@/lib/neuronAccess";
 
-type TabId = "library" | "viewer" | "chat" | "wiki" | "wikis" | "settings" | "admin";
+type TabId = "library" | "viewer" | "chat" | "wiki" | "wikis" | "settings" | "admin" | "store";
 
 interface AppState {
   books: BookDocument[];
@@ -81,6 +82,8 @@ interface AppState {
   updateChapter: (bookId: string, chapterId: string, name: string) => void;
   removeChapter: (bookId: string, chapterId: string) => void;
   updateBookTitle: (bookId: string, newTitle: string) => void;
+  /** Store `image` as the book's cover. Resolves false if it could not be saved. */
+  setBookCover: (bookId: string, image: Blob) => Promise<boolean>;
   updateBookTags: (bookId: string, category: string | null, tags: string[]) => Promise<void>;
   /** Toggle one shelf on/off for a book. Optimistic (state patches before
    *  the write, inverse-delta rollback on failure); in multi-shelf mode a
@@ -139,8 +142,10 @@ interface AppState {
   setActiveWiki: (wikiId: string) => Promise<void>;
   /** Replace the loaded set. ids[0] becomes the primary; capped at MAX_ACTIVE_NEURONS. */
   setActiveNeurons: (wikiIds: string[]) => Promise<void>;
-  /** Add/remove a secondary neuron from the loaded set (primary can't be removed). Resolves to the new set. */
+  /** Add/remove a notebook from the loaded set. Removing the primary promotes the next one; removing the last leaves plain chat. Resolves to the new set. */
   toggleNeuronInSession: (wikiId: string) => Promise<string[]>;
+  /** Unload every notebook — Counsel becomes a plain chat. */
+  unloadAllNeurons: () => Promise<void>;
   signOut: () => void;
 }
 
@@ -326,7 +331,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [trashLoading, setTrashLoading] = useState(false);
   // Restore-the-last-book runs once per signed-in session (guard ref).
   const restoredBookRef = useRef(false);
-  const [activeTab, setActiveTab] = useState<TabId>("library");
+  // Home is the middle of the dock: Counsel. It works from the first second
+  // (no book, no notebook and no API key required), which the Library — empty
+  // for a new account — does not.
+  const [activeTab, setActiveTab] = useState<TabId>("chat");
   const [wikis, setWikis] = useState<Wiki[]>([]);
   const [activeWikiId, setActiveWikiId] = useState<string | null>(null);
   // Full ordered loaded set — invariant: activeWikiIds[0] === activeWikiId.
@@ -372,10 +380,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!user) { setWikis([]); setActiveWikiId(null); setActiveWikiIds([]); activeWikiIdsRef.current = []; return; }
     try {
       let [list, active] = await Promise.all([fetchWikis(), fetchActiveWikiIds()]);
-      if (list.length === 0) {
+      // A brand-new account gets a first notebook, loaded, so Counsel has
+      // somewhere to keep notes from the first conversation. That is a
+      // welcome, not a rule: someone who later deletes every notebook has
+      // chosen to have none, and must not find "My notes" recreated and
+      // loaded behind their back on the next refresh. The marker records that
+      // this account has had a notebook on this device.
+      const hadNotebookKey = `cc.hadNotebook.${user.id}`;
+      let hadNotebook = false;
+      try { hadNotebook = localStorage.getItem(hadNotebookKey) === "1"; } catch { /* storage blocked */ }
+      if (list.length === 0 && !hadNotebook) {
         const created = await createWiki({ name: "My notes", description: "Your first notebook — Counsel saves notes here." });
         await loadWikiApi(created.id);
         list = [created]; active = { primary: created.id, set: [created.id], setPersisted: true };
+      }
+      if (list.length > 0 && !hadNotebook) {
+        try { localStorage.setItem(hadNotebookKey, "1"); } catch { /* storage blocked */ }
+      }
+      if (list.length === 0) {
+        setWikis([]);
+        commitActiveSet([]);
+        return;
       }
       // Self-heal: drop set members that no longer exist (deleted elsewhere;
       // active_wiki_ids has no FK, so dead ids can linger there). If the
@@ -384,6 +409,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // the AI tools and the knowledge-extract edge function write to, so a
       // local-only heal would leave them targeting NULL/dead ids forever.
       const existing = new Set(list.map((w) => w.id));
+      // Notebook-free chat: nothing loaded is a state the user can choose
+      // ("Just chat"), and it persists as a NULL primary with an empty set.
+      // It is told apart from a dangling primary (deleted elsewhere), which
+      // still heals below — there the row names a notebook that is gone.
+      if (!active.primary && active.set.length === 0) {
+        setWikis(list);
+        commitActiveSet([]);
+        return;
+      }
       let set = active.set.filter((id) => existing.has(id));
       let primary = active.primary && existing.has(active.primary) ? active.primary : set[0] ?? null;
       if (!primary) {
@@ -451,7 +485,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const toggleNeuronInSession = useCallback(async (wikiId: string): Promise<string[]> => {
     const current = activeWikiIdsRef.current;
-    if (wikiId === current[0]) return current; // the primary can't be unloaded
+    // Unloading the primary promotes the next loaded notebook; unloading the
+    // last one leaves Counsel in plain chat, with no notebook at all.
     let next: string[];
     if (current.includes(wikiId)) {
       next = current.filter((id) => id !== wikiId);
@@ -463,6 +498,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     await applyActiveSet(next);
     return next;
+  }, [applyActiveSet]);
+
+  /** Plain chat: unload every notebook. Counsel then neither reads saved
+   *  notes nor saves new ones until a notebook is loaded again. */
+  const unloadAllNeurons = useCallback(async () => {
+    if (activeWikiIdsRef.current.length === 0) return;
+    await applyActiveSet([]);
   }, [applyActiveSet]);
 
   // ── Counsel's focus: one reducer, one writer ─────────────────────────────
@@ -558,6 +600,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return data.user.id;
   }, [user?.id]);
 
+  /** Sign stored-cover markers and patch the URLs into the library. */
+  const signBookCovers = useCallback(async (rows: ReadonlyArray<readonly [string, string | null | undefined]>) => {
+    const pending = rows.filter(([, raw]) => isCoverMarker(raw) && !coverUrlNow(raw));
+    if (pending.length === 0) return;
+    const signed = await signCovers(pending.map(([, raw]) => raw as string));
+    if (signed.size === 0) return;
+    const byBook = new Map<string, string>();
+    for (const [id, raw] of pending) {
+      const url = signed.get(raw as string);
+      if (url) byBook.set(id, url);
+    }
+    setBooks((prev) => prev.map((b) => (byBook.has(b.id) && !b.coverImageUrl ? { ...b, coverImageUrl: byBook.get(b.id) } : b)));
+  }, []);
+
   useEffect(() => {
     if (!user) {
       setBooks([]);
@@ -640,7 +696,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         fileName: b.file_name,
         fileData: "",
         pageCount: b.page_count,
-        coverImageUrl: b.cover_image_url || undefined,
+        coverImageUrl: coverUrlNow(b.cover_image_url),
         chapters: [],
         addedAt: new Date(b.created_at).getTime(),
         category: b.category || undefined,
@@ -663,6 +719,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setBooks(dbBooks);
       setBooksError(null);
       setBooksLoading(false);
+      // Stored covers are private objects: sign the ones this device has no
+      // cached URL for, then drop them in. Cosmetic and late by design — the
+      // generated placeholder stands in until a cover arrives.
+      void signBookCovers(bookRows.rows.map((b: any) => [b.id, b.cover_image_url] as const));
       const initialIds = new Set(dbBooks.map((b) => b.id));
 
       // Chapters and shelf membership load concurrently and patch state
@@ -792,6 +852,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           // writes one today; this keeps the invariant "books = live books"
           // true whatever writes rows tomorrow).
           if (b.deleted_at) return;
+          void signBookCovers([[b.id, b.cover_image_url]]);
           setBooks((prev) => {
             if (prev.some((x) => x.id === b.id)) return prev;
             const newBook: BookDocument = {
@@ -800,7 +861,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               fileName: b.file_name,
               fileData: "",
               pageCount: b.page_count ?? 0,
-              coverImageUrl: b.cover_image_url || undefined,
+              coverImageUrl: coverUrlNow(b.cover_image_url),
               chapters,
               addedAt: new Date(b.created_at).getTime(),
               category: b.category || undefined,
@@ -1037,6 +1098,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       await supabase.storage.from("book-pdfs").remove(Array.from(new Set(storagePaths)));
     } catch (e) { console.error("Book row deleted; PDF cleanup failed:", e); }
+    await removeCover(user.id, id);
     // Extracted figures: their rows cascaded, but the JPEGs in
     // generated-images would be orphaned forever — the rows were the only
     // pointers to them.
@@ -1188,9 +1250,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         textContent: "", gist: c.gist ?? null,
       }));
     } catch { /* the spine loads on next reload; the book is back either way */ }
+    void signBookCovers([[row.id, row.cover_image_url]]);
     const restored: BookDocument = {
       id: row.id, title: row.title, fileName: row.file_name, fileData: "",
-      pageCount: row.page_count ?? 0, coverImageUrl: row.cover_image_url || undefined,
+      pageCount: row.page_count ?? 0, coverImageUrl: coverUrlNow(row.cover_image_url),
       chapters, addedAt: new Date(row.created_at).getTime(),
       category: row.category || undefined, tags: Array.isArray(row.tags) ? row.tags : [],
       summary: row.summary ?? null, summaryModel: row.summary_model ?? null,
@@ -1381,6 +1444,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           : b
       )
     );
+  }, [user]);
+
+  /** Store a cover image for a book and show it at once. Best-effort: a
+   *  failed save leaves the generated placeholder, never an error. */
+  const setBookCover = useCallback(async (bookId: string, image: Blob): Promise<boolean> => {
+    if (!user) return false;
+    const saved = await saveCover(user.id, bookId, image);
+    if (!saved) return false;
+    setBooks((prev) => prev.map((b) => {
+      if (b.id !== bookId) return b;
+      if (b.coverImageUrl?.startsWith("blob:")) URL.revokeObjectURL(b.coverImageUrl);
+      return { ...b, coverImageUrl: saved.url };
+    }));
+    return true;
   }, [user]);
 
   const updateBookTitle = useCallback(async (bookId: string, newTitle: string) => {
@@ -1737,6 +1814,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         applyBookSummary,
         removeChapter,
         updateBookTitle,
+        setBookCover,
         updateBookTags,
         toggleBookShelf,
         setBookShelfMembership,
@@ -1768,6 +1846,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setActiveWiki,
         setActiveNeurons,
         toggleNeuronInSession,
+        unloadAllNeurons,
         signOut,
       }}
     >

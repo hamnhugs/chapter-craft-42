@@ -120,18 +120,15 @@ describe("no containing-block trigger anywhere on the workspace ancestor chain",
     {
       file: "src/pages/Index.tsx",
       anchor: /className="flex flex-1 overflow-hidden"/,
-      label: "Index tablet-rail row",
+      label: "Index content row",
     },
     {
       file: "src/pages/Index.tsx",
-      // The bottom padding is deliberately loose, exactly as the Index root
-      // tolerates `h-screen` OR `h-app` above: its VALUE is nav-clearance
-      // arithmetic that has already changed once (flat `pb-20` → one that adds
-      // `env(safe-area-inset-bottom)`), and padding of any value is not a
-      // containing-block trigger. This test must not become the thing that
-      // blocks a legitimate clearance fix. `md:pb-0` stays in the anchor
-      // because that half IS an invariant — see workspaceIntegration.
-      anchor: /className="flex-1 overflow-hidden pb-[^"]*md:pb-0"/,
+      // The tab content clears the dock with `cc-dock-clearance`
+      // (styles/arena.css): padding only, of whatever height the dock is —
+      // and padding of any value is not a containing-block trigger. The dock
+      // is on every screen size now, so there is no `md:pb-0` half any more.
+      anchor: /className="flex-1 overflow-hidden cc-dock-clearance"/,
       label: "Index tab content",
     },
     {

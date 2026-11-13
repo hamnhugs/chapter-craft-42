@@ -3,6 +3,7 @@ import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import { useApp } from "@/context/AppContext";
+import { renderCover } from "@/lib/bookIntake";
 import { Chapter } from "@/types/library";
 import ChapterNameDialog from "@/components/ChapterNameDialog";
 import ChapterManageDialog from "@/components/ChapterManageDialog";
@@ -44,8 +45,11 @@ const renderPixelRatio = () => Math.min(2, typeof window !== "undefined" ? windo
 const iconBtn =
   "grid place-items-center w-11 h-11 rounded-full transition-colors hover:bg-surface-container-high active:scale-95 disabled:opacity-30 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50";
 
+/** Books whose cover backfill already ran this session (one attempt each). */
+const coverBackfilled = new Set<string>();
+
 const PdfViewer: React.FC = () => {
-  const { getActiveBook, addChapter, updateChapter, removeChapter, updateBookTitle, activeBookId, loadBookFile, loadChapterTextStrict, setActiveTab } = useApp();
+  const { getActiveBook, addChapter, updateChapter, removeChapter, updateBookTitle, setBookCover, activeBookId, loadBookFile, loadChapterTextStrict, setActiveTab } = useApp();
   const book = getActiveBook();
   const isPdfBook = book?.fileName.toLowerCase().endsWith(".pdf") ?? false;
   const isHtmlBook = book?.fileName.toLowerCase().endsWith(".html") ?? false;
@@ -200,12 +204,25 @@ const PdfViewer: React.FC = () => {
     return () => ro.disconnect();
   }, [scrollEl]);
 
+  const coverBackfillRef = useRef<{ id: string; hasCover: boolean } | null>(null);
+  {
+    const b = getActiveBook();
+    coverBackfillRef.current = b ? { id: b.id, hasCover: !!b.coverImageUrl } : null;
+  }
   const onDocumentLoadSuccess = useCallback((pdf: PDFDocumentProxy) => {
     setNumPages(pdf.numPages);
     setCurrentPage((p) => Math.min(Math.max(1, p), pdf.numPages));
     // Measure a page up front so the first render is already fitted.
     pdf.getPage(1).then((p) => setPageWidth((w) => w || p.getViewport({ scale: 1 }).width)).catch(() => {});
-  }, []);
+    // Books uploaded before covers were automatic get theirs the first time
+    // they are opened — the document is already in memory, so it costs one
+    // small render and no download.
+    const open = coverBackfillRef.current;
+    if (open && !open.hasCover && !coverBackfilled.has(open.id)) {
+      coverBackfilled.add(open.id);
+      void renderCover(pdf as any).then((blob) => { if (blob) void setBookCover(open.id, blob); });
+    }
+  }, [setBookCover]);
 
   const gutter = containerWidth < 640 ? 8 : 32;
   const fitScale = pageWidth > 0 && containerWidth > 0
@@ -762,7 +779,7 @@ const PdfViewer: React.FC = () => {
           automatic) and quote capture (PDF only). Their own lane ABOVE the
           chapter chip and read-along dock. */}
       {!captureOpen && ((!autoHighlight && highlights.pendingSelection) || (!isHtmlBook && !focused && selectionCapture)) && (
-        <div className={`fixed bottom-52 md:bottom-32 left-1/2 -translate-x-1/2 flex items-center gap-2 ${focused ? "z-[70]" : "z-50"}`}>
+        <div className={`fixed bottom-[calc(var(--cc-dock-h)+9rem)] left-1/2 -translate-x-1/2 flex items-center gap-2 ${focused ? "z-[70]" : "z-50"}`}>
           {!autoHighlight && highlights.pendingSelection && (
             <button
               onClick={() => { void highlights.commitSelection(); }}
@@ -804,7 +821,7 @@ const PdfViewer: React.FC = () => {
 
       {/* Current chapter — a compact chip so it doesn't cover the page */}
       {!isHtmlBook && !focused && !readAlongActive && selectedChapter && (
-        <div className="fixed bottom-24 md:bottom-6 left-1/2 -translate-x-1/2 z-40 max-w-[90vw]">
+        <div className="fixed bottom-[calc(var(--cc-dock-h)+2rem)] left-1/2 -translate-x-1/2 z-40 max-w-[90vw]">
           <div className="flex items-center gap-2 pl-3 pr-1 py-1 bg-surface-container-high/90 backdrop-blur-xl rounded-full shadow-xl border border-outline-variant/20">
             <span className="material-symbols-outlined text-primary text-lg" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden>auto_stories</span>
             <span className="truncate font-headline font-bold text-sm text-primary">{selectedChapter.name}</span>

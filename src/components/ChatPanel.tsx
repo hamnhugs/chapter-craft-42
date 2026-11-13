@@ -63,7 +63,7 @@ const SEARCH_INTENT_RE =
   /\b(search|look up|look for|find|google|what is|what are|who is|who are|tell me about|research|check online|latest|current|news about)\b/i;
 
 const ChatPanel: React.FC = () => {
-  const { books, activeBookId, activeWiki, activeWikiId, activeWikis, activeWikiIds, toggleNeuronInSession, setActiveTab, shelves } = useApp();
+  const { books, activeBookId, activeWiki, activeWikiId, activeWikis, activeWikiIds, toggleNeuronInSession, unloadAllNeurons, setActiveTab, shelves } = useApp();
   const { user } = useAuth();
   const {
     apiKey, nvidiaKeyLast4, geminiApiKey, leanMode, savedModels, selectedModel, voiceModel, autoReadReplies, burplexityApiToken, accessAllNeurons, loaded,
@@ -910,9 +910,7 @@ const ChatPanel: React.FC = () => {
       ? (handsFree.interim ? `“${handsFree.interim}”` : `Hands-free — ${handsFreeStateLabel}`)
       : dictation.isListening
         ? "Listening… speak now"
-        : !(apiKey || nvidiaKeyLast4 || geminiApiKey)
-          ? "Add an API key in Settings to start chatting"
-          : activeModes.length
+        : activeModes.length
             ? `${activeModes.join(" · ")} — ask anything…`
             : "Ask about your books, or drop an image…";
 
@@ -936,7 +934,6 @@ const ChatPanel: React.FC = () => {
     const text = input.trim();
     const imagesToSend = pendingImages;
     if (!text && imagesToSend.length === 0) return;
-    if (!apiKey && !nvidiaKeyLast4 && !geminiApiKey) { toast.error("Add an API key in Settings first — OpenRouter, NVIDIA or Gemini"); openSettings("models"); return; }
     sendingRef.current = true;
     // Desktop refocus eligibility: this send came from the composer area
     // (Enter or the send button). Touch devices never refocus.
@@ -1096,6 +1093,25 @@ const ChatPanel: React.FC = () => {
           a save-as-chain affordance (Linear-style: save at point of use).
           One line that scrolls, like the composer's strips: wrapping grew a
           row per few notebooks, taken from a 506px-tall transcript. */}
+      {/* Plain chat: no notebook loaded. Said out loud, with the one tap back,
+          so "nothing is being saved" is never a surprise later. */}
+      {activeWikis.length === 0 && (
+        <div className="cc-counsel-px cc-counsel-context pt-3 pb-1 flex flex-nowrap overflow-x-auto hide-scrollbar items-center gap-1.5 text-xs font-body text-on-surface-variant [&>*]:shrink-0">
+          <span className="inline-flex items-center gap-1.5 pl-2 pr-2.5 py-0.5 rounded-full bg-surface-container-high border border-outline-variant/20">
+            <span className="material-symbols-outlined text-[14px]" aria-hidden>chat_bubble</span>
+            <span className="font-semibold text-primary">Just chatting</span>
+          </span>
+          <span className="hidden sm:inline">No notebook — nothing is saved.</span>
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent("open-neuron-switcher", { detail: { mode: "add" } }))}
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-dashed border-outline-variant/40 hover:border-primary/50 hover:text-primary transition-colors"
+            title="Load a notebook so Counsel can read and save notes"
+          >
+            <span className="material-symbols-outlined text-[14px]">add</span>
+            <span className="text-[10px] font-bold uppercase tracking-widest">Use a notebook</span>
+          </button>
+        </div>
+      )}
       {activeWikis.length > 0 && (
         <div className="cc-counsel-px cc-counsel-context pt-3 pb-1 flex flex-nowrap overflow-x-auto hide-scrollbar items-center gap-1.5 text-xs font-body text-on-surface-variant [&>*]:shrink-0">
           <span className="mr-0.5">
@@ -1116,7 +1132,7 @@ const ChatPanel: React.FC = () => {
               {i === 0 && activeWikis.length > 1 && (
                 <span className="text-[9px] font-bold uppercase tracking-widest text-on-surface-variant">saves here</span>
               )}
-              {i > 0 && (
+              {(
                 <button
                   onClick={() => toggleNeuronInSession(w.id).catch((e: any) => toast.error(e.message || "Couldn't remove that notebook"))}
                   className="rounded-full hover:bg-surface-container-highest p-0.5 leading-none"
@@ -1136,6 +1152,16 @@ const ChatPanel: React.FC = () => {
           >
             <span className="material-symbols-outlined text-[14px]">add</span>
           </button>
+          {activeWikis.length === 1 && (
+            <button
+              onClick={() => unloadAllNeurons().catch((e: any) => toast.error(e.message || "Couldn't switch to plain chat"))}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-outline-variant/40 hover:border-primary/50 hover:text-primary transition-colors"
+              title="Chat without a notebook — nothing is read from or saved to your notes"
+            >
+              <span className="material-symbols-outlined text-[14px]">chat_bubble</span>
+              <span className="text-[10px] font-bold uppercase tracking-widest">Just chat</span>
+            </button>
+          )}
           {activeWikis.length >= 2 && (
             <button
               onClick={() => import("@/components/ChainDialog").then((m) => m.openChainDialog({ prefillIds: activeWikiIds }))}
@@ -1201,12 +1227,15 @@ const ChatPanel: React.FC = () => {
             <p className="text-sm text-center max-w-md">
               {selectedBook
                 ? `Ready to discuss "${selectedBook.title}". ${selectedBook.chapters.length > 0 ? `${selectedBook.chapters.length} chapter(s) loaded.` : "No chapters isolated yet."}`
-                : "Select a book in Read, then come here to counsel with the AI about it."}
+                : "Ask anything. Open a book from your Library and Counsel will talk it through with you."}
             </p>
-            {!apiKey && loaded && (
-              <button onClick={() => openSettings("models")} className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-lg text-primary text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all">
-                <span className="material-symbols-outlined text-sm">key</span> Set API Key
-              </button>
+            {!apiKey && !nvidiaKeyLast4 && !geminiApiKey && loaded && (
+              <p className="text-xs text-center max-w-md">
+                No API key needed — replies use Bookworm AI and your coins.{" "}
+                <button onClick={() => openSettings("models")} className="underline text-primary hover:brightness-110">
+                  Use your own key instead
+                </button>
+              </p>
             )}
           </div>
         )}
@@ -2003,7 +2032,7 @@ const ChatPanel: React.FC = () => {
             ? "Reading: all notebooks"
             : activeWikis.length > 1
               ? `Reading: ${activeWikis.length} notebooks`
-              : `Reading: ${activeWiki?.name || "no notebook"}`
+              : activeWiki ? `Reading: ${activeWiki.name}` : "Just chatting — no notebook"
         }
         onAttachImage={() => fileInputRef.current?.click()}
         onOpenResearchSettings={() => openSettings("research")}

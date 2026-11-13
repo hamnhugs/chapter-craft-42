@@ -42,7 +42,7 @@ export function openSetupWizard(step = 0) {
 }
 
 const TOUR_ROWS: { icon: string; name: string; metaphor: string; real: string }[] = [
-  { icon: "archive", name: "The Vault", metaphor: "Your bookshelf.", real: "Upload PDFs and EPUBs — they live here." },
+  { icon: "archive", name: "The Library", metaphor: "Your card collection.", real: "Upload PDFs and EPUBs — they live here." },
   { icon: "psychology", name: "Counsel", metaphor: "Your reading companion.", real: "Chat (or talk) with an AI about any book." },
   { icon: "auto_stories", name: "Read", metaphor: "Your reading desk.", real: "Open a book, highlight what matters, ask about any page." },
   { icon: "menu_book", name: "Notebooks", metaphor: "Notes that know their page.", real: "Counsel keeps short notes as you read and chat, each linked to the page it came from — plus three recall questions a day." },
@@ -232,7 +232,7 @@ const SetupWizard: React.FC = () => {
               ))}
             </div>
             <p className="text-xs text-on-surface-variant text-center">
-              Vault → Counsel → Notebooks. Read, talk, remember.
+              Library → Counsel → Notebooks. Read, talk, remember.
             </p>
           </div>
         )}
@@ -360,7 +360,8 @@ const SetupWizard: React.FC = () => {
             </div>
 
             <p className="text-[11px] text-on-surface-variant">
-              You can skip this — your Vault works without it — but Counsel and Notebooks need a key to think.
+              You can skip this. Without a key, Counsel runs on Bookworm AI and spends your coins — you start with
+              some, and the Store has more. Your own key means your own account and no coins.
             </p>
           </div>
         )}
@@ -449,7 +450,7 @@ const SetupWizard: React.FC = () => {
             </div>
             <div className="space-y-2.5">
               {[
-                { icon: "upload_file", text: "Drop a PDF or EPUB into the Vault." },
+                { icon: "upload_file", text: "Drop a PDF or EPUB into the Library — title and cover set themselves." },
                 { icon: "forum", text: "Open Counsel and ask anything about it." },
                 { icon: "history_edu", text: 'Tell Counsel what to remember — and watch your first notebook grow.' },
               ].map((s, i) => (

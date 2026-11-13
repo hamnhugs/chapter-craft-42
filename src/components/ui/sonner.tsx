@@ -10,6 +10,9 @@ const Toaster = ({ ...props }: ToasterProps) => {
     <Sonner
       theme={theme as ToasterProps["theme"]}
       className="toaster group"
+      // Toasts rise from the bottom edge; lift them clear of the dock (the
+      // variable is 0 on pages that have none, such as sign-in).
+      offset="calc(var(--cc-dock-h, 0px) + 16px)"
       toastOptions={{
         classNames: {
           toast:

@@ -6,4 +6,13 @@ declare module "culori" {
   export function differenceCiede2000(
     kL?: number, kC?: number, kH?: number,
   ): (colorA: string | object, colorB: string | object) => number;
+
+  // The reference implementations oklch.test.ts checks lib/oklch.ts against.
+  // Loosely typed on purpose: culori's colour objects vary by mode.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type CuloriColor = any;
+  export function converter(mode: string): (color: string | object) => CuloriColor;
+  export function clampChroma(color: string | object, mode?: string): CuloriColor;
+  export function wcagContrast(a: string | object, b: string | object): number;
+  export function wcagLuminance(color: string | object): number;
 }

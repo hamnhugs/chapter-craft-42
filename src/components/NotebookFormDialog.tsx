@@ -28,7 +28,7 @@ export async function deleteNotebookWithConfirm(
   loadedIds: string[],
 ): Promise<boolean> {
   if (loadedIds.includes(wiki.id)) {
-    toast.error("Counsel is using this notebook. Switch Counsel to another one first, then delete this one.");
+    toast.error("Counsel is using this notebook. Switch Counsel to another one — or to Just chat — then delete this one.");
     return false;
   }
   if (!confirm(`Delete "${wiki.name}" and all ${noteCount} ${noteCount === 1 ? "note" : "notes"}? This can't be undone.`)) {

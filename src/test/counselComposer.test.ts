@@ -31,6 +31,7 @@ const stripComments = (s: string): string =>
 const CHAT_PANEL = stripComments(read("src/components/ChatPanel.tsx"));
 const SHEET = stripComments(read("src/components/CounselToolsSheet.tsx"));
 const INDEX = stripComments(read("src/pages/Index.tsx"));
+const ARENA = read("src/styles/arena.css");
 const count = (h: string, n: string) => h.split(n).length - 1;
 
 describe("nothing stacks under the composer", () => {
@@ -53,7 +54,12 @@ describe("nothing stacks under the composer", () => {
   it("keeps the context strips to a single scrolling line", () => {
     // Two in the composer (pinned files, loaded books) and the notebook row
     // above the transcript, which wrapped onto extra rows in short windows.
-    expect(count(CHAT_PANEL, "flex flex-nowrap overflow-x-auto hide-scrollbar items-center")).toBe(3);
+    // …plus the "Just chatting" row that takes the notebook row's place when
+    // no notebook is loaded. The two are mutually exclusive, so it is still
+    // one line above the transcript, never two.
+    expect(count(CHAT_PANEL, "flex flex-nowrap overflow-x-auto hide-scrollbar items-center")).toBe(4);
+    expect(CHAT_PANEL).toContain("activeWikis.length === 0 && (");
+    expect(CHAT_PANEL).toContain("activeWikis.length > 0 && (");
   });
 
   it("defaults loaded books to collapsed, so the bar does not grow with context", () => {
@@ -174,15 +180,22 @@ describe("send", () => {
   });
 });
 
-describe("the bottom nav no longer covers the composer", () => {
-  it("clears the nav's full height, safe-area inset included", () => {
-    // nav = h-16 (4rem) + env(safe-area-inset-bottom). A flat pb-20 covered
-    // only the 4rem, so a home indicator ate the last ~18px of the tab.
-    expect(INDEX).toMatch(/pb-\[calc\(5rem\+env\(safe-area-inset-bottom,0px\)\)\]/);
-    expect(INDEX).toContain("h-16");
+describe("the dock never covers the composer", () => {
+  it("clears the dock's full height, safe-area inset included", () => {
+    // The dock is var(--cc-dock-h) tall PLUS env(safe-area-inset-bottom). A
+    // flat padding once covered only the bar, so a home indicator ate the
+    // last ~18px of the tab — in Counsel, the bottom of the composer.
+    expect(INDEX).toContain('className="flex-1 overflow-hidden cc-dock-clearance"');
+    expect(ARENA).toContain("padding-bottom: calc(var(--cc-dock-h) + env(safe-area-inset-bottom, 0px))");
+    expect(ARENA).toContain(".cc-dock-row { height: var(--cc-dock-h); }");
   });
 
-  it("still switches the clearance off at md, where the nav is hidden", () => {
-    expect(INDEX).toMatch(/className="flex-1 overflow-hidden pb-\S+ md:pb-0"/);
+  it("only reserves the room while a dock is actually mounted", () => {
+    // Pages with no dock (sign-in, payment success) must not get a phantom
+    // 4rem gap or toasts floating above nothing.
+    expect(ARENA).toContain(":root { --cc-dock-h: 0px; }");
+    expect(ARENA).toContain(":root.cc-has-dock { --cc-dock-h: 4rem; }");
+    expect(INDEX).toContain('document.documentElement.classList.add("cc-has-dock")');
+    expect(INDEX).toContain('document.documentElement.classList.remove("cc-has-dock")');
   });
 });

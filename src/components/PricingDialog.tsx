@@ -28,6 +28,16 @@ const subscribeDialog = (l: () => void) => {
 };
 const getDialogState = () => dialogState;
 
+/**
+ * Open a checkout / billing page. `window.open` after an `await` is no longer
+ * inside the click that started it, so Safari (and every iOS browser) blocks
+ * it silently — the button spun and nothing happened. When the popup is
+ * refused, go there in this tab instead.
+ */
+export function openExternal(url: string) {
+  if (!window.open(url, "_blank")) window.location.assign(url);
+}
+
 export function openPricing(reason?: string) {
   if (OPEN_ACCESS) return;
   setDialogState({ open: true, reason: reason ?? null });
@@ -107,7 +117,7 @@ const PricingDialog: React.FC = () => {
         body: { plan: target },
       });
       if (error || !data?.url) throw new Error(error?.message || data?.error || "Could not start checkout");
-      window.open(data.url, "_blank");
+      openExternal(data.url);
     } catch (err: any) {
       toast.error(err.message || "Could not start checkout");
     } finally {
@@ -120,7 +130,7 @@ const PricingDialog: React.FC = () => {
     try {
       const { data, error } = await supabase.functions.invoke("customer-portal");
       if (error || !data?.url) throw new Error(error?.message || data?.error || "Could not open billing portal");
-      window.open(data.url, "_blank");
+      openExternal(data.url);
     } catch (err: any) {
       toast.error(err.message || "Could not open billing portal");
     } finally {

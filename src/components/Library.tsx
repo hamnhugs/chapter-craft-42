@@ -3,7 +3,6 @@ import VaultDropzone, { VaultDropOverlay, dragCarriesBooks } from "@/components/
 import React, { useRef, useState, useMemo, useEffect, useCallback, lazy, Suspense } from "react";
 import { useApp, TRASH_RETENTION_DAYS } from "@/context/AppContext";
 import { BookDocument } from "@/types/library";
-import { pdfjs } from "react-pdf";
 import { isAssistantBook, isYoutubeTranscript, topicTags } from "@/lib/bookProvenance";
 import YoutubeTranscriptBadge from "@/components/YoutubeTranscriptBadge";
 import { Progress } from "@/components/ui/progress";
@@ -23,7 +22,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+import { probePdf, resolveTitle, type PdfProbe } from "@/lib/bookIntake";
 import LibraryShelves from "@/components/LibraryShelves";
+import LibraryDeck from "@/components/LibraryDeck";
 import { bookHaystack, chapterMatch, matchesAll, normalizeText, tokenize } from "@/lib/librarySearch";
 import { seekLibrary, SEEK_FETCH_CAP, type SeekOutcome } from "@/lib/librarySeek";
 
@@ -105,8 +106,9 @@ const MAX_UPLOAD_ATTEMPTS = 3;
 const MAX_CONCURRENT_UPLOADS = 3;
 
 
-type ViewMode = "shelves" | "list" | "showcase" | "graph";
+type ViewMode = "cards" | "shelves" | "list" | "showcase" | "graph";
 const VIEW_KEY = "vault_view_mode";
+const VIEW_CHOSEN_KEY = "vault_view_chosen_v2";
 /**
  * Everything below is state the Vault used to throw away.
  *
@@ -130,6 +132,7 @@ const RESURFACE_DISMISS_KEY = "vault_resurface_dismissed_day";
 const RESURFACE_MIN_BOOKS = 6;
 
 const VIEW_OPTIONS: { id: ViewMode; icon: string; label: string }[] = [
+  { id: "cards", icon: "style", label: "Cards" },
   { id: "shelves", icon: "shelves", label: "Shelves" },
   { id: "list", icon: "view_list", label: "List" },
   { id: "showcase", icon: "play_circle", label: "Showcase" },
@@ -138,7 +141,7 @@ const VIEW_OPTIONS: { id: ViewMode; icon: string; label: string }[] = [
 
 
 const Library: React.FC = () => {
-  const { books, addBook, removeBook, trashAvailable, trashedBooks, trashLoading, refreshTrash, restoreBook, purgeBook, emptyTrash, requestBookLoad, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile, applyChapterGists, applyBookSummary, loadChapterText,
+  const { books, addBook, setBookCover, removeBook, trashAvailable, trashedBooks, trashLoading, refreshTrash, restoreBook, purgeBook, emptyTrash, requestBookLoad, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile, applyChapterGists, applyBookSummary, loadChapterText,
     shelves, toggleBookShelf, booksLoading, booksError, retryLoadBooks } = useApp();
   const { apiKey, imageExtractionModel, selectedModel, geminiApiKey, nvidiaKeyLast4, autoCatalogOnUpload } = useChatSettings();
   const { user } = useAuth();
@@ -192,8 +195,13 @@ const Library: React.FC = () => {
   // Values from retired views (grid/folders/collections) fall back to
   // Shelves, which absorbed all three.
   const [view, setView] = useState<ViewMode>(() => {
+    // The card collection is the default. A view someone chose before it
+    // existed is honoured once; "shelves" was the old default, not a choice,
+    // so it is only kept when picked again after cards arrived.
     const v = localStorage.getItem(VIEW_KEY);
-    return v === "list" || v === "graph" || v === "showcase" ? v : "shelves";
+    const chosenSinceCards = localStorage.getItem(VIEW_CHOSEN_KEY) === "1";
+    if (v === "list" || v === "graph" || v === "showcase") return v;
+    return v === "shelves" && chosenSinceCards ? "shelves" : "cards";
   });
   useEffect(() => {
     try { localStorage.setItem(SORT_KEY, sortBy); } catch { /* private mode */ }
@@ -287,7 +295,7 @@ const Library: React.FC = () => {
         if (!data || data.length === 0) return;
         if (localStorage.getItem("reel_moved_notice")) return;
         localStorage.setItem("reel_moved_notice", "1");
-        toast("Reel has moved — grab YouTube transcripts with the “From YouTube” button in your Vault.");
+        toast("Reel has moved — grab YouTube transcripts with the “From YouTube” button in your Library.");
       });
   }, [user]);
 
@@ -548,6 +556,34 @@ const Library: React.FC = () => {
     }
   };
 
+  /**
+   * Categorize and tag the books that just arrived, unasked.
+   *
+   * Tagging was a button, which is why most libraries are untagged and the
+   * collection's filters and mind map had little to work with. It runs once
+   * per batch, after the uploads settle, on the new books only. Silent on
+   * failure: the manual Auto-tag button is still there, and an unrequested
+   * background step has no business raising an error toast.
+   */
+  const autoTagArrivals = async (ids: string[]) => {
+    if (ids.length === 0 || tagProgress) return;
+    // Chapter detection finishes later and tags read better with chapter
+    // names, but a title and the opening pages are enough to place a book —
+    // and waiting would mean threading through the structure queue.
+    const targets = ids
+      .map((id) => booksRef.current.find((b) => b.id === id))
+      .filter((b): b is BookDocument => !!b && !b.category && !isAssistantBook(b));
+    if (targets.length === 0) return;
+    try {
+      const results = await autoTagBooks(targets, booksRef.current, { apiKey: apiKey || undefined });
+      for (const r of results) {
+        try { await updateBookTags(r.id, r.category, r.tags); } catch { /* next book */ }
+      }
+    } catch (e) {
+      console.warn("Auto-tag on upload skipped:", e);
+    }
+  };
+
   const currentBatchStateMap = useMemo(() => {
     const ids = new Set(currentBatchIds);
     return uploadStates.filter((state) => ids.has(state.id));
@@ -566,20 +602,6 @@ const Library: React.FC = () => {
     return !!extension && SUPPORTED_UPLOAD_EXTENSIONS.includes(extension as (typeof SUPPORTED_UPLOAD_EXTENSIONS)[number]);
   };
 
-  const getDisplayTitle = (fileName: string) => {
-    return fileName.replace(/\.[^/.]+$/i, "");
-  };
-
-  const getPdfPageCount = async (file: File) => {
-    try {
-      const data = await file.arrayBuffer();
-      const loadingTask = pdfjs.getDocument({ data });
-      const pdf = await loadingTask.promise;
-      return pdf.numPages;
-    } catch {
-      return 0;
-    }
-  };
 
   const updateUploadState = (id: string, patch: Partial<UploadState>) => {
     setUploadStates((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
@@ -634,10 +656,16 @@ const Library: React.FC = () => {
 
     setIsUploading(true);
 
+    /** Books handed to chapter detection; these are tagged when it finishes. */
+    const structuring = new Set<string>();
     const processQueueItem = async (item: { id: string; file: File }) => {
       const isEpub = item.file.name.toLowerCase().endsWith(".epub");
       let fileToUpload = item.file;
       let pageCount = 0;
+      // One pass over the PDF yields the page count, the title candidates and
+      // the cover (lib/bookIntake.ts) — nothing here is left for the reader
+      // to fill in by hand afterwards.
+      let probe: PdfProbe | null = null;
 
       if (isEpub) {
         updateUploadState(item.id, { status: "uploading", attempts: 0, error: "Converting EPUB…" });
@@ -647,14 +675,32 @@ const Library: React.FC = () => {
           const result = await convertEpubToPdf(item.file);
           fileToUpload = result.file;
           pageCount = result.pageCount;
+          // The converted PDF's first page is the EPUB's opening page.
+          probe = await probePdf(result.file);
         } catch {
           updateUploadState(item.id, { status: "failed", attempts: 0, error: "EPUB conversion failed" });
           return;
         }
       } else {
         const isPdf = item.file.name.toLowerCase().endsWith(".pdf");
-        pageCount = isPdf ? await getPdfPageCount(item.file) : 0;
+        if (isPdf) {
+          updateUploadState(item.id, { status: "uploading", attempts: 0, error: "Reading title and cover…" });
+          probe = await probePdf(item.file);
+          pageCount = probe.pageCount;
+        }
       }
+
+      // A re-upload replaces the FILE of a book already in the library. Its
+      // title may have been edited since — keep it, rather than resetting it
+      // to whatever the file says (which is what this used to do).
+      const reupload = booksRef.current.find((b) => b.fileName.toLowerCase() === fileToUpload.name.toLowerCase());
+      const title = reupload?.title
+        ?? resolveTitle({
+          fileName: item.file.name,
+          // An EPUB's generated PDF carries no metadata of its own.
+          metadataTitle: isEpub ? null : probe?.metadataTitle,
+          headingTitle: isEpub ? null : probe?.headingTitle,
+        });
 
       let attempt = 0;
       let uploaded = false;
@@ -667,7 +713,7 @@ const Library: React.FC = () => {
         try {
           const newBook: BookDocument = {
             id: crypto.randomUUID(),
-            title: getDisplayTitle(item.file.name),
+            title,
             fileName: fileToUpload.name,
             fileData: "",
             pageCount,
@@ -680,6 +726,9 @@ const Library: React.FC = () => {
           updateUploadState(item.id, { status: "success", attempts: attempt, error: undefined });
           addedIds.push(finalBookId);
           uploaded = true;
+          // Cover: page one, stored beside the book. Not awaited — a cover
+          // arriving a second late must not hold up the next file.
+          if (probe?.cover) void setBookCover(finalBookId, probe.cover);
 
           // Auto-detect the table of contents / sections as soon as the upload
           // lands (PDFs only — EPUBs were already converted to PDF above).
@@ -698,8 +747,11 @@ const Library: React.FC = () => {
               load: async () => ({ file: fileToUpload }),
               apiKey: apiKey || undefined,
               deps: { addChapter, removeChapter },
-              onComplete: () => enqueueCatalog(finalBookId),
+              // Tag once the chapters exist: their names place a book far
+              // better than its title alone.
+              onComplete: () => { enqueueCatalog(finalBookId); void autoTagArrivals([finalBookId]); },
             });
+            structuring.add(finalBookId);
           }
         } catch (error) {
           lastError = error;
@@ -735,6 +787,8 @@ const Library: React.FC = () => {
 
     setIsUploading(false);
     setJustAdded(addedIds);
+    // Books with no chapter run ahead of them are tagged now, from the title.
+    void autoTagArrivals(addedIds.filter((id) => !structuring.has(id)));
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -859,6 +913,16 @@ const Library: React.FC = () => {
     onRename: (b: BookDocument, title: string) => latestHandlers.current.updateBookTitle(b.id, title),
   }), []);
 
+  /** What is running on each book, in a few words, for its card. */
+  const busyByBook = useMemo(() => {
+    const m = new Map<string, string>();
+    const live = (st?: string) => st === "queued" || st === "running";
+    for (const [id, j] of Object.entries(catJobs)) if (live((j as { status?: string })?.status)) m.set(id, "Writing summary…");
+    for (const [id, j] of Object.entries(figJobs)) if (live((j as { status?: string })?.status)) m.set(id, "Finding figures…");
+    for (const [id, j] of Object.entries(jobs)) if (live((j as { status?: string })?.status)) m.set(id, "Finding chapters…");
+    return m;
+  }, [jobs, figJobs, catJobs]);
+
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const dt = e.dataTransfer;
@@ -907,8 +971,11 @@ const Library: React.FC = () => {
             ariaLabel="Library view"
             options={VIEW_OPTIONS}
             value={view}
-            onChange={setView}
-            labelClassName="hidden lg:inline"
+            onChange={(v) => {
+              try { localStorage.setItem(VIEW_CHOSEN_KEY, "1"); } catch { /* private mode */ }
+              setView(v);
+            }}
+            labelClassName="hidden xl:inline"
             onOptionHover={(id) => {
               // Warm the three.js chunk on hover so the switch feels instant.
               if (id === "graph") void import("@/components/LibraryGraph");
@@ -1005,7 +1072,7 @@ const Library: React.FC = () => {
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <p className="px-2 py-1.5 text-[11px] leading-snug text-on-surface-variant">
-                    Or drop files anywhere on the Vault, or paste a YouTube link.
+                    Or drop files anywhere on the Library, or paste a YouTube link.
                   </p>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -1196,7 +1263,7 @@ const Library: React.FC = () => {
           >
             <span className="material-symbols-outlined text-primary animate-spin">progress_activity</span>
             <span className="flex-1 text-sm text-foreground">
-              Extracting {activeVideoJobs} YouTube transcript{activeVideoJobs === 1 ? "" : "s"}… the book lands in your Vault when done.
+              Extracting {activeVideoJobs} YouTube transcript{activeVideoJobs === 1 ? "" : "s"}… the book lands in your Library when done.
             </span>
             <span className="text-sm font-bold text-primary">View</span>
           </button>
@@ -1236,7 +1303,14 @@ const Library: React.FC = () => {
                           : "text-muted-foreground"
                     }
                   >
-                    {item.status === "uploading" ? `Uploading (try ${item.attempts}/${MAX_UPLOAD_ATTEMPTS})` : item.status}
+                    {/* Before the first attempt the row carries a step name
+                        ("Converting EPUB…", "Reading title and cover…") — it
+                        used to read "Uploading (try 0/3)" through both. */}
+                    {item.status === "uploading"
+                      ? item.attempts === 0 && item.error
+                        ? item.error
+                        : `Uploading (try ${item.attempts}/${MAX_UPLOAD_ATTEMPTS})`
+                      : item.status}
                     {item.status === "failed" && item.error ? ` · ${item.error}` : ""}
                   </span>
                 </div>
@@ -1323,6 +1397,16 @@ const Library: React.FC = () => {
               <LibraryGraph books={filteredBooks} onOpenBook={(id) => requestBookLoad(id)} />
             </Suspense>
           </LazyErrorBoundary>
+        ) : view === "cards" ? (
+          <LibraryDeck
+            books={filteredBooks}
+            shelves={shelves}
+            filtered={query.trim().length > 0}
+            softDelete={softDelete}
+            busyByBook={busyByBook}
+            handlers={cardHandlers}
+            highlight={(text) => <Highlight text={text} query={query} />}
+          />
         ) : view === "showcase" ? (
           <LibraryShowcase
             books={filteredBooks}
@@ -1462,7 +1546,7 @@ const Library: React.FC = () => {
             <DialogHeader>
               <DialogTitle className="font-headline text-2xl text-primary">Import from YouTube</DialogTitle>
               <DialogDescription>
-                Paste a YouTube URL to extract the full transcript as a readable book — it lands in your Vault automatically.
+                Paste a YouTube URL to extract the full transcript as a readable book — it lands in your Library automatically.
               </DialogDescription>
             </DialogHeader>
             <LazyErrorBoundary title="The YouTube importer couldn't load" hint="Check your connection, close this dialog, and try again.">

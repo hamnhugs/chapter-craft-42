@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useEffect } from "react";
 import { useApp } from "@/context/AppContext";
 import PdfViewer from "@/components/PdfViewer";
 import Library from "@/components/Library";
@@ -17,215 +17,155 @@ import AdInterstitial from "@/components/ads/AdInterstitial";
 import WelcomeGate from "@/components/WelcomeGate";
 import LoadNeuronDialog from "@/components/LoadNeuronDialog";
 import ChainDialog from "@/components/ChainDialog";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { useTheme } from "@/context/ThemeContext";
 import { useVisitTracker } from "@/hooks/useVisitTracker";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { useAutoSleepCycle } from "@/hooks/useAutoSleepCycle";
+import { formatCoins, useWallet } from "@/lib/coins";
 
 // Admin-only surface: lazy so regular users never download it.
 const AdminPanel = React.lazy(() => import("@/components/AdminPanel"));
 // Settings: visited rarely (a small minority of users ever change settings —
 // Nielsen's "power of defaults"), so its chunk shouldn't weigh down startup.
 const SettingsPanel = React.lazy(() => import("@/components/SettingsPanel"));
+// The Store: one tab away, but most sessions never open it.
+const StorePanel = React.lazy(() => import("@/components/StorePanel"));
 
-// Navigation — Craft Workshop theme
-// Workflow reads left-to-right: Vault → Read → Counsel (intake & processing)
-//                                  then → Notebooks (what Counsel remembers)
+// Navigation — the arena shell.
 //
-// Adaptive navigation (Material 3 window size classes + Apple HIG + NN/g):
-//  - Mobile  (<md):   bottom bar — 3 primary tabs + a "More" sheet
-//  - Tablet  (md–lg): left icon rail with ALL destinations visible (M3 medium
-//                     class; rail sits on the edge where two-handed tablet
-//                     thumbs rest — no hidden "More" overflow on big screens)
-//  - Desktop (lg+):   top nav with icon + label buttons and a sliding pill
-//                     active indicator (measured offsets + CSS transition)
-const tabs = [
-  { id: "library" as const, icon: "archive", label: "Vault" },
-  { id: "viewer" as const, icon: "auto_stories", label: "Read" },
+// One bottom dock on every screen size: five big tabs with home (Counsel) in
+// the middle, the Store on the left edge and the things you collect and make
+// on either side. It replaced three different navigations (a desktop top bar,
+// a tablet rail, a phone bar with a "More" sheet) — one layout to learn, the
+// same place for everything on every device.
+//
+// Settings and Admin are not destinations you visit all day, so they live in
+// the top bar with the wallet instead of taking a dock slot.
+//
+// Existing tab IDs must never change; adding a new one ("store") is safe.
+const DOCK_TABS = [
+  { id: "store" as const, icon: "storefront", label: "Store" },
+  { id: "library" as const, icon: "style", label: "Library" },
   { id: "chat" as const, icon: "psychology", label: "Counsel" },
+  { id: "viewer" as const, icon: "auto_stories", label: "Read" },
   // "wiki" (one open notebook) and "wikis" (the list) are two views of ONE
-  // destination: the nav shows only "Notebooks" and lights up for both.
-  { id: "wiki" as const, icon: "menu_book", label: "Notebook" },
+  // destination: the dock shows only "Notebooks" and lights up for both.
   { id: "wikis" as const, icon: "menu_book", label: "Notebooks" },
-  { id: "settings" as const, icon: "settings", label: "Settings" },
 ];
 
-// The "admin" tab is appended at runtime for admin accounts only. Existing
-// tab IDs must never change; adding a new one is safe.
-const ADMIN_TAB = { id: "admin" as const, icon: "admin_panel_settings", label: "Admin" };
-
-type NavTabId = (typeof tabs)[number]["id"] | typeof ADMIN_TAB.id;
-type NavTab = { id: NavTabId; icon: string; label: string };
-
-const PRIMARY_IDS = ["library", "viewer", "chat"] as const;
-const primaryTabs = PRIMARY_IDS.map((id) => tabs.find((t) => t.id === id)!);
-
-// Zone separator index: intake tools (Vault/Read/Counsel) | knowledge building
-const ZONE_SPLIT = 3;
+type DockTabId = (typeof DOCK_TABS)[number]["id"];
 
 /**
- * Desktop top navigation (lg+). Icon + label buttons; a pill slides behind the
- * active item via measured offsets + a CSS transition (no animation library).
+ * The dock. It keeps the `data-mobile-nav` hook and the active-pill markup of
+ * the phone bar it grew out of, because that is what every theme's own
+ * styling in index.css targets — so each theme dresses the dock for free.
+ * Geometry (height, the active tab's lift, the short-window layout) is in
+ * styles/arena.css.
  */
-const DesktopNav: React.FC<{
-  tabs: NavTab[];
+const ArenaDock: React.FC<{
   activeTab: string;
-  setActiveTab: (id: NavTabId) => void;
-  viewerLabel: string;
-}> = ({ tabs, activeTab, setActiveTab, viewerLabel }) => {
-  const refs = useRef<Record<string, HTMLButtonElement | null>>({});
-  const [pill, setPill] = useState<{ left: number; width: number } | null>(null);
-
-  useLayoutEffect(() => {
-    const el = refs.current[activeTab];
-    setPill(el ? { left: el.offsetLeft, width: el.offsetWidth } : null);
-  }, [activeTab, viewerLabel]);
-
+  onSelect: (id: DockTabId) => void;
+  storeDot: boolean;
+}> = ({ activeTab, onSelect, storeDot }) => {
+  // Everything that must clear the dock (the page, floating reader chips,
+  // toasts) reads its height from --cc-dock-h, which only exists while a
+  // dock is on screen.
   useEffect(() => {
-    const measure = () => {
-      const el = refs.current[activeTab];
-      setPill(el ? { left: el.offsetLeft, width: el.offsetWidth } : null);
-    };
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, [activeTab]);
-
+    document.documentElement.classList.add("cc-has-dock");
+    return () => document.documentElement.classList.remove("cc-has-dock");
+  }, []);
   return (
-    <nav aria-label="Main navigation" className="relative hidden lg:flex items-center gap-1">
-      {pill && (
-        <span
-          aria-hidden
-          className="absolute top-1/2 -translate-y-1/2 h-9 rounded-full bg-accent/10 ring-1 ring-accent/20 transition-all duration-200 ease-out"
-          style={{ left: pill.left, width: pill.width }}
-        />
-      )}
-      {tabs.map((tab, index) => {
-        const isActive = activeTab === tab.id;
-        return (
-          <React.Fragment key={tab.id}>
-            {index === ZONE_SPLIT && (
-              <span className="w-px h-5 mx-2 bg-border/60 flex-shrink-0" aria-hidden />
-            )}
+    <nav
+      data-mobile-nav
+      aria-label="Main navigation"
+      className="cc-dock fixed bottom-0 inset-x-0 z-50 border-t border-border/60 bg-background/85 backdrop-blur-xl"
+      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+    >
+      <div className="cc-dock-row mx-auto flex max-w-3xl items-stretch px-1">
+        {DOCK_TABS.map((tab) => {
+          const isActive = activeTab === tab.id;
+          return (
             <button
-              ref={(el) => {
-                refs.current[tab.id] = el;
-              }}
-              onClick={() => setActiveTab(tab.id)}
+              key={tab.id}
+              onClick={() => onSelect(tab.id)}
+              aria-label={tab.label}
               aria-current={isActive ? "page" : undefined}
-              className={`relative z-10 flex items-center gap-2 h-9 px-3.5 rounded-full font-body text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/60 ${
-                isActive
-                  ? "text-accent font-semibold"
-                  : "text-secondary font-medium hover:text-primary hover:bg-muted/50"
-              }`}
+              className="cc-dock-tab group"
             >
-              <span
-                className="material-symbols-outlined text-[20px]"
-                style={isActive ? { fontVariationSettings: "'FILL' 1" } : undefined}
-              >
-                {tab.icon}
+              <span className="cc-dock-icon relative flex items-center justify-center h-8 w-14">
+                {isActive && <span className="absolute inset-0 rounded-full bg-accent/15" aria-hidden />}
+                <span
+                  className={`material-symbols-outlined relative text-[22px] ${isActive ? "text-accent" : "text-secondary"}`}
+                  style={isActive ? { fontVariationSettings: "'FILL' 1" } : undefined}
+                >
+                  {tab.icon}
+                </span>
+                {tab.id === "store" && storeDot && !isActive && <span className="cc-dock-dot" aria-hidden />}
               </span>
-              <span className="truncate max-w-[160px]">
-                {tab.id === "viewer" ? viewerLabel : tab.label}
+              <span
+                className={`cc-dock-label font-body text-[11px] leading-none font-medium ${
+                  isActive ? "text-accent" : "text-muted-foreground"
+                }`}
+              >
+                {tab.label}
               </span>
             </button>
-          </React.Fragment>
-        );
-      })}
+          );
+        })}
+      </div>
     </nav>
   );
 };
 
-/**
- * Tablet navigation rail (md–lg). Top-aligned, edge-flush, all destinations
- * visible with icon + label, ≥48px touch targets. It was vertically centered:
- * in a window shorter than the stack (a 2x-scaled 1080p laptop gives the app
- * 956x506), centering overflowed BOTH ends and the top one — Vault — sat above
- * the scrollable area, unreachable. Top-aligned, an overflow only ever runs
- * off the bottom, where the rail scrolls; `.cc-rail` also tightens it on short
- * windows so the whole stack fits (index.css).
- */
-const TabletRail: React.FC<{
-  tabs: NavTab[];
-  activeTab: string;
-  setActiveTab: (id: NavTabId) => void;
-}> = ({ tabs, activeTab, setActiveTab }) => (
-  <nav
-    aria-label="Main navigation"
-    className="cc-rail hidden md:flex lg:hidden w-20 shrink-0 flex-col items-center gap-1 overflow-y-auto hide-scrollbar border-r border-border/60 bg-background/85 backdrop-blur-xl py-3"
-  >
-    {tabs.map((tab, index) => {
-      const isActive = activeTab === tab.id;
-      return (
-        <React.Fragment key={tab.id}>
-          {index === ZONE_SPLIT && <span className="cc-rail-split my-1.5 h-px w-8 shrink-0 bg-border/70" aria-hidden />}
-          <button
-            onClick={() => setActiveTab(tab.id)}
-            aria-label={tab.label}
-            aria-current={isActive ? "page" : undefined}
-            className={`cc-rail-item group flex w-16 shrink-0 flex-col items-center justify-center gap-0.5 rounded-2xl py-2 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/60 ${
-              isActive ? "" : "hover:bg-muted/40"
-            }`}
-          >
-            <span className="relative flex h-8 w-14 items-center justify-center">
-              {isActive && <span className="absolute inset-0 rounded-full bg-accent/15" aria-hidden />}
-              <span
-                className={`material-symbols-outlined relative text-[22px] transition-transform duration-150 group-active:scale-90 ${
-                  isActive ? "text-accent" : "text-secondary"
-                }`}
-                style={isActive ? { fontVariationSettings: "'FILL' 1" } : undefined}
-              >
-                {tab.icon}
-              </span>
-            </span>
-            <span
-              className={`font-body text-[11px] leading-none font-medium ${
-                isActive ? "text-accent" : "text-muted-foreground"
-              }`}
-            >
-              {tab.label}
-            </span>
-          </button>
-        </React.Fragment>
-      );
-    })}
-  </nav>
-);
+/** The wallet in the top bar: balance, and one tap to the Store. */
+const WalletPill: React.FC<{ onOpenStore: () => void }> = ({ onOpenStore }) => {
+  const wallet = useWallet();
+  if (!wallet.loaded || !wallet.available) return null;
+  return (
+    <button
+      onClick={onOpenStore}
+      className="cc-wallet text-sm"
+      title="Your coins — open the Store"
+      aria-label={`${formatCoins(wallet.balance)} coins. Open the Store.`}
+    >
+      <span className="cc-coin" aria-hidden>c</span>
+      <span>{formatCoins(wallet.balance)}</span>
+      <span className="cc-wallet-plus" aria-hidden>
+        <span className="material-symbols-outlined text-[16px]">add</span>
+      </span>
+    </button>
+  );
+};
 
 const Index: React.FC = () => {
-  const { activeTab, setActiveTab, getActiveBook, signOut, activeWiki, activeWikis } = useApp();
+  const { activeTab, setActiveTab, signOut, activeWiki, activeWikis } = useApp();
   const { isAdmin } = useIsAdmin();
+  const wallet = useWallet();
   useAutoSleepCycle();
-  const [moreOpen, setMoreOpen] = useState(false);
-  const visibleTabs: NavTab[] = (isAdmin ? [...tabs, ADMIN_TAB] : tabs).filter((t) => t.id !== "wiki");
   // One "Notebooks" destination: it lights up for the list and for an open
   // notebook, and always lands on the list.
-  const navActiveTab = activeTab === "wiki" ? "wikis" : activeTab;
-  const navSelect = (id: NavTabId) => setActiveTab(id);
-  const moreTabs = visibleTabs.filter((t) => !PRIMARY_IDS.includes(t.id as any));
-  const moreActive = moreTabs.some((t) => t.id === navActiveTab);
-  const activeBook = getActiveBook();
+  const dockActiveTab = activeTab === "wiki" ? "wikis" : activeTab;
   const { themeId } = useTheme();
   const isFruitStripe = themeId === "fruit-stripe";
   useVisitTracker();
 
-  const viewerLabel = activeBook?.title || tabs.find((t) => t.id === "viewer")!.label;
+  const barButton =
+    "text-primary hover:bg-primary/10 transition-all duration-200 p-2 rounded-lg active:scale-95 flex items-center";
 
   return (
     <div className="flex flex-col h-app bg-background">
       {/* Top App Bar */}
-      <header data-app-header className="cc-app-bar sticky top-0 w-full flex items-center justify-between px-4 sm:px-6 py-2 bg-background/80 backdrop-blur-xl z-50 shadow-[0px_4px_20px_rgba(0,0,0,0.04),0px_10px_40px_rgba(0,0,0,0.08)]">
+      <header data-app-header className="cc-app-bar sticky top-0 w-full flex items-center justify-between gap-2 px-3 sm:px-6 py-2 bg-background/80 backdrop-blur-xl z-50 shadow-[0px_4px_20px_rgba(0,0,0,0.04),0px_10px_40px_rgba(0,0,0,0.08)]">
         {/* Each theme's living backdrop behind the bar's contents (Bookworm Studio: the live Vegas sky). */}
         <HeaderArt themeId={themeId} />
-        <div className="flex items-center gap-3">
-          <span className="material-symbols-outlined text-accent text-2xl">menu_book</span>
+        {/* The wordmark gives way first: on a narrow phone it clips rather
+            than sliding under the wallet. */}
+        <div className="flex items-center gap-3 min-w-0 overflow-hidden">
+          <span className="material-symbols-outlined text-accent text-2xl shrink-0">menu_book</span>
           <span data-wordmark className="font-display font-bold text-2xl tracking-tight text-primary">​</span>
         </div>
 
-        {/* Desktop nav (lg+) — tablet uses the left rail instead */}
-        <DesktopNav tabs={visibleTabs} activeTab={navActiveTab} setActiveTab={navSelect} viewerLabel={viewerLabel} />
-
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 sm:gap-2 shrink-0">
           {activeWiki && (
             <button
               onClick={() => setActiveTab("wiki")}
@@ -234,7 +174,7 @@ const Index: React.FC = () => {
                   ? `Counsel is using: ${activeWikis.map((w) => w.name).join(", ")} — press ⌘K to switch`
                   : `Counsel is using: ${activeWiki.name} — press ⌘K to switch`
               }
-              className="hidden sm:inline-flex lg:hidden xl:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent/10 hover:bg-accent/20 transition-colors text-xs font-body font-medium text-accent max-w-[200px] truncate"
+              className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent/10 hover:bg-accent/20 transition-colors text-xs font-body font-medium text-accent max-w-[200px] truncate"
             >
               {/* One dot per loaded neuron, overlapping — primary first. */}
               <span className="flex items-center flex-shrink-0" aria-hidden>
@@ -252,35 +192,46 @@ const Index: React.FC = () => {
               )}
             </button>
           )}
+          <WalletPill onOpenStore={() => setActiveTab("store")} />
           <PlanBadgeButton />
           <ConflictNotifier />
-          <ThemeSwitcher />
+          {/* Themes are also in Settings → Appearance; the bar drops the
+              shortcut where there is no room for it. */}
+          <span className="hidden sm:contents"><ThemeSwitcher /></span>
+          {isAdmin && (
+            <button
+              onClick={() => setActiveTab("admin")}
+              aria-label="Admin"
+              title="Admin"
+              aria-current={activeTab === "admin" ? "page" : undefined}
+              className={barButton}
+            >
+              <span className="material-symbols-outlined text-[22px]" style={activeTab === "admin" ? { fontVariationSettings: "'FILL' 1" } : undefined}>admin_panel_settings</span>
+            </button>
+          )}
           <button
-            onClick={signOut}
-            className="text-primary hover:bg-primary/10 transition-all duration-200 px-4 py-2 rounded-lg font-body font-medium text-sm active:scale-95"
+            onClick={() => setActiveTab("settings")}
+            aria-label="Settings"
+            title="Settings"
+            aria-current={activeTab === "settings" ? "page" : undefined}
+            className={barButton}
           >
-            Sign out
+            <span className="material-symbols-outlined text-[22px]" style={activeTab === "settings" ? { fontVariationSettings: "'FILL' 1" } : undefined}>settings</span>
+          </button>
+          <button onClick={signOut} aria-label="Sign out" title="Sign out" className={barButton}>
+            <span className="material-symbols-outlined text-[22px]">logout</span>
           </button>
         </div>
       </header>
       {isFruitStripe && <StripeBar thickness={4} />}
       <AdBanner />
 
-      {/* Tablet rail + content */}
+      {/* The page. `cc-dock-clearance` pads it by the dock's real height plus
+          the home-indicator inset (styles/arena.css) — a flat padding once
+          covered only the bar and let a phone's home indicator hide the
+          bottom of the chat composer under a bar that swallowed the taps. */}
       <div className="flex flex-1 overflow-hidden">
-        <TabletRail tabs={visibleTabs} activeTab={navActiveTab} setActiveTab={navSelect} />
-
-        {/* Clearance for the fixed bottom nav, which is `h-16` (4rem) PLUS
-            `env(safe-area-inset-bottom)` — see the <nav> below. A flat `pb-20`
-            covered only the 4rem and left the extra 1rem as breathing room, so
-            on any device with a home indicator (~34px) the nav stood ~98px
-            tall against 80px of clearance and the last ~18px of the tab —
-            in Counsel, the bottom of the composer — sat underneath a
-            `fixed z-50` bar that swallowed the taps. The 5rem keeps that 1rem
-            of breathing room exactly as it was; the `env()` term is the fix.
-            Resolves to 0 at `md` and up, where the nav is `md:hidden` and the
-            tablet rail takes over. */}
-        <div className="flex-1 overflow-hidden pb-[calc(5rem+env(safe-area-inset-bottom,0px))] md:pb-0">
+        <div className="flex-1 overflow-hidden cc-dock-clearance">
           {activeTab === "library" ? (
             <Library />
           ) : activeTab === "chat" ? (
@@ -289,6 +240,16 @@ const Index: React.FC = () => {
             <WikiPanel />
           ) : activeTab === "wikis" ? (
             <WikiLibrary />
+          ) : activeTab === "store" ? (
+            <React.Suspense
+              fallback={
+                <div className="flex items-center justify-center h-full text-muted-foreground">
+                  Loading…
+                </div>
+              }
+            >
+              <StorePanel />
+            </React.Suspense>
           ) : activeTab === "settings" ? (
             <React.Suspense
               fallback={
@@ -315,124 +276,11 @@ const Index: React.FC = () => {
         </div>
       </div>
 
-      {/* Mobile Bottom Nav */}
-      <nav
-        data-mobile-nav
-        aria-label="Main navigation"
-        className="md:hidden fixed bottom-0 inset-x-0 z-50 border-t border-border/60 bg-background/85 backdrop-blur-xl"
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-      >
-        <div className="grid grid-cols-4 h-16">
-          {primaryTabs.map((tab) => {
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                aria-label={tab.label}
-                aria-current={isActive ? "page" : undefined}
-                className="group relative flex flex-col items-center justify-center gap-0.5 outline-none focus-visible:ring-2 focus-visible:ring-accent/60 rounded-md"
-              >
-                <span className="relative flex items-center justify-center h-8 w-14">
-                  {isActive && (
-                    <span className="absolute inset-0 rounded-full bg-accent/15" aria-hidden />
-                  )}
-                  <span
-                    className={`material-symbols-outlined relative text-[22px] transition-transform duration-150 group-active:scale-90 ${
-                      isActive ? "text-accent" : "text-secondary"
-                    }`}
-                    style={isActive ? { fontVariationSettings: "'FILL' 1" } : undefined}
-                  >
-                    {tab.icon}
-                  </span>
-                </span>
-                <span
-                  className={`font-body text-[11px] leading-none font-medium ${
-                    isActive ? "text-accent" : "text-muted-foreground"
-                  }`}
-                >
-                  {tab.label}
-                </span>
-              </button>
-            );
-          })}
-
-          <Sheet open={moreOpen} onOpenChange={setMoreOpen}>
-            <SheetTrigger asChild>
-              <button
-                aria-label="More tabs"
-                aria-current={moreActive ? "page" : undefined}
-                className="group relative flex flex-col items-center justify-center gap-0.5 outline-none focus-visible:ring-2 focus-visible:ring-accent/60 rounded-md"
-              >
-                <span className="relative flex items-center justify-center h-8 w-14">
-                  {moreActive && (
-                    <span className="absolute inset-0 rounded-full bg-accent/15" aria-hidden />
-                  )}
-                  <span
-                    className={`material-symbols-outlined relative text-[22px] transition-transform duration-150 group-active:scale-90 ${
-                      moreActive ? "text-accent" : "text-secondary"
-                    }`}
-                    style={moreActive ? { fontVariationSettings: "'FILL' 1" } : undefined}
-                  >
-                    more_horiz
-                  </span>
-                </span>
-                <span
-                  className={`font-body text-[11px] leading-none font-medium ${
-                    moreActive ? "text-accent" : "text-muted-foreground"
-                  }`}
-                >
-                  More
-                </span>
-              </button>
-            </SheetTrigger>
-            <SheetContent
-              side="bottom"
-              className="rounded-t-3xl border-t border-border/60 bg-background/95 backdrop-blur-xl pb-[calc(env(safe-area-inset-bottom)+1.5rem)]"
-            >
-              <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-muted-foreground/30" />
-              <SheetHeader className="text-left">
-                <SheetTitle className="font-display text-xl">More</SheetTitle>
-              </SheetHeader>
-              <div className="mt-4 grid grid-cols-3 gap-3">
-                {moreTabs.map((tab) => {
-                  const isActive = navActiveTab === tab.id;
-                  return (
-                    <button
-                      key={tab.id}
-                      onClick={() => {
-                        navSelect(tab.id);
-                        setMoreOpen(false);
-                      }}
-                      className={`flex flex-col items-center justify-center gap-2 h-24 rounded-2xl border bg-card transition-colors active:scale-95 ${
-                        isActive
-                          ? "border-accent/60 ring-1 ring-accent/40 bg-accent/10"
-                          : "border-border/60 hover:bg-muted/40"
-                      }`}
-                    >
-                      <span
-                        className={`material-symbols-outlined text-[26px] ${
-                          isActive ? "text-accent" : "text-secondary"
-                        }`}
-                        style={isActive ? { fontVariationSettings: "'FILL' 1" } : undefined}
-                      >
-                        {tab.icon}
-                      </span>
-                      <span
-                        className={`font-body text-[12px] font-medium ${
-                          isActive ? "text-accent" : "text-foreground"
-                        }`}
-                      >
-                        {tab.label}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </SheetContent>
-          </Sheet>
-        </div>
-      </nav>
+      <ArenaDock
+        activeTab={dockActiveTab}
+        onSelect={setActiveTab}
+        storeDot={wallet.loaded && wallet.available && wallet.dailyAvailable}
+      />
       <WikiQuickSwitcher />
       <LoadNeuronDialog />
       <ChainDialog />

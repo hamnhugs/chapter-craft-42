@@ -203,17 +203,18 @@ describe("Index.tsx — h-screen → h-app", () => {
     expect(INDEX).not.toContain("h-screen");
   });
 
-  it("does not touch the tablet rail or the bottom nav (verified correct for landscape phones)", () => {
-    // At 852 px wide the rail shows (md:flex lg:hidden — 80 px of 852, on the
-    // abundant axis) and the bottom nav stays hidden (md:hidden), so the tab
-    // content's bottom padding correctly resolves to 0. Pinned so a later
-    // "landscape fix" does not undo an already-correct behaviour.
-    //
-    // Only `md:pb-0` is asserted, not the mobile value beside it: that value is
-    // nav-clearance arithmetic (4rem of nav + safe-area inset + breathing
-    // room) and is free to change. The invariant is that it switches OFF at md.
-    expect(INDEX).toContain("md:flex lg:hidden");
-    expect(INDEX).toMatch(/className="flex-1 overflow-hidden pb-\S+ md:pb-0"/);
+  it("clears the dock on every screen size (there is no rail and no md switch-off any more)", () => {
+    // The arena shell has ONE navigation: the bottom dock, at every width.
+    // The tablet rail and the `md:pb-0` switch that went with it are gone, so
+    // the tab content always pads by the dock's own height — read from
+    // --cc-dock-h, which arena.css shortens on low windows (a landscape phone
+    // gets a 3rem dock, not a 4rem one).
+    expect(INDEX).not.toContain("md:flex lg:hidden");
+    expect(INDEX).not.toContain("md:pb-0");
+    expect(INDEX).toContain('className="flex-1 overflow-hidden cc-dock-clearance"');
+    const ARENA = read("src/styles/arena.css");
+    expect(ARENA).toMatch(/\.cc-dock-clearance\s*\{\s*padding-bottom:\s*calc\(var\(--cc-dock-h\) \+ env\(safe-area-inset-bottom, 0px\)\)/);
+    expect(ARENA).toMatch(/@media \(max-height: 620px\)\s*\{\s*:root\.cc-has-dock \{ --cc-dock-h: 3rem; \}/);
   });
 });
 

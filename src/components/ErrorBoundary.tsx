@@ -8,6 +8,14 @@ interface State {
   error: Error | null;
 }
 
+const CHUNK_RELOAD_KEY = "cc.chunkReloadAt";
+
+/** The browser's wording for "that lazy-loaded file is not there any more". */
+export function isStaleChunkError(error: unknown): boolean {
+  const msg = error instanceof Error ? `${error.name} ${error.message}` : String(error ?? "");
+  return /dynamically imported module|Importing a module script failed|ChunkLoadError|Loading chunk \S+ failed|error loading dynamically imported module/i.test(msg);
+}
+
 /**
  * App-wide error boundary. Catches uncaught render errors so a single failing
  * component shows a recoverable fallback instead of white-screening the whole
@@ -23,6 +31,20 @@ class ErrorBoundary extends React.Component<Props, State> {
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     // Surface in the console for debugging / Lovable capture.
     console.error("Uncaught render error:", error, info?.componentStack);
+    // A tab left open across a deploy still points at the OLD chunk names, so
+    // the first lazy screen it opens (Settings, the Store, the mind map)
+    // fails to load — and "Try again" cannot help, because React.lazy keeps
+    // the rejected import. The fix is a reload, which fetches the new index.
+    // Once per minute at most, so a genuinely missing chunk cannot loop.
+    if (isStaleChunkError(error)) {
+      try {
+        const last = Number(sessionStorage.getItem(CHUNK_RELOAD_KEY)) || 0;
+        if (Date.now() - last > 60_000) {
+          sessionStorage.setItem(CHUNK_RELOAD_KEY, String(Date.now()));
+          window.location.reload();
+        }
+      } catch { /* storage blocked — the fallback's Reload button remains */ }
+    }
   }
 
   handleReset = () => {

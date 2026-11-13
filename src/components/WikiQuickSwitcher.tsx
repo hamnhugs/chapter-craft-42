@@ -39,7 +39,7 @@ const isEditable = (el: Element | null): boolean => {
 export const OPEN_NEURON_SWITCHER_EVENT = "open-neuron-switcher";
 
 const WikiQuickSwitcher: React.FC = () => {
-  const { wikis, activeWikiId, activeWikiIds, setActiveWiki, setActiveNeurons, toggleNeuronInSession, setActiveTab } = useApp();
+  const { wikis, activeWikiId, activeWikiIds, setActiveWiki, setActiveNeurons, toggleNeuronInSession, unloadAllNeurons, setActiveTab } = useApp();
   const { isPaid, loaded: planLoaded } = usePlan();
   const { chains } = useChains();
   const [open, setOpen] = useState(false);
@@ -226,6 +226,31 @@ const WikiQuickSwitcher: React.FC = () => {
                 </button>
               </CommandItem>
             ))}
+          </CommandGroup>
+        )}
+        {mode !== "add" && (
+          <CommandGroup heading="No notebook">
+            <CommandItem
+              value="just chat no notebook plain chat"
+              onSelect={() => {
+                setOpen(false);
+                unloadAllNeurons()
+                  .then(() => toast.success("Just chatting — no notebook is loaded"))
+                  .catch((err: any) => toast.error(err.message || "Couldn't switch to plain chat"));
+              }}
+              className="flex items-center gap-3 py-2.5"
+            >
+              <span className="material-symbols-outlined text-[16px] shrink-0 text-muted-foreground" aria-hidden>chat_bubble</span>
+              <div className="flex-1 min-w-0">
+                <span className="font-medium">Just chat</span>
+                <div className="text-xs text-muted-foreground truncate">Counsel answers without reading or saving notes.</div>
+              </div>
+              {activeWikiIds.length === 0 && (
+                <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-primary shrink-0">
+                  <Check className="w-3 h-3" /> Now
+                </span>
+              )}
+            </CommandItem>
           </CommandGroup>
         )}
         <CommandGroup heading={mode === "add" ? "Add for Counsel" : "Use with Counsel"}>
