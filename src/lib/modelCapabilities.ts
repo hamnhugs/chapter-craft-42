@@ -50,10 +50,6 @@ export function modelToolSupport(model: string): ToolSupport {
     case "gemini":
       declared = GEMINI_DECLARED_TOOLS.get(localId) ?? null;
       break;
-    case "bookworm":
-      // A fixed list the app chose, all of them tool-capable.
-      declared = true;
-      break;
     case "openrouter":
       // Reads the already-cached catalog; null until a catalog fetch has
       // landed at least once in this browser.

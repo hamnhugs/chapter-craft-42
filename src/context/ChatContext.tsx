@@ -5,7 +5,6 @@ import { useApp } from "@/context/AppContext";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { usePlan } from "@/hooks/usePlan";
 import { computeLockedWikiIds } from "@/lib/neuronAccess";
-import { DEFAULT_COIN_MODEL } from "@/lib/coins";
 import { usePromptPresets } from "@/hooks/usePromptPresets";
 import { buildChatSystemPrompt, buildFenceNonce, fenced, sanitizeBlock, type UsedMemory } from "@/lib/buildChatSystemPrompt";
 import { lensVerdict, type MemoryImageCandidate } from "@/lib/memoryLens";
@@ -41,7 +40,7 @@ import {
 } from "@/lib/chatBooks";
 import { toast } from "sonner";
 import { isEmbeddingModel, isBatchOnlyModel } from "@/lib/utils";
-import { describeModel, freeChatProviders, localModelId, modelProvider, providerConfigured, providerKey, providerKeyless, providerKeyUrl, providerLabel, resolveModel } from "@/lib/providers/registry";
+import { describeModel, freeChatProviders, localModelId, modelProvider, providerConfigured, providerKey, providerKeyUrl, providerLabel, resolveModel } from "@/lib/providers/registry";
 import type { CacheBreakpoint, ProviderId, TokenUsage } from "@/lib/providers/types";
 import { addUsage } from "@/lib/providers/sse";
 import { studioToolsActive } from "@/lib/studioTools";
@@ -989,10 +988,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // actually requires is checked after model resolution below.
       // Any configured provider is enough — a Gemini-only or NVIDIA-only
       // user must not be told to go get a key they deliberately didn't pick.
-      // With no key at all, the turn runs on Bookworm AI — the built-in
-      // models paid for with coins — instead of stopping at "go get a key".
-      // Chatting must not require an account somewhere else first.
-      const noKeys = !apiKey && !nvidiaKeyLast4 && !geminiApiKey;
+      if (!apiKey && !nvidiaKeyLast4 && !geminiApiKey) {
+        toast.error("Add an API key in Settings first — OpenRouter, NVIDIA or Gemini");
+        throw new Error("Missing API key");
+      }
 
       // The book the prompt calls "active" is Counsel's FOCUS book, derived
       // (counselFocus.focusBookId): the reader's book only when nothing is
@@ -1132,16 +1131,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // function still referenced in `messages` is rejected outright by some
       // providers (Gemini) and confuses the rest — the "context-dangling tool"
       // failure. Decided from the turn's opening state, then held.
-      const pickedModel = opts?.modelOverride
+      const model = opts?.modelOverride
         || (hasUploads && visionModel ? visionModel : (deepResearch ? deepResearchModel : selectedModel));
-      const keylessFallback = noKeys && !providerKeyless(modelProvider(pickedModel));
-      const model = keylessFallback ? DEFAULT_COIN_MODEL : pickedModel;
-      if (keylessFallback) {
-        // Make it the saved choice too, so the model chip tells the truth and
-        // the next turn does not re-decide.
-        if (savedModels.includes(DEFAULT_COIN_MODEL)) setSelectedModel(DEFAULT_COIN_MODEL);
-        else addModel(DEFAULT_COIN_MODEL);
-      }
       const { provider: turnProviderId, localId: turnLocalId } = resolveModel(model);
       const nvInfo = turnProviderId === "nvidia" ? nvidiaModelInfo(turnLocalId) : null;
       // Voice replies are one to three spoken sentences; a reasoning model

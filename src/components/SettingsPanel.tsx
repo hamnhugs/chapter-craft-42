@@ -28,7 +28,7 @@ import { getMemoryMode, setMemoryMode, MemoryMode } from "@/lib/knowledgeApi";
 import { consumeSettingsSection } from "@/lib/settingsNav";
 import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
 import { isEmbeddingModel, isBatchOnlyModel } from "@/lib/utils";
-import { addableProviders, allProviders, describeModel, freeChatProviders, isNvidiaModel, localModelId, modelProvider, namespacedId, providerConfigured, providerLabel } from "@/lib/providers/registry";
+import { allProviders, describeModel, freeChatProviders, isNvidiaModel, localModelId, modelProvider, namespacedId, providerConfigured, providerLabel } from "@/lib/providers/registry";
 import type { ProviderId } from "@/lib/providers/types";
 import { namespacedNvidiaId, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
 import { LEAN_MODES, LEAN_MODE_INFO } from "@/lib/leanMode";
@@ -145,7 +145,6 @@ const PROVIDER_GROUP_LABEL: Record<ProviderId, string> = {
   nvidia: "NVIDIA — free, no balance needed",
   gemini: "Gemini — free tier, billed to Google beyond it",
   openrouter: "OpenRouter — billed to your OpenRouter balance",
-  bookworm: "Bookworm AI — no key, paid with coins",
 };
 
 /** Saved-model options, provider-labelled. Providers serve many models under
@@ -821,7 +820,7 @@ const SettingsPanel: React.FC = () => {
                         className="bg-surface-container-high border border-outline-variant/15 rounded-lg text-sm text-foreground py-2 px-3 shrink-0"
                         aria-label="Provider for the model being added"
                       >
-                        {addableProviders().map((p) => (
+                        {allProviders().map((p) => (
                           <option key={p} value={p}>{providerLabel(p)}</option>
                         ))}
                       </select>

@@ -136,7 +136,7 @@ serve(async (req) => {
     // Auto-chapterize is a paid feature — verify the plan server-side so a
     // tampered client can't bypass the gate. Admins are exempt (the RPC
     // re-checks the role in the database); everyone else needs Pro: a
-    // subscription, a coin pass, or open access (_shared/entitled.ts).
+    // subscription, or open access (_shared/entitled.ts).
     if (!(await isEntitled(supabase))) {
       return json({ error: "Auto-chapterize is a Pro feature. Upgrade to detect chapters automatically." }, 402);
     }

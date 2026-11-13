@@ -1230,12 +1230,9 @@ const ChatPanel: React.FC = () => {
                 : "Ask anything. Open a book from your Library and Counsel will talk it through with you."}
             </p>
             {!apiKey && !nvidiaKeyLast4 && !geminiApiKey && loaded && (
-              <p className="text-xs text-center max-w-md">
-                No API key needed — replies use Bookworm AI and your coins.{" "}
-                <button onClick={() => openSettings("models")} className="underline text-primary hover:brightness-110">
-                  Use your own key instead
-                </button>
-              </p>
+              <button onClick={() => openSettings("models")} className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-lg text-primary text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-colors">
+                <span className="material-symbols-outlined text-sm">key</span> Set API Key
+              </button>
             )}
           </div>
         )}

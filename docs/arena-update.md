@@ -1,18 +1,21 @@
-# Arena update — plain chat, card library, Store, automatic intake
+# Arena update — plain chat, card library, automatic intake
 
-November 2026, branch `new1`. What changed, what has to happen on the server
-before the paid parts work, and the bug audit that went with it.
+November 2026, branch `new1`. What changed, what has to happen on the server,
+and the bug audit that went with it.
+
+> **13 Nov: the Store was removed.** The Store tab, coins, the wallet, Bookworm
+> AI (keyless chat paid in coins) and coin-bought Pro passes are all gone —
+> they added more to learn than they were worth. Chat needs your own API key
+> again, as it did before. See "Server work" for the clean-up that leaves.
 
 ## What is different for a user
 
 | Area | Before | Now |
 |---|---|---|
-| Navigation | Top bar on desktop, side rail on tablet, bottom bar + "More" sheet on phone | One bottom dock everywhere: **Store · Library · Counsel · Read · Notebooks**. Settings, Admin and sign-out are icons in the top bar, next to the coin wallet. Counsel is the home tab. |
+| Navigation | Top bar on desktop, side rail on tablet, bottom bar + "More" sheet on phone | One bottom dock everywhere: **Library · Counsel · Read · Notebooks**. Settings, Admin and sign-out are icons in the top bar. Counsel is the home tab. |
 | Chat | Always tied to a notebook; "My notes" was created and loaded whether you wanted it or not | **Just chat**: unload every notebook (the chip row above the chat, or ⌘K → Just chat). Nothing is read from or saved to notes until you load one again. |
-| API key | Chat refused to send without one | With no key, replies run on **Bookworm AI** and spend coins. A key is still supported and costs no coins. |
 | Uploading a book | Named after the file; no cover; tagging was a button | Title is worked out (PDF metadata → page-one heading for opaque file names → cleaned file name); page one becomes the cover; chapters are detected; the book is categorised and tagged. Nothing to do by hand. |
 | Library | Shelves grid | **Cards** (default): each book is a card with a tier (by length), a level (by how far you have read), and a time-to-read badge. "Reading now" is a hand of cards on top. Tap a card for its **profile**: stats, summary, chapters, shelves, and every action. Shelves / List / Showcase / Mind map are still one tap away. |
-| Store | A pricing dialog, switched off | A Store tab: coin wallet, daily free coins, coin packs (Stripe), Bookworm AI model choice, Pro passes bought with coins. |
 
 Tiers: Leaflet (<80 pages), Volume (80+), Tome (300+), Opus (600+). Levels:
 ten, one per tenth of the book read; a finished book is MAX.
@@ -20,45 +23,28 @@ ten, one per tenth of the book read; a finished book is MAX.
 Books uploaded before this change get their cover the first time they are
 opened in the reader. Their titles are not touched.
 
-## Server work that is NOT done yet
+## Server work
 
-The client is complete and degrades cleanly without any of this (the Store
-says coins are not switched on; a keyless chat turn explains that Bookworm AI
-is not deployed). To turn the paid parts on, in Lovable:
+The coins backend was applied on 13 Nov and now has to come back out. In
+Lovable:
 
-1. **Apply the migration** `supabase/migrations/20261112120000_coins.sql`
-   (wallets, ledger, passes, and the `my_entitlements` update).
-2. **Deploy the edge functions**: `coin-chat` and `claim-coins` (new),
-   `create-checkout`, `auto-structure`, `describe-figures` (changed).
-3. **Secrets** the functions read: `LOVABLE_API_KEY` (already used by other
-   functions) and `STRIPE_SECRET_KEY` (needed for coin packs).
+1. **Apply the migration** `supabase/migrations/20261113120000_remove_coins.sql`.
+   It drops the wallet, passes and coin functions and restores
+   `my_entitlements()`. If anyone bought a coin pack with real money, the
+   ledger is kept as `coin_ledger_archive` so the purchase can be refunded;
+   otherwise it is dropped too.
+2. **Delete the edge functions** `coin-chat` and `claim-coins` (their code is
+   gone from the repo), and **redeploy** `create-checkout` (plans only again),
+   `auto-structure` and `describe-figures`.
+
+Until step 1 runs nothing breaks: the app no longer calls any of it.
 
 Book covers and titles need **no** server change: covers are stored beside
 each book's file in the existing private `book-pdfs` bucket.
 
-### Numbers you may want to change
-
-| What | Where | Value |
-|---|---|---|
-| Welcome coins | `my_wallet()` in the migration | 100 |
-| Daily coins | `claim_daily_coins()` | 10 |
-| Pass prices | `buy_pass()` | 7 days = 400, 30 days = 1,200 |
-| Coin packs | `supabase/functions/_shared/coin-packs.ts` | 500 / $2.99 · 1,200 / $5.99 · 2,800 / $11.99 · 6,500 / $24.99 |
-| Coins per 1K tokens | `RATES` in `coin-chat` | Swift 0.2 in / 1.5 out · Sage 0.3 in / 2 out |
-
-`src/lib/coins.ts` holds display copies of the last three. They only label
-the shelf; the server values are what is charged.
-
-The rates are a first guess, not a costed price list. Check them against what
-the AI gateway actually bills before selling packs — and note the welcome and
-daily grants are free usage for every new account.
-
-### Open access
-
 `OPEN_ACCESS` (`src/lib/openAccess.ts`) is still `true`, so everything in Pro
-is free and the Store shows passes as "included for everyone". Coins and
-Bookworm AI work either way. Turning billing back on is still that one flag
-plus `app_open_access()` in the database, as before.
+is free. The pricing dialog and Stripe plans are untouched and still dormant
+behind that flag.
 
 ## How it was checked
 
@@ -66,21 +52,13 @@ plus `app_open_access()` in the database, as before.
 - `npx vitest run` — 114 files, 2,630 tests pass (28 new).
 - `npx vite build` — builds.
 - `deno check` on the five edge functions touched — clean.
-- The coins migration was applied twice (it is re-runnable) to a throwaway
-  Postgres from the Supabase image and exercised as `authenticated`,
-  `service_role` and `anon`: welcome grant once, daily claim once a day, a
-  purchase credited once when replayed, a metered debit clamps at zero, a
-  pass extends rather than overlaps, a pass makes `my_entitlements` report
-  Pro, clients cannot write a wallet or call `coin_apply`, and each user sees
-  only their own rows.
-- The dock, Store, card collection and book profile were looked at in a real
+- The dock, card collection and book profile were looked at in a real
   browser at 956×506, 1280×900 and 390×800 through `#/arena-lab` (dev only;
   `#/arena-lab?deck` for the collection).
 
 **Not run:** anything against the live backend. No real upload, chat turn,
-Stripe checkout or coin debit has been exercised end to end — `coin-chat`,
-`claim-coins` and the checkout change are type-checked and reviewed only, and
-the upload path (title, cover, tagging) is unit-tested for its title logic but
+Stripe checkout has been exercised end to end, the remove-coins migration has
+not been run against a database, and the upload path (title, cover, tagging) is unit-tested for its title logic but
 has not been driven with a real file in a signed-in session.
 
 ## Bug audit
@@ -102,12 +80,12 @@ Fixed in this change:
 
 Found and left alone (say if you want them done):
 
-- **Figure extraction without your own key** still needs a real plan or pass
+- **Figure extraction without your own key** still needs a real plan
   even during open access. That looks deliberate (it spends the app's AI
-  credits in volume), so the gate was kept and only taught about passes.
+  credits in volume), so the gate was kept.
 - **Stripe lookups are by email, first match, 100 sessions.** A customer with
   two Stripe customer records for one email, or more than 100 checkouts, can
-  have a purchase missed by `check-subscription` / `claim-coins`. Needs
+  have a purchase missed by `check-subscription`. Needs
   pagination and a stored customer id.
 - **`localStorage` is read unguarded in ~90 places.** A browser with storage
   blocked throws on some of them at render. Rare (sign-in needs storage too).

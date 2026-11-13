@@ -13,7 +13,7 @@ import { bookContextStore } from "@/lib/chatBooks";
 import { ASSISTANT_TAG, mergeReservedTags } from "@/lib/bookProvenance";
 import { MAX_ACTIVE_NEURONS } from "@/lib/neuronAccess";
 
-type TabId = "library" | "viewer" | "chat" | "wiki" | "wikis" | "settings" | "admin" | "store";
+type TabId = "library" | "viewer" | "chat" | "wiki" | "wikis" | "settings" | "admin";
 
 interface AppState {
   books: BookDocument[];

@@ -3,10 +3,9 @@
 //
 // The functions used to read `subscribers.subscribed` directly, which knows
 // about Stripe and nothing else: it refused everyone during open access (the
-// client believed they were entitled, the server answered 402), and it would
-// have refused a Pro pass bought with coins. `my_entitlements()` is the
-// database's own single source — admin, subscription and coin pass — and
-// `app_open_access()` is the server-side twin of the client's OPEN_ACCESS
+// client believed they were entitled, the server answered 402).
+// `my_entitlements()` is the database's own single source — admin and
+// subscription — and `app_open_access()` is the server-side twin of the client's OPEN_ACCESS
 // switch.
 //
 // `supabase` must be the CALLER-scoped client (their JWT): both RPCs answer
@@ -15,7 +14,7 @@
 //
 // `openAccess: false` is for features that spend the app's own AI credits in
 // volume (figure extraction through the gateway): open access does not extend
-// to those, a real plan or pass does.
+// to those, a real plan does.
 
 // deno-lint-ignore no-explicit-any
 export async function isEntitled(supabase: any, opts: { openAccess?: boolean } = {}): Promise<boolean> {

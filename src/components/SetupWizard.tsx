@@ -360,8 +360,7 @@ const SetupWizard: React.FC = () => {
             </div>
 
             <p className="text-[11px] text-on-surface-variant">
-              You can skip this. Without a key, Counsel runs on Bookworm AI and spends your coins — you start with
-              some, and the Store has more. Your own key means your own account and no coins.
+              You can skip this — your Library works without it — but Counsel and Notebooks need a key to think.
             </p>
           </div>
         )}

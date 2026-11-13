@@ -9,6 +9,15 @@ export type LeanMode = "full" | "lean" | "chat_only";
 
 const DEFAULT_MODEL = "google/gemini-2.5-flash";
 const DEFAULT_DEEP_RESEARCH_MODEL = "google/gemini-2.5-pro";
+
+// "coins:" ids belonged to a built-in provider that was removed. An account
+// that picked one would otherwise have it read as an OpenRouter id and fail
+// every turn, so they are dropped as settings load.
+const isRetiredModel = (id: unknown) => typeof id === "string" && id.startsWith("coins:");
+function liveModels(saved: string[]): string[] {
+  const live = saved.filter((m) => !isRetiredModel(m));
+  return live.length > 0 ? live : [DEFAULT_MODEL];
+}
 const DEFAULT_TTS_RATE = 1.05;
 const DEFAULT_HANDS_FREE_TTS_RATE = 1.0;
 
@@ -264,8 +273,10 @@ function rowToSettings(data: any): ChatSettings {
     leanMode: (["full", "lean", "chat_only"] as const).includes(data.lean_mode)
       ? (data.lean_mode as LeanMode)
       : "full",
-    savedModels: (data.saved_models as string[]) || [DEFAULT_MODEL],
-    selectedModel: data.selected_model || DEFAULT_MODEL,
+    savedModels: liveModels((data.saved_models as string[]) || []),
+    selectedModel: isRetiredModel(data.selected_model)
+      ? liveModels((data.saved_models as string[]) || [])[0]
+      : data.selected_model || DEFAULT_MODEL,
     deepResearchModel: data.deep_research_model || DEFAULT_DEEP_RESEARCH_MODEL,
     voiceModel: data.voice_model || "",
     ttsRate: typeof data.tts_rate === "number" && data.tts_rate > 0
