@@ -4,6 +4,7 @@ import LibraryDeck from "@/components/LibraryDeck";
 import type { BookDocument } from "@/types/library";
 import { saveLastPage } from "@/hooks/useReaderPrefs";
 import { AppContext, useApp } from "@/context/AppContext";
+import { useChat } from "@/context/ChatContext";
 import type { BookFolder } from "@/lib/bookFolders";
 
 /**
@@ -24,6 +25,8 @@ import type { BookFolder } from "@/lib/bookFolders";
  *   #/arena-lab?reader the shell on the Read tab with a real PDF open (a
  *                      document from docs/, served by the dev server), with
  *                      three chapters. `&html` opens an HTML book instead.
+ *   #/arena-lab?chat   the shell on Counsel with a reply on it that has every
+ *                      kind of prose in it (heading, list, quote, rule, code).
  *
  * Like WorkspaceLab it is gated on `import.meta.env.DEV` in App.tsx, so a
  * production build never emits it.
@@ -176,6 +179,38 @@ const LibraryLab: React.FC = () => {
  * `&open` clicks the first card (the profile), `?tab=<Label>` clicks a dock
  * tab — so a headless screenshot can reach states that need a tap.
  */
+/** A reply with every kind of prose in it, so a theme's typesetting can be looked at. */
+const SAMPLE_REPLY = `## On the measure of a line
+
+Shannon's opening move is to throw the meaning away. A message is one selected from a set of possible messages, and what matters to the engineer is only how *many* there were to choose from — which is why the measure is logarithmic.
+
+That single decision is what lets the rest of the paper exist. Three things follow from it:
+
+- **Entropy** is the average surprise of a source, in bits per symbol.
+- **Redundancy** is what a language spends on being robust; English spends about half.
+- **Capacity** is a property of the channel alone, whatever is sent down it.
+
+> The fundamental problem of communication is that of reproducing at one point either exactly or approximately a message selected at another point.
+
+1. Read section 1 for the discrete noiseless case.
+2. Skip to section 12 if you only want the theorem.
+
+---
+
+The entropy itself is \`H = -Σ p log p\`. See [the paper](https://example.com) for the proof.`;
+
+/** `?chat` — the Counsel tab with a reply already on it. */
+const ChatLab: React.FC = () => {
+  const { injectDisplayMessage } = useChat();
+  useEffect(() => {
+    injectDisplayMessage("Good evening. Which book shall we open?");
+    const t = setTimeout(() => injectDisplayMessage(SAMPLE_REPLY), 50);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return <Index />;
+};
+
 const ArenaLab: React.FC = () => {
   const hash = window.location.hash;
   useEffect(() => {
@@ -188,6 +223,7 @@ const ArenaLab: React.FC = () => {
   }, [hash]);
   if (hash.includes("?library")) return <LibraryLab />;
   if (hash.includes("?reader")) return <ReaderLab html={hash.includes("html")} />;
+  if (hash.includes("?chat")) return <ChatLab />;
   return hash.includes("?deck") ? <DeckLab /> : <Index />;
 };
 

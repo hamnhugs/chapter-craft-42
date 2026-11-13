@@ -2485,6 +2485,24 @@
   @keyframes cc-vt-out { to   { opacity: 0; transform: translateY(-6px); } }
 }
 
+/* Theme turn — changing theme, or a living theme changing face (the
+   Scriptorium's candle being lit), is not a tab change and does not
+   cross-fade: the new look opens outward from where the reader last pressed,
+   like light let into a room. ThemeContext sets .cc-theme-turn and the two
+   origin variables for the life of the transition. */
+@supports (view-transition-name: root) {
+  .cc-theme-turn::view-transition-old(root) { animation: none; z-index: 0; }
+  .cc-theme-turn::view-transition-new(root) {
+    animation: cc-theme-turn 900ms cubic-bezier(.3,.6,.2,1) both;
+    z-index: 1;
+    mix-blend-mode: normal;
+  }
+  @keyframes cc-theme-turn {
+    from { clip-path: circle(0 at var(--turn-x, 50%) var(--turn-y, 25%)); }
+    to   { clip-path: circle(150vmax at var(--turn-x, 50%) var(--turn-y, 25%)); }
+  }
+}
+
 /* Scroll-driven reading-progress bar — no JS loop. Add a
    <div class="cc-scroll-progress" /> at the top of a scrolling region. */
 @supports (animation-timeline: scroll()) {

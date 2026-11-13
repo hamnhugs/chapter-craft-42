@@ -6,6 +6,7 @@ import FruitStripeArt from "./FruitStripeArt";
 import DextersLabArt from "./DextersLabArt";
 import AuroraArt from "./AuroraArt";
 import DesolateLabArt from "./DesolateLabArt";
+import ScriptoriumArt from "./ScriptoriumArt";
 
 export default function HeaderArt({ themeId }: { themeId: ThemeId }) {
   switch (themeId) {
@@ -14,6 +15,7 @@ export default function HeaderArt({ themeId }: { themeId: ThemeId }) {
     case "dexters-lab": return <DextersLabArt />;
     case "aurora": return <AuroraArt />;
     case "desolate-lab": return <DesolateLabArt />;
+    case "scriptorium": return <ScriptoriumArt />;
     default: return null;
   }
 }

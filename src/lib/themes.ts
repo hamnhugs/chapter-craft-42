@@ -1,7 +1,9 @@
 // Theme registry. Each theme defines HSL token overrides applied to :root
 // via the ThemeProvider, plus optional fonts loaded from Google Fonts.
+import type { Hemisphere } from "@/lib/season";
+import { hoursAt } from "@/components/themes/scriptoriumHours";
 
-export type ThemeId = "bookworm-studio" | "dexters-lab" | "fruit-stripe" | "aurora" | "desolate-lab";
+export type ThemeId = "bookworm-studio" | "dexters-lab" | "fruit-stripe" | "aurora" | "desolate-lab" | "scriptorium";
 
 export interface ThemeDef {
   id: ThemeId;
@@ -29,6 +31,35 @@ export interface ThemeDef {
   seasonalAmplitude?: number;
   // HSL strings (e.g. "38 100% 83%") for CSS variables
   tokens: Record<string, string>;
+  /**
+   * A LIVING theme: one with more than one face, and a clock that chooses.
+   *
+   * Every other theme is one palette for good. A living theme keeps `tokens`
+   * as its first face and lists the others here as overrides on top of it;
+   * `at` is asked once a minute which face the moment calls for, and may hand
+   * back live CSS variables of its own (written to :root beside the tokens).
+   * The reader can pin a face from the theme menu instead of following the
+   * clock. The active face is published as `data-face` on <html>, so a
+   * theme's stylesheet can dress each face separately.
+   *
+   * Faces are SWITCHED, never blended — see scriptoriumHours.ts for why — and
+   * each must clear contrast on its own (src/test/scriptorium.test.ts).
+   */
+  living?: LivingDef;
+}
+
+export interface LivingDef {
+  /** What following the clock is called in the theme menu. */
+  autoLabel: string;
+  /** Face id → its label and its token overrides. The first is the base face. */
+  faces: Record<string, { label: string; tokens: Record<string, string> }>;
+  at: (now: Date, hemisphere: Hemisphere) => { face: string; vars: Record<string, string> };
+}
+
+/** A theme's tokens with one of its faces laid over them. */
+export function faceTokens(theme: ThemeDef, face: string | null): Record<string, string> {
+  const over = face ? theme.living?.faces[face]?.tokens : undefined;
+  return over ? { ...theme.tokens, ...over } : theme.tokens;
 }
 
 export const THEMES: ThemeDef[] = [
@@ -438,6 +469,155 @@ export const THEMES: ThemeDef[] = [
       "--sidebar-accent-foreground": "20 7% 89%",
       "--sidebar-border": "0 0% 16%",
       "--sidebar-ring": "0 0% 100%",
+    },
+  },
+  {
+    id: "scriptorium",
+    name: "Scriptorium",
+    description: "A monastery writing room that keeps the hours — vellum by daylight, candle after dark, and gold leaf that catches the light you bring.",
+    // Pigments are minerals: vermilion, lapis and verdigris do not turn with
+    // the year. What changes in a scriptorium is the LIGHT, and that is the
+    // theme's own job (see `living`), so the season only breathes on it.
+    seasonalAmplitude: 0.3,
+    swatch: ["#efe3c6", "#8f2014", "#243f94"],
+    // Four voices: a blackletter hand for the wordmark and the versals,
+    // Cormorant for headings, Alegreya — drawn for long reading, and sturdy at
+    // interface sizes where a Garamond goes spindly — for everything read, and
+    // its small capitals for the rubrics.
+    fonts: {
+      headline: "'Cormorant', 'Alegreya', Georgia, serif",
+      body: "'Alegreya', Georgia, serif",
+      display: "'UnifrakturCook', 'Cormorant', Georgia, serif",
+      label: "'Alegreya Sans SC', 'Alegreya Sans', system-ui, sans-serif",
+      googleFontsHref:
+        "https://fonts.googleapis.com/css2?family=Alegreya:ital,wght@0,400..800;1,400..800&family=Alegreya+Sans+SC:wght@400;500;700&family=Cormorant:ital,wght@0,400..700;1,400..700&family=UnifrakturCook:wght@700&family=JetBrains+Mono:wght@400;500;600&display=swap",
+    },
+    // The daylight face. Ratios: ink on vellum 12.8:1, faded ink 7.7:1,
+    // vermilion 6.9:1, lapis 7.4:1 (all against the vellum canvas).
+    tokens: {
+      "--background": "42 56% 86%", // Vellum #efe3c6
+      "--foreground": "29 46% 12%", // Iron-gall ink #2b1d10
+      "--card": "44 67% 90%", // A fresh leaf #f7eed6
+      "--card-foreground": "29 46% 12%", // #2b1d10
+      "--popover": "43 71% 92%", // #f9f1dc
+      "--popover-foreground": "29 46% 12%", // #2b1d10
+      "--primary": "6 75% 32%", // Vermilion — the rubricator's red #8f2014
+      "--primary-foreground": "38 100% 95%", // #fff6e6
+      "--secondary": "43 49% 79%", // Vellum, hair side #e3d4ae
+      "--secondary-foreground": "29 46% 12%", // #2b1d10
+      "--muted": "43 50% 82%", // #e8dbba
+      "--muted-foreground": "32 34% 25%", // Faded ink #544029
+      "--accent": "226 61% 36%", // Lapis — ultramarine, dearer than gold #243f94
+      "--accent-foreground": "44 87% 94%", // #fdf6e3
+      "--destructive": "352 66% 33%", // Crimson lake #8a1c2b
+      "--destructive-foreground": "38 100% 95%", // #fff6e6
+      "--border": "41 37% 66%", // Drypoint ruling #c9b58a
+      "--input": "44 67% 90%", // #f7eed6
+      "--ring": "226 61% 36%", // #243f94
+      "--surface-container-lowest": "44 76% 93%", // #fbf4e1
+      "--surface-container-low": "43 64% 89%", // #f5ebd2
+      "--surface-container": "42 56% 85%", // #eee1c2
+      "--surface-container-high": "42 51% 81%", // #e7d8b5
+      "--surface-container-highest": "42 47% 76%", // #dfcea7
+      "--outline": "36 26% 38%", // #7a6648
+      "--outline-variant": "41 30% 60%", // #b7a379
+      "--on-surface-variant": "31 34% 23%", // #4d3a26
+      "--primary-container": "224 60% 35%", // Lapis ground — user bubbles, filled chips #24408f
+      "--on-primary-container": "44 87% 94%", // #fdf6e3
+      "--secondary-container": "44 58% 76%", // Shell-gold wash #e6d3a0
+      "--on-secondary-container": "29 46% 12%", // #2b1d10
+      "--error-container": "18 66% 86%", // #f3d2c4
+      "--on-error-container": "2 71% 22%", // #5e1210
+      "--tertiary": "157 41% 29%", // Verdigris #2c6a52
+      "--tertiary-container": "120 26% 85%", // #cfe3cf
+      "--primary-fixed-dim": "6 75% 32%", // #8f2014
+      "--viewer-bg": "42 49% 81%", // The desk under the page #e6d8b6
+      "--toolbar-bg": "43 64% 89%", // #f5ebd2
+      "--book-spine": "352 66% 33%", // #8a1c2b
+      "--sidebar-background": "43 64% 89%", // #f5ebd2
+      "--sidebar-foreground": "29 46% 12%", // #2b1d10
+      "--sidebar-primary": "6 75% 32%", // #8f2014
+      "--sidebar-primary-foreground": "38 100% 95%", // #fff6e6
+      "--sidebar-accent": "43 50% 82%", // #e8dbba
+      "--sidebar-accent-foreground": "29 46% 12%", // #2b1d10
+      "--sidebar-border": "41 37% 66%", // #c9b58a
+      "--sidebar-ring": "226 61% 36%", // #243f94
+      "--radius": "0.375rem",
+    },
+    living: {
+      autoLabel: "Keep the hours",
+      faces: {
+        day: { label: "Daylight", tokens: {} },
+        // The same room after dark. Ratios against the canvas: vellum-by-
+        // candle 14.3:1, muted 9.5:1, gold leaf 10.7:1, lit lapis 9.2:1.
+        night: {
+          label: "Candle",
+          tokens: {
+            "--background": "33 35% 6%", // The room after dark #15100a
+            "--foreground": "43 60% 83%", // Vellum by candle #eedfba
+            "--card": "32 36% 9%", // #20180f
+            "--card-foreground": "43 60% 83%", // #eedfba
+            "--popover": "32 38% 8%", // #1b140c
+            "--popover-foreground": "43 60% 83%", // #eedfba
+            "--primary": "41 74% 65%", // Gold leaf #e8bd62
+            "--primary-foreground": "34 57% 7%", // #1d1408
+            "--secondary": "34 38% 16%", // #3a2c1a
+            "--secondary-foreground": "43 60% 83%", // #eedfba
+            "--muted": "32 36% 10%", // #241b11
+            // Brighter than a dark theme's muted ink usually is: the candle's dark
+            // lies over it, and it has to clear AA at the far edge of that.
+            "--muted-foreground": "41 36% 67%", // #c9b68c
+            "--accent": "223 82% 78%", // Lapis, lit #9bb4f5
+            "--accent-foreground": "228 48% 12%", // #10162e
+            "--destructive": "8 81% 69%", // Vermilion, lit #f0806e
+            "--destructive-foreground": "7 75% 9%", // #2a0a06
+            "--border": "34 37% 17%", // #3b2d1b
+            "--input": "32 36% 9%", // #20180f
+            "--ring": "41 74% 65%", // #e8bd62
+            "--surface-container-lowest": "30 40% 4%", // #0e0a06
+            "--surface-container-low": "32 41% 7%", // #1a130b
+            "--surface-container": "32 36% 9%", // #20180f
+            "--surface-container-high": "33 35% 12%", // #2a2014
+            "--surface-container-highest": "32 33% 15%", // #34281a
+            "--outline": "38 24% 45%", // #8f7b58
+            "--outline-variant": "35 35% 22%", // #4a3a24
+            "--on-surface-variant": "42 37% 69%", // #cdbb92
+            "--primary-container": "227 54% 37%", // #2b4192
+            "--on-primary-container": "44 87% 94%", // #fdf6e3
+            "--secondary-container": "38 45% 16%", // #3a2d16
+            "--on-secondary-container": "43 73% 78%", // #f0d9a0
+            "--error-container": "4 67% 21%", // #5a1712
+            "--on-error-container": "12 100% 91%", // #ffd9cf
+            "--tertiary": "151 39% 64%", // #7fc7a4
+            "--tertiary-container": "152 31% 18%", // #1f3b2e
+            "--primary-fixed-dim": "41 74% 65%", // #e8bd62
+            "--viewer-bg": "33 39% 5%", // #100c07
+            "--toolbar-bg": "30 40% 4%", // #0e0a06
+            "--book-spine": "5 62% 44%", // #b5352a
+            "--sidebar-background": "30 40% 4%", // #0e0a06
+            "--sidebar-foreground": "43 60% 83%", // #eedfba
+            "--sidebar-primary": "41 74% 65%", // #e8bd62
+            "--sidebar-primary-foreground": "34 57% 7%", // #1d1408
+            "--sidebar-accent": "32 36% 9%", // #20180f
+            "--sidebar-accent-foreground": "43 60% 83%", // #eedfba
+            "--sidebar-border": "34 37% 17%", // #3b2d1b
+            "--sidebar-ring": "41 74% 65%", // #e8bd62
+          },
+        },
+      },
+      at: (now, hemisphere) => {
+        const h = hoursAt(now, hemisphere);
+        return {
+          face: h.face,
+          vars: {
+            "--scr-golden": h.golden.toFixed(3),
+            "--scr-sun": Math.min(1, Math.max(0, h.sun)).toFixed(3),
+            "--scr-candle": h.candle.toFixed(3),
+            // Read by the wordmark's rubric (content: var(--scr-office)).
+            "--scr-office": `"${h.office.name}"`,
+          },
+        };
+      },
     },
   },
 ];
