@@ -1,9 +1,8 @@
 /* =====================================================================
    ARENA SHELL — the app's game-style chrome.
 
-   One bottom dock on every screen size (five big tabs, the middle one home),
-   a wallet in the top bar, chunky pressable buttons, and collectible cards
-   for the library and the Store.
+   One bottom dock on every screen size (four big tabs), chunky pressable
+   buttons, and collectible cards for the library.
 
    Everything here is drawn from the active theme's tokens (--primary,
    --accent, --card, …), so each of the five themes gets its own arena
@@ -37,7 +36,7 @@
   outline: none;
   transition: flex-grow 180ms ease-out;
 }
-/* Hairline between tabs — the bar reads as five slots, not a strip. */
+/* Hairline between tabs — the bar reads as four slots, not a strip. */
 .cc-dock-tab + .cc-dock-tab::before {
   content: "";
   position: absolute;
@@ -64,18 +63,6 @@
   padding-inline: 4px;
 }
 .cc-dock-tab[aria-current="page"] .cc-dock-label { font-weight: 700; }
-/* A count on a tab (unclaimed daily coins). */
-.cc-dock-dot {
-  position: absolute;
-  top: 2px;
-  right: 6px;
-  min-width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: hsl(var(--accent));
-  box-shadow: 0 0 0 2px hsl(var(--background));
-}
-
 /* Short windows (a 2x-scaled 1080p laptop gives the app 956x506): the dock
    lies down — icon beside label — and gives a full rem back to the page. */
 @media (max-height: 620px) {
@@ -85,7 +72,7 @@
   .cc-dock-icon { height: 1.75rem !important; width: 2.5rem !important; }
 }
 @media (max-height: 620px) and (max-width: 520px) {
-  /* No room for five labels in a row on a short AND narrow window. */
+  /* No room for four labels in a row on a short AND narrow window. */
   .cc-dock-tab:not([aria-current="page"]) .cc-dock-label { display: none; }
 }
 
@@ -133,48 +120,6 @@
 .cc-btn3d[data-tone="danger"] { --btn: var(--error-container); --btn-ink: var(--on-error-container); }
 .cc-btn3d[data-size="lg"] { padding: 0.8rem 1.4rem; font-size: 1.05rem; border-radius: 1rem; }
 .cc-btn3d[data-size="sm"] { padding: 0.35rem 0.7rem; font-size: 0.78rem; border-radius: 0.6rem; }
-
-/* ── Wallet pill ──────────────────────────────────────────────────────── */
-.cc-coin {
-  display: inline-grid;
-  place-items: center;
-  width: 1.25em;
-  height: 1.25em;
-  border-radius: 999px;
-  font-size: 0.72em;
-  font-weight: 900;
-  line-height: 1;
-  color: #5a3a00;
-  -webkit-text-fill-color: #5a3a00;
-  background: radial-gradient(circle at 34% 28%, #fff3b0 0%, #ffd23f 42%, #f0a202 100%);
-  box-shadow: inset 0 0 0 1.5px #c47f00, 0 1px 2px rgb(0 0 0 / 0.35);
-  flex: none;
-}
-.cc-wallet {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  height: 2rem;
-  padding: 0 0.3rem 0 0.5rem;
-  border-radius: 999px;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-  color: hsl(var(--foreground));
-  background: hsl(var(--surface-container-highest) / 0.85);
-  box-shadow: inset 0 0 0 1px hsl(var(--outline-variant) / 0.5), inset 0 -2px 0 0 rgb(0 0 0 / 0.18);
-  transition: filter 120ms;
-}
-.cc-wallet:hover { filter: brightness(1.1); }
-.cc-wallet-plus {
-  display: grid;
-  place-items: center;
-  width: 1.4rem;
-  height: 1.4rem;
-  border-radius: 999px;
-  color: hsl(var(--accent-foreground));
-  background: hsl(var(--accent));
-  box-shadow: 0 2px 0 0 color-mix(in srgb, hsl(var(--accent)) 58%, #000);
-}
 
 /* ── Collectible card ─────────────────────────────────────────────────── */
 /* `--tier` is the frame colour (an HSL triplet), set per tier below. */
@@ -307,7 +252,7 @@
   box-shadow: 0 2px 4px rgb(0 0 0 / 0.35);
 }
 
-/* Section banner: a plaque with a title, used in the collection and Store. */
+/* Section banner: a plaque with a title, used in the collection. */
 .cc-banner {
   display: flex;
   align-items: center;
@@ -320,35 +265,6 @@
   background: linear-gradient(180deg, hsl(var(--surface-container-highest)) 0%, hsl(var(--surface-container)) 100%);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08), inset 0 0 0 1px hsl(var(--outline-variant) / 0.35), 0 3px 0 0 hsl(var(--background) / 0.9);
 }
-
-/* ── Store ────────────────────────────────────────────────────────────── */
-.cc-offer {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 1rem 0.75rem 0.85rem;
-  border-radius: 1rem;
-  overflow: hidden;
-  text-align: center;
-  background: linear-gradient(180deg, hsl(var(--surface-container-highest)) 0%, hsl(var(--surface-container-low)) 100%);
-  box-shadow: inset 0 0 0 1.5px hsl(var(--outline-variant) / 0.45), 0 5px 0 0 hsl(var(--background) / 0.9), 0 12px 20px -14px rgb(0 0 0 / 0.7);
-}
-/* A shelf tag has more to say than a card's "NEW". */
-.cc-offer .cc-ribbon { top: 15px; right: -34px; width: 132px; font-size: 0.5rem; }
-.cc-offer[data-featured] { box-shadow: inset 0 0 0 2px hsl(var(--accent) / 0.85), 0 5px 0 0 hsl(var(--background) / 0.9), 0 0 26px -8px hsl(var(--accent) / 0.6); }
-.cc-offer-icon {
-  display: grid;
-  place-items: center;
-  width: 3.5rem;
-  height: 3.5rem;
-  border-radius: 1rem;
-  color: #5a3a00;
-  background: radial-gradient(circle at 34% 28%, #fff3b0 0%, #ffd23f 45%, #f0a202 100%);
-  box-shadow: inset 0 0 0 2px #c47f00, 0 4px 0 0 #8a5a00;
-}
-.cc-offer-icon .material-symbols-outlined { -webkit-text-fill-color: #5a3a00; }
 
 @media (prefers-reduced-motion: reduce) {
   .cc-card, .cc-btn3d { transition: none; }

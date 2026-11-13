@@ -1,7 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import Stripe from "https://esm.sh/stripe@14.21.0";
-import { COIN_PACKS } from "../_shared/coin-packs.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -47,25 +46,13 @@ serve(async (req) => {
       });
     }
 
-    const { plan, pack } = await req.json();
-    // Two kinds of purchase share this function: a plan (monthly / lifetime)
-    // or a coin pack. Either way the client sends a NAME; the price is looked
-    // up here.
-    const coinPack = typeof pack === "string" ? COIN_PACKS[pack] : undefined;
-    if (!coinPack && plan !== "monthly" && plan !== "lifetime") {
-      return new Response(JSON.stringify({ error: pack ? "Invalid coin pack" : "Invalid plan" }), {
+    const { plan } = await req.json();
+    if (plan !== "monthly" && plan !== "lifetime") {
+      return new Response(JSON.stringify({ error: "Invalid plan" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    const planDef = coinPack
-      ? {
-          name: coinPack.name,
-          description: `${coinPack.coins.toLocaleString("en-US")} coins for Bookworm AI and Pro passes.`,
-          unit_amount: coinPack.unit_amount,
-          mode: "payment" as const,
-        }
-      : PLANS[plan as keyof typeof PLANS];
-    const product = coinPack ? `coins:${coinPack.id}` : plan;
+    const planDef = PLANS[plan as keyof typeof PLANS];
 
     const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
     if (!stripeKey) {
@@ -104,7 +91,7 @@ serve(async (req) => {
       ...(planDef.mode === "payment" ? { invoice_creation: { enabled: true } } : {}),
       allow_promotion_codes: true,
       client_reference_id: user.id,
-      metadata: { user_id: user.id, product },
+      metadata: { user_id: user.id, product: plan },
       success_url: `${origin}/#/payment-success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/#/`,
     });

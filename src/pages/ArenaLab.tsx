@@ -8,13 +8,13 @@ import { saveLastPage } from "@/hooks/useReaderPrefs";
  * ARENA LAB — dev-only. Route: #/arena-lab  (and #/arena-lab?deck)
  *
  * Every surface of the app is behind the sign-in wall, which makes the arena
- * shell (dock, top bar, Store) and the card collection impossible to look at
+ * shell (dock, top bar) and the card collection impossible to look at
  * in a real browser without an account. This mounts the REAL components with
  * no session:
  *
  *   #/arena-lab        the whole shell — `Index` itself, signed out. The
- *                      library is empty and the wallet is unavailable, which
- *                      is also the honest look of both empty states.
+ *                      library is empty, which is also the honest look of
+ *                      its empty state.
  *   #/arena-lab?deck   `LibraryDeck` over a fixture library covering every
  *                      tier, every level band, covers and no covers.
  *

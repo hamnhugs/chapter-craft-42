@@ -21,30 +21,25 @@ import { useTheme } from "@/context/ThemeContext";
 import { useVisitTracker } from "@/hooks/useVisitTracker";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { useAutoSleepCycle } from "@/hooks/useAutoSleepCycle";
-import { formatCoins, useWallet } from "@/lib/coins";
 
 // Admin-only surface: lazy so regular users never download it.
 const AdminPanel = React.lazy(() => import("@/components/AdminPanel"));
 // Settings: visited rarely (a small minority of users ever change settings —
 // Nielsen's "power of defaults"), so its chunk shouldn't weigh down startup.
 const SettingsPanel = React.lazy(() => import("@/components/SettingsPanel"));
-// The Store: one tab away, but most sessions never open it.
-const StorePanel = React.lazy(() => import("@/components/StorePanel"));
 
 // Navigation — the arena shell.
 //
-// One bottom dock on every screen size: five big tabs with home (Counsel) in
-// the middle, the Store on the left edge and the things you collect and make
-// on either side. It replaced three different navigations (a desktop top bar,
+// One bottom dock on every screen size: four big tabs — the things you
+// collect, home (Counsel), the reader and the things you make. It replaced three different navigations (a desktop top bar,
 // a tablet rail, a phone bar with a "More" sheet) — one layout to learn, the
 // same place for everything on every device.
 //
 // Settings and Admin are not destinations you visit all day, so they live in
-// the top bar with the wallet instead of taking a dock slot.
+// the top bar instead of taking a dock slot.
 //
-// Existing tab IDs must never change; adding a new one ("store") is safe.
+// Existing tab IDs must never change.
 const DOCK_TABS = [
-  { id: "store" as const, icon: "storefront", label: "Store" },
   { id: "library" as const, icon: "style", label: "Library" },
   { id: "chat" as const, icon: "psychology", label: "Counsel" },
   { id: "viewer" as const, icon: "auto_stories", label: "Read" },
@@ -65,8 +60,7 @@ type DockTabId = (typeof DOCK_TABS)[number]["id"];
 const ArenaDock: React.FC<{
   activeTab: string;
   onSelect: (id: DockTabId) => void;
-  storeDot: boolean;
-}> = ({ activeTab, onSelect, storeDot }) => {
+}> = ({ activeTab, onSelect }) => {
   // Everything that must clear the dock (the page, floating reader chips,
   // toasts) reads its height from --cc-dock-h, which only exists while a
   // dock is on screen.
@@ -100,7 +94,6 @@ const ArenaDock: React.FC<{
                 >
                   {tab.icon}
                 </span>
-                {tab.id === "store" && storeDot && !isActive && <span className="cc-dock-dot" aria-hidden />}
               </span>
               <span
                 className={`cc-dock-label font-body text-[11px] leading-none font-medium ${
@@ -117,30 +110,9 @@ const ArenaDock: React.FC<{
   );
 };
 
-/** The wallet in the top bar: balance, and one tap to the Store. */
-const WalletPill: React.FC<{ onOpenStore: () => void }> = ({ onOpenStore }) => {
-  const wallet = useWallet();
-  if (!wallet.loaded || !wallet.available) return null;
-  return (
-    <button
-      onClick={onOpenStore}
-      className="cc-wallet text-sm"
-      title="Your coins — open the Store"
-      aria-label={`${formatCoins(wallet.balance)} coins. Open the Store.`}
-    >
-      <span className="cc-coin" aria-hidden>c</span>
-      <span>{formatCoins(wallet.balance)}</span>
-      <span className="cc-wallet-plus" aria-hidden>
-        <span className="material-symbols-outlined text-[16px]">add</span>
-      </span>
-    </button>
-  );
-};
-
 const Index: React.FC = () => {
   const { activeTab, setActiveTab, signOut, activeWiki, activeWikis } = useApp();
   const { isAdmin } = useIsAdmin();
-  const wallet = useWallet();
   useAutoSleepCycle();
   // One "Notebooks" destination: it lights up for the list and for an open
   // notebook, and always lands on the list.
@@ -159,7 +131,7 @@ const Index: React.FC = () => {
         {/* Each theme's living backdrop behind the bar's contents (Bookworm Studio: the live Vegas sky). */}
         <HeaderArt themeId={themeId} />
         {/* The wordmark gives way first: on a narrow phone it clips rather
-            than sliding under the wallet. */}
+            than sliding under the buttons. */}
         <div className="flex items-center gap-3 min-w-0 overflow-hidden">
           <span className="material-symbols-outlined text-accent text-2xl shrink-0">menu_book</span>
           <span data-wordmark className="font-display font-bold text-2xl tracking-tight text-primary">​</span>
@@ -192,7 +164,6 @@ const Index: React.FC = () => {
               )}
             </button>
           )}
-          <WalletPill onOpenStore={() => setActiveTab("store")} />
           <PlanBadgeButton />
           <ConflictNotifier />
           {/* Themes are also in Settings → Appearance; the bar drops the
@@ -240,16 +211,6 @@ const Index: React.FC = () => {
             <WikiPanel />
           ) : activeTab === "wikis" ? (
             <WikiLibrary />
-          ) : activeTab === "store" ? (
-            <React.Suspense
-              fallback={
-                <div className="flex items-center justify-center h-full text-muted-foreground">
-                  Loading…
-                </div>
-              }
-            >
-              <StorePanel />
-            </React.Suspense>
           ) : activeTab === "settings" ? (
             <React.Suspense
               fallback={
@@ -276,11 +237,7 @@ const Index: React.FC = () => {
         </div>
       </div>
 
-      <ArenaDock
-        activeTab={dockActiveTab}
-        onSelect={setActiveTab}
-        storeDot={wallet.loaded && wallet.available && wallet.dailyAvailable}
-      />
+      <ArenaDock activeTab={dockActiveTab} onSelect={setActiveTab} />
       <WikiQuickSwitcher />
       <LoadNeuronDialog />
       <ChainDialog />
