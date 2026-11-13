@@ -11,6 +11,7 @@ import {
   FOCUS_MAX_ITEMS,
   type WorkspaceItem,
 } from "@/lib/workspaceStore";
+import { useNotebookDirectory } from "@/lib/notebookDirectory";
 import {
   KIND_ICON,
   KIND_LABEL,
@@ -31,6 +32,12 @@ import {
  * viewer below, which cannot execute or interpret anything. The old code had
  * this inverted: the frame was the DEFAULT branch, so a `code` item would have
  * been executed as HTML. Keep the named-kinds-first shape.
+ *
+ * FILED BY NOTEBOOK. Every item belongs to the notebook Counsel had loaded
+ * when it was made (meta.wikiId, stamped in the store). The list opens on the
+ * loaded notebook's files, so one project's files are not buried under every
+ * other project's; the row of chips under the header switches notebook, shows
+ * what still needs one, or shows everything.
  *
  * The list survives tab switches and full reloads because it is backed by the
  * IndexedDB-backed workspaceStore, not ephemeral chat state.
@@ -61,6 +68,16 @@ const MAX_GUTTER_LINES = 2000;
 export const WIDE_DENSITY_PX = 640;
 
 type Density = "narrow" | "wide";
+
+/** Which files the list shows. "auto" follows the notebook Counsel has
+ *  loaded (everything, when it has none) until the person picks a chip. */
+type Scope = "auto" | "all" | "unfiled" | { wikiId: string };
+
+/** Scope chips, as complete literals for Tailwind's scanner. */
+const SCOPE_CHIP_CLASS = {
+  on: "shrink-0 inline-flex items-center gap-1.5 h-7 max-w-[11rem] px-2.5 rounded-full text-[11px] font-semibold bg-primary-container/20 text-primary border border-primary-container/40 transition-colors",
+  off: "shrink-0 inline-flex items-center gap-1.5 h-7 max-w-[11rem] px-2.5 rounded-full text-[11px] font-semibold text-on-surface-variant border border-outline-variant/20 hover:bg-surface-container-high transition-colors",
+};
 
 /**
  * Detail-header control shape, as two COMPLETE literals — Tailwind's content
@@ -195,6 +212,8 @@ const WorkspacePanel: React.FC<{
 }> = ({ userId, onClose, selectedId, onSelect, fullscreen, onToggleFullscreen, fullscreenButtonRef }) => {
   const allItems = useWorkspaceItems();
   const [filter, setFilter] = useState<"all" | "library">("all");
+  const { notebooks, activeId } = useNotebookDirectory();
+  const [scope, setScope] = useState<Scope>("auto");
 
   // ── Width density ───────────────────────────────────────────────────────
   // The panel measures ITSELF rather than reading the window, because in
@@ -250,15 +269,65 @@ const WorkspacePanel: React.FC<{
 
   const wide = density === "wide";
 
+  const mine = useMemo(
+    () => allItems.filter((i) => i.userId == null || i.userId === userId),
+    [allItems, userId],
+  );
+
+  const notebookById = useMemo(() => new Map(notebooks.map((n) => [n.id, n])), [notebooks]);
+  /** The notebook an item is filed in, or null. An id whose notebook was
+   *  deleted counts as unfiled — the file outlives the notebook. */
+  const notebookOf = (item: WorkspaceItem) =>
+    (item.meta?.wikiId && notebookById.get(item.meta.wikiId)) || null;
+
+  // Per-notebook counts, for the chips. Signed-out and notebook-less accounts
+  // have nothing to file under: no chips, and the panel is the flat list it
+  // always was.
+  const { counts, unfiledCount } = useMemo(() => {
+    const counts = new Map<string, number>();
+    let unfiledCount = 0;
+    for (const i of mine) {
+      const id = i.meta?.wikiId;
+      if (id && notebookById.has(id)) counts.set(id, (counts.get(id) || 0) + 1);
+      else unfiledCount++;
+    }
+    return { counts, unfiledCount };
+  }, [mine, notebookById]);
+  const filingOn = notebooks.length > 0;
+
+  // The loaded notebook first, then every other notebook that holds files.
+  const scopeNotebooks = useMemo(
+    () => [
+      ...notebooks.filter((n) => n.id === activeId),
+      ...notebooks.filter((n) => n.id !== activeId && counts.has(n.id)),
+    ],
+    [notebooks, activeId, counts],
+  );
+
+  // What "auto" means right now. A picked notebook that has since been
+  // deleted falls back the same way.
+  const effectiveScope: Exclude<Scope, "auto"> = !filingOn
+    ? "all"
+    : scope === "auto" || (typeof scope === "object" && !notebookById.has(scope.wikiId))
+      ? activeId && notebookById.has(activeId) ? { wikiId: activeId } : "all"
+      : scope;
+  const scopeWikiId = typeof effectiveScope === "object" ? effectiveScope.wikiId : null;
+  const scopeNotebook = scopeWikiId ? notebookById.get(scopeWikiId) || null : null;
+  const unfiledScope = effectiveScope === "unfiled";
+
   const items = useMemo(() => {
-    let list = allItems.filter((i) => i.userId == null || i.userId === userId);
+    let list = mine;
+    if (scopeWikiId) list = list.filter((i) => i.meta?.wikiId === scopeWikiId);
+    else if (unfiledScope) list = list.filter((i) => !(i.meta?.wikiId && notebookById.has(i.meta.wikiId)));
     if (filter === "library") list = list.filter((i) => i.savedToLibrary);
     return list;
-  }, [allItems, userId, filter]);
+  }, [mine, scopeWikiId, unfiledScope, notebookById, filter]);
 
+  // From everything, not the scoped list: a chat bubble or the Notebooks tab
+  // can open a file from a notebook other than the one being browsed.
   const selected = useMemo(
-    () => items.find((i) => i.id === selectedId) || null,
-    [items, selectedId]
+    () => mine.find((i) => i.id === selectedId) || null,
+    [mine, selectedId]
   );
 
   const handleDelete = (id: string) => {
@@ -305,12 +374,14 @@ const WorkspacePanel: React.FC<{
   };
 
   const handleClearUnsaved = () => {
-    const removable = items.filter((i) => !i.savedToLibrary).length;
-    if (!removable) {
+    // Only what is listed: clearing one notebook's files must never reach
+    // into another's.
+    const removable = items.filter((i) => !i.savedToLibrary).map((i) => i.id);
+    if (!removable.length) {
       toast.message("Nothing to clear", { description: "Pinned library items are kept." });
       return;
     }
-    workspaceStore.clearUnsaved(userId);
+    workspaceStore.removeMany(removable);
     onSelect(null);
     toast.success("Cleared unsaved files");
   };
@@ -529,16 +600,89 @@ const WorkspacePanel: React.FC<{
             // which rowToItem has already normalized to "text".
             <InertFileViewer key={selected.id} item={selected} onCopy={handleCopy} />
           )}
-          <div className="px-3 py-1.5 border-t border-outline-variant/10 shrink-0 text-[10px] text-on-surface-variant">
-            {selected.kind === "html" || selected.kind === "svg"
-              ? "Sandboxed preview · no network or page access"
-              : `Saved ${timeAgo(selected.createdAt)}${selected.meta?.source ? ` · ${selected.meta.source}` : ""}${
-                  selected.kind === "research" ? "" : " · text only, nothing here runs"
-                }`}
+          <div className="flex items-center gap-2 px-3 py-1.5 border-t border-outline-variant/10 shrink-0 text-[10px] text-on-surface-variant min-w-0">
+            <span className="truncate min-w-0 flex-1">
+              {selected.kind === "html" || selected.kind === "svg"
+                ? "Sandboxed preview · no network or page access"
+                : `Saved ${timeAgo(selected.createdAt)}${selected.meta?.source ? ` · ${selected.meta.source}` : ""}${
+                    selected.kind === "research" ? "" : " · text only, nothing here runs"
+                  }`}
+            </span>
+            {filingOn && selected.userId && (
+              <button
+                onClick={() => workspaceStore.requestFiling([selected.id])}
+                title="Move to another notebook"
+                className="shrink-0 inline-flex items-center gap-1 max-w-[50%] h-6 px-2 rounded-full border border-outline-variant/20 font-semibold hover:bg-surface-container-high hover:text-foreground transition-colors"
+              >
+                {notebookOf(selected) ? (
+                  <span aria-hidden className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: notebookOf(selected)!.color }} />
+                ) : (
+                  <span className="material-symbols-outlined text-[14px]" aria-hidden>drive_file_move</span>
+                )}
+                <span className="truncate">{notebookOf(selected)?.name || "Needs a notebook"}</span>
+              </button>
+            )}
           </div>
         </div>
       ) : (
         <>
+          {/* Notebook scope: one line that scrolls, like Counsel's chip row. */}
+          {filingOn && (
+            <div
+              role="tablist"
+              aria-label="Show files from"
+              className="flex flex-nowrap items-center gap-1.5 px-2 py-2 border-b border-outline-variant/10 shrink-0 overflow-x-auto hide-scrollbar"
+            >
+              {scopeNotebooks.map((n) => (
+                <button
+                  key={n.id}
+                  role="tab"
+                  aria-selected={scopeWikiId === n.id}
+                  onClick={() => setScope({ wikiId: n.id })}
+                  title={n.id === activeId ? `${n.name} — open in Counsel, new files go here` : n.name}
+                  className={scopeWikiId === n.id ? SCOPE_CHIP_CLASS.on : SCOPE_CHIP_CLASS.off}
+                >
+                  <span aria-hidden className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: n.color }} />
+                  <span className="truncate">{n.name}</span>
+                  <span className="tabular-nums opacity-70">{counts.get(n.id) || 0}</span>
+                </button>
+              ))}
+              {unfiledCount > 0 && (
+                <button
+                  role="tab"
+                  aria-selected={effectiveScope === "unfiled"}
+                  onClick={() => setScope("unfiled")}
+                  title="Files that aren't in a notebook yet"
+                  className={effectiveScope === "unfiled" ? SCOPE_CHIP_CLASS.on : SCOPE_CHIP_CLASS.off}
+                >
+                  <span className="material-symbols-outlined text-[14px]" aria-hidden>inbox</span>
+                  <span className="truncate">Needs a notebook</span>
+                  <span className="tabular-nums opacity-70">{unfiledCount}</span>
+                </button>
+              )}
+              <button
+                role="tab"
+                aria-selected={effectiveScope === "all"}
+                onClick={() => setScope("all")}
+                className={effectiveScope === "all" ? SCOPE_CHIP_CLASS.on : SCOPE_CHIP_CLASS.off}
+              >
+                All
+                <span className="tabular-nums opacity-70">{mine.length}</span>
+              </button>
+            </div>
+          )}
+          {effectiveScope === "unfiled" && items.some((i) => i.userId) && (
+            <div className="px-2 pt-2 shrink-0">
+              <button
+                onClick={() => workspaceStore.requestFiling(items.filter((i) => i.userId).map((i) => i.id))}
+                className="flex items-center justify-center gap-1.5 w-full min-h-[36px] rounded-lg border border-dashed border-outline-variant/40 text-xs font-semibold text-on-surface-variant hover:border-primary-container/60 hover:text-primary transition-colors"
+              >
+                <span className="material-symbols-outlined text-[16px]" aria-hidden>drive_file_move</span>
+                {items.length === 1 ? "Move it to a notebook" : `Move all ${items.filter((i) => i.userId).length} to a notebook`}
+              </button>
+            </div>
+          )}
+
           {/* List view */}
           <div className={LIST_SCROLL_CLASS[density]}>
             {items.length === 0 ? (
@@ -547,12 +691,20 @@ const WorkspacePanel: React.FC<{
                   {filter === "library" ? "bookmark" : "folder_open"}
                 </span>
                 <p className="text-sm font-medium text-foreground">
-                  {filter === "library" ? "No saved files yet" : "No files yet"}
+                  {filter === "library"
+                    ? "No saved files yet"
+                    : scopeNotebook
+                      ? `Nothing in ${scopeNotebook.name} yet`
+                      : "No files yet"}
                 </p>
                 <p className="text-xs">
                   {filter === "library"
                     ? "Pin a file with the bookmark to keep it here permanently."
-                    : "Everything the chat produces — artifacts, code, documents, data and research — collects here automatically."}
+                    : scopeNotebook
+                      ? scopeNotebook.id === activeId
+                        ? "Whatever Counsel makes while this notebook is open is filed here."
+                        : "Open this notebook in Counsel and what it makes is filed here."
+                      : "Everything the chat produces — artifacts, code, documents, data and research — collects here automatically."}
                 </p>
               </div>
             ) : (
@@ -593,6 +745,7 @@ const WorkspacePanel: React.FC<{
                       {labelFor(item)}
                       {item.meta?.language ? ` · ${languageLabel(item.meta.language)}` : ""} ·{" "}
                       {timeAgo(item.createdAt)}
+                      {filingOn && !scopeWikiId && notebookOf(item) ? ` · ${notebookOf(item)!.name}` : ""}
                     </div>
                   </div>
                   <span
@@ -637,6 +790,18 @@ const WorkspacePanel: React.FC<{
                         bookmark
                       </span>
                     </span>
+                    {filingOn && item.userId && (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => workspaceStore.requestFiling([item.id])}
+                        onKeyDown={(e) => { if (e.key === "Enter") workspaceStore.requestFiling([item.id]); }}
+                        title="Move to another notebook"
+                        className="inline-flex items-center justify-center h-7 w-7 rounded-lg cursor-pointer text-on-surface-variant hover:bg-surface-container-highest transition-colors"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">drive_file_move</span>
+                      </span>
+                    )}
                     <span
                       role="button"
                       tabIndex={0}

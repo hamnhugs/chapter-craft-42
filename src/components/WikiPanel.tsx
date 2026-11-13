@@ -42,6 +42,8 @@ import EntryLocatorPanel from "@/components/EntryLocatorPanel";
 import { fetchImagesForEntries, deleteImageAttachment, type ImageAttachmentRow } from "@/lib/imageGen";
 import DailyRecall from "@/components/DailyRecall";
 import NotebookFormDialog, { deleteNotebookWithConfirm } from "@/components/NotebookFormDialog";
+import { useWorkspaceItems, workspaceStore } from "@/lib/workspaceStore";
+import { KIND_ICON, KIND_LABEL, languageLabel } from "@/lib/workspaceFiles";
 import { dailyRecallDoneToday, locatorBookId, DAILY_RECALL_SIZE } from "@/lib/dailyRecall";
 
 type WikiView = "entries" | "detail" | "conflicts";
@@ -91,6 +93,13 @@ const WikiPanel: React.FC = () => {
   const [selectedEntry, setSelectedEntry] = useState<KnowledgeEntry | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  // Notes or the Workspace files filed in this notebook. A search looks in both.
+  const [listTab, setListTab] = useState<"notes" | "files">("notes");
+  const workspaceItems = useWorkspaceItems();
+  const files = useMemo(
+    () => (wikiId ? workspaceItems.filter((i) => i.meta?.wikiId === wikiId) : []),
+    [workspaceItems, wikiId],
+  );
   const [editing, setEditing] = useState(false);
   const [editTitle, setEditTitle] = useState("");
   const [editContent, setEditContent] = useState("");
@@ -146,6 +155,7 @@ const WikiPanel: React.FC = () => {
     if (!switched) return;
     setView((v) => (v === "conflicts" ? v : "entries"));
     setSearchQuery("");
+    setListTab("notes");
   }, [wikiId]);
 
   const entryById = useMemo(() => {
@@ -252,6 +262,24 @@ const WikiPanel: React.FC = () => {
     window.addEventListener(OPEN_NOTE_EVENT, onOpen);
     return () => window.removeEventListener(OPEN_NOTE_EVENT, onOpen);
   }, []);
+
+  const filteredFiles = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return files;
+    return files.filter((f) =>
+      f.title.toLowerCase().includes(q) ||
+      (KIND_LABEL[f.kind] || "").toLowerCase().includes(q) ||
+      (f.meta?.language || "").toLowerCase().includes(q) ||
+      f.content.toLowerCase().includes(q),
+    );
+  }, [files, searchQuery]);
+
+  // Workspace lives in Counsel. Opening a file there is still only viewing:
+  // it changes neither the notebook Counsel has loaded nor this one.
+  const openFile = (id: string) => {
+    workspaceStore.requestOpen(id);
+    setActiveTab("chat");
+  };
 
   const filteredEntries = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -407,6 +435,9 @@ const WikiPanel: React.FC = () => {
   };
 
   const openConflictsCount = conflicts.length;
+  const searching = searchQuery.trim().length > 0;
+  const showNotes = searching || listTab === "notes" || files.length === 0;
+  const showFiles = files.length > 0 && (searching ? filteredFiles.length > 0 : listTab === "files");
 
   return (
     <div className="flex flex-col h-full overflow-auto">
@@ -493,7 +524,7 @@ const WikiPanel: React.FC = () => {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 aria-label="Search this notebook"
-                placeholder="Search this notebook"
+                placeholder={files.length > 0 ? "Search notes and files" : "Search this notebook"}
                 className="w-full h-9 bg-surface-container-low border border-outline-variant/20 rounded-lg pl-9 pr-9 text-sm text-foreground placeholder:text-on-surface-variant/60 focus:outline-none focus:ring-1 focus:ring-primary/40"
               />
               {searchQuery && (
@@ -507,16 +538,39 @@ const WikiPanel: React.FC = () => {
               )}
             </div>
 
-            {loading && entries.length === 0 ? (
+            {files.length > 0 && !searching && (
+              <div role="tablist" aria-label="Notes or files" className="flex items-center gap-1.5 mb-3">
+                {(["notes", "files"] as const).map((t) => (
+                  <button
+                    key={t}
+                    role="tab"
+                    aria-selected={listTab === t}
+                    onClick={() => setListTab(t)}
+                    className={`h-8 px-3 rounded-full text-xs font-semibold border transition-colors ${
+                      listTab === t
+                        ? "bg-primary-container/20 text-primary border-primary-container/40"
+                        : "text-on-surface-variant border-outline-variant/20 hover:bg-surface-container-high"
+                    }`}
+                  >
+                    {t === "notes" ? `Notes · ${entries.length}` : `Files · ${files.length}`}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {!showNotes ? null : loading && entries.length === 0 ? (
               <div className="flex items-center justify-center py-20">
                 <Loader2 className="w-6 h-6 animate-spin text-on-surface-variant" aria-hidden />
               </div>
             ) : filteredEntries.length === 0 ? (
-              <p className="py-12 text-sm text-center text-on-surface-variant max-w-sm mx-auto">
-                {entries.length === 0
-                  ? "This notebook is empty. Chat with Counsel about what you're reading to fill it."
-                  : "No notes match your search."}
-              </p>
+              // A search that found files but no notes says nothing about notes.
+              searching && filteredFiles.length > 0 ? null : (
+                <p className="py-12 text-sm text-center text-on-surface-variant max-w-sm mx-auto">
+                  {searching
+                    ? files.length > 0 ? "No notes or files match your search." : "No notes match your search."
+                    : "This notebook is empty. Chat with Counsel about what you're reading to fill it."}
+                </p>
+              )
             ) : (
               <ul
                 aria-busy={loading}
@@ -549,6 +603,42 @@ const WikiPanel: React.FC = () => {
                   );
                 })}
               </ul>
+            )}
+
+            {/* Workspace files filed in this notebook */}
+            {showFiles && (
+              <>
+                {searching && (
+                  <h3 className="mt-4 mb-2 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">
+                    Files · {filteredFiles.length}
+                  </h3>
+                )}
+                <ul className="divide-y divide-outline-variant/10 rounded-xl border border-outline-variant/15 bg-surface-container-low overflow-hidden">
+                  {filteredFiles.map((f) => (
+                    <li key={f.id}>
+                      <button
+                        onClick={() => openFile(f.id)}
+                        title="Open in the Workspace"
+                        className="flex items-center gap-3 w-full min-w-0 text-left px-4 py-2.5 hover:bg-surface-container-high transition-colors focus-visible:outline-none focus-visible:bg-surface-container-high"
+                      >
+                        <span className="material-symbols-outlined text-xl text-primary-container shrink-0" aria-hidden>
+                          {KIND_ICON[f.kind] || "draft"}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-semibold text-foreground">{f.title}</span>
+                          <span className="block truncate text-xs text-on-surface-variant">
+                            {KIND_LABEL[f.kind] || "File"}
+                            {f.meta?.language ? ` · ${languageLabel(f.meta.language)}` : ""}
+                            {" · "}
+                            {new Date(f.createdAt).toLocaleDateString()}
+                          </span>
+                        </span>
+                        <span className="material-symbols-outlined text-lg text-on-surface-variant shrink-0" aria-hidden>open_in_new</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </>
             )}
           </>
         ) : (

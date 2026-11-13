@@ -152,10 +152,19 @@ describe("Ask Counsel takes the open shelf and keeps the notebook", () => {
   it("says which notebook goes along", async () => {
     app.activeWikis = [{ id: "w1", name: "Philosophy notes" }];
     await mount();
+    await act(async () => { tab("Stoics").click(); });
     expect(host.querySelector(".cc-notebook-slot")!.textContent).toContain("Philosophy notes");
     app.activeWikis = [];
     await mount();
     expect(host.querySelector(".cc-notebook-slot")!.textContent).toContain("None — just chat");
+  });
+
+  it("is not offered on Reading now — only a shelf goes to Counsel", async () => {
+    await mount();
+    await act(async () => { tab("Reading now").click(); });
+    expect(tab("Reading now").getAttribute("aria-selected")).toBe("true");
+    expect(button("Ask Counsel")).toBeUndefined();
+    expect(host.querySelector(".cc-notebook-slot")).toBeNull();
   });
 
   it("shows which shelf Counsel already has", async () => {

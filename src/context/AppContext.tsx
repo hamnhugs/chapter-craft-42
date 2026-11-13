@@ -12,6 +12,8 @@ import { applyLoad, describeLoad, focusChanged, focusEpoch, type FocusState, typ
 import { bookContextStore } from "@/lib/chatBooks";
 import { ASSISTANT_TAG, mergeReservedTags } from "@/lib/bookProvenance";
 import { MAX_ACTIVE_NEURONS } from "@/lib/neuronAccess";
+import { workspaceStore } from "@/lib/workspaceStore";
+import { notebookDirectory } from "@/lib/notebookDirectory";
 
 type TabId = "library" | "viewer" | "chat" | "wiki" | "wikis" | "settings" | "admin";
 
@@ -347,6 +349,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const commitActiveSet = useCallback((ids: string[]) => {
     activeWikiIdsRef.current = ids;
     sessionActiveWikiIds.current = ids; // chat tools read this when the DB can't hold the set
+    // New Workspace items are filed under the primary. Set here, not in an
+    // effect, so a file made in the same tick as a notebook switch lands in
+    // the notebook the person just chose.
+    workspaceStore.setFilingTarget(ids[0] ?? null);
     setActiveWikiId(ids[0] ?? null);
     setActiveWikiIds(ids);
   }, []);
@@ -377,7 +383,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const setTab = useCallback((tab: TabId) => navigateTab(tab), [navigateTab]);
 
   const refreshWikis = useCallback(async () => {
-    if (!user) { setWikis([]); setActiveWikiId(null); setActiveWikiIds([]); activeWikiIdsRef.current = []; return; }
+    if (!user) { setWikis([]); setActiveWikiId(null); setActiveWikiIds([]); activeWikiIdsRef.current = []; workspaceStore.setFilingTarget(null); return; }
     try {
       let [list, active] = await Promise.all([fetchWikis(), fetchActiveWikiIds()]);
       // A brand-new account gets a first notebook, loaded, so Counsel has
@@ -445,6 +451,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [user, commitActiveSet]);
 
   useEffect(() => { refreshWikis(); }, [refreshWikis]);
+
+  // The Workspace reads notebook names and the loaded one from here.
+  useEffect(() => {
+    notebookDirectory.set(
+      wikis.map((w) => ({ id: w.id, name: w.name, color: w.cover_color || "#7C3AED" })),
+      activeWikiId,
+    );
+  }, [wikis, activeWikiId]);
 
   // Listen for AI-tool-driven wiki switches/creates to refresh active wiki state live.
   useEffect(() => {
