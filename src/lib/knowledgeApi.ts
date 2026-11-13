@@ -218,7 +218,7 @@ export async function deleteKnowledgeEntry(id: string): Promise<void> {
 }
 
 export async function updateKnowledgeEntry(id: string, updates: { title?: string; content?: string; tags?: string[]; confidence?: number; hook?: string | null }): Promise<void> {
-  const { error } = await supabase.from("knowledge_entries").update(updates as never).eq("id", id);
+  const { error } = await supabase.from("knowledge_entries").update(updates).eq("id", id);
   if (error) throw error;
   // A text edit clears the stale vectors (embedding_staleness trigger) — re-embed.
   if (updates.title !== undefined || updates.content !== undefined) embedEntriesSoon([id]);

@@ -1213,6 +1213,7 @@ export type Database = {
           encoding_strength: number | null
           entry_type: string
           folder: string
+          hook: string | null
           id: string
           importance: number | null
           is_index: boolean
@@ -1255,6 +1256,7 @@ export type Database = {
           encoding_strength?: number | null
           entry_type?: string
           folder?: string
+          hook?: string | null
           id?: string
           importance?: number | null
           is_index?: boolean
@@ -1297,6 +1299,7 @@ export type Database = {
           encoding_strength?: number | null
           entry_type?: string
           folder?: string
+          hook?: string | null
           id?: string
           importance?: number | null
           is_index?: boolean
@@ -1487,6 +1490,44 @@ export type Database = {
             columns: ["target_entry_id"]
             isOneToOne: false
             referencedRelation: "knowledge_entries"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      memory_sleep_runs: {
+        Row: {
+          created_at: string
+          edge_ids: string[]
+          hook_entry_ids: string[]
+          id: string
+          undone_at: string | null
+          user_id: string
+          wiki_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          edge_ids?: string[]
+          hook_entry_ids?: string[]
+          id?: string
+          undone_at?: string | null
+          user_id?: string
+          wiki_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          edge_ids?: string[]
+          hook_entry_ids?: string[]
+          id?: string
+          undone_at?: string | null
+          user_id?: string
+          wiki_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "memory_sleep_runs_wiki_id_fkey"
+            columns: ["wiki_id"]
+            isOneToOne: false
+            referencedRelation: "wikis"
             referencedColumns: ["id"]
           },
         ]
@@ -3345,11 +3386,12 @@ export type Database = {
         Returns: {
           content: string
           entry_type: string
+          hook: string
           id: string
+          locators: Json
           next_review_at: string
-          storage_strength: number
+          review_count: number
           title: string
-          vibrancy: number
           wiki_id: string
         }[]
       }
@@ -3370,6 +3412,7 @@ export type Database = {
           encoding_strength: number | null
           entry_type: string
           folder: string
+          hook: string | null
           id: string
           importance: number | null
           is_index: boolean
@@ -3735,6 +3778,7 @@ export type Database = {
         Args: { boost?: number; node_ids: string[] }
         Returns: undefined
       }
+      undo_sleep_run: { Args: { _run_id: string }; Returns: boolean }
       upsert_wiki_health_alert: {
         Args: {
           p_kind: string
