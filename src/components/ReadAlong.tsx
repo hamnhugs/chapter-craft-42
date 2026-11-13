@@ -9,6 +9,9 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useChatSettings } from "@/hooks/useChatSettings";
@@ -37,6 +40,11 @@ import { ReadAlongPlayer, type ReadAlongEnd, type ReadAlongStatus, type ReadAlon
  * uses (Inworld voice when enabled, else the device voice), highlights each
  * word with a theme-coloured pill as it is spoken, auto-scrolls and turns
  * pages, and rewards listening with XP, levels, combos and a daily streak.
+ *
+ * It draws two things: the "Listen" button in the reader's bar, and — while
+ * a session is on — the player, which takes the bar over (it is portalled
+ * into `playerHost`). The rewards stay out of the way of the controls: a ring
+ * round the Listen icon, and the numbers in the player's More menu.
  */
 
 export interface ReadAlongProps {
@@ -56,12 +64,16 @@ export interface ReadAlongProps {
   hasNextPage: boolean;
   onNextPage: () => void;
   onStatusChange?: (status: ReadAlongStatus) => void;
-  /** Focus mode: a compact always-available mini-player instead of the dock. */
-  focusMode?: boolean;
-  /** Focus mode only: whether the mini-player is shown (it auto-hides while reading). */
-  controlsVisible?: boolean;
-  onToggleFocus?: () => void;
-  /** Any touch on the controls (keeps focus-mode controls from hiding mid-use). */
+  /** Where the player goes while a session is on: the reader bar's own row. */
+  playerHost: HTMLElement | null;
+  /** Narrow bar: icon over label, tighter player. */
+  compact: boolean;
+  /** The bar is at the bottom of the screen (phones): pop-ups open upward. */
+  barAtBottom: boolean;
+  /** Classes of a bar slot and its label, so Listen matches its neighbours. */
+  slotClass: string;
+  slotLabelClass: string;
+  /** Any touch on the controls (keeps a phone's controls from hiding mid-use). */
   onInteract?: () => void;
 }
 
@@ -85,7 +97,7 @@ const prefersReducedMotion = () =>
 type Celebration = { id: number; title: string; detail?: string; burst: boolean };
 
 const ReadAlong: React.FC<ReadAlongProps> = (props) => {
-  const { mode, bookId, bookTitle, textVersion, page, onStatusChange, focusMode = false, controlsVisible = true, onToggleFocus, onInteract } = props;
+  const { mode, bookId, bookTitle, textVersion, page, onStatusChange, playerHost, compact, barAtBottom, slotClass, slotLabelClass, onInteract } = props;
   const { user } = useAuth();
   const settings = useChatSettings();
   const { stats, latest: statsRef, update: updateStats, flush: flushStats } = useReadAlongStats(user?.id ?? null);
@@ -525,9 +537,9 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
     return () => window.clearInterval(tick);
   }, [sleep]);
 
-  // Focus mode keys: Space play/pause, [ and ] skip a sentence.
+  // While listening: Space play/pause, [ and ] skip a sentence.
   useEffect(() => {
-    if (!focusMode) return;
+    if (!active) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
       const target = e.target as HTMLElement | null;
@@ -546,7 +558,7 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [focusMode, togglePlay, skipSentence, onInteract]);
+  }, [active, togglePlay, skipSentence, onInteract]);
 
   // ── Derived display ───────────────────────────────────────────────────────
   const lvl = levelInfo(stats.xp);
@@ -568,22 +580,17 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
     () => Array.from({ length: 14 }, (_, i) => ({ a: `${(360 / 14) * i}deg`, d: `${(i % 3) * 40}ms`, c: i % 2 ? "hsl(var(--primary))" : "hsl(var(--primary-container))" })),
     [],
   );
-  // Menus must stack above the focus-mode layer (z-60) when it's up.
-  const menuZ = focusMode ? "z-[80]" : "";
-
-  const levelBadge = (size: number) => (
-    <div
+  /** The level as a ring: how far into the current level, no numbers. */
+  const levelRing = (size: number, children: React.ReactNode) => (
+    <span
       className="relative shrink-0 rounded-full grid place-items-center"
       style={{
         width: size,
         height: size,
         background: `conic-gradient(hsl(var(--primary)) ${lvl.into / lvl.span}turn, hsl(var(--surface-container-highest)) 0)`,
       }}
-      title={`Level ${lvl.level} · ${lvl.into}/${lvl.span} XP to next level`}
     >
-      <div className="absolute inset-[3px] rounded-full bg-surface-container-high grid place-items-center">
-        <span className="font-headline font-bold leading-none text-primary" style={{ fontSize: size * 0.34 }}>{lvl.level}</span>
-      </div>
+      <span className="absolute inset-[2px] rounded-full bg-surface-container-high grid place-items-center">{children}</span>
       {celebration?.burst && (
         <span key={celebration.id} aria-hidden>
           {particles.map((pt, i) => (
@@ -591,272 +598,189 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
           ))}
         </span>
       )}
-    </div>
+    </span>
   );
 
   const celebrationPop = celebration && (
-    <div key={celebration.id} className="ra-pop absolute -top-14 left-1/2 -translate-x-1/2 whitespace-nowrap px-4 py-2 rounded-full bg-primary-container text-on-primary-container shadow-xl text-center" role="status">
+    <div
+      key={celebration.id}
+      className={`ra-pop absolute left-1/2 -translate-x-1/2 whitespace-nowrap px-4 py-2 rounded-full bg-primary-container text-on-primary-container shadow-xl text-center z-10 ${barAtBottom ? "-top-14" : "top-full mt-3"}`}
+      role="status"
+    >
       <span className="font-headline font-bold text-sm">{celebration.title}</span>
       {celebration.detail && <span className="text-xs opacity-80 ml-2">{celebration.detail}</span>}
     </div>
   );
 
-  const playButton = (size: "md" | "lg") => (
-    <button
-      type="button"
-      onClick={togglePlay}
-      aria-label={status === "playing" || status === "loading" ? "Pause" : active ? "Resume" : "Start reading"}
-      className={`shrink-0 rounded-full bg-primary-container text-on-primary-container grid place-items-center shadow-lg active:scale-90 transition-transform ${size === "lg" ? "w-14 h-14" : "w-12 h-12"}`}
-    >
-      {status === "loading" ? (
-        <Loader2 className="w-5 h-5 animate-spin" />
-      ) : (
-        <span className={`material-symbols-outlined ${size === "lg" ? "text-3xl" : "text-2xl"}`} style={{ fontVariationSettings: "'FILL' 1" }}>
-          {status === "playing" ? "pause" : "play_arrow"}
-        </span>
-      )}
-    </button>
-  );
+  const transportBtn =
+    "shrink-0 grid place-items-center w-12 h-12 rounded-full text-foreground hover:bg-surface-container-highest active:scale-90 transition disabled:opacity-30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50";
 
   const skipButton = (dir: -1 | 1) => (
     <button
       type="button"
       onClick={() => skipSentence(dir)}
-      disabled={!active}
       aria-label={dir < 0 ? "Back one sentence" : "Forward one sentence"}
-      title={dir < 0 ? "Back one sentence" : "Forward one sentence"}
-      className="shrink-0 grid place-items-center w-11 h-11 rounded-full text-foreground hover:bg-surface-container-highest active:scale-90 transition disabled:opacity-30"
+      title={dir < 0 ? "Back one sentence ([)" : "Forward one sentence (])"}
+      className={transportBtn}
     >
       <span className="material-symbols-outlined text-2xl" aria-hidden>{dir < 0 ? "fast_rewind" : "fast_forward"}</span>
     </button>
   );
 
-  const voiceMenu = (compact: boolean) => (
-    <DropdownMenu onOpenChange={(o) => { if (o) loadVoices(); onInteract?.(); }}>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          aria-label={`Voice: ${voiceLabel}`}
-          className={`flex items-center gap-1 rounded-full bg-surface-container-highest text-foreground min-w-0 ${compact ? "h-10 w-10 justify-center shrink-0" : "px-2.5 h-9 max-w-[40%]"}`}
-        >
-          <span className="material-symbols-outlined text-base text-primary" aria-hidden>record_voice_over</span>
-          {!compact && <span className="truncate">{voiceLabel}</span>}
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className={`max-h-[50dvh] overflow-y-auto ${menuZ}`}>
-        <DropdownMenuLabel>Voice</DropdownMenuLabel>
-        <DropdownMenuRadioGroup
-          value={voice.engine === "inworld" ? `inworld:${voice.inworldVoiceId}` : "browser"}
-          onValueChange={(v) => changeVoice(v === "browser" ? { engine: "browser" } : { engine: "inworld", inworldVoiceId: v.slice("inworld:".length) })}
-        >
-          {counselVoice.engine === "inworld" && (
-            <DropdownMenuRadioItem value={`inworld:${counselVoice.inworldVoiceId}`}>
-              {voices?.find((v) => v.voice_id === counselVoice.inworldVoiceId)?.name ?? counselVoice.inworldVoiceId} (Counsel voice)
-            </DropdownMenuRadioItem>
-          )}
-          <DropdownMenuRadioItem value="browser">Device voice{counselVoice.engine === "browser" ? " (Counsel voice)" : ""}</DropdownMenuRadioItem>
-          {settings.inworldEnabled && (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel className="text-[10px] uppercase tracking-widest text-muted-foreground">Inworld voices</DropdownMenuLabel>
-              {voices === null && <div className="px-2 py-1.5 text-xs text-muted-foreground">Loading…</div>}
-              {voices?.filter((v) => v.voice_id !== counselVoice.inworldVoiceId).map((v) => (
-                <DropdownMenuRadioItem key={v.voice_id} value={`inworld:${v.voice_id}`}>{v.name}</DropdownMenuRadioItem>
-              ))}
-            </>
-          )}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-
-  const speedButton = (
-    <button
-      type="button"
-      onClick={() => { cycleSpeed(); onInteract?.(); }}
-      className="shrink-0 px-2.5 h-9 rounded-full bg-surface-container-highest text-foreground font-semibold tabular-nums"
-      aria-label={`Speed ${rate}x — tap to change`}
-    >
-      {rate}×
-    </button>
-  );
-
-  const sleepMenu = (
-    <DropdownMenu onOpenChange={() => onInteract?.()}>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          aria-label={sleepLabel ? `Sleep timer: ${sleepLabel}` : "Sleep timer"}
-          title="Sleep timer"
-          className={`shrink-0 flex items-center gap-1 h-9 rounded-full ${sleep ? "px-2.5 bg-primary-container text-on-primary-container" : "w-9 justify-center bg-surface-container-highest text-foreground"}`}
-        >
-          <span className="material-symbols-outlined text-base" aria-hidden>bedtime</span>
-          {sleepLabel && <span className="text-xs font-semibold tabular-nums">{sleepLabel}</span>}
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="center" className={menuZ}>
-        <DropdownMenuLabel>Sleep timer</DropdownMenuLabel>
-        <DropdownMenuRadioGroup value={sleepValue} onValueChange={chooseSleep}>
-          {SLEEP_OPTIONS.map((o) => (
-            <DropdownMenuRadioItem key={o.value} value={o.value}>{o.label}</DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-
-  const progressBar = (
+  const player = active && playerHost && createPortal(
     <div
-      className="h-1.5 rounded-full bg-surface-container-highest overflow-hidden"
-      role="progressbar"
-      aria-label={mode === "pdf" ? "Page progress" : "Progress"}
-      aria-valuenow={pagePct}
-      aria-valuemin={0}
-      aria-valuemax={100}
-    >
-      <div
-        className="h-full rounded-full transition-[width] duration-300"
-        style={{ width: `${pagePct}%`, background: "linear-gradient(90deg, hsl(var(--primary-container)), hsl(var(--primary)))" }}
-      />
-    </div>
-  );
-
-  const dock = active && !focusMode && createPortal(
-    <div
-      className="fixed left-1/2 -translate-x-1/2 bottom-[calc(var(--cc-dock-h)+2rem)] z-40 w-[min(94vw,560px)]"
+      className="relative flex items-center w-full gap-1"
       role="region"
-      aria-label="Read-along controls"
-    >
-      {celebrationPop}
-      <div className="bg-surface-container-high/90 backdrop-blur-xl rounded-2xl shadow-2xl border border-outline-variant/20 p-3 space-y-2">
-        <div className="flex items-center gap-2">
-          {levelBadge(42)}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">
-              <span className="truncate">Lv {lvl.level} · {Math.floor(stats.xp).toLocaleString()} XP</span>
-              {streak > 0 && (
-                <span className="shrink-0 text-primary" title={`${streak}-day streak`}>
-                  <span className="ra-flame" aria-hidden>🔥</span>{streak}
-                </span>
-              )}
-              {mult > 1 && (
-                <span key={mult} className="ra-pulse shrink-0 px-1.5 py-0.5 rounded-full bg-primary-container text-on-primary-container normal-case tracking-normal" title={`${combo}-word combo`}>
-                  ×{mult}
-                </span>
-              )}
-            </div>
-            <div className="mt-1.5">{progressBar}</div>
-            <div className="mt-1 flex justify-between gap-2 text-[10px] text-on-surface-variant">
-              <span className="truncate">{mode === "pdf" ? `Page ${page} · ${pagePct}%` : `${pagePct}%`}</span>
-              <span className="shrink-0" title="Today's words toward the daily streak goal">{Math.min(todayWords, DAILY_WORD_GOAL)}/{DAILY_WORD_GOAL} today</span>
-            </div>
-          </div>
-          {skipButton(-1)}
-          {playButton("md")}
-          {skipButton(1)}
-        </div>
-        <div className="flex items-center gap-1.5 text-xs">
-          {voiceMenu(false)}
-          {speedButton}
-          {sleepMenu}
-          <span className="flex-1" />
-          {onToggleFocus && (
-            <button
-              type="button"
-              onClick={onToggleFocus}
-              className="shrink-0 grid place-items-center w-9 h-9 rounded-full text-on-surface-variant hover:text-foreground hover:bg-surface-container-highest"
-              aria-label="Focus mode"
-              title="Focus mode: just the page"
-            >
-              <span className="material-symbols-outlined text-lg" aria-hidden>fullscreen</span>
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={stopReading}
-            className="shrink-0 flex items-center gap-1 px-2.5 h-9 rounded-full text-on-surface-variant hover:text-foreground hover:bg-surface-container-highest"
-          >
-            <span className="material-symbols-outlined text-sm" aria-hidden>stop</span>
-            Stop
-          </button>
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-
-  // Focus mode: a slim player docked to the bottom edge; it slides away while
-  // reading and comes back on any tap.
-  const miniPlayer = focusMode && createPortal(
-    <div
-      className={`fixed inset-x-0 bottom-0 z-[70] flex justify-center px-2 transition-all duration-300 ${controlsVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-full pointer-events-none"}`}
-      style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 0.5rem)" }}
-      role="region"
-      aria-label="Read-along controls"
-      aria-hidden={!controlsVisible}
+      aria-label="Listening controls"
       onPointerDown={() => onInteract?.()}
     >
-      <div className="relative w-full max-w-[560px]">
-        {celebrationPop}
-        <div className="bg-surface-container-high/90 backdrop-blur-xl rounded-2xl shadow-2xl border border-outline-variant/20 px-3 pt-2.5 pb-2 space-y-2">
-          {active && (
-            <div className="flex items-center gap-2 text-[10px] text-on-surface-variant">
-              <span className="shrink-0 font-bold text-primary">Lv {lvl.level}</span>
-              <div className="flex-1">{progressBar}</div>
-              <span className="shrink-0 tabular-nums">{mode === "pdf" ? `p.${page} · ` : ""}{pagePct}%</span>
-            </div>
+      {celebrationPop}
+      {/* How far through the page the voice is. */}
+      <div
+        className={`absolute inset-x-1 h-0.5 rounded-full bg-surface-container-highest overflow-hidden ${barAtBottom ? "-top-1" : "-bottom-0.5"}`}
+        role="progressbar"
+        aria-label={mode === "pdf" ? "Page progress" : "Progress"}
+        aria-valuenow={pagePct}
+        aria-valuemin={0}
+        aria-valuemax={100}
+      >
+        <div className="h-full bg-primary transition-[width] duration-300" style={{ width: `${pagePct}%` }} />
+      </div>
+
+      <span className="flex-1 flex items-center justify-start min-w-0">
+        <button
+          type="button"
+          onClick={() => { cycleSpeed(); onInteract?.(); }}
+          className="shrink-0 h-12 min-w-12 px-2 rounded-full hover:bg-surface-container-highest text-foreground font-semibold tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+          aria-label={`Speed ${rate}x. Tap to change.`}
+          title="Reading speed"
+        >
+          {rate}×
+        </button>
+        {!compact && (
+          <span className="ml-2 truncate text-xs text-on-surface-variant">
+            {mode === "pdf" ? `Listening · page ${page}` : "Listening"}
+          </span>
+        )}
+      </span>
+
+      <span className="flex items-center gap-1">
+        {skipButton(-1)}
+        <button
+          type="button"
+          onClick={togglePlay}
+          aria-label={status === "playing" || status === "loading" ? "Pause" : "Resume"}
+          title="Play or pause (Space)"
+          className={`shrink-0 rounded-full bg-primary-container text-on-primary-container grid place-items-center shadow-lg ${barAtBottom ? "w-12 h-12" : "w-11 h-11"} active:scale-90 transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50`}
+        >
+          {status === "loading" ? (
+            <Loader2 className="w-5 h-5 animate-spin" />
+          ) : (
+            <span className="material-symbols-outlined text-3xl" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden>
+              {status === "playing" ? "pause" : "play_arrow"}
+            </span>
           )}
-          <div className="flex items-center gap-1">
-            {voiceMenu(true)}
-            <span className="flex-1 flex justify-end">{speedButton}</span>
-            <div className="flex items-center gap-1 px-2">
-              {skipButton(-1)}
-              {playButton("lg")}
-              {skipButton(1)}
-            </div>
-            <span className="flex-1 flex justify-start">{sleepMenu}</span>
+        </button>
+        {skipButton(1)}
+      </span>
+
+      <span className="flex-1 flex items-center justify-end gap-1 min-w-0">
+        <DropdownMenu onOpenChange={(o) => { if (o) loadVoices(); onInteract?.(); }}>
+          <DropdownMenuTrigger asChild>
             <button
               type="button"
-              onClick={stopReading}
-              disabled={!active}
-              className="shrink-0 grid place-items-center w-10 h-10 rounded-full text-on-surface-variant hover:text-foreground hover:bg-surface-container-highest disabled:opacity-30"
-              aria-label="Stop reading"
+              aria-label={sleepLabel ? `Voice, sleep timer and progress. Sleep timer: ${sleepLabel}` : "Voice, sleep timer and progress"}
+              title="Voice, sleep timer, progress"
+              className={`${transportBtn} relative`}
             >
-              <span className="material-symbols-outlined" aria-hidden>stop</span>
+              <span className="material-symbols-outlined text-2xl" aria-hidden>more_horiz</span>
+              {sleep && <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-primary" aria-hidden />}
             </button>
-          </div>
-          {!active && (
-            <p className="text-center text-[11px] text-on-surface-variant pb-0.5">
-              Press play to read this page aloud · tap the page to show or hide controls
-            </p>
-          )}
-        </div>
-      </div>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-64">
+            <DropdownMenuLabel className="font-normal">
+              <span className="block font-semibold">Level {lvl.level} · {Math.floor(stats.xp).toLocaleString()} XP</span>
+              <span className="block text-xs text-muted-foreground">
+                {lvl.into}/{lvl.span} XP to the next level
+                <br />
+                {Math.min(todayWords, DAILY_WORD_GOAL)}/{DAILY_WORD_GOAL} words today
+                {streak > 0 && <> · <span className="ra-flame" aria-hidden>🔥</span>{streak}-day streak</>}
+                {mult > 1 && <> · ×{mult} combo</>}
+              </span>
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <span className="flex-1">Voice</span>
+                <span className="max-w-[7rem] truncate text-xs text-muted-foreground">{voiceLabel}</span>
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="max-h-[50dvh] overflow-y-auto">
+                <DropdownMenuRadioGroup
+                  value={voice.engine === "inworld" ? `inworld:${voice.inworldVoiceId}` : "browser"}
+                  onValueChange={(v) => changeVoice(v === "browser" ? { engine: "browser" } : { engine: "inworld", inworldVoiceId: v.slice("inworld:".length) })}
+                >
+                  {counselVoice.engine === "inworld" && (
+                    <DropdownMenuRadioItem value={`inworld:${counselVoice.inworldVoiceId}`}>
+                      {voices?.find((v) => v.voice_id === counselVoice.inworldVoiceId)?.name ?? counselVoice.inworldVoiceId} (Counsel voice)
+                    </DropdownMenuRadioItem>
+                  )}
+                  <DropdownMenuRadioItem value="browser">Device voice{counselVoice.engine === "browser" ? " (Counsel voice)" : ""}</DropdownMenuRadioItem>
+                  {settings.inworldEnabled && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuLabel className="text-[10px] uppercase tracking-widest text-muted-foreground">Inworld voices</DropdownMenuLabel>
+                      {voices === null && <div className="px-2 py-1.5 text-xs text-muted-foreground">Loading…</div>}
+                      {voices?.filter((v) => v.voice_id !== counselVoice.inworldVoiceId).map((v) => (
+                        <DropdownMenuRadioItem key={v.voice_id} value={`inworld:${v.voice_id}`}>{v.name}</DropdownMenuRadioItem>
+                      ))}
+                    </>
+                  )}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <span className="flex-1">Sleep timer</span>
+                <span className="text-xs text-muted-foreground">{sleepLabel ?? "Off"}</span>
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                <DropdownMenuRadioGroup value={sleepValue} onValueChange={chooseSleep}>
+                  {SLEEP_OPTIONS.map((o) => (
+                    <DropdownMenuRadioItem key={o.value} value={o.value}>{o.label}</DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <button
+          type="button"
+          onClick={stopReading}
+          aria-label="Stop listening"
+          title="Stop listening"
+          className={`shrink-0 flex items-center justify-center gap-1 h-12 rounded-full text-foreground hover:bg-surface-container-highest focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${compact ? "w-12" : "px-3"}`}
+        >
+          <span className="material-symbols-outlined text-2xl" aria-hidden>close</span>
+          {!compact && <span className="font-label text-sm font-semibold">Stop</span>}
+        </button>
+      </span>
     </div>,
-    document.body,
+    playerHost,
   );
 
   return (
     <>
       <button
         type="button"
-        onClick={() => (active ? stopReading() : startReading(false))}
-        className={`flex items-center gap-2 pl-2 pr-4 py-1.5 rounded-lg shrink-0 active:scale-95 transition-all ${
-          active
-            ? "bg-accent text-on-primary-container"
-            : "bg-primary-container/10 border border-primary-container/20 text-primary-container"
-        }`}
-        aria-pressed={active}
+        onClick={() => { startReading(false); onInteract?.(); }}
+        className={slotClass}
+        title={`Read this page aloud · Level ${lvl.level}${streak > 0 ? ` · ${streak}-day streak` : ""}`}
+        aria-label="Listen: read this page aloud"
       >
-        {levelBadge(30)}
-        <span className="material-symbols-outlined">{active ? "stop_circle" : "graphic_eq"}</span>
-        <span className="font-label text-sm font-semibold">{active ? "Stop" : "Read Along"}</span>
-        {!active && streak > 0 && (
-          <span className="text-xs font-bold" title={`${streak}-day streak`}><span className="ra-flame" aria-hidden>🔥</span>{streak}</span>
-        )}
+        {levelRing(26, <span className="material-symbols-outlined text-base text-primary" aria-hidden>graphic_eq</span>)}
+        <span className={slotLabelClass}>Listen</span>
       </button>
-      {dock}
-      {miniPlayer}
+      {player}
     </>
   );
 };

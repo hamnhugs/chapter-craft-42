@@ -3,6 +3,7 @@ import Index from "./Index";
 import LibraryDeck from "@/components/LibraryDeck";
 import type { BookDocument } from "@/types/library";
 import { saveLastPage } from "@/hooks/useReaderPrefs";
+import { AppContext, useApp } from "@/context/AppContext";
 
 /**
  * ARENA LAB — dev-only. Route: #/arena-lab  (and #/arena-lab?deck)
@@ -17,6 +18,9 @@ import { saveLastPage } from "@/hooks/useReaderPrefs";
  *                      its empty state.
  *   #/arena-lab?deck   `LibraryDeck` over a fixture library covering every
  *                      tier, every level band, covers and no covers.
+ *   #/arena-lab?reader the shell on the Read tab with a real PDF open (a
+ *                      document from docs/, served by the dev server), with
+ *                      three chapters. `&html` opens an HTML book instead.
  *
  * Like WorkspaceLab it is gated on `import.meta.env.DEV` in App.tsx, so a
  * production build never emits it.
@@ -79,6 +83,38 @@ const DeckLab: React.FC = () => {
   );
 };
 
+const READER_HTML = `<!doctype html><meta charset="utf-8"><body style="font:18px/1.6 Georgia,serif;max-width:40rem;margin:2rem auto;padding:0 1rem">${Array.from({ length: 6 }, (_, i) => `<h2 id="section-${i + 1}">Section ${i + 1}</h2>${"<p>The quick brown fox jumps over the lazy dog, and then considers at some length what it has done and why it mattered to anyone at all.</p>".repeat(5)}`).join("")}</body>`;
+
+/** `Index` on the Read tab over one fixture book, by overriding just the
+ *  book-facing parts of the real (signed-out) app state. */
+const ReaderLab: React.FC<{ html: boolean }> = ({ html }) => {
+  const real = useApp();
+  const book = useMemo<BookDocument>(() => ({
+    id: "lab-reader-book",
+    title: "Program Sandbox Reference",
+    fileName: html ? "lab-reader-book.html" : "lab-reader-book.pdf",
+    fileData: html ? URL.createObjectURL(new Blob([READER_HTML], { type: "text/html" })) : "/docs/program-sandbox-reference.pdf",
+    pageCount: 5,
+    chapters: [1, 2, 4].map((start, c) => ({
+      id: `lab-reader-c${c}`, name: ["Overview", "The sandbox contract", "Limits and errors"][c], startPage: start, endPage: start + 1, textContent: "",
+    })),
+    addedAt: Date.now(),
+    folderIds: [],
+  }), [html]);
+  const [tab, setTab] = React.useState<typeof real.activeTab>("viewer");
+  const value = useMemo(() => ({
+    ...real,
+    books: [book],
+    activeBookId: book.id,
+    getActiveBook: () => book,
+    getActiveBookId: () => book.id,
+    loadBookFile: async () => book.fileData,
+    activeTab: tab,
+    setActiveTab: setTab,
+  }), [real, book, tab]);
+  return <AppContext.Provider value={value as typeof real}><Index /></AppContext.Provider>;
+};
+
 /**
  * `&open` clicks the first card (the profile), `?tab=<Label>` clicks a dock
  * tab — so a headless screenshot can reach states that need a tap.
@@ -93,6 +129,7 @@ const ArenaLab: React.FC = () => {
     }, 600);
     return () => clearTimeout(t);
   }, [hash]);
+  if (hash.includes("?reader")) return <ReaderLab html={hash.includes("html")} />;
   return hash.includes("?deck") ? <DeckLab /> : <Index />;
 };
 

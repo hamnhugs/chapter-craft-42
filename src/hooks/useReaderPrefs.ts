@@ -55,7 +55,9 @@ export function useReaderPrefs() {
     write(SWIPE_KEY, on ? "on" : "off");
   }, []);
 
-  const [autoHighlight, setAutoHighlightState] = useState(() => read(AUTO_HIGHLIGHT_KEY) !== "off");
+  // Off unless chosen: selecting text (to copy, to ask about it) shouldn't
+  // leave a mark behind. The selection menu's "Highlight" is one tap away.
+  const [autoHighlight, setAutoHighlightState] = useState(() => read(AUTO_HIGHLIGHT_KEY) === "on");
   const setAutoHighlight = useCallback((on: boolean) => {
     setAutoHighlightState(on);
     write(AUTO_HIGHLIGHT_KEY, on ? "on" : "off");
