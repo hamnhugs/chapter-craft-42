@@ -6,6 +6,7 @@ import ChatPanel from "@/components/ChatPanel";
 import WikiPanel from "@/components/WikiPanel";
 import WikiLibrary from "@/components/WikiLibrary";
 import WikiQuickSwitcher from "@/components/WikiQuickSwitcher";
+import WorkspaceFilingPrompt from "@/components/WorkspaceFilingPrompt";
 import ThemeSwitcher from "@/components/ThemeSwitcher";
 import ConflictNotifier from "@/components/ConflictNotifier";
 import StripeBar from "@/components/fruit-stripe/StripeBar";
@@ -239,6 +240,7 @@ const Index: React.FC = () => {
 
       <ArenaDock activeTab={dockActiveTab} onSelect={setActiveTab} />
       <WikiQuickSwitcher />
+      <WorkspaceFilingPrompt />
       <LoadNeuronDialog />
       <ChainDialog />
       <PricingDialog />

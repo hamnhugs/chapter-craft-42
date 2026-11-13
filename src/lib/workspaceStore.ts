@@ -71,6 +71,12 @@ export interface WorkspaceItem {
     /** Content identity (see fileFingerprint). Lets a re-run of the extractor
      *  recognise a block it already filed instead of duplicating it. */
     fingerprint?: string;
+    /** The notebook this item is filed under. Stamped at creation from the
+     *  notebook Counsel has loaded (see setFilingTarget); absent means
+     *  "needs a notebook". In meta, like `focused`, so it syncs cross-device
+     *  with zero migration. A deleted notebook's id simply stops matching,
+     *  which reads as unfiled again — nothing is lost with the notebook. */
+    wikiId?: string;
   };
 }
 
@@ -291,6 +297,40 @@ let hydrated = false;
 let currentUserId: string | null = null;
 let realtimeChannel: any = null;
 
+// ---- Filing: which notebook a new item belongs to -------------------------
+
+/** The notebook Counsel has loaded (its primary). AppContext keeps this in
+ *  step; every creation path goes through addItem, so stamping it there files
+ *  artifacts, code blocks, research and save_file alike with no call-site
+ *  changes — and a call site that forgets cannot produce a stray item. */
+let filingTarget: string | null = null;
+
+export type FilingMode = "new" | "move";
+export interface FilingRequest {
+  /** Items waiting for the person to name a notebook. */
+  ids: string[];
+  /** "new": made with no notebook loaded. "move": the person asked to refile. */
+  mode: FilingMode;
+}
+
+/** The open question, if any. Replaced (new object) on every change so
+ *  useSyncExternalStore sees it; null between questions. Session-only on
+ *  purpose: the items themselves are already saved (unfiled), so a reload
+ *  loses the question, never the file. */
+let filingRequest: FilingRequest | null = null;
+
+/** One file a surface outside Counsel (the Notebooks tab) wants shown in the
+ *  Workspace. Held here because ChatPanel is unmounted on other tabs — it
+ *  takes this when it mounts. */
+let openRequest: string | null = null;
+
+function dropFromFiling(ids: string[]) {
+  if (!filingRequest) return;
+  const left = filingRequest.ids.filter((id) => !ids.includes(id));
+  if (left.length === filingRequest.ids.length) return;
+  filingRequest = left.length ? { ...filingRequest, ids: left } : null;
+}
+
 function emit() {
   for (const l of listeners) l();
 }
@@ -393,6 +433,7 @@ function uid(): string {
 }
 
 function addItem(input: NewWorkspaceItem): WorkspaceItem {
+  const wikiId = input.meta?.wikiId ?? filingTarget ?? undefined;
   const item: WorkspaceItem = {
     id: uid(),
     createdAt: Date.now(),
@@ -401,9 +442,19 @@ function addItem(input: NewWorkspaceItem): WorkspaceItem {
     kind: normalizeKind(input.kind),
     title: (input.title || "Untitled").slice(0, 200),
     content: input.content || "",
-    meta: input.meta,
+    meta: wikiId ? { ...(input.meta || {}), wikiId } : input.meta,
   };
   items = sortDesc([item, ...items]);
+  // No notebook loaded: the file is saved either way (never hold a produced
+  // file hostage to a dialog), and the question of where it belongs is put to
+  // the person. One reply can make several files — they join one question.
+  // Signed-out items are skipped: notebooks belong to an account.
+  if (!wikiId && item.userId) {
+    filingRequest =
+      filingRequest?.mode === "new"
+        ? { mode: "new", ids: [...filingRequest.ids, item.id] }
+        : { mode: "new", ids: [item.id] };
+  }
   emit();
   void idbPut(item);
   void serverUpsert(item);
@@ -476,9 +527,85 @@ export const workspaceStore = {
 
   remove(id: string) {
     items = items.filter((i) => i.id !== id);
+    dropFromFiling([id]);
     emit();
     void idbDelete(id);
     void serverDelete(id);
+  },
+
+  /** Delete exactly these items. The panel's "Clear unsaved" uses this so it
+   *  clears what is on screen, not every notebook's files. */
+  removeMany(ids: string[]) {
+    if (!ids.length) return;
+    const gone = new Set(ids);
+    items = items.filter((i) => !gone.has(i.id));
+    dropFromFiling(ids);
+    emit();
+    for (const id of ids) {
+      void idbDelete(id);
+      void serverDelete(id);
+    }
+  },
+
+  /** The notebook new items are filed under — Counsel's loaded primary, or
+   *  null when it is just chatting. */
+  setFilingTarget(wikiId: string | null) {
+    filingTarget = wikiId || null;
+  },
+
+  getFilingTarget(): string | null {
+    return filingTarget;
+  },
+
+  /** File items under a notebook (null = take them out of every notebook).
+   *  Answers the open question for those items. */
+  assignNotebook(ids: string[], wikiId: string | null) {
+    const wanted = new Set(ids);
+    const changed: WorkspaceItem[] = [];
+    items = items.map((i) => {
+      if (!wanted.has(i.id) || (i.meta?.wikiId ?? null) === wikiId) return i;
+      const nextMeta = { ...(i.meta || {}) };
+      if (wikiId) nextMeta.wikiId = wikiId;
+      else delete nextMeta.wikiId;
+      const next = { ...i, meta: Object.keys(nextMeta).length > 0 ? nextMeta : undefined };
+      changed.push(next);
+      return next;
+    });
+    dropFromFiling(ids);
+    emit();
+    for (const i of changed) {
+      void idbPut(i);
+      void serverUpsert(i);
+    }
+  },
+
+  /** Ask the person which notebook these existing items belong in. */
+  requestFiling(ids: string[]) {
+    if (!ids.length) return;
+    filingRequest = { mode: "move", ids: [...ids] };
+    emit();
+  },
+
+  /** Close the question without an answer. The items stay unfiled. */
+  dismissFiling() {
+    if (!filingRequest) return;
+    filingRequest = null;
+    emit();
+  },
+
+  getFilingRequest(): FilingRequest | null {
+    return filingRequest;
+  },
+
+  /** Ask Counsel's Workspace to show one item (see openRequest). */
+  requestOpen(id: string) {
+    openRequest = id;
+  },
+
+  takeOpenRequest(): string | null {
+    const id = openRequest;
+    openRequest = null;
+    return id;
   },
 
   toggleLibrary(id: string) {
@@ -586,6 +713,15 @@ export function useWorkspaceItems(): WorkspaceItem[] {
     workspaceStore.subscribe,
     workspaceStore.getAll,
     () => EMPTY
+  );
+}
+
+/** The open "which notebook?" question, or null. */
+export function useFilingRequest(): FilingRequest | null {
+  return useSyncExternalStore(
+    workspaceStore.subscribe,
+    workspaceStore.getFilingRequest,
+    () => null
   );
 }
 

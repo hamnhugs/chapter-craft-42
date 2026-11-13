@@ -242,6 +242,14 @@ const ChatPanel: React.FC = () => {
   const [workspaceOpen, setWorkspaceOpen] = useState(() => localStorage.getItem("counsel_workspace_open") === "1");
   const [workspaceSelectedId, setWorkspaceSelectedId] = useState<string | null>(null);
   const workspaceItems = useWorkspaceItems();
+  // A file opened from the Notebooks tab: this panel was unmounted then, so
+  // the request waits in the store and is taken here on the way in.
+  useEffect(() => {
+    const id = workspaceStore.takeOpenRequest();
+    if (!id) return;
+    setWorkspaceSelectedId(id);
+    setWorkspaceOpen(true);
+  }, []);
   const workspaceCount = workspaceItems.filter((i) => i.userId == null || i.userId === user?.id).length;
   // Guarded because this was the repo's only unguarded storage write, and it
   // runs from an effect: `localStorage.setItem` throws in Safari private mode

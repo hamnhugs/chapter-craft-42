@@ -776,7 +776,6 @@ const LibraryDeck: React.FC<{
 
   const askCounsel = () => {
     if (shelf) void loadFocus({ kind: "shelf", shelfId: shelf.id, neurons: { kind: "keep" } });
-    else void loadFocus({ kind: "books", bookIds: deckCards.map((c) => c.book.id), neurons: { kind: "keep" } });
   };
   const toCollection = () => collectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
 
@@ -927,7 +926,10 @@ const LibraryDeck: React.FC<{
               )}
             </div>
 
-            {/* What goes to Counsel with these books, and the one button that takes it there. */}
+            {/* What goes to Counsel with these books, and the one button that takes it there.
+                A shelf only: "Reading now" is a view of what's in progress, not
+                something to hand to Counsel. */}
+            {shelf && (
             <div className="cc-deck-go">
               <button
                 type="button"
@@ -953,9 +955,10 @@ const LibraryDeck: React.FC<{
                   ? "Add a book first."
                   : inCounsel
                     ? "Counsel has this shelf."
-                    : `Takes ${shelf ? "this shelf" : "these books"}${notebookNames.length ? " and the notebook" : ""} to the chat.`}
+                    : `Takes this shelf${notebookNames.length ? " and the notebook" : ""} to the chat.`}
               </p>
             </div>
+            )}
           </div>
         )}
       </section>
