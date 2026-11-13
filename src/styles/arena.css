@@ -148,7 +148,9 @@
   transition: transform 140ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 140ms;
   outline: none;
 }
-.cc-card:hover { transform: translateY(-4px) rotate(-0.6deg); }
+/* Only where there is a pointer to hover with: on a touch screen the tilt
+   stuck to the last card tapped. */
+@media (hover: hover) { .cc-card:hover { transform: translateY(-4px) rotate(-0.6deg); } }
 .cc-card:active { transform: translateY(2px) scale(0.985); box-shadow: 0 1px 0 0 color-mix(in srgb, hsl(var(--tier)) 45%, #000), 0 4px 10px -8px rgb(0 0 0 / 0.6); }
 .cc-card:focus-visible { box-shadow: 0 0 0 3px hsl(var(--ring)), 0 4px 0 0 color-mix(in srgb, hsl(var(--tier)) 45%, #000); }
 .cc-card[data-tier="leaflet"] { --tier: var(--outline); }
@@ -187,7 +189,10 @@
   background: hsl(var(--surface-container-highest));
 }
 .cc-card-name {
-  padding: 0.35rem 0.45rem 0.15rem;
+  /* The gap under the title is a margin: padding would show a sliver of the
+     clamped third line. */
+  padding: 0.35rem 0.45rem 0;
+  margin-bottom: 0.15rem;
   font-weight: 800;
   font-size: 0.74rem;
   line-height: 1.15;
@@ -278,8 +283,149 @@
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08), inset 0 0 0 1px hsl(var(--outline-variant) / 0.35), 0 3px 0 0 hsl(var(--background) / 0.9);
 }
 
+/* A tapped card lifts out of the grid while its actions are showing. */
+.cc-card[data-state="open"] {
+  z-index: 5;
+  transform: translateY(-8px) scale(1.06);
+  box-shadow: 0 0 0 3px hsl(var(--accent)), 0 12px 0 -4px color-mix(in srgb, hsl(var(--tier)) 45%, #000), 0 22px 30px -12px rgb(0 0 0 / 0.75);
+}
+/* A card in a shelf slot: art and title only. */
+.cc-card[data-compact] { border-radius: 0.7rem; padding: 2px; }
+.cc-card[data-compact] .cc-card-face { border-radius: 0.55rem; }
+.cc-card[data-compact] .cc-card-name { font-size: 0.64rem; min-height: 1.75rem; padding: 0.25rem 0.3rem 0; margin-bottom: 0.3rem; overflow-wrap: anywhere; }
+.cc-card[data-compact] .cc-card-cost { min-width: 1.45rem; height: 1.45rem; font-size: 0.58rem; top: -6px; left: -6px; }
+/* Corner tick: this book is on the open shelf. */
+.cc-card-onshelf {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 999px;
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+  box-shadow: inset 0 0 0 2px hsl(var(--background)), 0 2px 0 0 rgb(0 0 0 / 0.4);
+}
+.cc-card-onshelf .material-symbols-outlined { font-size: 0.95rem; font-weight: 700; }
+
+/* The actions a tapped card offers: chunky buttons floating under it. */
+.cc-card-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  min-width: 10.5rem;
+  max-width: 15rem;
+  padding: 0.5rem 0.5rem 0.75rem;
+  overflow: visible;
+  border: 0;
+  border-radius: 1rem;
+  background: hsl(var(--background) / 0.82);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 0 0 1px hsl(var(--outline-variant) / 0.4), 0 18px 30px -10px rgb(0 0 0 / 0.7);
+}
+.cc-card-menu .cc-btn3d { width: 100%; min-height: 44px; justify-content: flex-start; outline: none; cursor: pointer; }
+.cc-card-menu .cc-btn3d[data-highlighted] { filter: brightness(1.12); }
+.cc-card-menu .cc-btn3d:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+
+/* ── Shelf deck ───────────────────────────────────────────────────────── */
+.cc-deck {
+  border-radius: 1.1rem;
+  background: linear-gradient(180deg, hsl(var(--surface-container-high)) 0%, hsl(var(--surface-container-low)) 100%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.07), inset 0 0 0 1px hsl(var(--outline-variant) / 0.35), 0 4px 0 0 hsl(var(--background) / 0.9);
+}
+.cc-deck-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem;
+  overflow-x: auto;
+  scroll-padding-inline: 0.5rem;
+}
+.cc-deck-tab {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 44px;
+  padding: 0 0.8rem;
+  border-radius: 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: hsl(var(--on-surface-variant));
+  -webkit-text-fill-color: currentColor;
+  transition: background-color 120ms, color 120ms;
+}
+.cc-deck-tab:hover { color: hsl(var(--foreground)); background: hsl(var(--surface-container-highest) / 0.6); }
+.cc-deck-tab:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: -2px; }
+.cc-deck-tab[aria-selected="true"] {
+  color: hsl(var(--foreground));
+  background: hsl(var(--background) / 0.75);
+  box-shadow: inset 0 0 0 1.5px hsl(var(--accent) / 0.8), 0 3px 0 0 hsl(var(--accent) / 0.55);
+}
+.cc-deck-tab[data-new] { font-weight: 600; }
+.cc-deck-mark {
+  display: grid;
+  place-items: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 0.4rem;
+  background: hsl(var(--surface-container-highest));
+}
+.cc-deck-mark .material-symbols-outlined { font-size: 0.95rem; }
+.cc-deck-count {
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  background: hsl(var(--surface-container-highest));
+  color: hsl(var(--on-surface-variant));
+}
+.cc-deck-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 0.15rem 0.75rem 0.85rem;
+}
+.cc-deck-go { display: flex; flex-direction: column; gap: 0.6rem; }
+@media (min-width: 768px) {
+  .cc-deck-body { flex-direction: row; align-items: stretch; }
+  .cc-deck-go { width: 13rem; flex-shrink: 0; justify-content: center; padding-left: 0.9rem; border-left: 1px solid hsl(var(--outline-variant) / 0.3); }
+}
+/* An empty slot is the same shape as a slotted card. */
+.cc-slot {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 6.1;
+  border-radius: 0.7rem;
+  border: 2px dashed hsl(var(--outline-variant) / 0.55);
+  color: hsl(var(--on-surface-variant) / 0.7);
+  background: hsl(var(--background) / 0.35);
+  transition: border-color 120ms, color 120ms;
+}
+/* Slots past the end of a phone's row of four wait for a wider screen. */
+.cc-slot[data-wide] { display: none; }
+@media (min-width: 640px) { .cc-slot[data-wide] { display: grid; } }
+.cc-slot:hover { border-color: hsl(var(--accent) / 0.8); color: hsl(var(--accent)); }
+.cc-slot:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+.cc-notebook-slot {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 48px;
+  padding: 0.4rem 0.65rem;
+  border-radius: 0.8rem;
+  background: hsl(var(--background) / 0.55);
+  box-shadow: inset 0 0 0 1px hsl(var(--outline-variant) / 0.45);
+  transition: box-shadow 120ms;
+}
+.cc-notebook-slot:hover { box-shadow: inset 0 0 0 1.5px hsl(var(--primary) / 0.7); }
+.cc-notebook-slot:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+
 @media (prefers-reduced-motion: reduce) {
   .cc-card, .cc-btn3d { transition: none; }
+  .cc-card[data-state="open"] { transform: none; }
   .cc-card[data-tier="opus"]::after { animation: none; }
   .cc-card:hover { transform: none; }
 }

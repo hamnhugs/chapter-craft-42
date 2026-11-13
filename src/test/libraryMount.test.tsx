@@ -39,6 +39,7 @@ vi.mock("@/context/AppContext", () => ({
     multiShelf: true, membershipLoaded: true, createShelf: vi.fn(), renameShelf: vi.fn(),
     deleteShelf: vi.fn(), applyShelfDigest: vi.fn(), setActiveTab: vi.fn(),
     requestShelfLoad: vi.fn(), requestBooksLoad: vi.fn(),
+    loadFocus: vi.fn(), activeWikis: [],
   }),
 }));
 
@@ -54,10 +55,15 @@ vi.mock("@/hooks/useIsAdmin", () => ({ useIsAdmin: () => ({ isAdmin: false, load
 vi.mock("@/lib/structureJobs", () => ({ useStructureJobs: () => ({}), structureJobs: { enqueue: vi.fn() } }));
 vi.mock("@/lib/catalogJobs", () => ({ useCatalogJobs: () => ({}), catalogJobs: { enqueue: vi.fn() } }));
 vi.mock("@/lib/figureJobs", () => ({ useFigureJobs: () => ({}), figureJobs: { enqueue: vi.fn() } }));
-vi.mock("@/lib/chatBooks", () => ({
-  bookContextStore: { init: vi.fn(), set: vi.fn() },
-  bookHasCatalog: () => false,
-}));
+vi.mock("@/lib/chatBooks", () => {
+  // One object: useSyncExternalStore needs the same snapshot back each time.
+  const nothingLoaded = { shelfId: null, bookIds: [], excludedIds: [] };
+  return {
+    bookContextStore: { init: vi.fn(), set: vi.fn(), subscribe: () => () => {}, get: () => nothingLoaded },
+    bookHasCatalog: () => false,
+    BOOK_CONTEXT_MAX_BOOKS: 8,
+  };
+});
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn(), info: vi.fn() }) }));
 
 import Library from "@/components/Library";

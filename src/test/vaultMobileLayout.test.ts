@@ -311,16 +311,7 @@ describe("the marker classes are wired to something at both ends", () => {
    * file still passes because it only reads the CSS.
    */
   const MARKERS = [
-    "cc-book-cover",
-    "cc-book-info",
-    "cc-book-title",
-    "cc-book-meta",
-    "cc-book-tags",
-    "cc-book-status",
-    "cc-book-actions",
-    "cc-book-open",
     "cc-vault-main",
-    "cc-vault-title",
     "cc-vault-dropzone",
     "cc-dropzone-icon",
     "cc-dropzone-title",
@@ -360,22 +351,6 @@ describe("the marker classes are wired to something at both ends", () => {
     expect(reveals.length, "expected the two compact reveals plus the hover-none tablet reveal").toBe(3);
     for (const at of reveals) {
       expect(at, "a reveal is declared ABOVE the default, so the default wins and nothing shows").toBeGreaterThan(hide);
-    }
-  });
-
-  it("the narrow-card overflow menu is display-toggled, never branch-rendered", () => {
-    // Two JSX branches for the same subtree would remount the card on every
-    // column-count change and drop the dropdown's open state mid-interaction —
-    // the same law that keeps the workspace viewer at one JSX position.
-    expect(CSS_CODE).toMatch(/\[data-cc-narrow\]\s*\{\s*display:\s*none/);
-    expect(CSS_CODE).toMatch(/\[data-cc-wide\]\s*\{\s*display:\s*none/);
-    expect(LIBRARY).toContain("data-cc-narrow");
-    expect(LIBRARY).toContain("data-cc-wide");
-    // The wide buttons and the menu items are the same actions, so their
-    // labels come from one binding each rather than being written twice.
-    for (const label of ["detectLabel", "extractLabel", "removeLabel"]) {
-      const uses = [...tsxCode(LIBRARY).matchAll(new RegExp(`\\b${label}\\b`, "g"))].length;
-      expect(uses, `${label} should be defined once and used by both routes`).toBeGreaterThanOrEqual(3);
     }
   });
 

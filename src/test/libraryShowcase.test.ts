@@ -356,16 +356,17 @@ describe("Library wiring", () => {
   });
 
   it("offers the Showcase as a view and remembers it", () => {
-    expect(LIBRARY).toContain('type ViewMode = "cards" | "shelves" | "list" | "showcase" | "graph";');
-    expect(LIBRARY).toContain('{ id: "showcase", icon: "play_circle", label: "Showcase" },');
-    // A stored "showcase" is still honoured; what changed is the fallback,
-    // which is the card collection now rather than Shelves.
-    expect(LIBRARY).toContain('if (v === "list" || v === "graph" || v === "showcase") return v;');
+    expect(LIBRARY).toContain('type ViewMode = "cards" | "list" | "showcase" | "graph";');
+    // It is offered from the "more" menu now, not a five-icon switch.
+    expect(LIBRARY).toContain('{ id: "showcase", icon: "play_circle", label: "Showcase", hint:');
+    // A stored "showcase" is still honoured; anything else — the retired
+    // Shelves view included — lands on the cards.
+    expect(LIBRARY).toContain('return v === "list" || v === "graph" || v === "showcase" ? v : "cards";');
     expect(LIBRARY).toContain('view === "showcase" ? (');
   });
 
   it("feeds the Showcase the filtered set, so search still narrows it", () => {
-    const slice = LIBRARY.slice(LIBRARY.indexOf('view === "showcase" ? ('), LIBRARY.indexOf('view === "list" ? ('));
+    const slice = LIBRARY.slice(LIBRARY.indexOf('view === "showcase" ? ('), LIBRARY.indexOf("<LibraryList"));
     expect(slice.length).toBeGreaterThan(120);
     expect(slice).toContain("books={filteredBooks}");
     expect(slice).toContain("shelves={shelves}");
