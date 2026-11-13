@@ -116,7 +116,9 @@ describe("bookProfile", () => {
 
 describe("ThemeContext source", () => {
   it("applies the season after the theme, so it can rewrite the theme's tokens", () => {
-    expect(THEME_CTX).toContain("const merged = { ...theme.tokens, ...seasonVars };");
+    // A living theme's face sits between the two: tokens, face, then season.
+    expect(THEME_CTX).toContain("const merged = { ...faceTokens(theme, face), ...extraVars };");
+    expect(THEME_CTX).toContain("applyTheme(themeId, face, { ...vars, ...(live?.vars ?? {}) });");
     expect(THEME_CTX).toContain("appliedKeys = Object.keys(merged);");
   });
 
@@ -126,7 +128,7 @@ describe("ThemeContext source", () => {
   });
 
   it("lets the season be switched off entirely", () => {
-    expect(THEME_CTX).toContain("const vars = seasonal ? seasonalTheme(getTheme(themeId), season).vars : {};");
+    expect(THEME_CTX).toContain("const vars = seasonal ? seasonalTheme(worn, season).vars : {};");
   });
 });
 

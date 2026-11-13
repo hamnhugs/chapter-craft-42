@@ -1,0 +1,820 @@
+/* =====================================================================
+   SCRIPTORIUM — a monastery writing room that keeps the hours
+   The one theme with two faces and a room around them. By day the app is
+   a gathering of vellum leaves: iron-gall ink, drypoint rulings, rubrics in
+   vermilion, lapis for the thing that matters, verdigris in the margins and
+   gold leaf on the one button that matters. After sunset the candle is lit
+   and it is the same room in the dark — vellum-coloured ink on brown-black,
+   and the gold now the brightest thing in it.
+   Three things here are not in any other theme:
+     1. FACES. themes.ts declares a `living` theme; ThemeContext asks the
+        horarium (components/themes/scriptoriumHours.ts) which face the hour
+        calls for and publishes it as data-face on <html>. Rules that differ
+        after dark are scoped [data-face="night"] below.
+     2. LIGHT. ScriptoriumAmbient lays the room's light over the whole app —
+        window sun by day, the reader's candle by night — and tells every
+        gilded element where it falls, as --scr-x / --scr-y.
+     3. GOLD THAT ANSWERS. Every gilded surface paints --scr-glint, a
+        highlight fixed in VIEWPORT space at that point, over its leaf. As
+        the light moves the glint slides across the gold and off it again.
+   The app bar's vine (.scr-frieze) and the light (.scr-ambient) are at the
+   foot of this file. Contrast ratios noted inline; both faces are swept in
+   src/test/scriptorium.test.ts.
+   ===================================================================== */
+
+:root[data-theme="scriptorium"] {
+  /* Where the light falls, in viewport px. This is only its resting place:
+     ScriptoriumAmbient overrides the pair on each gilded element, never
+     here — an inherited property changing on :root restyles everything. */
+  --scr-x: 50vw;
+  --scr-y: 30vh;
+
+  /* Pigments — daylight */
+  --scr-vellum: #efe3c6;
+  --scr-leaf: #f7eed6;
+  --scr-leaf-hi: #fbf4e1;
+  --scr-ink: #2b1d10;            /* 12.8:1 on vellum */
+  --scr-ink-soft: #544029;       /* 7.7:1 */
+  --scr-red: #8f2014;            /* vermilion — 6.9:1 */
+  --scr-lapis: #243f94;          /* ultramarine — 7.4:1 */
+  --scr-green: #2c6a52;          /* verdigris — 5.0:1 */
+  --scr-rule: rgba(110, 82, 44, 0.34);
+  --scr-rule-hi: rgba(110, 82, 44, 0.6);
+  --scr-shadow: rgba(74, 52, 22, 0.28);
+  --scr-gold-ink: #2b1d10;       /* ink on leaf: 5.4:1 on its darkest stop */
+
+  /* Gold leaf: burnished, uneven, laid in overlapping squares. */
+  --scr-leaf-gold: linear-gradient(118deg, #b8892b 0%, #e9c766 18%, #c99a35 37%, #f3dc92 55%, #c1922f 74%, #e6c260 100%);
+  /* Leaf laid for lettering: brighter, so a letter in it reads at a glance. */
+  --scr-leaf-letter: linear-gradient(180deg, #fff3bd 0%, #f0cf72 48%, #d2a23a 100%);
+  /* The glint — fixed to the viewport at the light, so it crosses the gold. */
+  --scr-glint: radial-gradient(circle 190px at var(--scr-x) var(--scr-y), rgba(255, 252, 228, 0.95) 0%, rgba(255, 246, 200, 0.5) 32%, rgba(255, 240, 180, 0) 70%);
+
+  /* Vellum is skin: a little mottled, never flat. Two noise tiles, one fine
+     (the grain) and one very coarse (the mottling). */
+  --scr-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='280' height='280'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .36 0 0 0 0 .25 0 0 0 0 .1 0 0 0 1.1 -.42'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  --scr-mottle: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='720' height='720'%3E%3Cfilter id='m' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.006' numOctaves='3' seed='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .55 0 0 0 0 .38 0 0 0 0 .14 0 0 0 .8 -.3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E");
+
+  /* The bookworm, in verdigris. */
+  --worm-body: #7fb894;
+  --worm-dark: #4f8f6c;
+  --worm-pupil: #2b1d10;
+  --worm-mouth: #2b1d10;
+  --worm-tongue: #c9503f;
+  --worm-eye: #fbf4e1;
+}
+
+/* The same pigments by candle. */
+:root[data-theme="scriptorium"][data-face="night"] {
+  --scr-vellum: #15100a;
+  --scr-leaf: #20180f;
+  --scr-leaf-hi: #2a2014;
+  --scr-ink: #eedfba;            /* 14.3:1 on the dark */
+  --scr-ink-soft: #c9b68c;       /* 9.5:1 — bright, because the dark dims it */
+  --scr-red: #ee7c62;            /* vermilion, lit — 7.0:1 */
+  --scr-lapis: #9bb4f5;          /* 9.2:1 */
+  --scr-green: #7fc7a4;          /* 9.6:1 */
+  --scr-rule: rgba(232, 189, 98, 0.2);
+  --scr-rule-hi: rgba(232, 189, 98, 0.42);
+  --scr-shadow: rgba(0, 0, 0, 0.6);
+  --scr-leaf-gold: linear-gradient(118deg, #a87a22 0%, #e2bd5a 18%, #b98a2c 37%, #f1d789 55%, #b0832a 74%, #dcb656 100%);
+  --scr-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='280' height='280'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .95 0 0 0 0 .8 0 0 0 0 .55 0 0 0 .7 -.3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  --worm-body: #8fcfa8;
+  --worm-dark: #5fa07c;
+  --worm-pupil: #15100a;
+  --worm-mouth: #15100a;
+  --worm-eye: #f6ecd0;
+}
+
+/* Canvas — the desk. By day a sheet of vellum: mottled, darker toward the
+   edges where hands have held it. By night nearly black, a little warm
+   where the candle would be. The app root goes transparent to let it show. */
+[data-theme="scriptorium"] body {
+  background:
+    var(--scr-mottle),
+    radial-gradient(130% 90% at 50% 30%, rgba(255, 250, 232, 0.55) 0%, rgba(255, 250, 232, 0) 60%),
+    radial-gradient(120% 120% at 50% 50%, rgba(120, 84, 38, 0) 55%, rgba(120, 84, 38, 0.2) 100%),
+    var(--scr-vellum) !important;
+  background-attachment: fixed !important;
+}
+[data-theme="scriptorium"][data-face="night"] body {
+  background:
+    radial-gradient(90% 70% at 50% 24%, rgba(232, 160, 70, 0.07) 0%, rgba(232, 160, 70, 0) 70%),
+    radial-gradient(120% 120% at 50% 50%, rgba(0, 0, 0, 0) 50%, rgba(0, 0, 0, 0.5) 100%),
+    var(--scr-vellum) !important;
+  background-attachment: fixed !important;
+}
+[data-theme="scriptorium"] .h-app.bg-background { background: transparent; }
+
+/* Type — Cormorant speaks, Alegreya reads, its small capitals label. The
+   first letter of every heading is rubricated, as a scribe leaves it for
+   the rubricator to fill in red. */
+[data-theme="scriptorium"] h1,
+[data-theme="scriptorium"] h2,
+[data-theme="scriptorium"] h3,
+[data-theme="scriptorium"] .font-headline {
+  font-family: var(--font-headline) !important;
+  font-weight: 700;
+  letter-spacing: 0.002em;
+  font-feature-settings: "liga", "dlig", "onum";
+}
+[data-theme="scriptorium"] h1::first-letter,
+[data-theme="scriptorium"] h2::first-letter { color: var(--scr-red); }
+[data-theme="scriptorium"] h1 em,
+[data-theme="scriptorium"] h2 em { color: var(--scr-lapis); }
+[data-theme="scriptorium"] body { font-feature-settings: "liga", "onum", "kern"; }
+[data-theme="scriptorium"] .font-label {
+  font-family: var(--font-label);
+  letter-spacing: 0.07em;
+  text-transform: none;
+}
+[data-theme="scriptorium"] code,
+[data-theme="scriptorium"] kbd,
+[data-theme="scriptorium"] .font-mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.86em; }
+
+/* A wash of shell gold, as a reader marks a passage. Ink on it 9:1 / the
+   candle face keeps dark ink on a brighter wash, 9.6:1. */
+[data-theme="scriptorium"] ::selection { background: #e9cf86; color: #2b1d10; }
+[data-theme="scriptorium"][data-face="night"] ::selection { background: #e8bd62; color: #1d1408; }
+
+/* Focus — a ring of lapis; by candle, of gold. */
+[data-theme="scriptorium"] *:focus-visible {
+  outline: 2px solid var(--scr-lapis) !important;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 5px rgba(36, 63, 148, 0.14);
+}
+[data-theme="scriptorium"][data-face="night"] *:focus-visible {
+  outline-color: #e8bd62 !important;
+  box-shadow: 0 0 0 5px rgba(232, 189, 98, 0.16), 0 0 18px rgba(232, 189, 98, 0.25);
+}
+
+[data-theme="scriptorium"] ::-webkit-scrollbar { width: 10px; height: 10px; }
+[data-theme="scriptorium"] ::-webkit-scrollbar-track { background: transparent; }
+[data-theme="scriptorium"] ::-webkit-scrollbar-thumb {
+  background: var(--scr-rule-hi);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+[data-theme="scriptorium"] ::-webkit-scrollbar-thumb:hover { background: var(--scr-ink-soft); background-clip: padding-box; }
+
+/* Surfaces — leaves. A hairline of ruling for an edge and, set in from it,
+   the frame a scribe rules before writing a word; the leaf lies on the desk
+   with a soft warm shadow under its lower edge. */
+[data-theme="scriptorium"] .bg-card,
+[data-theme="scriptorium"] .surface-container,
+[data-theme="scriptorium"] .bg-surface-container,
+[data-theme="scriptorium"] .bg-surface-container-low,
+[data-theme="scriptorium"] .bg-surface-container-high:not(.message-bubble-ai) {
+  background-color: var(--scr-leaf) !important;
+  background-image: linear-gradient(180deg, rgba(255, 252, 240, 0.5), rgba(255, 252, 240, 0) 40%);
+  border: 1px solid var(--scr-rule);
+  box-shadow: 0 1px 0 rgba(255, 252, 240, 0.6) inset, 0 10px 22px -16px var(--scr-shadow);
+}
+[data-theme="scriptorium"][data-face="night"] .bg-card,
+[data-theme="scriptorium"][data-face="night"] .surface-container,
+[data-theme="scriptorium"][data-face="night"] .bg-surface-container,
+[data-theme="scriptorium"][data-face="night"] .bg-surface-container-low,
+[data-theme="scriptorium"][data-face="night"] .bg-surface-container-high:not(.message-bubble-ai) {
+  background-image: linear-gradient(180deg, rgba(232, 189, 98, 0.05), rgba(232, 189, 98, 0) 40%);
+  box-shadow: 0 1px 0 rgba(232, 189, 98, 0.07) inset, 0 14px 30px -18px var(--scr-shadow);
+}
+
+/* Dialogs / popovers / menus — a leaf laid on top of the book: the ruled
+   frame set in from the edge, a vermilion point pricked at each corner. */
+[data-theme="scriptorium"] [role="dialog"],
+[data-theme="scriptorium"] [role="menu"],
+[data-theme="scriptorium"] [data-radix-popper-content-wrapper] > * {
+  background:
+    radial-gradient(circle at 7px 7px, var(--scr-red) 0 1.6px, transparent 2.2px),
+    radial-gradient(circle at calc(100% - 7px) 7px, var(--scr-red) 0 1.6px, transparent 2.2px),
+    radial-gradient(circle at 7px calc(100% - 7px), var(--scr-red) 0 1.6px, transparent 2.2px),
+    radial-gradient(circle at calc(100% - 7px) calc(100% - 7px), var(--scr-red) 0 1.6px, transparent 2.2px),
+    var(--scr-grain),
+    var(--scr-leaf-hi) !important;
+  border: 1px solid var(--scr-rule-hi) !important;
+  outline: 1px solid var(--scr-rule);
+  outline-offset: -5px;
+  border-radius: 4px !important;
+  box-shadow: 0 30px 60px -24px var(--scr-shadow), 0 6px 16px -8px var(--scr-shadow) !important;
+}
+/* A menu takes focus when it opens; it keeps its ruled frame rather than
+   trading it for the focus ring. */
+[data-theme="scriptorium"] [role="dialog"]:focus-visible,
+[data-theme="scriptorium"] [role="menu"]:focus-visible {
+  outline: 1px solid var(--scr-rule) !important;
+  outline-offset: -5px;
+}
+[data-theme="scriptorium"] [role="menuitem"]:focus,
+[data-theme="scriptorium"] [role="menuitem"][data-highlighted],
+[data-theme="scriptorium"] [role="option"][data-highlighted] {
+  background: linear-gradient(90deg, rgba(233, 199, 102, 0.42), rgba(233, 199, 102, 0.12)) !important;
+  color: var(--scr-ink) !important;
+  border-radius: 3px;
+}
+
+[data-theme="scriptorium"] button:not([data-no-sticker]):not([role="tab"]):not([role="menuitem"]) {
+  transition: transform 160ms cubic-bezier(.2,.8,.2,1), box-shadow 220ms ease, filter 160ms ease;
+}
+
+/* The gilded button — gold leaf over raised gesso, so it stands a little
+   proud of the page with a dark line under its lower edge. The glint is the
+   first background layer and is FIXED: it does not belong to the button, it
+   belongs to the light, and the button merely passes under it. */
+[data-theme="scriptorium"] button.bg-primary,
+[data-theme="scriptorium"] .cc-btn3d:not([data-tone]) {
+  background-color: #d9b14e !important;
+  background-image: var(--scr-glint), var(--scr-leaf-gold) !important;
+  background-attachment: fixed, scroll !important;
+  color: var(--scr-gold-ink) !important;
+  border: 1px solid #8a6417 !important;
+  border-radius: 4px;
+  font-weight: 700;
+  text-shadow: 0 1px 0 rgba(255, 244, 200, 0.5);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 250, 220, 0.75),
+    inset 0 -1px 0 rgba(110, 76, 14, 0.5),
+    0 2px 0 #7a5814,
+    0 8px 16px -8px var(--scr-shadow);
+}
+[data-theme="scriptorium"] button.bg-primary:hover {
+  filter: brightness(1.06) saturate(1.08);
+  transform: translateY(-1px);
+}
+[data-theme="scriptorium"] button.bg-primary:active {
+  transform: translateY(1px);
+  box-shadow: inset 0 2px 5px rgba(90, 60, 10, 0.5), 0 0 0 #7a5814;
+}
+[data-theme="scriptorium"][data-face="night"] button.bg-primary {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 250, 220, 0.6),
+    inset 0 -1px 0 rgba(80, 54, 8, 0.6),
+    0 2px 0 #5c420f,
+    0 0 22px -6px rgba(232, 189, 98, 0.55);
+}
+/* Lapis — the second-dearest thing on the page, ruled in gold. */
+[data-theme="scriptorium"] button.bg-accent,
+[data-theme="scriptorium"] .bg-primary-container:not(.message-bubble-user) {
+  background: linear-gradient(160deg, #2c4aa6 0%, #213a88 100%) !important;
+  color: #fdf6e3 !important;                       /* 8.8:1 */
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgba(233, 199, 102, 0.55), 0 2px 0 #14275f, 0 8px 16px -8px var(--scr-shadow);
+}
+[data-theme="scriptorium"] button.bg-accent:hover,
+[data-theme="scriptorium"] button.bg-primary-container:hover { filter: brightness(1.12); }
+[data-theme="scriptorium"] button.bg-destructive {
+  background: linear-gradient(160deg, #9c2233 0%, #7a1626 100%) !important;
+  color: #fff6e6 !important;                       /* 8.6:1 */
+  border-radius: 4px;
+  box-shadow: 0 2px 0 #4f0c18;
+}
+
+/* Switches — a bead on a ruled line; on, it is gilded and the line is red. */
+[data-theme="scriptorium"] [role="switch"][data-state="unchecked"] {
+  background: transparent !important;
+  box-shadow: inset 0 0 0 1px var(--scr-rule-hi);
+}
+[data-theme="scriptorium"] [role="switch"][data-state="unchecked"] > span { background: var(--scr-ink-soft) !important; }
+[data-theme="scriptorium"] [role="switch"][data-state="checked"] {
+  background: var(--scr-red) !important;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+}
+[data-theme="scriptorium"] [role="switch"][data-state="checked"] > span {
+  background-image: var(--scr-glint), var(--scr-leaf-gold) !important;
+  background-attachment: fixed, scroll !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+/* Inputs — a ruled line to write on. Focus inks the line in lapis. */
+[data-theme="scriptorium"] input,
+[data-theme="scriptorium"] textarea,
+[data-theme="scriptorium"] select {
+  background: var(--scr-leaf-hi) !important;
+  color: var(--scr-ink) !important;
+  border: 1px solid var(--scr-rule) !important;
+  border-bottom: 1px solid var(--scr-ink-soft) !important;
+  border-radius: 3px;
+  caret-color: var(--scr-red);
+  transition: border-color 160ms ease, box-shadow 200ms ease;
+}
+[data-theme="scriptorium"] input::placeholder,
+[data-theme="scriptorium"] textarea::placeholder { color: #7a6648; font-style: italic; }   /* 4.6:1 on the leaf */
+[data-theme="scriptorium"][data-face="night"] input::placeholder,
+[data-theme="scriptorium"][data-face="night"] textarea::placeholder { color: #9c8962; }    /* 5.2:1 */
+[data-theme="scriptorium"] input:focus,
+[data-theme="scriptorium"] textarea:focus,
+[data-theme="scriptorium"] select:focus {
+  border-color: var(--scr-lapis) !important;
+  box-shadow: 0 2px 0 -1px var(--scr-lapis), 0 0 0 3px rgba(36, 63, 148, 0.12);
+  outline: none !important;
+}
+[data-theme="scriptorium"] input[type="checkbox"],
+[data-theme="scriptorium"] input[type="radio"],
+[data-theme="scriptorium"] input[type="range"] { accent-color: var(--scr-red); }
+
+/* Top app bar — the head margin of the page, closed by a double rule:
+   vermilion over ink, the way a rubricator finishes a running title. */
+[data-theme="scriptorium"] [data-app-header] {
+  background: linear-gradient(180deg, #f7eed6 0%, #efe3c6 100%) !important;
+  backdrop-filter: none;
+  border-bottom: 1px solid var(--scr-red);
+  box-shadow: 0 2px 0 -1px var(--scr-vellum), 0 3px 0 -1px var(--scr-rule-hi), 0 12px 24px -18px var(--scr-shadow) !important;
+}
+[data-theme="scriptorium"][data-face="night"] [data-app-header] {
+  background: linear-gradient(180deg, #1c150c 0%, #130e08 100%) !important;
+  border-bottom-color: rgba(232, 189, 98, 0.55);
+  box-shadow: 0 2px 0 -1px #130e08, 0 3px 0 -1px rgba(232, 189, 98, 0.22), 0 16px 30px -18px #000 !important;
+}
+
+/* The versal. The bar's book glyph becomes the wordmark's own initial: a
+   blackletter C in gold leaf on a lapis ground inside a gilt frame, with
+   the white-dot filigree an illuminator works into the blue. The rest of
+   the word follows in the same hand, in ink. */
+[data-theme="scriptorium"] [data-app-header] > div > .material-symbols-outlined.text-accent {
+  position: relative;
+  flex: none;
+  width: 2.2rem;
+  height: 2.2rem;
+  font-size: 0 !important;
+  border-radius: 3px;
+  background:
+    radial-gradient(circle at 5px 5px, rgba(255, 255, 255, 0.85) 0 0.8px, transparent 1.3px),
+    radial-gradient(circle at calc(100% - 5px) 5px, rgba(255, 255, 255, 0.85) 0 0.8px, transparent 1.3px),
+    radial-gradient(circle at 5px calc(100% - 5px), rgba(255, 255, 255, 0.85) 0 0.8px, transparent 1.3px),
+    radial-gradient(circle at calc(100% - 5px) calc(100% - 5px), rgba(255, 255, 255, 0.85) 0 0.8px, transparent 1.3px),
+    linear-gradient(150deg, #2f4eae 0%, #1d357f 100%);
+  box-shadow: 0 0 0 1px #8a6417, 0 0 0 2.5px #e2bd5a, 0 0 0 3.5px #8a6417, 0 3px 8px -2px var(--scr-shadow);
+  margin: 0 0.1rem 0 0.25rem;
+}
+[data-theme="scriptorium"] [data-app-header] > div > .material-symbols-outlined.text-accent::before {
+  content: "C";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding-bottom: 0.1rem;
+  font-family: var(--font-display);
+  font-size: 1.95rem;
+  font-weight: 700;
+  line-height: 1;
+  background-image: var(--scr-glint), var(--scr-leaf-letter);
+  background-attachment: fixed, scroll;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 1px 0 rgba(10, 16, 50, 0.7));
+}
+[data-theme="scriptorium"][data-face="night"] [data-app-header] > div > .material-symbols-outlined.text-accent {
+  box-shadow: 0 0 0 1px #6b4d10, 0 0 0 2.5px #e2bd5a, 0 0 0 3.5px #6b4d10, 0 0 18px -2px rgba(232, 189, 98, 0.5);
+}
+[data-theme="scriptorium"] [data-wordmark] {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.7rem;
+  margin-left: -0.5rem;
+  line-height: 1;
+  white-space: nowrap;
+  letter-spacing: 0 !important;
+  font-family: var(--font-display) !important;
+}
+[data-theme="scriptorium"] [data-wordmark]::before {
+  content: "hapter Craft";
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.6rem;
+  color: var(--scr-ink);
+  padding-bottom: 0.05em;
+}
+/* After dark the wordmark is written in gold. */
+[data-theme="scriptorium"][data-face="night"] [data-wordmark]::before {
+  background-image: var(--scr-glint), var(--scr-leaf-letter);
+  background-attachment: fixed, scroll;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 10px rgba(232, 189, 98, 0.25));
+}
+/* The rubric: which office is being kept, from the horarium. */
+[data-theme="scriptorium"] [data-wordmark]::after {
+  content: "\00B6\2009" var(--scr-office, "Sext");
+  font-family: var(--font-label);
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.14em;
+  color: var(--scr-red);
+  transform: translateY(-0.12em);
+}
+@media (max-width: 560px) {
+  [data-theme="scriptorium"] [data-wordmark]::after { display: none; }
+}
+@media (max-width: 420px) {
+  [data-theme="scriptorium"] [data-wordmark]::before { font-size: 1.35rem; }
+}
+
+/* Header controls — rubricated by day, gilt by night (the tokens' primary). */
+[data-theme="scriptorium"] [data-app-header] button .material-symbols-outlined,
+[data-theme="scriptorium"] [data-app-header] button svg { filter: drop-shadow(0 1px 0 rgba(255, 252, 240, 0.5)); }
+[data-theme="scriptorium"][data-face="night"] [data-app-header] button .material-symbols-outlined,
+[data-theme="scriptorium"][data-face="night"] [data-app-header] button svg { filter: drop-shadow(0 0 6px rgba(232, 189, 98, 0.35)); }
+
+/* The dock — the foot margin. The tab you are on is gilded. */
+[data-theme="scriptorium"] .cc-dock,
+[data-theme="scriptorium"] [data-mobile-nav] {
+  background: linear-gradient(180deg, #f5ebd2 0%, #ecdfc0 100%) !important;
+  backdrop-filter: none;
+  border-color: var(--scr-rule-hi) !important;
+  box-shadow: 0 -1px 0 var(--scr-red), 0 -3px 0 -1px var(--scr-vellum), 0 -4px 0 -1px var(--scr-rule-hi);
+}
+[data-theme="scriptorium"][data-face="night"] .cc-dock,
+[data-theme="scriptorium"][data-face="night"] [data-mobile-nav] {
+  background: linear-gradient(180deg, #19120a 0%, #110c07 100%) !important;
+  box-shadow: 0 -1px 0 rgba(232, 189, 98, 0.5), 0 -3px 0 -1px #110c07, 0 -4px 0 -1px rgba(232, 189, 98, 0.2);
+}
+[data-theme="scriptorium"] [data-mobile-nav] button[aria-current="page"] .bg-accent\/15 {
+  background-color: #d9b14e;
+  background-image: var(--scr-glint), var(--scr-leaf-gold);
+  background-attachment: fixed, scroll;
+  border-radius: 4px;
+  box-shadow: inset 0 1px 0 rgba(255, 250, 220, 0.7), 0 0 0 1px #8a6417, 0 2px 0 #7a5814;
+  animation: scr-gild 700ms cubic-bezier(.2,.8,.2,1) 1 both;
+}
+[data-theme="scriptorium"] [data-mobile-nav] button[aria-current="page"] .text-accent { color: var(--scr-red) !important; }
+/* The dock's own pill is a faint tint that the label may overlap; a leaf of
+   gold is not, so it is trimmed to the glyph. */
+[data-theme="scriptorium"] [data-mobile-nav] button[aria-current="page"] .bg-accent\/15 { inset: 1px 9px 4px; }
+/* …but the glyph standing on the leaf is ink (5.4:1), not vermilion (2:1). */
+[data-theme="scriptorium"] [data-mobile-nav] button[aria-current="page"] .material-symbols-outlined { color: var(--scr-gold-ink) !important; }
+/* `secondary` is a surface in this theme, not an ink. */
+[data-theme="scriptorium"] .text-secondary { color: var(--scr-ink-soft) !important; }
+/* Leaf going down: laid dull, then burnished. */
+@keyframes scr-gild {
+  from { filter: saturate(0.2) brightness(0.8); transform: scale(0.86); }
+  to   { filter: none; transform: none; }
+}
+
+/* The collection's cards — a gilt rule round every miniature. */
+[data-theme="scriptorium"] .cc-card { border-radius: 5px; }
+[data-theme="scriptorium"] .cc-card-face { border-radius: 3px; box-shadow: inset 0 0 0 1px rgba(233, 199, 102, 0.55); }
+[data-theme="scriptorium"] .cc-card-name { font-family: var(--font-headline); font-weight: 700; letter-spacing: 0; }
+
+/* Chat — the text and its gloss. Counsel writes on the leaf, with a rubric
+   down the margin; you answer in the margin's own colour, lapis ruled in
+   gold. A reply long enough to have paragraphs opens on a gilded versal. */
+[data-theme="scriptorium"] .message-bubble-ai {
+  background:
+    linear-gradient(var(--scr-red), var(--scr-red)) left / 2px 100% no-repeat,
+    var(--scr-leaf) !important;
+  border: 1px solid var(--scr-rule) !important;
+  border-radius: 3px 6px 6px 3px;
+  box-shadow: 0 10px 22px -16px var(--scr-shadow);
+}
+/* A new reply is written on, not switched on: it is revealed from its first
+   line down, and the ink goes on wet — a shade darker — and dries. Runs once
+   when a bubble mounts; a reply still streaming is not re-inked. */
+[data-theme="scriptorium"] .message-bubble-ai,
+[data-theme="scriptorium"] .message-bubble-user {
+  animation: scr-ink 900ms cubic-bezier(.3,.6,.3,1) 1 backwards;
+}
+/* The mask lives in the keyframes and nowhere else, so once the ink is dry
+   the bubble carries no mask at all — a transcript is a long scrolling list. */
+@keyframes scr-ink {
+  from {
+    -webkit-mask: linear-gradient(180deg, #000 0 66%, transparent 100%) 0 100% / 100% 300% no-repeat;
+    mask: linear-gradient(180deg, #000 0 66%, transparent 100%) 0 100% / 100% 300% no-repeat;
+    filter: contrast(1.25) brightness(0.92);
+  }
+  to {
+    -webkit-mask: linear-gradient(180deg, #000 0 66%, transparent 100%) 0 0 / 100% 300% no-repeat;
+    mask: linear-gradient(180deg, #000 0 66%, transparent 100%) 0 0 / 100% 300% no-repeat;
+    filter: none;
+  }
+}
+[data-theme="scriptorium"] .message-bubble-user {
+  background: linear-gradient(160deg, #2c4aa6 0%, #213a88 100%) !important;
+  color: #fdf6e3 !important;                       /* 8.8:1 */
+  border-radius: 6px 3px 3px 6px;
+  box-shadow: inset 0 0 0 1px rgba(233, 199, 102, 0.55), 0 10px 22px -14px var(--scr-shadow);
+}
+[data-theme="scriptorium"] .message-bubble-ai .prose:has(> p + p) > p:first-of-type::first-letter {
+  float: left;
+  font-family: var(--font-display);
+  font-size-adjust: none;
+  font-size: 3.3em;
+  line-height: 0.84;
+  margin: 0.04em 0.09em 0 0;
+  /* Rubricated by day — gold on vellum would be a letter you cannot read
+     (1.9:1); by candle it is gilded, 10.7:1. Either way it is the first
+     letter of a sentence and has to read as one. */
+  color: var(--scr-red);
+  text-shadow: 1.5px 1.5px 0 rgba(233, 199, 102, 0.9);
+}
+[data-theme="scriptorium"][data-face="night"] .message-bubble-ai .prose:has(> p + p) > p:first-of-type::first-letter {
+  color: #e8bd62;
+  text-shadow: 1.5px 1.5px 0 #9c2f20, 0 0 14px rgba(232, 189, 98, 0.35);
+}
+
+/* Prose — set as a page is set. Nothing else styles `.prose` (the
+   typography plugin is not installed), so a reply elsewhere is bare
+   paragraphs; here it gets a measure, leading, and a scribe's furniture:
+   hedera for bullets, rubricated numerals, a manicule pointing at anything
+   quoted, and a fleuron where a rule would go. font-size-adjust evens out
+   Alegreya's modest x-height so 14px of it reads like 14px of a sans. */
+[data-theme="scriptorium"] .prose {
+  font-family: var(--font-body);
+  font-size-adjust: 0.49;
+  line-height: 1.6;
+  color: inherit;
+  hanging-punctuation: first;
+}
+[data-theme="scriptorium"] .prose > * + * { margin-top: 0.7em; }
+[data-theme="scriptorium"] .prose :is(h1, h2, h3, h4) {
+  font-size-adjust: none;
+  line-height: 1.15;
+  margin-top: 1.1em;
+}
+[data-theme="scriptorium"] .prose h1 { font-size: 1.7em; }
+[data-theme="scriptorium"] .prose h2 { font-size: 1.4em; }
+[data-theme="scriptorium"] .prose h3 { font-size: 1.18em; font-style: italic; }
+[data-theme="scriptorium"] .prose h3::first-letter { color: var(--scr-red); }
+[data-theme="scriptorium"] .prose a {
+  color: var(--scr-lapis);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+[data-theme="scriptorium"] .message-bubble-user .prose a { color: #f3dc92; }
+[data-theme="scriptorium"] .prose :is(ul, ol) { padding-left: 1.5em; }
+[data-theme="scriptorium"] .prose ul { list-style: disc; }
+[data-theme="scriptorium"] .prose ol { list-style: decimal; }
+[data-theme="scriptorium"] .prose li + li { margin-top: 0.25em; }
+[data-theme="scriptorium"] .prose ul > li::marker { content: "\2767\2002"; color: var(--scr-red); font-size: 0.85em; }
+[data-theme="scriptorium"] .prose ol > li::marker { color: var(--scr-red); font-family: var(--font-headline); font-weight: 700; }
+[data-theme="scriptorium"] .prose blockquote {
+  position: relative;
+  margin-left: 1.6em;
+  padding-left: 0.9em;
+  border-left: 2px solid var(--scr-red);
+  font-style: italic;
+  color: var(--scr-ink-soft);
+}
+[data-theme="scriptorium"] .prose blockquote::before {
+  content: "\261E";
+  position: absolute;
+  left: -1.75em;
+  top: -0.05em;
+  font-style: normal;
+  font-size: 1.15em;
+  color: var(--scr-red);
+}
+[data-theme="scriptorium"] .prose hr {
+  border: 0;
+  height: 1.4em;
+  overflow: visible;
+  text-align: center;
+  background: linear-gradient(var(--scr-rule-hi), var(--scr-rule-hi)) 50% 50% / 60% 1px no-repeat;
+}
+[data-theme="scriptorium"] .prose hr::after {
+  content: "\2766";
+  padding: 0 0.6em;
+  color: var(--scr-red);
+  background: var(--scr-leaf);
+}
+[data-theme="scriptorium"] .prose :not(pre) > code { background: rgba(140, 104, 52, 0.18); border-radius: 2px; padding: 0.08em 0.3em; }
+[data-theme="scriptorium"] .prose pre {
+  font-size-adjust: none;
+  background: rgba(140, 104, 52, 0.12);
+  border: 1px solid var(--scr-rule);
+  border-radius: 3px;
+  padding: 0.7em 0.9em;
+  overflow-x: auto;
+}
+[data-theme="scriptorium"] mark { background: #e9cf86; color: #2b1d10; }
+
+/* Toasts — a slip of vellum passed across the desk, in the theme's hand
+   (the toaster sets its own system font otherwise). */
+[data-theme="scriptorium"] [data-sonner-toast] {
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  background: var(--scr-grain), var(--scr-leaf-hi) !important;
+  color: var(--scr-ink) !important;
+  border: 1px solid var(--scr-rule-hi) !important;
+  border-left: 2px solid var(--scr-red) !important;
+  border-radius: 3px;
+  box-shadow: 0 18px 34px -18px var(--scr-shadow) !important;
+}
+
+/* Progress — a line being gilded. */
+[data-theme="scriptorium"] [role="progressbar"] {
+  background: transparent !important;
+  box-shadow: inset 0 0 0 1px var(--scr-rule-hi);
+  border-radius: 2px;
+}
+[data-theme="scriptorium"] [role="progressbar"] > * {
+  background-image: var(--scr-glint), var(--scr-leaf-gold) !important;
+  background-attachment: fixed, scroll !important;
+  border-radius: 1px;
+}
+
+/* Read-along word pill — a wash of gold with a vermilion edge. */
+[data-theme="scriptorium"] .read-along-pill,
+[data-theme="scriptorium"] .read-along-ghost {
+  --ra-fill: #e9cf86;
+  --ra-glow: var(--scr-red);
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   The frieze — the app bar's border vine (ScriptoriumArt.tsx)
+   ───────────────────────────────────────────────────────────────────── */
+.scr-frieze {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+.scr-frieze svg { display: block; overflow: visible; }
+.scr-frieze > svg, .scr-frieze > i { position: absolute; left: 0; top: 0; }
+.scr-ruling { stroke: var(--scr-rule); stroke-width: 1; }
+.scr-sketch path { fill: none; stroke: var(--scr-rule-hi); stroke-width: 0.7; stroke-linecap: round; opacity: 0.7; }
+.scr-prick { fill: none; stroke: var(--scr-rule-hi); stroke-width: 0.8; }
+.scr-stem { fill: none; stroke: var(--scr-green); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.scr-stem--tendril { stroke-width: 0.9; }
+.scr-leaf { fill: var(--scr-green); stroke: rgba(20, 40, 28, 0.55); stroke-width: 0.5; }
+.scr-vein { fill: none; stroke: rgba(255, 250, 225, 0.45); stroke-width: 0.5; }
+.scr-fruit { stroke: rgba(40, 24, 8, 0.6); stroke-width: 0.5; }
+.scr-fruit--bezant { fill: #edca66; }
+.scr-fruit--berry { fill: var(--scr-red); }
+.scr-fruit--bud { fill: var(--scr-lapis); }
+.scr-fruit--blossom { fill: #fff3ea; stroke: #c9503f; }
+.scr-fruit--eye { fill: #e2b23f; }
+/* The year on the leaf: new growth in spring, turning in autumn. */
+.scr-leaf--fresh { fill: color-mix(in oklab, var(--scr-green) 62%, #c9d96a); }
+.scr-leaf--amber { fill: #c98a2b; }
+.scr-leaf--russet { fill: #a8472a; }
+.scr-bud-ring { fill: var(--scr-red); }
+.scr-bud-gold { fill: #f0d27a; stroke: #8a6417; stroke-width: 0.5; }
+/* The office being kept: a ring opening from its bud. */
+.scr-now {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px var(--scr-red);
+  animation: scr-office 3.6s ease-out infinite;
+  will-change: transform, opacity;
+}
+@keyframes scr-office {
+  0%   { transform: scale(0.8); opacity: 0.9; }
+  70%, 100% { transform: scale(2.6); opacity: 0; }
+}
+.scr-orb-halo { fill: rgba(240, 190, 80, 0.22); filter: blur(5px); }
+.scr-sun-rays { fill: #c99a35; animation: scr-turn 120s linear infinite; will-change: transform; }
+.scr-sun-disc { fill: #efcf6e; stroke: #8a6417; stroke-width: 0.8; }
+.scr-sun-ring { fill: none; stroke: var(--scr-red); stroke-width: 0.7; }
+@keyframes scr-turn { to { transform: rotate(360deg); } }
+.scr-moon-dark { fill: rgba(60, 70, 110, 0.55); }
+.scr-moon-lit { fill: #f3ecd6; }
+.scr-moon-rim { fill: none; stroke: rgba(240, 232, 205, 0.6); stroke-width: 0.6; }
+.scr-frieze[data-sky="night"] .scr-orb-halo { fill: rgba(200, 215, 255, 0.2); }
+.scr-stars { fill: #e8bd62; animation: scr-twinkle 7s ease-in-out infinite; will-change: opacity; }
+.scr-stars--b { animation-duration: 11s; animation-delay: -4s; }
+/* Gold stars on vellum read as specks of leaf; on the dark they are a sky. */
+.scr-frieze[data-face="day"] .scr-stars { fill: #b8892b; }
+@keyframes scr-twinkle {
+  0%, 100% { opacity: 0.3; }
+  50%      { opacity: 0.85; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   The light — over the whole app (ScriptoriumAmbient.tsx)
+   Plain alpha throughout: no blend modes, so nothing beneath is isolated.
+   ───────────────────────────────────────────────────────────────────── */
+.scr-ambient {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  overflow: hidden;
+  pointer-events: none;
+  contain: strict;
+}
+.scr-grain {
+  position: absolute;
+  inset: 0;
+  background: var(--scr-grain);
+  opacity: 0.38;
+}
+:root[data-face="night"] .scr-grain { opacity: 0.16; }
+
+/* Sun through a two-light lancet window, lying across the page: a patch
+   with pointed heads and a straight sill. It enters low and long from the
+   left in the morning, stands short at noon and leaves low and long to the
+   right — --scr-sun is 0 at sunrise, 1 at sunset — and goes amber as
+   --scr-golden rises.
+   The patch is made of two things, because light laid over text can only be
+   so bright before it costs the text (LIGHT in scriptoriumHours.ts): the
+   panes are a little lighter than the page, and the rest of the room is a
+   little darker — a shade with the window cut out of it. Half the contrast
+   between "in the sun" and "out of it" comes from each, and the darker half
+   is nearly free: shade dims ink and vellum together.
+   Not animated: the sun moves a fraction of a pixel a minute, and a
+   transition here would keep the compositor awake all day to show it. */
+.scr-window {
+  --lean: calc((var(--scr-sun, 0.5) - 0.5) * 2);       /* -1 … 1 */
+  position: absolute;
+  left: 50%;
+  top: 11vh;
+  width: 24vmax;
+  height: 44vmax;
+  display: flex;
+  gap: 1.5vmax;
+  transform-origin: 50% 0;
+  transform:
+    translateX(calc(-50% + var(--lean) * 30vw))
+    rotate(calc(var(--lean) * -8deg))
+    skewX(calc(var(--lean) * -40deg - 9deg));
+}
+/* The shade: an enormous soft shadow thrown by the window's own outline. */
+.scr-window i {
+  position: absolute;
+  inset: -0.4vmax;
+  border-radius: 50% 50% 0 0 / 9% 9% 0 0;
+  box-shadow: 0 0 2.4vmax 300vmax rgba(86, 58, 22, 0.07);
+}
+/* The leading: the mullion between the two lights and the glazing bars
+   across them throw the same shade as the wall does. (Where they cross it
+   doubles; the contrast sweep allows for that.) */
+.scr-window i::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  filter: blur(1.5px);
+  background:
+    linear-gradient(90deg, transparent calc(50% - 0.75vmax), rgba(86, 58, 22, 0.07) calc(50% - 0.75vmax) calc(50% + 0.75vmax), transparent calc(50% + 0.75vmax)),
+    repeating-linear-gradient(180deg, transparent 0 9vmax, rgba(86, 58, 22, 0.07) 9vmax 9.6vmax);
+}
+.scr-window span {
+  flex: 1;
+  filter: blur(5px);
+  /* A lancet: straight jambs and a pointed arch. */
+  clip-path: polygon(0 100%, 0 17%, 9% 10%, 26% 4%, 50% 0, 74% 4%, 91% 10%, 100% 17%, 100% 100%);
+  background: linear-gradient(180deg,
+    rgb(255 calc(238 - var(--scr-golden, 0) * 33) calc(176 - var(--scr-golden, 0) * 56) / 0.13) 0%,
+    rgb(255 calc(238 - var(--scr-golden, 0) * 33) calc(176 - var(--scr-golden, 0) * 56) / 0.09) 100%);
+}
+:root[data-face="night"] .scr-window { display: none; }
+
+/* The golden hour: the whole room warms before the candle is lit. */
+.scr-golden {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(200deg, rgba(255, 150, 50, 0.08), rgba(190, 70, 30, 0.05));
+  opacity: var(--scr-golden, 0);
+}
+:root[data-face="night"] .scr-golden { display: none; }
+
+/* A book is not the theme's to light. Over the reader the window, the amber
+   and the candle's dark all stand down; only the candle's glow stays. */
+:root:has([data-reader-bar]) .scr-window,
+:root:has([data-reader-bar]) .scr-golden,
+:root:has([data-reader-bar]) .scr-pool-dark { display: none; }
+
+/* The candle. One element moved by transform; the dark is a huge radial
+   that is clear around the flame, the glow a small warm one inside it. */
+.scr-pool { position: absolute; left: 0; top: 0; width: 0; height: 0; display: none; will-change: transform; }
+:root[data-face="night"] .scr-pool { display: block; }
+.scr-pool-dark {
+  position: absolute;
+  left: -160vmax; top: -160vmax;
+  width: 320vmax; height: 320vmax;
+  /* Burned low toward dawn, the candle lights a smaller circle. */
+  --reach: calc(15vmax + var(--scr-candle, 1) * 9vmax);
+  background: radial-gradient(circle, rgba(8, 5, 2, 0) 0, rgba(8, 5, 2, 0) calc(var(--reach) * 0.55), rgba(8, 5, 2, 0.22) calc(var(--reach) * 1.5), rgba(8, 5, 2, 0.3) calc(var(--reach) * 2.6));
+}
+.scr-pool-glow {
+  position: absolute;
+  left: -26vmax; top: -26vmax;
+  width: 52vmax; height: 52vmax;
+  background: radial-gradient(circle, rgba(255, 196, 104, 0.2) 0%, rgba(255, 170, 76, 0.09) 36%, rgba(255, 150, 60, 0) 68%);
+  animation: scr-flicker 4.2s steps(1, end) infinite;
+}
+/* A flame is steady, then it is not: long holds, short gutters. */
+@keyframes scr-flicker {
+  0%   { opacity: 1;    transform: scale(1); }
+  31%  { opacity: 0.9;  transform: scale(0.985); }
+  34%  { opacity: 1;    transform: scale(1.01); }
+  58%  { opacity: 0.94; transform: scale(0.99); }
+  61%  { opacity: 0.84; transform: scale(0.97); }
+  64%  { opacity: 1;    transform: scale(1); }
+  88%  { opacity: 0.92; transform: scale(0.99); }
+  91%  { opacity: 1;    transform: scale(1.012); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="scriptorium"] [data-mobile-nav] .bg-accent\/15,
+  [data-theme="scriptorium"] .message-bubble-ai,
+  [data-theme="scriptorium"] .message-bubble-user,
+  .scr-now,
+  .scr-sun-rays,
+  .scr-stars,
+  .scr-pool-glow { animation: none !important; }
+  .scr-window { transition: none; }
+}

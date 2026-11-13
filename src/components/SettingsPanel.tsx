@@ -262,7 +262,8 @@ const SettingsPanel: React.FC = () => {
     }
   };
   const { isPaid, plan } = usePlan();
-  const { themeId, setThemeId, themes, season, seasonal, setSeasonal, hemispherePref, setHemispherePref } = useTheme();
+  const { themeId, setThemeId, themes, season, seasonal, setSeasonal, hemispherePref, setHemispherePref, face, facePref, setFacePref } = useTheme();
+  const living = themes.find((t) => t.id === themeId)?.living;
   const {
     utilityModel, setUtilityModel, studioTools, setStudioTools,
     apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, savedModels, selectedModel, deepResearchModel, voiceModel, visionModel, ttsRate,
@@ -1330,6 +1331,20 @@ const SettingsPanel: React.FC = () => {
               {/* Seasonal drift is a modifier on whichever theme is chosen,
                   never a theme of its own — so it sits under the picker. */}
               <Group>
+                {/* Only a living theme has faces to choose between. */}
+                {living && (
+                  <Row
+                    label="Light"
+                    description={facePref === "auto" && face ? `Following the clock — now: ${living.faces[face]?.label.toLowerCase()}.` : "Pinned. The clock is ignored."}
+                  >
+                    <Choice
+                      ariaLabel="Light"
+                      value={facePref}
+                      onChange={setFacePref}
+                      options={[{ value: "auto", label: living.autoLabel }, ...Object.entries(living.faces).map(([id, f]) => ({ value: id, label: f.label }))]}
+                    />
+                  </Row>
+                )}
                 <Row
                   id="seasonal"
                   label="Drift with the season"
