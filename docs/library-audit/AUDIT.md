@@ -125,3 +125,12 @@ The count of controls on the first screen went up on the desktop, not down: the 
 - Driven in headless Chromium through the lab at 360×740, 476×506, 956×506 and 1440×900: open a shelf, tap a card, add it, open Info, make a shelf, open the notebook switcher, search, switch to the list and back, Ask Counsel (lands in the chat showing "4 books · Design").
 
 Not run: anything signed in. Shelf create/rename/delete, adding a book to a shelf, the two summarize actions and the notebook slot with real notebooks have only run against the lab's in-memory stand-ins or the unchanged app functions they call. Keyboard use of the card menu was not driven. Not tried on a real phone.
+
+## Phone follow-up, 2026-11-13
+
+Two things Manny hit on a phone after the deck shipped. Research behind the fixes: `reports/Mobile library shelf and card UX.md`.
+
+- **A card's menu opened while scrolling, then froze the page.** The card is a Radix `DropdownMenu` trigger, which opens on touch-down and is modal. It now opens on a completed tap (`preventDefault` on pointerdown, driven from `onClick` — the PromptSwitcher fix), is not modal, and closes if the page scrolls or anything else is tapped.
+- **A long shelf row hid shelves and stranded "New shelf" at its end.** Only the tabs scroll now. Pinned after them are "All shelves" (a bottom sheet listing every shelf; a filter box appears past eight) and "New shelf". The open tab is scrolled into view, and the row ends in a fade.
+
+Checked in headless Chromium at 360×740 with touch events through the lab: a drag that starts on a card scrolls and opens nothing; a tap opens the menu with the page still scrollable; scroll, a second tap, or a tap elsewhere closes it; the sheet lists and opens shelves; "New shelf" focuses its name box. Not checked on a real phone or in Safari. Not done: pinning favourite shelves, and tap-opens-the-book.

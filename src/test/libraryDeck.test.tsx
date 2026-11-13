@@ -86,6 +86,7 @@ const button = (name: string) => Array.from(host.querySelectorAll("button")).fin
 const slots = () => host.querySelector('[role="tabpanel"]')!;
 
 beforeEach(() => {
+  (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   app.loadFocus.mockClear();
   app.activeWikis = [];
   app.loaded = { shelfId: null, bookIds: [], excludedIds: [] };
@@ -169,6 +170,79 @@ describe("Ask Counsel takes the open shelf and keeps the notebook", () => {
     await mount({ shelves: [...SHELVES, shelf("s3", "Empty")] });
     await act(async () => { tab("Empty").click(); });
     expect(button("Ask Counsel").disabled).toBe(true);
+  });
+});
+
+describe("the shelf row on a phone", () => {
+  it("keeps New shelf and All shelves outside the part that scrolls", async () => {
+    await mount();
+    const row = host.querySelector('[role="tablist"]')!;
+    expect(row.contains(button("New shelf"))).toBe(false);
+    expect(row.contains(host.querySelector('[aria-label="All shelves"]'))).toBe(false);
+  });
+
+  it("lists every shelf in a sheet, and opens the one that is picked", async () => {
+    await mount();
+    await act(async () => { host.querySelector<HTMLElement>('[aria-label="All shelves"]')!.click(); });
+    const rows = Array.from(document.querySelectorAll<HTMLElement>(".cc-shelf-row"));
+    expect(rows.map((r) => r.textContent)).toEqual([
+      expect.stringContaining("Reading now"), expect.stringContaining("Stoics"), expect.stringContaining("Design"),
+    ]);
+    await act(async () => { rows[2].click(); });
+    expect(tab("Design").getAttribute("aria-selected")).toBe("true");
+    expect(document.querySelector(".cc-shelf-row")).toBeNull();
+    expect(app.loadFocus).not.toHaveBeenCalled();
+  });
+
+  it("offers a filter once there are too many shelves to scan", async () => {
+    await mount();
+    await act(async () => { host.querySelector<HTMLElement>('[aria-label="All shelves"]')!.click(); });
+    expect(document.querySelector('[aria-label="Find a shelf"]')).toBeNull();
+    await act(async () => { root.unmount(); });
+    root = createRoot(host);
+    await mount({ shelves: Array.from({ length: 9 }, (_, i) => shelf(`m${i}`, `Shelf ${i}`)) });
+    await act(async () => { host.querySelector<HTMLElement>('[aria-label="All shelves"]')!.click(); });
+    expect(document.querySelector('[aria-label="Find a shelf"]')).toBeTruthy();
+  });
+});
+
+/**
+ * The card's menu must open on TAP, never on touch-down — see
+ * promptSwitcherTap.test.tsx for the same bug in Counsel's tool row. Here the
+ * finger that landed on a card to scroll the Library opened its menu, and the
+ * menu, being modal, then stopped the page until it was dismissed.
+ */
+describe("a book card's menu", () => {
+  const card = () => host.querySelector<HTMLElement>("[data-deck-card]")!;
+  const fire = async (el: HTMLElement, type: string) => {
+    await act(async () => { el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 })); });
+  };
+
+  it("does not open on pointerdown — that touch may be the start of a scroll", async () => {
+    await mount();
+    await fire(card(), "pointerdown");
+    await fire(card(), "pointerup");
+    expect(card().getAttribute("data-state")).toBe("closed");
+  });
+
+  it("opens on click, closes on a second one, and never locks the page", async () => {
+    await mount();
+    await fire(card(), "pointerdown");
+    await fire(card(), "click");
+    expect(card().getAttribute("data-state")).toBe("open");
+    // A modal Radix menu sets this on <body>; a non-modal one must not.
+    expect(document.body.style.pointerEvents).not.toBe("none");
+    await fire(card(), "pointerdown");
+    await fire(card(), "click");
+    expect(card().getAttribute("data-state")).toBe("closed");
+  });
+
+  it("gets out of the way when the page scrolls", async () => {
+    await mount();
+    await fire(card(), "click");
+    expect(card().getAttribute("data-state")).toBe("open");
+    await act(async () => { document.dispatchEvent(new Event("scroll")); });
+    expect(card().getAttribute("data-state")).toBe("closed");
   });
 });
 

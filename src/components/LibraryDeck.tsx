@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { BookDocument } from "@/types/library";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/hooks/useAuth";
 import { useChatSettings } from "@/hooks/useChatSettings";
@@ -40,6 +41,10 @@ import { OPEN_NEURON_SWITCHER_EVENT } from "@/components/WikiQuickSwitcher";
  * Tapping a card lifts it and offers what you can do with it: Info (the
  * book's profile), Read, and add to / take off the open shelf. Opening a tab
  * only looks at a shelf — it never changes what Counsel has loaded.
+ *
+ * The tab row is a shortcut, not the only way in: "New shelf" and "All
+ * shelves" are pinned beside it, outside the part that scrolls, so neither is
+ * ever at the far end of a long row.
  */
 
 /** Cards mounted at once. The grid grows by this much as you near the end —
@@ -50,6 +55,8 @@ const DECK_KEY = "vault_deck_tab";
 /** The automatic tab: books in progress. Not a book_folders row. */
 const NOW_ID = "__reading_now__";
 const SLOTS = BOOK_CONTEXT_MAX_BOOKS;
+/** Past this many shelves the "All shelves" list gets a filter box. */
+const FILTER_SHELVES_FROM = 8;
 
 const SORTS: { id: CardSort; label: string; icon: string }[] = [
   { id: "recent", label: "Newest", icon: "schedule" },
@@ -134,11 +141,35 @@ const BookCardTile: React.FC<{
   const time = readTimeLabel(book.pageCount);
   const fresh = !compact && level.pct === 0 && Date.now() - book.addedAt < 3 * 86_400_000;
   const onShelf = !!shelf && book.folderIds.includes(shelf.id);
+  // OPEN ON TAP, NOT ON TOUCH-DOWN — the same fix as PromptSwitcher, for the
+  // same reason: Radix opens a DropdownMenu from `onPointerDown`, so on a
+  // phone the finger that lands on a card to SCROLL THE LIBRARY had already
+  // opened its menu. `preventDefault()` there skips Radix's toggle and the
+  // menu is driven from `onClick`, which the browser withholds when the touch
+  // turned into a scroll.
+  //
+  // And it is not modal: a modal menu locks scrolling and swallows the next
+  // tap anywhere, which made one stray menu stop the whole Library. Open, it
+  // now gets out of the way of a scroll or a tap elsewhere.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = (e: Event) => {
+      if (e.target instanceof Element && e.target.closest(".cc-card-menu")) return;
+      setMenuOpen(false);
+    };
+    window.addEventListener("scroll", close, { capture: true, passive: true });
+    return () => window.removeEventListener("scroll", close, { capture: true });
+  }, [menuOpen]);
   return (
-    <DropdownMenu>
+    <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen} modal={false}>
       <DropdownMenuTrigger asChild>
         <button
+          ref={trigger}
           type="button"
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={() => setMenuOpen((v) => !v)}
           data-deck-card
           data-tier={tier.id}
           data-compact={compact || undefined}
@@ -184,6 +215,12 @@ const BookCardTile: React.FC<{
         collisionPadding={MENU_CLEARANCE}
         className="cc-card-menu"
         aria-label={`Actions for ${book.title}`}
+        // A tap on the card that owns the menu is the card's own toggle; left
+        // to dismiss as well, it would close and immediately reopen.
+        onInteractOutside={(e) => {
+          const target = e.detail.originalEvent.target;
+          if (target instanceof Node && trigger.current?.contains(target)) e.preventDefault();
+        }}
       >
         <MenuPrimitive.Item asChild onSelect={() => actions.onInfo(book.id)}>
           <button type="button" className="cc-btn3d" data-tone="quiet">
@@ -633,6 +670,47 @@ const LibraryDeck: React.FC<{
   const [digesting, setDigesting] = useState(false);
   useEffect(() => { setRenaming(false); }, [deckId]);
 
+  // Every shelf as a list, for when the row is too long to swipe through.
+  const [listOpen, setListOpen] = useState(false);
+  const [shelfQuery, setShelfQuery] = useState("");
+  const filterShelves = shelves.length > FILTER_SHELVES_FROM;
+  const listedShelves = useMemo(() => {
+    const q = shelfQuery.trim().toLowerCase();
+    return q ? shelves.filter((s) => s.name.toLowerCase().includes(q)) : shelves;
+  }, [shelves, shelfQuery]);
+  const pickFromList = (id: string) => {
+    pickTab(id);
+    setListOpen(false);
+    setShelfQuery("");
+  };
+
+  // Keep the open tab in view — it may have been picked from the list, or
+  // remembered from last time, and be well off the end of the row. The row is
+  // moved only as far as it takes (never the page, which `scrollIntoView`
+  // would move too), and again once the icon font is in: until then every
+  // icon is its name spelled out and the tabs are several times too wide.
+  const tabRow = useRef<HTMLDivElement>(null);
+  const tabRowSeen = useRef(false);
+  useEffect(() => {
+    const reveal = (behavior: ScrollBehavior) => {
+      const row = tabRow.current;
+      const el = row?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+      if (!row || !el || typeof row.scrollTo !== "function") return;
+      const r = row.getBoundingClientRect();
+      const t = el.getBoundingClientRect();
+      const lead = t.left - (r.left + 8);
+      // 28px: clear of the fade the row ends in.
+      const trail = t.right - (r.right - 28);
+      const by = lead < 0 ? lead : trail > 0 ? Math.min(trail, lead) : 0;
+      if (by !== 0) row.scrollTo({ left: row.scrollLeft + by, behavior });
+    };
+    reveal(tabRowSeen.current ? "smooth" : "auto");
+    tabRowSeen.current = true;
+    let live = true;
+    void document.fonts?.ready.then(() => { if (live) reveal("auto"); });
+    return () => { live = false; };
+  }, [deckId, shelves.length]);
+
   const commitCreate = async () => {
     const name = newName.trim();
     if (!name) { setCreating(false); return; }
@@ -713,29 +791,32 @@ const LibraryDeck: React.FC<{
   return (
     <div className="flex flex-col gap-4">
       <section aria-label="Shelves" className="cc-deck">
-        {/* Deck tabs: one per shelf. */}
-        <div className="cc-deck-tabs hide-scrollbar" role="tablist" aria-label="Shelves">
-          <button type="button" role="tab" aria-selected={deckId === NOW_ID} className="cc-deck-tab" onClick={() => pickTab(NOW_ID)}>
-            <span className="material-symbols-outlined text-[18px] text-accent" aria-hidden>local_fire_department</span>
-            Reading now
-            <span className="cc-deck-count">{now.length}</span>
-          </button>
-          {shelves.map((s) => {
-            const mark = marks.get(s.id);
-            return (
-              <button key={s.id} type="button" role="tab" aria-selected={deckId === s.id} className="cc-deck-tab" onClick={() => pickTab(s.id)}>
-                <span className="cc-deck-mark" style={mark ? { background: mark.color, color: mark.ink } : undefined} aria-hidden>
-                  <span className="material-symbols-outlined">{mark?.glyph ?? "shelves"}</span>
-                </span>
-                <span className="truncate max-w-[10rem]">{s.name}</span>
-                {/* No count until membership has loaded: "0" would be a guess. */}
-                {membershipLoaded && <span className="cc-deck-count">{countByShelf.get(s.id) || 0}</span>}
-                {loaded.shelfId === s.id && (
-                  <span className="material-symbols-outlined text-[16px] text-accent" title="Counsel has this shelf" aria-label="Counsel has this shelf">psychology</span>
-                )}
-              </button>
-            );
-          })}
+        {/* Deck tabs: one per shelf. Only the tabs scroll; the two buttons
+            after them stay put. */}
+        <div className="cc-deck-bar">
+          <div ref={tabRow} className="cc-deck-tabs hide-scrollbar" role="tablist" aria-label="Shelves">
+            <button type="button" role="tab" aria-selected={deckId === NOW_ID} className="cc-deck-tab" onClick={() => pickTab(NOW_ID)}>
+              <span className="material-symbols-outlined text-[18px] text-accent" aria-hidden>local_fire_department</span>
+              Reading now
+              <span className="cc-deck-count">{now.length}</span>
+            </button>
+            {shelves.map((s) => {
+              const mark = marks.get(s.id);
+              return (
+                <button key={s.id} type="button" role="tab" aria-selected={deckId === s.id} className="cc-deck-tab" onClick={() => pickTab(s.id)}>
+                  <span className="cc-deck-mark" style={mark ? { background: mark.color, color: mark.ink } : undefined} aria-hidden>
+                    <span className="material-symbols-outlined">{mark?.glyph ?? "shelves"}</span>
+                  </span>
+                  <span className="truncate max-w-[10rem]">{s.name}</span>
+                  {/* No count until membership has loaded: "0" would be a guess. */}
+                  {membershipLoaded && <span className="cc-deck-count">{countByShelf.get(s.id) || 0}</span>}
+                  {loaded.shelfId === s.id && (
+                    <span className="material-symbols-outlined text-[16px] text-accent" title="Counsel has this shelf" aria-label="Counsel has this shelf">psychology</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
           {creating ? (
             <form onSubmit={(e) => { e.preventDefault(); void commitCreate(); }} className="shrink-0 flex">
               <input
@@ -750,10 +831,17 @@ const LibraryDeck: React.FC<{
               />
             </form>
           ) : (
-            <button type="button" className="cc-deck-tab" data-new onClick={() => setCreating(true)}>
-              <span className="material-symbols-outlined text-[18px]" aria-hidden>add</span>
-              New shelf
-            </button>
+            <>
+              {shelves.length > 0 && (
+                <button type="button" className="cc-deck-pin" onClick={() => setListOpen(true)} aria-label="All shelves" title="All shelves">
+                  <span className="material-symbols-outlined text-[20px]" aria-hidden>format_list_bulleted</span>
+                </button>
+              )}
+              <button type="button" className="cc-deck-pin" data-new onClick={() => setCreating(true)} title="New shelf">
+                <span className="material-symbols-outlined text-[20px]" aria-hidden>add</span>
+                <span className="sr-only sm:not-sr-only">New shelf</span>
+              </button>
+            </>
           )}
         </div>
 
@@ -924,6 +1012,63 @@ const LibraryDeck: React.FC<{
         )}
         {shown < sorted.length && <div ref={sentinel} className="h-8" aria-hidden />}
       </section>
+
+      <Sheet open={listOpen} onOpenChange={(o) => { setListOpen(o); if (!o) setShelfQuery(""); }}>
+        <SheetContent
+          side="bottom"
+          // A filtered list must not shrink the sheet: it is anchored to the
+          // bottom, so a short one would drop the filter box behind the keyboard.
+          className={`cc-shelf-sheet ${filterShelves ? "h-[80dvh]" : "max-h-[80dvh]"}`}
+          // Opening must not raise the keyboard over the list.
+          onOpenAutoFocus={(e) => e.preventDefault()}
+        >
+          <SheetTitle className="font-headline text-lg text-foreground">Shelves</SheetTitle>
+          <SheetDescription className="sr-only">Every shelf. Choose one to open it.</SheetDescription>
+          {filterShelves && (
+            <input
+              type="search"
+              value={shelfQuery}
+              onChange={(e) => setShelfQuery(e.target.value)}
+              placeholder="Find a shelf"
+              aria-label="Find a shelf"
+              className="h-11 w-full rounded-xl bg-surface-container-high border border-outline-variant/40 px-3 text-sm text-foreground"
+            />
+          )}
+          <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain -mx-2">
+            {!shelfQuery.trim() && (
+              <li>
+                <button type="button" className="cc-shelf-row" aria-current={deckId === NOW_ID || undefined} onClick={() => pickFromList(NOW_ID)}>
+                  <span className="cc-deck-mark" aria-hidden>
+                    <span className="material-symbols-outlined text-accent">local_fire_department</span>
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-left">Reading now</span>
+                  <span className="cc-deck-count">{now.length}</span>
+                </button>
+              </li>
+            )}
+            {listedShelves.map((s) => {
+              const mark = marks.get(s.id);
+              return (
+                <li key={s.id}>
+                  <button type="button" className="cc-shelf-row" aria-current={deckId === s.id || undefined} onClick={() => pickFromList(s.id)}>
+                    <span className="cc-deck-mark" style={mark ? { background: mark.color, color: mark.ink } : undefined} aria-hidden>
+                      <span className="material-symbols-outlined">{mark?.glyph ?? "shelves"}</span>
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-left">{s.name}</span>
+                    {loaded.shelfId === s.id && (
+                      <span className="material-symbols-outlined text-[16px] text-accent" title="Counsel has this shelf" aria-label="Counsel has this shelf">psychology</span>
+                    )}
+                    {membershipLoaded && <span className="cc-deck-count">{countByShelf.get(s.id) || 0}</span>}
+                  </button>
+                </li>
+              );
+            })}
+            {listedShelves.length === 0 && (
+              <li className="px-3 py-6 text-center text-sm text-on-surface-variant">No shelf matches “{shelfQuery.trim()}”.</li>
+            )}
+          </ul>
+        </SheetContent>
+      </Sheet>
 
       <BookProfileDialog
         card={openCard}
