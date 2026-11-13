@@ -18,6 +18,18 @@
 /* Clearance for the fixed dock, home indicator included. */
 .cc-dock-clearance { padding-bottom: calc(var(--cc-dock-h) + env(safe-area-inset-bottom, 0px)); }
 
+/* ── The reader takes the screen ──────────────────────────────────────── */
+/* While a book is being read on a phone (or in full screen anywhere) the
+   reader sits over the whole app and the app bar and dock slide away; a tap
+   on the page brings them back. PdfViewer toggles the class. */
+[data-app-header], .cc-dock { transition: transform 220ms ease, opacity 220ms ease; }
+:root.cc-has-dock.cc-reader-shell-hidden { --cc-dock-h: 0px; }
+:root.cc-reader-shell-hidden [data-app-header] { transform: translateY(-110%); opacity: 0; pointer-events: none; }
+:root.cc-reader-shell-hidden .cc-dock { transform: translateY(110%); opacity: 0; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+  [data-app-header], .cc-dock { transition: none; }
+}
+
 /* ── Dock ─────────────────────────────────────────────────────────────── */
 .cc-dock {
   box-shadow: 0 -6px 24px -12px rgb(0 0 0 / 0.45);

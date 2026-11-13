@@ -187,6 +187,8 @@ export function useReaderHighlights(opts: Options) {
    *  selection's handles replaces it instead of piling up marks. */
   const sessionIdRef = useRef<string | null>(null);
   const [pendingSelection, setPendingSelection] = useState(false);
+  /** Bumps each time a selection settles, so its menu can follow a moved handle. */
+  const [selectionTick, setSelectionTick] = useState(0);
 
   const readSelection = useCallback(() => {
     const src = getSource();
@@ -283,6 +285,7 @@ export function useReaderHighlights(opts: Options) {
       timer = window.setTimeout(() => {
         const worthy = !!readSelection();
         setPendingSelection(worthy);
+        setSelectionTick((n) => n + 1);
         if (!worthy) {
           const sel = doc.getSelection();
           if (!sel || sel.isCollapsed) sessionIdRef.current = null;
@@ -373,5 +376,5 @@ export function useReaderHighlights(opts: Options) {
   }, []);
 
   const pageCount = all.filter(onSurface).length;
-  return { commitSelection, pendingSelection, remove, pageCount, total: all.length, autoHighlight };
+  return { commitSelection, pendingSelection, selectionTick, remove, pageCount, total: all.length, autoHighlight };
 }

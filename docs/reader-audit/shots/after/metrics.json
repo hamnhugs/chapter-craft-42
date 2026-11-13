@@ -1,0 +1,1503 @@
+{
+ "phone-360-reading": {
+  "vw": 360,
+  "vh": 740,
+  "header": {
+   "top": -60,
+   "bottom": -5,
+   "h": 55,
+   "w": 360,
+   "shown": false
+  },
+  "bar": {
+   "top": 763,
+   "bottom": 825,
+   "h": 62,
+   "w": 360,
+   "shown": false
+  },
+  "barRowScrollW": 330,
+  "barRowClientW": 330,
+  "barControls": [
+   {
+    "t": "Contents",
+    "w": 62,
+    "h": 48
+   },
+   {
+    "t": "Listen",
+    "w": 52,
+    "h": 48
+   },
+   {
+    "t": "2 / 5Page",
+    "w": 52,
+    "h": 48
+   },
+   {
+    "t": "View",
+    "w": 52,
+    "h": 48
+   },
+   {
+    "t": "More",
+    "w": 52,
+    "h": 48
+   }
+  ],
+  "scroller": {
+   "top": 0,
+   "bottom": 740,
+   "h": 740,
+   "w": 360,
+   "shown": true
+  },
+  "page": {
+   "top": 148,
+   "bottom": 593,
+   "h": 445,
+   "w": 344,
+   "shown": true
+  },
+  "dock": {
+   "top": 740,
+   "bottom": 741,
+   "h": 1,
+   "w": 360,
+   "shown": false
+  },
+  "pageNo": "2",
+  "overflowX": false,
+  "afterRightTap": "3",
+  "afterLeftTap": "2"
+ },
+ "phone-360": {
+  "vw": 360,
+  "vh": 740,
+  "header": {
+   "top": 0,
+   "bottom": 55,
+   "h": 55,
+   "w": 360,
+   "shown": true
+  },
+  "bar": {
+   "top": 606,
+   "bottom": 668,
+   "h": 62,
+   "w": 360,
+   "shown": true
+  },
+  "barRowScrollW": 330,
+  "barRowClientW": 330,
+  "barControls": [
+   {
+    "t": "Contents",
+    "w": 62,
+    "h": 48
+   },
+   {
+    "t": "Listen",
+    "w": 52,
+    "h": 48
+   },
+   {
+    "t": "2 / 5Page",
+    "w": 52,
+    "h": 48
+   },
+   {
+    "t": "View",
+    "w": 52,
+    "h": 48
+   },
+   {
+    "t": "More",
+    "w": 52,
+    "h": 48
+   }
+  ],
+  "scroller": {
+   "top": 0,
+   "bottom": 740,
+   "h": 740,
+   "w": 360,
+   "shown": true
+  },
+  "page": {
+   "top": 148,
+   "bottom": 593,
+   "h": 445,
+   "w": 344,
+   "shown": true
+  },
+  "dock": {
+   "top": 675,
+   "bottom": 740,
+   "h": 65,
+   "w": 360,
+   "shown": true
+  },
+  "pageNo": "2",
+  "overflowX": false,
+  "afterTyping4": "4",
+  "selectionMenu": "Highlight | Ask | Save card | Copy"
+ },
+ "phone-360-listening": {
+  "vw": 360,
+  "vh": 740,
+  "header": {
+   "top": 0,
+   "bottom": 55,
+   "h": 55,
+   "w": 360,
+   "shown": true
+  },
+  "bar": {
+   "top": 606,
+   "bottom": 668,
+   "h": 62,
+   "w": 360,
+   "shown": true
+  },
+  "barRowScrollW": 330,
+  "barRowClientW": 330,
+  "barControls": [
+   {
+    "t": "1.05×",
+    "w": 61,
+    "h": 48
+   },
+   {
+    "t": "fast_rewind",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "fast_forward",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "more_horiz",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "close",
+    "w": 48,
+    "h": 48
+   }
+  ],
+  "scroller": {
+   "top": 0,
+   "bottom": 740,
+   "h": 740,
+   "w": 360,
+   "shown": true
+  },
+  "page": {
+   "top": 148,
+   "bottom": 593,
+   "h": 445,
+   "w": 344,
+   "shown": true
+  },
+  "dock": {
+   "top": 675,
+   "bottom": 740,
+   "h": 65,
+   "w": 360,
+   "shown": true
+  },
+  "pageNo": "4",
+  "overflowX": false,
+  "backToBar": true
+ },
+ "phone-412-reading": {
+  "vw": 412,
+  "vh": 915,
+  "header": {
+   "top": -60,
+   "bottom": -5,
+   "h": 55,
+   "w": 412,
+   "shown": false
+  },
+  "bar": {
+   "top": 938,
+   "bottom": 1000,
+   "h": 62,
+   "w": 412,
+   "shown": false
+  },
+  "barRowScrollW": 382,
+  "barRowClientW": 382,
+  "barControls": [
+   {
+    "t": "Contents",
+    "w": 62,
+    "h": 48
+   },
+   {
+    "t": "Listen",
+    "w": 52,
+    "h": 48
+   },
+   {
+    "t": "2 / 5Page",
+    "w": 52,
+    "h": 48
+   },
+   {
+    "t": "View",
+    "w": 52,
+    "h": 48
+   },
+   {
+    "t": "More",
+    "w": 52,
+    "h": 48
+   }
+  ],
+  "scroller": {
+   "top": 0,
+   "bottom": 915,
+   "h": 915,
+   "w": 412,
+   "shown": true
+  },
+  "page": {
+   "top": 202,
+   "bottom": 714,
+   "h": 512,
+   "w": 396,
+   "shown": true
+  },
+  "dock": {
+   "top": 915,
+   "bottom": 916,
+   "h": 1,
+   "w": 412,
+   "shown": false
+  },
+  "pageNo": "2",
+  "overflowX": false,
+  "afterRightTap": "3",
+  "afterLeftTap": "2"
+ },
+ "phone-412": {
+  "vw": 412,
+  "vh": 915,
+  "header": {
+   "top": 0,
+   "bottom": 55,
+   "h": 55,
+   "w": 412,
+   "shown": true
+  },
+  "bar": {
+   "top": 781,
+   "bottom": 843,
+   "h": 62,
+   "w": 412,
+   "shown": true
+  },
+  "barRowScrollW": 382,
+  "barRowClientW": 382,
+  "barControls": [
+   {
+    "t": "Contents",
+    "w": 62,
+    "h": 48
+   },
+   {
+    "t": "Listen",
+    "w": 52,
+    "h": 48
+   },
+   {
+    "t": "2 / 5Page",
+    "w": 52,
+    "h": 48
+   },
+   {
+    "t": "View",
+    "w": 52,
+    "h": 48
+   },
+   {
+    "t": "More",
+    "w": 52,
+    "h": 48
+   }
+  ],
+  "scroller": {
+   "top": 0,
+   "bottom": 915,
+   "h": 915,
+   "w": 412,
+   "shown": true
+  },
+  "page": {
+   "top": 202,
+   "bottom": 714,
+   "h": 512,
+   "w": 396,
+   "shown": true
+  },
+  "dock": {
+   "top": 850,
+   "bottom": 915,
+   "h": 65,
+   "w": 412,
+   "shown": true
+  },
+  "pageNo": "2",
+  "overflowX": false,
+  "afterTyping4": "4",
+  "selectionMenu": "Highlight | Ask | Save card | Copy"
+ },
+ "phone-412-listening": {
+  "vw": 412,
+  "vh": 915,
+  "header": {
+   "top": 0,
+   "bottom": 55,
+   "h": 55,
+   "w": 412,
+   "shown": true
+  },
+  "bar": {
+   "top": 781,
+   "bottom": 843,
+   "h": 62,
+   "w": 412,
+   "shown": true
+  },
+  "barRowScrollW": 382,
+  "barRowClientW": 382,
+  "barControls": [
+   {
+    "t": "1.05×",
+    "w": 61,
+    "h": 48
+   },
+   {
+    "t": "fast_rewind",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "fast_forward",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "more_horiz",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "close",
+    "w": 48,
+    "h": 48
+   }
+  ],
+  "scroller": {
+   "top": 0,
+   "bottom": 915,
+   "h": 915,
+   "w": 412,
+   "shown": true
+  },
+  "page": {
+   "top": 202,
+   "bottom": 714,
+   "h": 512,
+   "w": 396,
+   "shown": true
+  },
+  "dock": {
+   "top": 850,
+   "bottom": 915,
+   "h": 65,
+   "w": 412,
+   "shown": true
+  },
+  "pageNo": "4",
+  "overflowX": false,
+  "backToBar": true
+ },
+ "phone-land-reading": {
+  "vw": 740,
+  "vh": 360,
+  "header": {
+   "top": -52,
+   "bottom": -5,
+   "h": 47,
+   "w": 740,
+   "shown": false
+  },
+  "bar": {
+   "top": 383,
+   "bottom": 445,
+   "h": 62,
+   "w": 740,
+   "shown": false
+  },
+  "barRowScrollW": 562,
+  "barRowClientW": 562,
+  "barControls": [
+   {
+    "t": "Contents",
+    "w": 62,
+    "h": 48
+   },
+   {
+    "t": "Listen",
+    "w": 52,
+    "h": 48
+   },
+   {
+    "t": "2 / 5Page",
+    "w": 52,
+    "h": 48
+   },
+   {
+    "t": "View",
+    "w": 52,
+    "h": 48
+   },
+   {
+    "t": "More",
+    "w": 52,
+    "h": 48
+   }
+  ],
+  "scroller": {
+   "top": 0,
+   "bottom": 360,
+   "h": 360,
+   "w": 740,
+   "shown": true
+  },
+  "page": {
+   "top": 8,
+   "bottom": 882,
+   "h": 874,
+   "w": 676,
+   "shown": true
+  },
+  "dock": {
+   "top": 360,
+   "bottom": 361,
+   "h": 1,
+   "w": 740,
+   "shown": false
+  },
+  "pageNo": "2",
+  "overflowX": false,
+  "afterRightTap": "3",
+  "afterLeftTap": "2"
+ },
+ "phone-land": {
+  "vw": 740,
+  "vh": 360,
+  "header": {
+   "top": 0,
+   "bottom": 47,
+   "h": 47,
+   "w": 740,
+   "shown": true
+  },
+  "bar": {
+   "top": 242,
+   "bottom": 304,
+   "h": 62,
+   "w": 740,
+   "shown": true
+  },
+  "barRowScrollW": 562,
+  "barRowClientW": 562,
+  "barControls": [
+   {
+    "t": "Contents",
+    "w": 62,
+    "h": 48
+   },
+   {
+    "t": "Listen",
+    "w": 52,
+    "h": 48
+   },
+   {
+    "t": "2 / 5Page",
+    "w": 52,
+    "h": 48
+   },
+   {
+    "t": "View",
+    "w": 52,
+    "h": 48
+   },
+   {
+    "t": "More",
+    "w": 52,
+    "h": 48
+   }
+  ],
+  "scroller": {
+   "top": 0,
+   "bottom": 360,
+   "h": 360,
+   "w": 740,
+   "shown": true
+  },
+  "page": {
+   "top": 8,
+   "bottom": 882,
+   "h": 874,
+   "w": 676,
+   "shown": true
+  },
+  "dock": {
+   "top": 311,
+   "bottom": 360,
+   "h": 49,
+   "w": 740,
+   "shown": true
+  },
+  "pageNo": "2",
+  "overflowX": false,
+  "afterTyping4": "4",
+  "selectionMenu": "Highlight | Ask | Save card | Copy"
+ },
+ "phone-land-listening": {
+  "vw": 740,
+  "vh": 360,
+  "header": {
+   "top": 0,
+   "bottom": 47,
+   "h": 47,
+   "w": 740,
+   "shown": true
+  },
+  "bar": {
+   "top": 242,
+   "bottom": 304,
+   "h": 62,
+   "w": 740,
+   "shown": true
+  },
+  "barRowScrollW": 562,
+  "barRowClientW": 562,
+  "barControls": [
+   {
+    "t": "1.05×",
+    "w": 61,
+    "h": 48
+   },
+   {
+    "t": "fast_rewind",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "fast_forward",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "more_horiz",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "close",
+    "w": 48,
+    "h": 48
+   }
+  ],
+  "scroller": {
+   "top": 0,
+   "bottom": 360,
+   "h": 360,
+   "w": 740,
+   "shown": true
+  },
+  "page": {
+   "top": -522,
+   "bottom": 352,
+   "h": 874,
+   "w": 676,
+   "shown": true
+  },
+  "dock": {
+   "top": 311,
+   "bottom": 360,
+   "h": 49,
+   "w": 740,
+   "shown": true
+  },
+  "pageNo": "4",
+  "overflowX": false,
+  "backToBar": true
+ },
+ "tablet-port": {
+  "vw": 800,
+  "vh": 1280,
+  "header": {
+   "top": 0,
+   "bottom": 55,
+   "h": 55,
+   "w": 800,
+   "shown": true
+  },
+  "bar": {
+   "top": 55,
+   "bottom": 103,
+   "h": 48,
+   "w": 800,
+   "shown": true
+  },
+  "barRowScrollW": 766,
+  "barRowClientW": 766,
+  "barControls": [
+   {
+    "t": "Contents",
+    "w": 115,
+    "h": 40
+   },
+   {
+    "t": "arrow_back",
+    "w": 44,
+    "h": 44
+   },
+   {
+    "t": "Page 2 of 5",
+    "w": 109,
+    "h": 40
+   },
+   {
+    "t": "arrow_forward",
+    "w": 44,
+    "h": 44
+   },
+   {
+    "t": "Listen",
+    "w": 96,
+    "h": 40
+   },
+   {
+    "t": "remove",
+    "w": 44,
+    "h": 44
+   },
+   {
+    "t": "Fit",
+    "w": 56,
+    "h": 44
+   },
+   {
+    "t": "add",
+    "w": 44,
+    "h": 44
+   },
+   {
+    "t": "More",
+    "w": 87,
+    "h": 40
+   }
+  ],
+  "scroller": {
+   "top": 103,
+   "bottom": 1216,
+   "h": 1113,
+   "w": 800,
+   "shown": true
+  },
+  "page": {
+   "top": 156,
+   "bottom": 1108,
+   "h": 952,
+   "w": 736,
+   "shown": true
+  },
+  "dock": {
+   "top": 1215,
+   "bottom": 1280,
+   "h": 65,
+   "w": 800,
+   "shown": true
+  },
+  "pageNo": "2",
+  "overflowX": false,
+  "afterTyping4": "4",
+  "selectionMenu": "Highlight | Ask | Save card | Copy",
+  "spaceFrom": "4",
+  "spaceTo": "5"
+ },
+ "tablet-port-listening": {
+  "vw": 800,
+  "vh": 1280,
+  "header": {
+   "top": 0,
+   "bottom": 55,
+   "h": 55,
+   "w": 800,
+   "shown": true
+  },
+  "bar": {
+   "top": 55,
+   "bottom": 103,
+   "h": 48,
+   "w": 800,
+   "shown": true
+  },
+  "barRowScrollW": 766,
+  "barRowClientW": 766,
+  "barControls": [
+   {
+    "t": "1.05×",
+    "w": 61,
+    "h": 48
+   },
+   {
+    "t": "fast_rewind",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "fast_forward",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "more_horiz",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "Stop",
+    "w": 85,
+    "h": 48
+   }
+  ],
+  "scroller": {
+   "top": 103,
+   "bottom": 1216,
+   "h": 1113,
+   "w": 800,
+   "shown": true
+  },
+  "page": {
+   "top": 156,
+   "bottom": 1108,
+   "h": 952,
+   "w": 736,
+   "shown": true
+  },
+  "dock": {
+   "top": 1215,
+   "bottom": 1280,
+   "h": 65,
+   "w": 800,
+   "shown": true
+  },
+  "pageNo": "5",
+  "overflowX": false,
+  "backToBar": true
+ },
+ "tablet-land": {
+  "vw": 1280,
+  "vh": 800,
+  "header": {
+   "top": 0,
+   "bottom": 55,
+   "h": 55,
+   "w": 1280,
+   "shown": true
+  },
+  "bar": {
+   "top": 55,
+   "bottom": 103,
+   "h": 48,
+   "w": 1280,
+   "shown": true
+  },
+  "barRowScrollW": 1246,
+  "barRowClientW": 1246,
+  "barControls": [
+   {
+    "t": "Contents",
+    "w": 115,
+    "h": 40
+   },
+   {
+    "t": "arrow_back",
+    "w": 44,
+    "h": 44
+   },
+   {
+    "t": "Page 2 of 5",
+    "w": 109,
+    "h": 40
+   },
+   {
+    "t": "arrow_forward",
+    "w": 44,
+    "h": 44
+   },
+   {
+    "t": "Listen",
+    "w": 96,
+    "h": 40
+   },
+   {
+    "t": "remove",
+    "w": 44,
+    "h": 44
+   },
+   {
+    "t": "Fit",
+    "w": 56,
+    "h": 44
+   },
+   {
+    "t": "add",
+    "w": 44,
+    "h": 44
+   },
+   {
+    "t": "More",
+    "w": 87,
+    "h": 40
+   }
+  ],
+  "scroller": {
+   "top": 103,
+   "bottom": 736,
+   "h": 633,
+   "w": 1280,
+   "shown": true
+  },
+  "page": {
+   "top": 127,
+   "bottom": 1315,
+   "h": 1188,
+   "w": 1216,
+   "shown": true
+  },
+  "dock": {
+   "top": 735,
+   "bottom": 800,
+   "h": 65,
+   "w": 1280,
+   "shown": true
+  },
+  "pageNo": "2",
+  "overflowX": false,
+  "afterTyping4": "4",
+  "selectionMenu": "Highlight | Ask | Save card | Copy",
+  "spaceFrom": "4",
+  "spaceTo": "5"
+ },
+ "tablet-land-listening": {
+  "vw": 1280,
+  "vh": 800,
+  "header": {
+   "top": 0,
+   "bottom": 55,
+   "h": 55,
+   "w": 1280,
+   "shown": true
+  },
+  "bar": {
+   "top": 55,
+   "bottom": 103,
+   "h": 48,
+   "w": 1280,
+   "shown": true
+  },
+  "barRowScrollW": 1246,
+  "barRowClientW": 1246,
+  "barControls": [
+   {
+    "t": "1.05×",
+    "w": 61,
+    "h": 48
+   },
+   {
+    "t": "fast_rewind",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "fast_forward",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "more_horiz",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "Stop",
+    "w": 85,
+    "h": 48
+   }
+  ],
+  "scroller": {
+   "top": 103,
+   "bottom": 736,
+   "h": 633,
+   "w": 1280,
+   "shown": true
+  },
+  "page": {
+   "top": -532,
+   "bottom": 656,
+   "h": 1188,
+   "w": 1216,
+   "shown": true
+  },
+  "dock": {
+   "top": 735,
+   "bottom": 800,
+   "h": 65,
+   "w": 1280,
+   "shown": true
+  },
+  "pageNo": "5",
+  "overflowX": false,
+  "backToBar": true
+ },
+ "desk-956": {
+  "vw": 956,
+  "vh": 506,
+  "header": {
+   "top": 0,
+   "bottom": 47,
+   "h": 47,
+   "w": 956,
+   "shown": true
+  },
+  "bar": {
+   "top": 47,
+   "bottom": 95,
+   "h": 48,
+   "w": 956,
+   "shown": true
+  },
+  "barRowScrollW": 922,
+  "barRowClientW": 922,
+  "barControls": [
+   {
+    "t": "Contents",
+    "w": 115,
+    "h": 40
+   },
+   {
+    "t": "arrow_back",
+    "w": 44,
+    "h": 40
+   },
+   {
+    "t": "Page 2 of 5",
+    "w": 109,
+    "h": 40
+   },
+   {
+    "t": "arrow_forward",
+    "w": 44,
+    "h": 40
+   },
+   {
+    "t": "Listen",
+    "w": 96,
+    "h": 40
+   },
+   {
+    "t": "remove",
+    "w": 44,
+    "h": 44
+   },
+   {
+    "t": "Fit",
+    "w": 56,
+    "h": 44
+   },
+   {
+    "t": "add",
+    "w": 44,
+    "h": 44
+   },
+   {
+    "t": "More",
+    "w": 87,
+    "h": 40
+   }
+  ],
+  "scroller": {
+   "top": 95,
+   "bottom": 458,
+   "h": 363,
+   "w": 956,
+   "shown": true
+  },
+  "page": {
+   "top": 119,
+   "bottom": 1273,
+   "h": 1154,
+   "w": 892,
+   "shown": true
+  },
+  "dock": {
+   "top": 457,
+   "bottom": 506,
+   "h": 49,
+   "w": 956,
+   "shown": true
+  },
+  "pageNo": "2",
+  "overflowX": false,
+  "afterTyping4": "4",
+  "selectionMenu": "Highlight | Ask | Save card | Copy",
+  "spaceFrom": "4",
+  "spaceTo": "5"
+ },
+ "desk-956-listening": {
+  "vw": 956,
+  "vh": 506,
+  "header": {
+   "top": 0,
+   "bottom": 47,
+   "h": 47,
+   "w": 956,
+   "shown": true
+  },
+  "bar": {
+   "top": 47,
+   "bottom": 95,
+   "h": 48,
+   "w": 956,
+   "shown": true
+  },
+  "barRowScrollW": 922,
+  "barRowClientW": 922,
+  "barControls": [
+   {
+    "t": "1.05×",
+    "w": 61,
+    "h": 48
+   },
+   {
+    "t": "fast_rewind",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "fast_forward",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "more_horiz",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "Stop",
+    "w": 85,
+    "h": 48
+   }
+  ],
+  "scroller": {
+   "top": 95,
+   "bottom": 458,
+   "h": 363,
+   "w": 956,
+   "shown": true
+  },
+  "page": {
+   "top": -776,
+   "bottom": 378,
+   "h": 1154,
+   "w": 892,
+   "shown": true
+  },
+  "dock": {
+   "top": 457,
+   "bottom": 506,
+   "h": 49,
+   "w": 956,
+   "shown": true
+  },
+  "pageNo": "5",
+  "overflowX": false,
+  "backToBar": true
+ },
+ "desk-476": {
+  "vw": 476,
+  "vh": 506,
+  "header": {
+   "top": 0,
+   "bottom": 47,
+   "h": 47,
+   "w": 476,
+   "shown": true
+  },
+  "bar": {
+   "top": 47,
+   "bottom": 95,
+   "h": 48,
+   "w": 476,
+   "shown": true
+  },
+  "barRowScrollW": 458,
+  "barRowClientW": 458,
+  "barControls": [
+   {
+    "t": "Contents",
+    "w": 62,
+    "h": 44
+   },
+   {
+    "t": "Listen",
+    "w": 52,
+    "h": 44
+   },
+   {
+    "t": "chevron_left",
+    "w": 36,
+    "h": 44
+   },
+   {
+    "t": "2 / 5Page",
+    "w": 52,
+    "h": 44
+   },
+   {
+    "t": "chevron_right",
+    "w": 36,
+    "h": 44
+   },
+   {
+    "t": "View",
+    "w": 52,
+    "h": 44
+   },
+   {
+    "t": "More",
+    "w": 52,
+    "h": 44
+   }
+  ],
+  "scroller": {
+   "top": 95,
+   "bottom": 458,
+   "h": 363,
+   "w": 476,
+   "shown": true
+  },
+  "page": {
+   "top": 111,
+   "bottom": 706,
+   "h": 595,
+   "w": 460,
+   "shown": true
+  },
+  "dock": {
+   "top": 457,
+   "bottom": 506,
+   "h": 49,
+   "w": 476,
+   "shown": true
+  },
+  "pageNo": "2",
+  "overflowX": false,
+  "afterTyping4": "4",
+  "selectionMenu": "Highlight | Ask | Save card | Copy",
+  "spaceFrom": "4",
+  "spaceTo": "5"
+ },
+ "desk-476-listening": {
+  "vw": 476,
+  "vh": 506,
+  "header": {
+   "top": 0,
+   "bottom": 47,
+   "h": 47,
+   "w": 476,
+   "shown": true
+  },
+  "bar": {
+   "top": 47,
+   "bottom": 95,
+   "h": 48,
+   "w": 476,
+   "shown": true
+  },
+  "barRowScrollW": 458,
+  "barRowClientW": 458,
+  "barControls": [
+   {
+    "t": "1.05×",
+    "w": 61,
+    "h": 48
+   },
+   {
+    "t": "fast_rewind",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "fast_forward",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "more_horiz",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "close",
+    "w": 48,
+    "h": 48
+   }
+  ],
+  "scroller": {
+   "top": 95,
+   "bottom": 458,
+   "h": 363,
+   "w": 476,
+   "shown": true
+  },
+  "page": {
+   "top": -209,
+   "bottom": 386,
+   "h": 595,
+   "w": 460,
+   "shown": true
+  },
+  "dock": {
+   "top": 457,
+   "bottom": 506,
+   "h": 49,
+   "w": 476,
+   "shown": true
+  },
+  "pageNo": "5",
+  "overflowX": false,
+  "backToBar": true
+ },
+ "desk-1440": {
+  "vw": 1440,
+  "vh": 900,
+  "header": {
+   "top": 0,
+   "bottom": 55,
+   "h": 55,
+   "w": 1440,
+   "shown": true
+  },
+  "bar": {
+   "top": 55,
+   "bottom": 103,
+   "h": 48,
+   "w": 1440,
+   "shown": true
+  },
+  "barRowScrollW": 1406,
+  "barRowClientW": 1406,
+  "barControls": [
+   {
+    "t": "Contents",
+    "w": 115,
+    "h": 40
+   },
+   {
+    "t": "arrow_back",
+    "w": 44,
+    "h": 44
+   },
+   {
+    "t": "Page 2 of 5",
+    "w": 109,
+    "h": 40
+   },
+   {
+    "t": "arrow_forward",
+    "w": 44,
+    "h": 44
+   },
+   {
+    "t": "Listen",
+    "w": 96,
+    "h": 40
+   },
+   {
+    "t": "remove",
+    "w": 44,
+    "h": 44
+   },
+   {
+    "t": "Fit",
+    "w": 56,
+    "h": 44
+   },
+   {
+    "t": "add",
+    "w": 44,
+    "h": 44
+   },
+   {
+    "t": "More",
+    "w": 87,
+    "h": 40
+   }
+  ],
+  "scroller": {
+   "top": 103,
+   "bottom": 836,
+   "h": 733,
+   "w": 1440,
+   "shown": true
+  },
+  "page": {
+   "top": 127,
+   "bottom": 1315,
+   "h": 1188,
+   "w": 1376,
+   "shown": true
+  },
+  "dock": {
+   "top": 835,
+   "bottom": 900,
+   "h": 65,
+   "w": 1440,
+   "shown": true
+  },
+  "pageNo": "2",
+  "overflowX": false,
+  "afterTyping4": "4",
+  "selectionMenu": "Highlight | Ask | Save card | Copy",
+  "spaceFrom": "4",
+  "spaceTo": "5"
+ },
+ "desk-1440-listening": {
+  "vw": 1440,
+  "vh": 900,
+  "header": {
+   "top": 0,
+   "bottom": 55,
+   "h": 55,
+   "w": 1440,
+   "shown": true
+  },
+  "bar": {
+   "top": 55,
+   "bottom": 103,
+   "h": 48,
+   "w": 1440,
+   "shown": true
+  },
+  "barRowScrollW": 1406,
+  "barRowClientW": 1406,
+  "barControls": [
+   {
+    "t": "1.05×",
+    "w": 61,
+    "h": 48
+   },
+   {
+    "t": "fast_rewind",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "fast_forward",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "more_horiz",
+    "w": 48,
+    "h": 48
+   },
+   {
+    "t": "Stop",
+    "w": 85,
+    "h": 48
+   }
+  ],
+  "scroller": {
+   "top": 103,
+   "bottom": 836,
+   "h": 733,
+   "w": 1440,
+   "shown": true
+  },
+  "page": {
+   "top": -432,
+   "bottom": 756,
+   "h": 1188,
+   "w": 1376,
+   "shown": true
+  },
+  "dock": {
+   "top": 835,
+   "bottom": 900,
+   "h": 65,
+   "w": 1440,
+   "shown": true
+  },
+  "pageNo": "5",
+  "overflowX": false,
+  "backToBar": true
+ },
+ "errors": []
+}

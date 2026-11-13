@@ -206,7 +206,7 @@ export interface LoadReport {
   next: FocusState;
 }
 
-const AppContext = createContext<AppState | null>(null);
+export const AppContext = createContext<AppState | null>(null);
 
 const DEFAULT_STORAGE_EXTENSION = "pdf";
 
