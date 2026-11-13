@@ -44,8 +44,10 @@ const GATE_FRAMES = 2;
 
 interface Tap {
   analyser: AnalyserNode;
-  time: Uint8Array;
-  freq: Uint8Array;
+  // Pinned to ArrayBuffer: the analyser's read methods reject a view that
+  // could be backed by a SharedArrayBuffer, which a bare `Uint8Array` allows.
+  time: Uint8Array<ArrayBuffer>;
+  freq: Uint8Array<ArrayBuffer>;
   lowFrom: number;
   lowTo: number;
   highFrom: number;

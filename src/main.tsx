@@ -18,6 +18,7 @@ import "./styles/workspace-viewport.css";
 import "./styles/workspace-resize.css";
 import "./styles/workspace-overlay.css";
 import "./styles/workspace-typography.css";
+import "./styles/arena.css";
 
 /**
  * `ResizeObserver loop completed with undelivered notifications` is benign per

@@ -343,6 +343,10 @@ async function getNeuronScope(): Promise<{
    *  primary neuron and sent their captured memories into it. */
   retrievalWikiIds: string[];
   allNeurons: boolean;
+  /** Plain chat: the user has no notebook loaded and has not widened reach to
+   *  all of them. Searches answer empty here rather than falling through to
+   *  an unscoped query — "nothing loaded" must not quietly mean "everything". */
+  notebookFree: boolean;
 }> {
   const [{ data: settings }, { data: sub }] = await Promise.all([
     supabase.from("user_settings").select("active_wiki_id, access_all_neurons" as any).maybeSingle(),
@@ -361,11 +365,13 @@ async function getNeuronScope(): Promise<{
     }
   }
   if (activeWikiId && !set.includes(activeWikiId)) set = [activeWikiId, ...set];
+  const allNeurons = !!(settings as any)?.access_all_neurons && !!(sub as any)?.subscribed;
   return {
     activeWikiId,
     activeWikiIds: set,
     retrievalWikiIds: withToolshed(set, await toolshedWikiId()),
-    allNeurons: !!(settings as any)?.access_all_neurons && !!(sub as any)?.subscribed,
+    allNeurons,
+    notebookFree: set.length === 0 && !allNeurons,
   };
 }
 
@@ -2149,7 +2155,8 @@ function buildLiveCapabilities(deps: ToolDeps): (cap: string, capArgs: unknown) 
       case "memory_search": {
         const q = sanitizeIlike(String(a.query || ""));
         const limit = Math.min(20, Math.max(1, Number(a.limit) || 10));
-        const { retrievalWikiIds, allNeurons } = await getNeuronScope();
+        const { retrievalWikiIds, allNeurons, notebookFree } = await getNeuronScope();
+        if (notebookFree) return { results: [], untrusted: true };
         const build = (withSupersedeFilter: boolean) => {
           let qq: any = supabase
             .from("knowledge_entries")
@@ -3531,7 +3538,16 @@ export async function executeChatTool(
         const q = sanitizeIlike(String(args.query || ""));
         if (!q) return { result: { error: "Empty query" }, event: { name, summary: "Empty query", ok: false } };
         const limit = Math.min(25, Math.max(1, Number(args.limit) || 10));
-        const { activeWikiId, activeWikiIds, retrievalWikiIds, allNeurons } = await getNeuronScope();
+        const { activeWikiId, activeWikiIds, retrievalWikiIds, allNeurons, notebookFree } = await getNeuronScope();
+        if (notebookFree) {
+          return {
+            result: {
+              entries: [],
+              note: "No notebook is loaded — this is a plain chat, so there are no saved notes in reach. If the user wants their notes, ask them to load a notebook (the notebook chip above the chat).",
+            },
+            event: { name, summary: "No notebook loaded — nothing to search", ok: true },
+          };
+        }
         const buildSearch = (withSupersedeFilter: boolean, withCardCols: boolean) => {
           let qq: any = supabase
             .from("knowledge_entries")

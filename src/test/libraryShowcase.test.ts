@@ -355,10 +355,12 @@ describe("Library wiring", () => {
     expect(LIBRARY).toContain("{dragOver && <VaultDropOverlay");
   });
 
-  it("offers the Showcase as a fourth view and remembers it", () => {
-    expect(LIBRARY).toContain('type ViewMode = "shelves" | "list" | "showcase" | "graph";');
+  it("offers the Showcase as a view and remembers it", () => {
+    expect(LIBRARY).toContain('type ViewMode = "cards" | "shelves" | "list" | "showcase" | "graph";');
     expect(LIBRARY).toContain('{ id: "showcase", icon: "play_circle", label: "Showcase" },');
-    expect(LIBRARY).toContain('v === "showcase" ? v : "shelves"');
+    // A stored "showcase" is still honoured; what changed is the fallback,
+    // which is the card collection now rather than Shelves.
+    expect(LIBRARY).toContain('if (v === "list" || v === "graph" || v === "showcase") return v;');
     expect(LIBRARY).toContain('view === "showcase" ? (');
   });
 

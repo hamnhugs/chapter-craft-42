@@ -27,6 +27,9 @@ interface BuildOpts {
    * without revealing its name.
    */
   activeNeurons?: { id: string; name: string }[];
+  /** True when the user is chatting with NO notebook loaded: no notes are
+   *  retrieved and the prompt says nothing is being saved. */
+  plainChat?: boolean;
   /** When true (paid "Access all neurons" setting), retrieval spans every neuron instead of only the loaded ones. */
   allNeurons?: boolean;
   /** "Reflex cues" (Phase 2): when true, the assistant proactively flags a
@@ -415,7 +418,7 @@ export function applyRetrievalBudget(
 //     the context best, so the retrieved memories — the most query-specific,
 //     highest-value content — go LAST, right before the conversation.
 export async function buildChatSystemPrompt({
-  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeNeurons = [], allNeurons, reflex = true, maxReplySentences = 0, foundryTools = false, programTools = false, leanMode = "full", offeredTools, previousAssistantText, booksInContext, highlights, routePrompts = null, memoryContext = "pointers",
+  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeNeurons = [], plainChat = false, allNeurons, reflex = true, maxReplySentences = 0, foundryTools = false, programTools = false, leanMode = "full", offeredTools, previousAssistantText, booksInContext, highlights, routePrompts = null, memoryContext = "pointers",
 }: BuildOpts): Promise<BuiltPrompt> {
   const pointerMode = memoryContext !== "full";
   const tier = deepResearch ? "deep" : voiceMode ? "voice" : "chat";
@@ -472,6 +475,12 @@ export async function buildChatSystemPrompt({
   // than promoting a secondary to "active" in the prompt.
   const activeWikiName = activeNeurons[0]?.name || null;
   const scopeIds = activeNeurons.map((n) => n.id);
+  // Plain chat (the user unloaded every notebook, reach not widened): every
+  // notes read below is skipped. Without this an empty scope falls through to
+  // `null`, which the retrieval layer reads as "every notebook" — the
+  // opposite of none. It is an explicit input rather than inferred from an
+  // empty `activeNeurons`, which callers that simply pass no scope rely on.
+  const notebookFree = plainChat && !allNeurons && scopeIds.length === 0;
 
   if (customSystemPrompt && customSystemPrompt.trim()) {
     parts.push("## User Custom Instructions", customSystemPrompt.trim(), "");
@@ -514,6 +523,10 @@ export async function buildChatSystemPrompt({
     parts.push(
       `The user has ${namedNeurons.length} notebooks LOADED TOGETHER: ${list}. ${upperFirstChar(reachSpan)} all of the loaded notebooks — but not the user's other, unloaded notebooks.`,
       "The user loaded these together to learn ACROSS them. When concepts from different loaded notebooks genuinely bear on the current question, connect and compare them inline in your explanation — juxtaposing related-but-confusable items and naming which notebook each came from (research: comparing related cases roughly triples transfer, and interleaving related topics substantially improves retention). Two rules keep this useful: (1) only draw a cross-notebook link when it does explanatory work for the current question — decorative \"fun fact\" connections measurably hurt learning; (2) if a loaded notebook has nothing relevant to the question, leave it out entirely rather than forcing it in.",
+    );
+  } else if (notebookFree) {
+    parts.push(
+      "No notebook is loaded: this is a plain conversation. None of the user's saved notes are in reach this turn and nothing said here is being saved to one. Just answer. If the user asks you to remember, save or recall something, say in one sentence that no notebook is loaded and that they can load or create one from the notebook chip above the chat.",
     );
   } else if (activeWikiName) {
     parts.push(`The user's active notebook is "${activeWikiName}". ${reachScoped} to ONLY this notebook — you cannot read the user's other notebooks unless they load one or enable "Access all notebooks" in settings. New knowledge captured this session is scoped to it.`);
@@ -1143,7 +1156,7 @@ export async function buildChatSystemPrompt({
     if (got && !routing) routing = got;
     return r;
   };
-  if (retrievalQuery) {
+  if (retrievalQuery && !notebookFree) {
     try {
       // One call scopes and fuses every open notebook server-side (one
       // embedding whatever the number). null = every notebook; RLS still

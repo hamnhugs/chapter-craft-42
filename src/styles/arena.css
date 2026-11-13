@@ -1,0 +1,357 @@
+/* =====================================================================
+   ARENA SHELL — the app's game-style chrome.
+
+   One bottom dock on every screen size (five big tabs, the middle one home),
+   a wallet in the top bar, chunky pressable buttons, and collectible cards
+   for the library and the Store.
+
+   Everything here is drawn from the active theme's tokens (--primary,
+   --accent, --card, …), so each of the five themes gets its own arena
+   without a line of per-theme CSS in this file. The dock keeps the
+   `data-mobile-nav` attribute and the `.bg-accent/15` + `.text-accent`
+   active markup of the bar it replaced, which is what the themes' own
+   selectors in index.css already target.
+   ===================================================================== */
+
+:root { --cc-dock-h: 0px; }
+:root.cc-has-dock { --cc-dock-h: 4rem; }
+
+/* Clearance for the fixed dock, home indicator included. */
+.cc-dock-clearance { padding-bottom: calc(var(--cc-dock-h) + env(safe-area-inset-bottom, 0px)); }
+
+/* ── Dock ─────────────────────────────────────────────────────────────── */
+.cc-dock {
+  box-shadow: 0 -6px 24px -12px rgb(0 0 0 / 0.45);
+}
+.cc-dock-row { height: var(--cc-dock-h); }
+.cc-dock-tab {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border-radius: 0.75rem;
+  outline: none;
+  transition: flex-grow 180ms ease-out;
+}
+/* Hairline between tabs — the bar reads as five slots, not a strip. */
+.cc-dock-tab + .cc-dock-tab::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 22%;
+  bottom: 22%;
+  width: 1px;
+  background: hsl(var(--border) / 0.7);
+}
+.cc-dock-tab[aria-current="page"] { flex-grow: 1.45; }
+.cc-dock-tab[aria-current="page"]::before,
+.cc-dock-tab[aria-current="page"] + .cc-dock-tab::before { opacity: 0; }
+.cc-dock-icon {
+  transition: transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.cc-dock-tab[aria-current="page"] .cc-dock-icon { transform: translateY(-3px) scale(1.22); }
+.cc-dock-tab:active .cc-dock-icon { transform: scale(0.92); }
+.cc-dock-tab:focus-visible { box-shadow: inset 0 0 0 2px hsl(var(--accent) / 0.6); }
+.cc-dock-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-inline: 4px;
+}
+.cc-dock-tab[aria-current="page"] .cc-dock-label { font-weight: 700; }
+/* A count on a tab (unclaimed daily coins). */
+.cc-dock-dot {
+  position: absolute;
+  top: 2px;
+  right: 6px;
+  min-width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: hsl(var(--accent));
+  box-shadow: 0 0 0 2px hsl(var(--background));
+}
+
+/* Short windows (a 2x-scaled 1080p laptop gives the app 956x506): the dock
+   lies down — icon beside label — and gives a full rem back to the page. */
+@media (max-height: 620px) {
+  :root.cc-has-dock { --cc-dock-h: 3rem; }
+  .cc-dock-tab { flex-direction: row; gap: 6px; }
+  .cc-dock-tab[aria-current="page"] .cc-dock-icon { transform: scale(1.12); }
+  .cc-dock-icon { height: 1.75rem !important; width: 2.5rem !important; }
+}
+@media (max-height: 620px) and (max-width: 520px) {
+  /* No room for five labels in a row on a short AND narrow window. */
+  .cc-dock-tab:not([aria-current="page"]) .cc-dock-label { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-dock-tab, .cc-dock-icon { transition: none; }
+}
+
+/* ── Chunky button ────────────────────────────────────────────────────── */
+/* A slab with a darker lip underneath; pressing it pushes the slab down
+   onto the lip. `--btn` is an HSL triplet so any token can colour it. */
+.cc-btn3d {
+  --btn: var(--primary-container);
+  --btn-ink: var(--on-primary-container);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.55rem 1rem;
+  border-radius: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  color: hsl(var(--btn-ink));
+  background: linear-gradient(180deg, hsl(var(--btn) / 1) 0%, hsl(var(--btn) / 0.86) 100%);
+  box-shadow:
+    inset 0 1.5px 0 0 rgb(255 255 255 / 0.28),
+    0 4px 0 0 color-mix(in srgb, hsl(var(--btn)) 58%, #000),
+    0 7px 14px -6px rgb(0 0 0 / 0.5);
+  transform: translateY(0);
+  transition: transform 70ms ease-out, box-shadow 70ms ease-out, filter 120ms;
+  -webkit-text-fill-color: currentColor;
+}
+.cc-btn3d:hover:not(:disabled) { filter: brightness(1.07); }
+.cc-btn3d:active:not(:disabled) {
+  transform: translateY(3px);
+  box-shadow:
+    inset 0 1.5px 0 0 rgb(255 255 255 / 0.2),
+    0 1px 0 0 color-mix(in srgb, hsl(var(--btn)) 58%, #000),
+    0 3px 8px -4px rgb(0 0 0 / 0.5);
+}
+.cc-btn3d:disabled { opacity: 0.55; cursor: not-allowed; }
+.cc-btn3d:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 3px; }
+.cc-btn3d[data-tone="accent"] { --btn: var(--accent); --btn-ink: var(--accent-foreground); }
+.cc-btn3d[data-tone="quiet"] { --btn: var(--surface-container-highest); --btn-ink: var(--foreground); }
+.cc-btn3d[data-tone="danger"] { --btn: var(--error-container); --btn-ink: var(--on-error-container); }
+.cc-btn3d[data-size="lg"] { padding: 0.8rem 1.4rem; font-size: 1.05rem; border-radius: 1rem; }
+.cc-btn3d[data-size="sm"] { padding: 0.35rem 0.7rem; font-size: 0.78rem; border-radius: 0.6rem; }
+
+/* ── Wallet pill ──────────────────────────────────────────────────────── */
+.cc-coin {
+  display: inline-grid;
+  place-items: center;
+  width: 1.25em;
+  height: 1.25em;
+  border-radius: 999px;
+  font-size: 0.72em;
+  font-weight: 900;
+  line-height: 1;
+  color: #5a3a00;
+  -webkit-text-fill-color: #5a3a00;
+  background: radial-gradient(circle at 34% 28%, #fff3b0 0%, #ffd23f 42%, #f0a202 100%);
+  box-shadow: inset 0 0 0 1.5px #c47f00, 0 1px 2px rgb(0 0 0 / 0.35);
+  flex: none;
+}
+.cc-wallet {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  height: 2rem;
+  padding: 0 0.3rem 0 0.5rem;
+  border-radius: 999px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--foreground));
+  background: hsl(var(--surface-container-highest) / 0.85);
+  box-shadow: inset 0 0 0 1px hsl(var(--outline-variant) / 0.5), inset 0 -2px 0 0 rgb(0 0 0 / 0.18);
+  transition: filter 120ms;
+}
+.cc-wallet:hover { filter: brightness(1.1); }
+.cc-wallet-plus {
+  display: grid;
+  place-items: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 999px;
+  color: hsl(var(--accent-foreground));
+  background: hsl(var(--accent));
+  box-shadow: 0 2px 0 0 color-mix(in srgb, hsl(var(--accent)) 58%, #000);
+}
+
+/* ── Collectible card ─────────────────────────────────────────────────── */
+/* `--tier` is the frame colour (an HSL triplet), set per tier below. */
+.cc-card {
+  --tier: var(--outline);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  border-radius: 0.85rem;
+  padding: 3px;
+  background: linear-gradient(160deg, hsl(var(--tier) / 0.95) 0%, hsl(var(--tier) / 0.55) 55%, hsl(var(--tier) / 0.85) 100%);
+  box-shadow: 0 4px 0 0 color-mix(in srgb, hsl(var(--tier)) 45%, #000), 0 10px 18px -10px rgb(0 0 0 / 0.6);
+  transition: transform 140ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 140ms;
+  outline: none;
+}
+.cc-card:hover { transform: translateY(-4px) rotate(-0.6deg); }
+.cc-card:active { transform: translateY(2px) scale(0.985); box-shadow: 0 1px 0 0 color-mix(in srgb, hsl(var(--tier)) 45%, #000), 0 4px 10px -8px rgb(0 0 0 / 0.6); }
+.cc-card:focus-visible { box-shadow: 0 0 0 3px hsl(var(--ring)), 0 4px 0 0 color-mix(in srgb, hsl(var(--tier)) 45%, #000); }
+.cc-card[data-tier="leaflet"] { --tier: var(--outline); }
+.cc-card[data-tier="volume"] { --tier: var(--secondary); }
+.cc-card[data-tier="tome"] { --tier: var(--primary-container); }
+.cc-card[data-tier="opus"] { --tier: var(--accent); }
+/* The grandest tier catches the light. */
+.cc-card[data-tier="opus"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(115deg, transparent 30%, rgb(255 255 255 / 0.22) 46%, transparent 60%);
+  background-size: 250% 100%;
+  animation: cc-card-sheen 4.5s ease-in-out infinite;
+}
+@keyframes cc-card-sheen {
+  0%, 55% { background-position: 120% 0; }
+  100% { background-position: -60% 0; }
+}
+.cc-card-face {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  border-radius: 0.65rem;
+  overflow: hidden;
+  background: hsl(var(--surface-container-high));
+}
+.cc-card-art {
+  position: relative;
+  aspect-ratio: 4 / 5;
+  overflow: hidden;
+  background: hsl(var(--surface-container-highest));
+}
+.cc-card-name {
+  padding: 0.35rem 0.45rem 0.15rem;
+  font-weight: 800;
+  font-size: 0.74rem;
+  line-height: 1.15;
+  color: hsl(var(--foreground));
+  -webkit-text-fill-color: hsl(var(--foreground));
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 2.05rem;
+}
+/* Corner badge: how long the book takes to read. */
+.cc-card-cost {
+  position: absolute;
+  top: -7px;
+  left: -7px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  min-width: 1.75rem;
+  height: 1.75rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 900;
+  color: hsl(var(--primary-foreground));
+  -webkit-text-fill-color: hsl(var(--primary-foreground));
+  background: hsl(var(--primary));
+  box-shadow: inset 0 0 0 2px hsl(var(--background)), 0 2px 0 0 rgb(0 0 0 / 0.4);
+}
+.cc-card-level {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.1rem 0.45rem 0.4rem;
+  font-size: 0.62rem;
+  font-weight: 800;
+  color: hsl(var(--on-surface-variant));
+}
+.cc-meter {
+  position: relative;
+  flex: 1;
+  height: 0.5rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: hsl(var(--background) / 0.7);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.45);
+}
+.cc-meter > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, hsl(var(--accent) / 1), hsl(var(--accent) / 0.75));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.35);
+}
+.cc-meter[data-full] > span { background: linear-gradient(180deg, #ffe27a, #f0a202); }
+/* Diagonal corner ribbon ("NEW", "BEST VALUE"). */
+.cc-ribbon {
+  position: absolute;
+  top: 9px;
+  right: -26px;
+  z-index: 2;
+  width: 92px;
+  padding: 2px 0;
+  transform: rotate(38deg);
+  text-align: center;
+  font-size: 0.56rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: hsl(var(--accent-foreground));
+  -webkit-text-fill-color: hsl(var(--accent-foreground));
+  background: hsl(var(--accent));
+  box-shadow: 0 2px 4px rgb(0 0 0 / 0.35);
+}
+
+/* Section banner: a plaque with a title, used in the collection and Store. */
+.cc-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.85rem;
+  border-radius: 0.8rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  color: hsl(var(--foreground));
+  background: linear-gradient(180deg, hsl(var(--surface-container-highest)) 0%, hsl(var(--surface-container)) 100%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08), inset 0 0 0 1px hsl(var(--outline-variant) / 0.35), 0 3px 0 0 hsl(var(--background) / 0.9);
+}
+
+/* ── Store ────────────────────────────────────────────────────────────── */
+.cc-offer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem 0.75rem 0.85rem;
+  border-radius: 1rem;
+  overflow: hidden;
+  text-align: center;
+  background: linear-gradient(180deg, hsl(var(--surface-container-highest)) 0%, hsl(var(--surface-container-low)) 100%);
+  box-shadow: inset 0 0 0 1.5px hsl(var(--outline-variant) / 0.45), 0 5px 0 0 hsl(var(--background) / 0.9), 0 12px 20px -14px rgb(0 0 0 / 0.7);
+}
+/* A shelf tag has more to say than a card's "NEW". */
+.cc-offer .cc-ribbon { top: 15px; right: -34px; width: 132px; font-size: 0.5rem; }
+.cc-offer[data-featured] { box-shadow: inset 0 0 0 2px hsl(var(--accent) / 0.85), 0 5px 0 0 hsl(var(--background) / 0.9), 0 0 26px -8px hsl(var(--accent) / 0.6); }
+.cc-offer-icon {
+  display: grid;
+  place-items: center;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 1rem;
+  color: #5a3a00;
+  background: radial-gradient(circle at 34% 28%, #fff3b0 0%, #ffd23f 45%, #f0a202 100%);
+  box-shadow: inset 0 0 0 2px #c47f00, 0 4px 0 0 #8a5a00;
+}
+.cc-offer-icon .material-symbols-outlined { -webkit-text-fill-color: #5a3a00; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-card, .cc-btn3d { transition: none; }
+  .cc-card[data-tier="opus"]::after { animation: none; }
+  .cc-card:hover { transform: none; }
+}

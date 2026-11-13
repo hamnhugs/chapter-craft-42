@@ -1,13 +1,31 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { claimPurchases, formatCoins } from "@/lib/coins";
+import { refreshPlan } from "@/hooks/usePlan";
 
 /**
- * Payment success is currently a neutral landing page: billing is disabled
- * and every signed-in user has full access. Flip OPEN_ACCESS off in
- * src/lib/openAccess.ts to restore the Stripe verification flow.
+ * Where Stripe sends people back to.
+ *
+ * Two kinds of purchase land here. A coin pack is credited by asking the
+ * server to re-check what has been paid for (claim-coins — safe to repeat, a
+ * purchase is only ever credited once); a plan is picked up by refreshing
+ * entitlements. Neither depends on this page being reached: the Store runs
+ * the same check every time it opens, so closing the tab early loses nothing.
  */
 const PaymentSuccess: React.FC = () => {
+  const [credited, setCredited] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const coins = await claimPurchases();
+      void refreshPlan();
+      if (!cancelled) setCredited(coins);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-background px-6 text-center gap-5">
       <span
@@ -17,12 +35,15 @@ const PaymentSuccess: React.FC = () => {
         verified
       </span>
       <h1 className="font-headline text-4xl text-foreground">You're all set</h1>
-      <p className="text-on-surface-variant text-sm max-w-sm">
-        Everything is open right now — no payment needed. Unlimited notebooks,
-        Deep Research, and every Pro feature are yours to use.
+      <p className="text-on-surface-variant text-sm max-w-sm" aria-live="polite">
+        {credited === null
+          ? "Checking your purchase…"
+          : credited > 0
+            ? `${formatCoins(credited)} coins have been added to your wallet.`
+            : "Thanks! Anything you bought is on your account — coins show in the Store, plans in Settings."}
       </p>
       <Button asChild size="lg" className="mt-2">
-        <Link to="/">Start exploring</Link>
+        <Link to="/">Back to Bookworm</Link>
       </Button>
     </div>
   );

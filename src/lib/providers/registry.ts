@@ -16,6 +16,10 @@ import { ChatProviderAdapter, ProviderId } from "./types";
 import { openrouterAdapter } from "./openrouterAdapter";
 import { nvidiaAdapter } from "./nvidiaAdapter";
 import { geminiAdapter } from "./geminiAdapter";
+import { coinsAdapter } from "./coinsAdapter";
+import { COINS_PREFIX } from "@/lib/coins";
+
+export { COINS_PREFIX };
 
 interface ProviderRecord {
   id: ProviderId;
@@ -35,6 +39,12 @@ interface ProviderRecord {
   /** True when the provider has a genuinely free tier for chat — used to
    *  suggest an escape when a paid provider refuses. */
   freeChatTier: boolean;
+  /** True when the provider needs no key at all from the user (Bookworm AI:
+   *  paid for with coins, authorised by the user's own session). */
+  keyless?: boolean;
+  /** False keeps the provider out of "add a model by id" pickers — its
+   *  models are a fixed list the app offers, not something a user types. */
+  userAddable?: boolean;
 }
 
 export const NVIDIA_PREFIX = "nvidia:";
@@ -43,6 +53,17 @@ export const GEMINI_PREFIX = "gemini:";
 /** Order matters for display only. OpenRouter is last because it is the
  *  bare-id fallback and must be matched by elimination, not by prefix. */
 const PROVIDERS: ProviderRecord[] = [
+  {
+    id: "bookworm",
+    prefix: COINS_PREFIX,
+    label: "Bookworm AI",
+    adapter: coinsAdapter,
+    keyField: null, // no key anywhere: the relay bills the user's coin wallet
+    keyUrl: "",
+    freeChatTier: false,
+    keyless: true,
+    userAddable: false,
+  },
   {
     id: "nvidia",
     prefix: NVIDIA_PREFIX,
@@ -117,9 +138,21 @@ export function providerConfigured(
   p: ProviderId,
   keys: { apiKey?: string; geminiApiKey?: string; nvidiaKeyLast4?: string },
 ): boolean {
-  const field = recordById(p).keyField;
+  const rec = recordById(p);
+  if (rec.keyless) return true;
+  const field = rec.keyField;
   if (field === null) return !!keys.nvidiaKeyLast4;
   return !!keys[field];
+}
+
+/** True for a provider that runs with no key from the user. */
+export function providerKeyless(p: ProviderId): boolean {
+  return !!recordById(p).keyless;
+}
+
+/** Providers a user can add a model to by typing its id. */
+export function addableProviders(): ProviderId[] {
+  return PROVIDERS.filter((p) => p.userAddable !== false).map((p) => p.id);
 }
 
 /** The key string to send for this provider ("" when the browser holds none). */

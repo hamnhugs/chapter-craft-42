@@ -92,6 +92,20 @@
       "when": 1789731850215,
       "tag": "0012_prompt_routing",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794552196074,
+      "tag": "0013_coins",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1794552487956,
+      "tag": "0014_memory_redesign_additive",
+      "breakpoints": true
     }
   ]
 }
