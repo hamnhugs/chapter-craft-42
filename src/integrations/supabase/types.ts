@@ -691,6 +691,87 @@ export type Database = {
           },
         ]
       }
+      coin_ledger: {
+        Row: {
+          balance_after: number
+          created_at: string
+          delta: number
+          id: string
+          kind: string
+          note: string | null
+          ref: string | null
+          user_id: string
+        }
+        Insert: {
+          balance_after: number
+          created_at?: string
+          delta: number
+          id?: string
+          kind: string
+          note?: string | null
+          ref?: string | null
+          user_id: string
+        }
+        Update: {
+          balance_after?: number
+          created_at?: string
+          delta?: number
+          id?: string
+          kind?: string
+          note?: string | null
+          ref?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      coin_passes: {
+        Row: {
+          created_at: string
+          expires_at: string
+          id: string
+          kind: string
+          starts_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at: string
+          id?: string
+          kind: string
+          starts_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          id?: string
+          kind?: string
+          starts_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      coin_wallets: {
+        Row: {
+          balance: number
+          lifetime_purchased: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          balance?: number
+          lifetime_purchased?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          balance?: number
+          lifetime_purchased?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       consolidation_queue: {
         Row: {
           created_at: string
@@ -3175,6 +3256,8 @@ export type Database = {
         }
         Returns: boolean
       }
+      buy_pass: { Args: { _kind: string }; Returns: Json }
+      claim_daily_coins: { Args: never; Returns: Json }
       claim_due_schedules: {
         Args: { p_limit?: number }
         Returns: {
@@ -3184,6 +3267,17 @@ export type Database = {
           tz: string
           user_id: string
         }[]
+      }
+      coin_apply: {
+        Args: {
+          _clamp?: boolean
+          _delta: number
+          _kind: string
+          _note?: string
+          _ref?: string
+          _user_id: string
+        }
+        Returns: number
       }
       conflicts_for_wiki: {
         Args: { target_wiki_id: string }
@@ -3549,6 +3643,7 @@ export type Database = {
         }
       }
       my_entitlements: { Args: never; Returns: Json }
+      my_wallet: { Args: never; Returns: Json }
       pause_program_schedule: {
         Args: { p_enabled: boolean; p_program_id: string }
         Returns: Json
