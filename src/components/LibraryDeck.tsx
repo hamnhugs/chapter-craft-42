@@ -1,8 +1,12 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import * as MenuPrimitive from "@radix-ui/react-dropdown-menu";
 import { toast } from "sonner";
 import { BookDocument } from "@/types/library";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useApp } from "@/context/AppContext";
+import { useAuth } from "@/hooks/useAuth";
+import { useChatSettings } from "@/hooks/useChatSettings";
 import { bookProfile } from "@/lib/bookProfile";
 import { CardEntry, CardSort, MAX_LEVEL, readTimeLabel, readingNow, sortCards, toCard } from "@/lib/bookCard";
 import { ART_H, ART_W, coverArt } from "@/lib/coverArt";
@@ -10,24 +14,42 @@ import { categoryColor } from "@/lib/categoryColors";
 import { seedOf } from "@/lib/bookProfile";
 import { loadLastPage } from "@/hooks/useReaderPrefs";
 import type { BookFolder } from "@/lib/bookFolders";
+import { BOOK_CONTEXT_MAX_BOOKS, bookContextStore, bookHasCatalog } from "@/lib/chatBooks";
+import { catalogJobs } from "@/lib/catalogJobs";
+import { acquireDigestRun, generateShelfDigest, releaseDigestRun } from "@/lib/shelfDigest";
+import { useShelfMarks, type ShelfMark } from "@/lib/shelfMarks";
+import { OPEN_NEURON_SWITCHER_EVENT } from "@/components/WikiQuickSwitcher";
 
 /**
- * The library as a card collection.
+ * The library as a deck builder.
  *
- * Every book is a card: its cover (page one, captured at upload), a frame in
- * its tier's colour, a level that climbs as you read, and a corner badge with
- * the hours it takes. Books in progress sit in a "Reading now" deck at the
- * top; the rest is the collection underneath.
+ * Three things used to live on three screens: books (the card grid), shelves
+ * (their own view) and the notebook Counsel writes to (a dialog that
+ * interrupted every load). Here they are one panel, laid out the way a card
+ * game lays out a deck:
  *
- * Tapping a card opens its PROFILE — the one place that gathers everything
- * the app knows about a book and everything you can do with it. The grid
- * itself carries no menus: a card does one thing when tapped.
+ *   - SHELVES are the deck tabs. One is open at a time; "Reading now" is a
+ *     tab the app fills by itself.
+ *   - The open shelf's BOOKS sit in slots — eight, because Counsel takes
+ *     eight books at a time.
+ *   - The NOTEBOOK Counsel is using sits beside the slots, and "Ask Counsel"
+ *     takes the shelf and that notebook to the chat. Nothing is asked on the
+ *     way.
+ *   - Underneath is the collection: every book.
+ *
+ * Tapping a card lifts it and offers what you can do with it: Info (the
+ * book's profile), Read, and add to / take off the open shelf. Opening a tab
+ * only looks at a shelf — it never changes what Counsel has loaded.
  */
 
 /** Cards mounted at once. The grid grows by this much as you near the end —
  *  a thousand-book library must not mount a thousand covers up front. */
 const PAGE = 60;
 const SORT_KEY = "vault_deck_sort";
+const DECK_KEY = "vault_deck_tab";
+/** The automatic tab: books in progress. Not a book_folders row. */
+const NOW_ID = "__reading_now__";
+const SLOTS = BOOK_CONTEXT_MAX_BOOKS;
 
 const SORTS: { id: CardSort; label: string; icon: string }[] = [
   { id: "recent", label: "Newest", icon: "schedule" },
@@ -87,42 +109,103 @@ const LevelMeter: React.FC<{ card: CardEntry; className?: string }> = ({ card, c
   </span>
 );
 
+const MENU_CLEARANCE = { top: 56, bottom: 72, left: 10, right: 10 };
+
+/** The shelf a card can be put on or taken off from its menu. */
+interface OpenShelf { id: string; name: string; mark?: ShelfMark }
+
+interface CardActions {
+  onInfo: (id: string) => void;
+  onRead: (book: BookDocument) => void;
+  onToggleShelf: (book: BookDocument, shelf: OpenShelf) => void;
+}
+
 const BookCardTile: React.FC<{
   card: CardEntry;
   busy?: string | null;
-  onOpen: (id: string) => void;
+  /** A card in a shelf slot: art and title only. */
+  compact?: boolean;
+  /** The open shelf, when it is one you fill by hand. */
+  shelf?: OpenShelf | null;
+  actions: CardActions;
   highlight?: (text: string) => React.ReactNode;
-}> = React.memo(({ card, busy, onOpen, highlight }) => {
+}> = React.memo(({ card, busy, compact, shelf, actions, highlight }) => {
   const { book, tier, level } = card;
   const time = readTimeLabel(book.pageCount);
-  const fresh = level.pct === 0 && Date.now() - book.addedAt < 3 * 86_400_000;
+  const fresh = !compact && level.pct === 0 && Date.now() - book.addedAt < 3 * 86_400_000;
+  const onShelf = !!shelf && book.folderIds.includes(shelf.id);
   return (
-    <button
-      type="button"
-      data-deck-card
-      data-tier={tier.id}
-      onClick={() => onOpen(book.id)}
-      className="cc-card w-full"
-      aria-label={`${book.title} — ${tier.label}, level ${level.level}${level.maxed ? " (finished)" : ""}. Open profile.`}
-    >
-      {time && <span className="cc-card-cost" title={`About ${time} to read`}>{time}</span>}
-      <span className="cc-card-face">
-        <span className="cc-card-art">
-          <CardArt book={book} />
-          {fresh && <span className="cc-ribbon">New</span>}
-          {busy && (
-            <span className="absolute inset-x-0 bottom-0 px-1.5 py-1 text-[10px] font-bold text-center text-white bg-black/65 backdrop-blur-sm">
-              {busy}
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          data-deck-card
+          data-tier={tier.id}
+          data-compact={compact || undefined}
+          className="cc-card w-full"
+          aria-label={`${book.title} — ${tier.label}, level ${level.level}${level.maxed ? " (finished)" : ""}${onShelf ? `, on ${shelf!.name}` : ""}`}
+        >
+          {time && <span className="cc-card-cost" title={`About ${time} to read`}>{time}</span>}
+          {onShelf && !compact && (
+            <span
+              className="cc-card-onshelf"
+              style={shelf!.mark ? { background: shelf!.mark.color, color: shelf!.mark.ink } : undefined}
+              title={`On ${shelf!.name}`}
+            >
+              <span className="material-symbols-outlined" aria-hidden>check</span>
             </span>
           )}
-        </span>
-        <span className="cc-card-name">{highlight ? highlight(book.title) : book.title}</span>
-        <span className="cc-card-level">
-          <span className="shrink-0">{level.maxed ? "MAX" : `Lv ${level.level}`}</span>
-          <LevelMeter card={card} />
-        </span>
-      </span>
-    </button>
+          <span className="cc-card-face">
+            <span className="cc-card-art">
+              <CardArt book={book} />
+              {fresh && <span className="cc-ribbon">New</span>}
+              {busy && (
+                <span className="absolute inset-x-0 bottom-0 px-1.5 py-1 text-[10px] font-bold text-center text-white bg-black/65 backdrop-blur-sm">
+                  {busy}
+                </span>
+              )}
+            </span>
+            <span className="cc-card-name">{highlight ? highlight(book.title) : book.title}</span>
+            {!compact && (
+              <span className="cc-card-level">
+                <span className="shrink-0">{level.maxed ? "MAX" : `Lv ${level.level}`}</span>
+                <LevelMeter card={card} />
+              </span>
+            )}
+          </span>
+        </button>
+      </DropdownMenuTrigger>
+      {/* Beside the card where there is width for it, under it on a phone —
+          and never under the app bar or the dock. */}
+      <DropdownMenuContent
+        side={typeof window !== "undefined" && window.innerWidth >= 640 ? "right" : "bottom"}
+        align="center"
+        sideOffset={10}
+        collisionPadding={MENU_CLEARANCE}
+        className="cc-card-menu"
+        aria-label={`Actions for ${book.title}`}
+      >
+        <MenuPrimitive.Item asChild onSelect={() => actions.onInfo(book.id)}>
+          <button type="button" className="cc-btn3d" data-tone="quiet">
+            <span className="material-symbols-outlined" aria-hidden>info</span> Info
+          </button>
+        </MenuPrimitive.Item>
+        <MenuPrimitive.Item asChild onSelect={() => actions.onRead(book)}>
+          <button type="button" className="cc-btn3d">
+            <span className="material-symbols-outlined" aria-hidden>auto_stories</span>
+            {level.pct > 0 && !level.maxed ? "Continue" : "Read"}
+          </button>
+        </MenuPrimitive.Item>
+        {shelf && (
+          <MenuPrimitive.Item asChild onSelect={() => actions.onToggleShelf(book, shelf)}>
+            <button type="button" className="cc-btn3d" data-tone={onShelf ? "quiet" : "accent"}>
+              <span className="material-symbols-outlined" aria-hidden>{onShelf ? "remove" : "add"}</span>
+              <span className="truncate">{onShelf ? `Take off ${shelf.name}` : `Add to ${shelf.name}`}</span>
+            </button>
+          </MenuPrimitive.Item>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 });
 BookCardTile.displayName = "BookCardTile";
@@ -161,7 +244,7 @@ const BookProfileDialog: React.FC<{
   handlers: DeckHandlers;
   onClose: () => void;
 }> = ({ card, shelves, softDelete, busy, handlers, onClose }) => {
-  const { toggleBookShelf, setBookCover, setActiveBookSilent, setActiveTab } = useApp();
+  const { toggleBookShelf, setBookCover, loadFocus } = useApp();
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState("");
   const coverInput = useRef<HTMLInputElement>(null);
@@ -202,10 +285,12 @@ const BookProfileDialog: React.FC<{
     else toast.error("Couldn't save the cover — try again in a moment.");
   };
 
+  // "Ask Counsel" means the same on a book as on a shelf: take this to the
+  // chat. It used to point the reader at the book and switch tabs, which left
+  // Counsel discussing whatever shelf was loaded instead.
   const askCounsel = () => {
-    setActiveBookSilent(book.id);
     onClose();
-    setActiveTab("chat");
+    void loadFocus({ kind: "books", bookIds: [book.id], neurons: { kind: "keep" } });
   };
 
   const stats: { label: string; value: string; icon: string }[] = [
@@ -428,17 +513,32 @@ const BookProfileDialog: React.FC<{
 };
 
 const LibraryDeck: React.FC<{
+  /** What search leaves on screen — the collection. */
   books: BookDocument[];
+  /** The whole library — what a shelf really holds, whatever is being searched. */
+  allBooks: BookDocument[];
   shelves: BookFolder[];
-  /** True while a search is narrowing the list — the Reading-now deck steps
-   *  aside so results are the first thing on screen. */
+  /** True while a search is narrowing the list — the slots step aside so
+   *  results are the first thing on screen. */
   filtered: boolean;
   softDelete: boolean;
   /** Book id → a short line about a job running on it ("Finding chapters…"). */
   busyByBook: Map<string, string>;
   handlers: DeckHandlers;
   highlight?: (text: string) => React.ReactNode;
-}> = ({ books, shelves, filtered, softDelete, busyByBook, handlers, highlight }) => {
+}> = ({ books, allBooks, shelves, filtered, softDelete, busyByBook, handlers, highlight }) => {
+  const {
+    toggleBookShelf, createShelf, renameShelf, deleteShelf, loadFocus, activeWikis, membershipLoaded,
+    applyChapterGists, applyBookSummary, applyShelfDigest,
+  } = useApp();
+  const { user } = useAuth();
+  const { selectedModel, apiKey, geminiApiKey, nvidiaKeyLast4 } = useChatSettings();
+  const marks = useShelfMarks();
+  // "Ask Counsel" writes the book-context store; on a cold start straight to
+  // the Library nothing else has initialised it yet.
+  useEffect(() => { bookContextStore.init(user?.id ?? null); }, [user?.id]);
+  const loaded = useSyncExternalStore(bookContextStore.subscribe, bookContextStore.get);
+
   const [sort, setSort] = useState<CardSort>(() => {
     try {
       const v = localStorage.getItem(SORT_KEY) as CardSort | null;
@@ -448,16 +548,55 @@ const LibraryDeck: React.FC<{
   useEffect(() => { try { localStorage.setItem(SORT_KEY, sort); } catch { /* private mode */ } }, [sort]);
   const [openId, setOpenId] = useState<string | null>(null);
   const [shown, setShown] = useState(PAGE);
+  const [looseOnly, setLooseOnly] = useState(false);
   const sentinel = useRef<HTMLDivElement>(null);
+  const collectionRef = useRef<HTMLElement>(null);
 
   // Reading positions live in localStorage per book; read them once per list
   // rather than once per card per render.
-  const cards = useMemo(() => books.map((b) => toCard(b, loadLastPage(b.id))), [books]);
-  const sorted = useMemo(() => sortCards(cards, sort), [cards, sort]);
-  const now = useMemo(() => (filtered ? [] : readingNow(cards)), [cards, filtered]);
-  const openCard = useMemo(() => cards.find((c) => c.book.id === openId) ?? null, [cards, openId]);
+  const allCards = useMemo(() => allBooks.map((b) => toCard(b, loadLastPage(b.id))), [allBooks]);
+  const cardById = useMemo(() => new Map(allCards.map((c) => [c.book.id, c])), [allCards]);
+  const cards = useMemo(
+    () => books.map((b) => cardById.get(b.id) ?? toCard(b, loadLastPage(b.id))),
+    [books, cardById],
+  );
+  const loose = useMemo(() => cards.filter((c) => c.book.folderIds.length === 0), [cards]);
+  const showLoose = looseOnly && shelves.length > 0 && loose.length > 0;
+  const sorted = useMemo(() => sortCards(showLoose ? loose : cards, sort), [cards, loose, showLoose, sort]);
+  const now = useMemo(() => readingNow(allCards, SLOTS), [allCards]);
+  const openCard = openId ? cardById.get(openId) ?? null : null;
 
-  useEffect(() => { setShown(PAGE); }, [sort, books.length]);
+  // Which tab is open. Remembered; a shelf that has since been deleted falls
+  // back to the shelf Counsel has loaded, then to whatever has books in it.
+  const [tab, setTab] = useState<string>(() => {
+    try { return localStorage.getItem(DECK_KEY) || ""; } catch { return ""; }
+  });
+  const deckId = useMemo(() => {
+    if (tab === NOW_ID || shelves.some((s) => s.id === tab)) return tab;
+    if (loaded.shelfId && shelves.some((s) => s.id === loaded.shelfId)) return loaded.shelfId;
+    return now.length > 0 || shelves.length === 0 ? NOW_ID : shelves[0].id;
+  }, [tab, shelves, loaded.shelfId, now.length]);
+  const pickTab = (id: string) => {
+    setTab(id);
+    try { localStorage.setItem(DECK_KEY, id); } catch { /* private mode */ }
+  };
+  const shelf = deckId === NOW_ID ? null : shelves.find((s) => s.id === deckId) ?? null;
+  const openShelf = useMemo<OpenShelf | null>(
+    () => (shelf ? { id: shelf.id, name: shelf.name, mark: marks.get(shelf.id) } : null),
+    [shelf, marks],
+  );
+  const countByShelf = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const b of allBooks) for (const id of b.folderIds) m.set(id, (m.get(id) || 0) + 1);
+    return m;
+  }, [allBooks]);
+  const deckCards = useMemo(
+    () => (shelf ? sortCards(allCards.filter((c) => c.book.folderIds.includes(shelf.id)), "recent") : now),
+    [shelf, allCards, now],
+  );
+  const inCounsel = shelf ? loaded.shelfId === shelf.id : false;
+
+  useEffect(() => { setShown(PAGE); }, [sort, books.length, showLoose]);
   useEffect(() => {
     const el = sentinel.current;
     if (!el || typeof IntersectionObserver === "undefined") return;
@@ -468,39 +607,293 @@ const LibraryDeck: React.FC<{
     return () => io.disconnect();
   }, [sorted.length]);
 
+  // One stable set of card actions, so a memoised tile does not re-render
+  // (and close its open menu) every time this component does.
+  const latest = useRef({ handlers, toggleBookShelf });
+  latest.current = { handlers, toggleBookShelf };
+  const actions = useMemo<CardActions>(() => ({
+    onInfo: setOpenId,
+    onRead: (book) => latest.current.handlers.onRead(book),
+    onToggleShelf: (book, target) => {
+      const adding = !book.folderIds.includes(target.id);
+      latest.current.toggleBookShelf(book.id, target.id).then(
+        () => toast(adding ? `Added to ${target.name}` : `Taken off ${target.name}`, {
+          action: { label: "Undo", onClick: () => { void latest.current.toggleBookShelf(book.id, target.id); } },
+        }),
+        (e) => toast.error(e instanceof Error ? e.message : "Couldn't change that shelf"),
+      );
+    },
+  }), []);
+
+  // ── Shelf housekeeping ───────────────────────────────────────────────
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [renaming, setRenaming] = useState(false);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [digesting, setDigesting] = useState(false);
+  useEffect(() => { setRenaming(false); }, [deckId]);
+
+  const commitCreate = async () => {
+    const name = newName.trim();
+    if (!name) { setCreating(false); return; }
+    try {
+      const made = await createShelf(name);
+      setNewName("");
+      setCreating(false);
+      pickTab(made.id);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not create the shelf");
+    }
+  };
+  const commitRename = async () => {
+    const name = renameDraft.trim();
+    setRenaming(false);
+    if (!shelf || !name || name === shelf.name) return;
+    try { await renameShelf(shelf.id, name); } catch (e) { toast.error(e instanceof Error ? e.message : "Rename failed"); }
+  };
+  const removeShelf = async () => {
+    if (!shelf) return;
+    if (!window.confirm(`Delete shelf "${shelf.name}"? Its books stay in your library.`)) return;
+    try {
+      await deleteShelf(shelf.id);
+      toast.success("Shelf deleted");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Delete failed");
+    }
+  };
+  const keys = { apiKey: apiKey || undefined, geminiApiKey: geminiApiKey || undefined, nvidiaKeyLast4: nvidiaKeyLast4 || undefined };
+  const allBooksRef = useRef(allBooks);
+  useEffect(() => { allBooksRef.current = allBooks; }, [allBooks]);
+  /** Chapter and book summaries for the books here that have none — what
+   *  lets Counsel carry a shelf as a map instead of its full text. */
+  const summarizeBooks = () => {
+    const missing = deckCards.map((c) => c.book).filter((b) => !bookHasCatalog(b) && b.chapters.length > 0);
+    if (missing.length === 0) { toast("Every book here that has chapters already has summaries."); return; }
+    for (const b of missing) {
+      catalogJobs.enqueue({
+        bookId: b.id,
+        getBook: () => allBooksRef.current.find((x) => x.id === b.id),
+        settings: { model: selectedModel, keys },
+        onGists: applyChapterGists,
+        onSummary: applyBookSummary,
+      });
+    }
+    toast.success(`Summarizing ${missing.length} book${missing.length === 1 ? "" : "s"} — one at a time; progress shows on each card.`);
+  };
+  const summarizeShelf = async () => {
+    if (!shelf || digesting) return;
+    if (!acquireDigestRun()) { toast("Another shelf summary is still being written."); return; }
+    setDigesting(true);
+    try {
+      const result = await generateShelfDigest(shelf, deckCards.map((c) => c.book), { model: selectedModel, keys });
+      applyShelfDigest(shelf.id, result.summary, result.model);
+      toast.success(`Summary written for “${shelf.name}”`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't write the summary");
+    } finally {
+      releaseDigestRun();
+      setDigesting(false);
+    }
+  };
+
+  const askCounsel = () => {
+    if (shelf) void loadFocus({ kind: "shelf", shelfId: shelf.id, neurons: { kind: "keep" } });
+    else void loadFocus({ kind: "books", bookIds: deckCards.map((c) => c.book.id), neurons: { kind: "keep" } });
+  };
+  const toCollection = () => collectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  // Empty slots fill the row out to eight. A phone shows four to a row, so
+  // there the empties stop at the end of the row the last book is on.
+  const empties = shelf ? Math.max(0, SLOTS - deckCards.length) : 0;
+  const phoneEmpties = shelf ? Math.min(empties, (4 - (deckCards.length % 4)) % 4 || 4) : 0;
   const finished = cards.filter((c) => c.level.maxed).length;
-  const grid = "grid gap-x-3 gap-y-5 grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7";
+  const notebookNames = activeWikis.map((w) => w.name);
+  const grid = "grid gap-x-3 gap-y-5 grid-cols-3 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-7 xl:grid-cols-8";
 
   return (
-    <div className="flex flex-col gap-5">
-      {now.length > 0 && (
-        <section aria-label="Reading now">
-          <div className="cc-banner mb-4">
-            <span className="material-symbols-outlined text-accent" aria-hidden>local_fire_department</span>
-            <span>Reading now</span>
-            <span className="ml-auto text-xs font-semibold text-on-surface-variant">{now.length} in play</span>
-          </div>
-          {/* One row that scrolls sideways: a hand of cards, not a second
-              grid that pushes the collection off the first screen. */}
-          <div className="flex gap-3 overflow-x-auto hide-scrollbar px-3 pt-2 pb-3 -mx-3 snap-x scroll-px-3">
-            {now.map((c) => (
-              <div key={c.book.id} className="flex w-[7.25rem] sm:w-36 shrink-0 snap-start">
-                <BookCardTile card={c} busy={busyByBook.get(c.book.id)} onOpen={setOpenId} highlight={highlight} />
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
+    <div className="flex flex-col gap-4">
+      <section aria-label="Shelves" className="cc-deck">
+        {/* Deck tabs: one per shelf. */}
+        <div className="cc-deck-tabs hide-scrollbar" role="tablist" aria-label="Shelves">
+          <button type="button" role="tab" aria-selected={deckId === NOW_ID} className="cc-deck-tab" onClick={() => pickTab(NOW_ID)}>
+            <span className="material-symbols-outlined text-[18px] text-accent" aria-hidden>local_fire_department</span>
+            Reading now
+            <span className="cc-deck-count">{now.length}</span>
+          </button>
+          {shelves.map((s) => {
+            const mark = marks.get(s.id);
+            return (
+              <button key={s.id} type="button" role="tab" aria-selected={deckId === s.id} className="cc-deck-tab" onClick={() => pickTab(s.id)}>
+                <span className="cc-deck-mark" style={mark ? { background: mark.color, color: mark.ink } : undefined} aria-hidden>
+                  <span className="material-symbols-outlined">{mark?.glyph ?? "shelves"}</span>
+                </span>
+                <span className="truncate max-w-[10rem]">{s.name}</span>
+                {/* No count until membership has loaded: "0" would be a guess. */}
+                {membershipLoaded && <span className="cc-deck-count">{countByShelf.get(s.id) || 0}</span>}
+                {loaded.shelfId === s.id && (
+                  <span className="material-symbols-outlined text-[16px] text-accent" title="Counsel has this shelf" aria-label="Counsel has this shelf">psychology</span>
+                )}
+              </button>
+            );
+          })}
+          {creating ? (
+            <form onSubmit={(e) => { e.preventDefault(); void commitCreate(); }} className="shrink-0 flex">
+              <input
+                autoFocus
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onBlur={() => void commitCreate()}
+                onKeyDown={(e) => { if (e.key === "Escape") { setNewName(""); setCreating(false); } }}
+                placeholder="Shelf name"
+                aria-label="New shelf name"
+                className="h-11 w-40 rounded-xl bg-surface-container-high border border-outline-variant/40 px-3 text-sm text-foreground"
+              />
+            </form>
+          ) : (
+            <button type="button" className="cc-deck-tab" data-new onClick={() => setCreating(true)}>
+              <span className="material-symbols-outlined text-[18px]" aria-hidden>add</span>
+              New shelf
+            </button>
+          )}
+        </div>
 
-      <section aria-label="Collection">
+        {!filtered && (
+          <div className="cc-deck-body" role="tabpanel">
+            <div className="min-w-0 flex-1 flex flex-col gap-2">
+              <div className="flex items-center gap-2 min-h-[2rem]">
+                {renaming && shelf ? (
+                  <form onSubmit={(e) => { e.preventDefault(); void commitRename(); }} className="flex-1 min-w-0">
+                    <input
+                      autoFocus
+                      value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onBlur={() => void commitRename()}
+                      onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setRenaming(false); } }}
+                      aria-label="Shelf name"
+                      className="w-full max-w-xs rounded-lg bg-surface-container-high border border-outline-variant/40 px-2 py-1 text-sm font-bold text-foreground"
+                    />
+                  </form>
+                ) : (
+                  <p className="flex-1 min-w-0 truncate text-xs text-on-surface-variant">
+                    {shelf
+                      ? deckCards.length === 0
+                        ? "Empty shelf. Tap a book below, then “Add to " + shelf.name + "”."
+                        : deckCards.length > SLOTS
+                          ? `${deckCards.length} books. Counsel reads ${SLOTS} at a time — pick which in the chat.`
+                          : `${deckCards.length} of ${SLOTS} — the books Counsel reads together.`
+                      : now.length === 0
+                        ? "Books you have started show up here by themselves."
+                        : "Filled in for you: the books you are part-way through."}
+                  </p>
+                )}
+                {shelf && !renaming && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button type="button" className="cc-tap-44 shrink-0 w-9 h-9 grid place-items-center rounded-lg text-on-surface-variant hover:text-foreground hover:bg-surface-container-highest" aria-label={`More for shelf ${shelf.name}`} title="Shelf options">
+                        <span className={`material-symbols-outlined text-[20px] ${digesting ? "animate-spin" : ""}`} aria-hidden>{digesting ? "progress_activity" : "more_horiz"}</span>
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="min-w-60">
+                      <DropdownMenuItem onSelect={() => { setRenameDraft(shelf.name); setRenaming(true); }}>
+                        <span className="material-symbols-outlined text-base mr-2" aria-hidden>edit</span> Rename
+                      </DropdownMenuItem>
+                      <DropdownMenuItem disabled={deckCards.length === 0} onSelect={summarizeBooks}>
+                        <span className="material-symbols-outlined text-base mr-2" aria-hidden>summarize</span>
+                        <span className="flex flex-col">
+                          <span>Summarize its books</span>
+                          <span className="text-[11px] text-on-surface-variant">Helps Counsel find the right chapter. Uses your AI key.</span>
+                        </span>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem disabled={deckCards.length === 0 || digesting} onSelect={() => void summarizeShelf()}>
+                        <span className="material-symbols-outlined text-base mr-2" aria-hidden>notes</span>
+                        <span className="flex flex-col">
+                          <span>{shelf.summary ? "Rewrite the shelf summary" : "Write a shelf summary"}</span>
+                          <span className="text-[11px] text-on-surface-variant">What this shelf is about, in a paragraph.</span>
+                        </span>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => void removeShelf()} className="text-destructive focus:text-destructive">
+                        <span className="material-symbols-outlined text-base mr-2" aria-hidden>delete</span> Delete shelf
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+              </div>
+              {(deckCards.length > 0 || empties > 0) && (
+                <div className="grid grid-cols-4 sm:grid-cols-8 gap-x-2.5 gap-y-4 pt-1.5 pl-1.5">
+                  {deckCards.map((c) => (
+                    <BookCardTile key={c.book.id} card={c} compact busy={busyByBook.get(c.book.id)} shelf={openShelf} actions={actions} />
+                  ))}
+                  {Array.from({ length: empties }, (_, i) => (
+                    <button
+                      key={`empty-${i}`}
+                      type="button"
+                      onClick={toCollection}
+                      className="cc-slot"
+                      data-wide={i >= phoneEmpties || undefined}
+                      aria-label={`Empty slot — choose a book to add to ${shelf?.name}`}
+                    >
+                      <span className="material-symbols-outlined" aria-hidden>add</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* What goes to Counsel with these books, and the one button that takes it there. */}
+            <div className="cc-deck-go">
+              <button
+                type="button"
+                className="cc-notebook-slot"
+                onClick={() => window.dispatchEvent(new CustomEvent(OPEN_NEURON_SWITCHER_EVENT))}
+                title="Change the notebook Counsel uses"
+              >
+                <span className="material-symbols-outlined text-[22px] text-primary" aria-hidden>menu_book</span>
+                <span className="min-w-0 flex flex-col text-left leading-tight">
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Notebook</span>
+                  <span className="truncate text-sm font-bold text-foreground">
+                    {notebookNames.length === 0 ? "None — just chat" : notebookNames.length === 1 ? notebookNames[0] : `${notebookNames[0]} +${notebookNames.length - 1}`}
+                  </span>
+                </span>
+                <span className="material-symbols-outlined text-[18px] text-on-surface-variant ml-auto" aria-hidden>swap_horiz</span>
+              </button>
+              <button type="button" className="cc-btn3d w-full" data-tone="accent" data-size="lg" disabled={deckCards.length === 0} onClick={askCounsel}>
+                <span className="material-symbols-outlined" aria-hidden>psychology</span>
+                {inCounsel ? "Open Counsel" : "Ask Counsel"}
+              </button>
+              <p className="text-[11px] text-center text-on-surface-variant leading-snug">
+                {deckCards.length === 0
+                  ? "Add a book first."
+                  : inCounsel
+                    ? "Counsel has this shelf."
+                    : `Takes ${shelf ? "this shelf" : "these books"}${notebookNames.length ? " and the notebook" : ""} to the chat.`}
+              </p>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section aria-label="Collection" ref={collectionRef} className="scroll-mt-3">
         <div className="cc-banner mb-4 flex-wrap">
           <span className="material-symbols-outlined text-primary" aria-hidden>style</span>
-          <span>{filtered ? "Matches" : "Collection"}</span>
+          <span>{filtered ? "Matches" : "All books"}</span>
           <span className="text-xs font-semibold text-on-surface-variant">
-            {cards.length} card{cards.length === 1 ? "" : "s"}
-            {!filtered && finished > 0 ? ` · ${finished} finished` : ""}
+            {sorted.length}
+            <span className="hidden sm:inline">{!filtered && !showLoose && finished > 0 ? ` · ${finished} finished` : ""}</span>
           </span>
-          <div className="ml-auto flex items-center gap-1" role="group" aria-label="Sort cards">
+          <div className="w-full sm:w-auto sm:ml-auto flex items-center gap-1">
+          {shelves.length > 0 && loose.length > 0 && (
+            <button
+              type="button"
+              aria-pressed={showLoose}
+              onClick={() => setLooseOnly((v) => !v)}
+              className={`cc-tap-44 px-2 py-1 rounded-lg text-[11px] font-bold transition-colors ${
+                showLoose ? "bg-accent/20 text-accent" : "text-on-surface-variant hover:text-foreground hover:bg-surface-container-highest"
+              }`}
+            >
+              Not on a shelf · {loose.length}
+            </button>
+          )}
+          <div className="ml-auto flex items-center gap-1" role="group" aria-label="Sort books">
             {SORTS.map((s) => (
               <button
                 key={s.id}
@@ -508,7 +901,8 @@ const LibraryDeck: React.FC<{
                 aria-pressed={sort === s.id}
                 onClick={() => setSort(s.id)}
                 title={`Sort by ${s.label}`}
-                className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold transition-colors ${
+                aria-label={`Sort by ${s.label}`}
+                className={`cc-tap-44 inline-flex items-center justify-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold transition-colors ${
                   sort === s.id ? "bg-accent/20 text-accent" : "text-on-surface-variant hover:text-foreground hover:bg-surface-container-highest"
                 }`}
               >
@@ -517,13 +911,14 @@ const LibraryDeck: React.FC<{
               </button>
             ))}
           </div>
+          </div>
         </div>
         {sorted.length === 0 ? (
-          <p className="py-10 text-center text-sm text-on-surface-variant">No cards match.</p>
+          <p className="py-10 text-center text-sm text-on-surface-variant">No books match.</p>
         ) : (
-          <div className={grid}>
+          <div className={`${grid} pl-1.5 pt-1.5`}>
             {sorted.slice(0, shown).map((c) => (
-              <BookCardTile key={c.book.id} card={c} busy={busyByBook.get(c.book.id)} onOpen={setOpenId} highlight={highlight} />
+              <BookCardTile key={c.book.id} card={c} busy={busyByBook.get(c.book.id)} shelf={openShelf} actions={actions} highlight={highlight} />
             ))}
           </div>
         )}

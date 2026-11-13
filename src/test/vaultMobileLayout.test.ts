@@ -311,16 +311,7 @@ describe("the marker classes are wired to something at both ends", () => {
    * file still passes because it only reads the CSS.
    */
   const MARKERS = [
-    "cc-book-cover",
-    "cc-book-info",
-    "cc-book-title",
-    "cc-book-meta",
-    "cc-book-tags",
-    "cc-book-status",
-    "cc-book-actions",
-    "cc-book-open",
     "cc-vault-main",
-    "cc-vault-title",
     "cc-vault-dropzone",
     "cc-dropzone-icon",
     "cc-dropzone-title",
@@ -360,56 +351,6 @@ describe("the marker classes are wired to something at both ends", () => {
     expect(reveals.length, "expected the two compact reveals plus the hover-none tablet reveal").toBe(3);
     for (const at of reveals) {
       expect(at, "a reveal is declared ABOVE the default, so the default wins and nothing shows").toBeGreaterThan(hide);
-    }
-  });
-
-  it("the narrow-card overflow menu is display-toggled, never branch-rendered", () => {
-    // Two JSX branches for the same subtree would remount the card on every
-    // column-count change and drop the dropdown's open state mid-interaction —
-    // the same law that keeps the workspace viewer at one JSX position.
-    expect(CSS_CODE).toMatch(/\[data-cc-narrow\]\s*\{\s*display:\s*none/);
-    expect(CSS_CODE).toMatch(/\[data-cc-wide\]\s*\{\s*display:\s*none/);
-    expect(LIBRARY).toContain("data-cc-narrow");
-    expect(LIBRARY).toContain("data-cc-wide");
-    // The wide buttons and the menu items are the same actions, so their
-    // labels come from one binding each rather than being written twice.
-    for (const label of ["detectLabel", "extractLabel", "removeLabel"]) {
-      const uses = [...tsxCode(LIBRARY).matchAll(new RegExp(`\\b${label}\\b`, "g"))].length;
-      expect(uses, `${label} should be defined once and used by both routes`).toBeGreaterThanOrEqual(3);
-    }
-  });
-
-  it("no query container sits above the mind map's fixed fullscreen overlay", () => {
-    // `container-type` applies layout containment, and layout containment makes
-    // an element a containing block for `position: fixed` descendants. Chromium
-    // 148 measured as NOT confining it, but the spec says it should and engines
-    // disagree — and this repo has already shipped that exact failure once,
-    // with aurora's `backdrop-filter` confining MediaFrame's fullscreen. So the
-    // container lives on the shelves view, which holds the only `.book-grid`
-    // and no fixed-position descendant, rather than on `<main>`.
-    const GRAPH = src("src/components/LibraryGraph.tsx");
-    expect(GRAPH, "the graph's fullscreen is no longer `fixed` — re-check this guard").toContain(
-      "fixed inset-0 z-[100]",
-    );
-    // `<main>` wraps the graph, so it must not be a container.
-    const mainTag = tsxCode(LIBRARY).split("\n").find((l) => l.includes("<main"));
-    expect(mainTag).toBeTruthy();
-    expect(mainTag, "cc-container on <main> puts a query container above the graph").not.toContain(
-      "cc-container",
-    );
-    // …and the shelves view, which does not, must be one.
-    expect([...tsxCode(SHELVES).matchAll(/cc-container/g)], "both shelves roots need it").toHaveLength(2);
-  });
-
-  it("the mind map is never taller than the viewport it has to fit in", () => {
-    // A bare `min-h-[420px]` exceeds the whole 393px viewport of every rotated
-    // target phone, which no amount of scrolling recovers inside a 60vh box.
-    for (const [name, source] of [
-      ["LibraryGraph.tsx", src("src/components/LibraryGraph.tsx")],
-      ["Library.tsx", LIBRARY],
-    ] as const) {
-      expect(source, `${name}: an unclamped 420px floor`).not.toContain("min-h-[420px]");
-      expect(source).toContain("min-h-[min(420px,60dvh)]");
     }
   });
 

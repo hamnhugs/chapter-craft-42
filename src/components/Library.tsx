@@ -1,20 +1,17 @@
-import { SegmentedControl } from "@/components/ui/segmented-control";
 import VaultDropzone, { VaultDropOverlay, dragCarriesBooks } from "@/components/VaultDropzone";
 import React, { useRef, useState, useMemo, useEffect, useCallback, lazy, Suspense } from "react";
 import { useApp, TRASH_RETENTION_DAYS } from "@/context/AppContext";
 import { BookDocument } from "@/types/library";
-import { isAssistantBook, isYoutubeTranscript, topicTags } from "@/lib/bookProvenance";
-import YoutubeTranscriptBadge from "@/components/YoutubeTranscriptBadge";
+import { isAssistantBook } from "@/lib/bookProvenance";
 import { Progress } from "@/components/ui/progress";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { usePlan } from "@/hooks/usePlan";
 import { openPricing } from "@/components/PricingDialog";
-import { structureJobs, useStructureJobs, StructureJob } from "@/lib/structureJobs";
-import { catalogJobs, useCatalogJobs, CatalogJob } from "@/lib/catalogJobs";
-import { figureJobs, useFigureJobs, FigureJob } from "@/lib/figureJobs";
+import { structureJobs, useStructureJobs } from "@/lib/structureJobs";
+import { catalogJobs, useCatalogJobs } from "@/lib/catalogJobs";
+import { figureJobs, useFigureJobs } from "@/lib/figureJobs";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { autoTagBooks } from "@/lib/autoTag";
-import { isTouchPrimary } from "@/lib/focusPolicy";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -23,21 +20,11 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { probePdf, resolveTitle, type PdfProbe } from "@/lib/bookIntake";
-import LibraryShelves from "@/components/LibraryShelves";
 import LibraryDeck from "@/components/LibraryDeck";
-import { bookHaystack, chapterMatch, matchesAll, normalizeText, tokenize } from "@/lib/librarySearch";
+import { bookHaystack, matchesAll, tokenize } from "@/lib/librarySearch";
 import { seekLibrary, SEEK_FETCH_CAP, type SeekOutcome } from "@/lib/librarySeek";
 
 import LibraryList from "@/components/LibraryList";
-import LibraryShowcase from "@/components/LibraryShowcase";
-import { seedOf } from "@/lib/bookProfile";
-import { jacketLayout, titleDate } from "@/lib/bookJacket";
-import { marksForBook, markStripes, useShelfMarks, type ShelfMark } from "@/lib/shelfMarks";
-import type { BookFolder } from "@/lib/bookFolders";
-
-// The 3D mind map pulls in three.js (~300KB gzip); lazy-load so that chunk is
-// only fetched when the user actually toggles the graph view on.
-const LibraryGraph = lazy(() => import("@/components/LibraryGraph"));
 
 // YouTube import (the former Reel tab) — lazy so its chunk loads only when
 // the dialog opens.
@@ -106,9 +93,8 @@ const MAX_UPLOAD_ATTEMPTS = 3;
 const MAX_CONCURRENT_UPLOADS = 3;
 
 
-type ViewMode = "cards" | "shelves" | "list" | "showcase" | "graph";
+type ViewMode = "cards" | "list";
 const VIEW_KEY = "vault_view_mode";
-const VIEW_CHOSEN_KEY = "vault_view_chosen_v2";
 /**
  * Everything below is state the Vault used to throw away.
  *
@@ -131,21 +117,23 @@ const RESURFACE_DISMISS_KEY = "vault_resurface_dismissed_day";
  *  already see — resurfacing needs a library big enough to forget things in. */
 const RESURFACE_MIN_BOOKS = 6;
 
-const VIEW_OPTIONS: { id: ViewMode; icon: string; label: string }[] = [
-  { id: "cards", icon: "style", label: "Cards" },
-  { id: "shelves", icon: "shelves", label: "Shelves" },
-  { id: "list", icon: "view_list", label: "List" },
-  { id: "showcase", icon: "play_circle", label: "Showcase" },
-  { id: "graph", icon: "hub", label: "Mind map" },
+/** The view besides the cards, offered from the "more" menu. */
+const OTHER_VIEWS: { id: ViewMode; icon: string; label: string; hint: string }[] = [
+  { id: "list", icon: "view_list", label: "View as a list", hint: "A table you can sort by column" },
 ];
 
 
 const Library: React.FC = () => {
-  const { books, addBook, setBookCover, removeBook, trashAvailable, trashedBooks, trashLoading, refreshTrash, restoreBook, purgeBook, emptyTrash, requestBookLoad, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile, applyChapterGists, applyBookSummary, loadChapterText,
-    shelves, toggleBookShelf, booksLoading, booksError, retryLoadBooks } = useApp();
+  const { books, addBook, setBookCover, removeBook, trashAvailable, trashedBooks, trashLoading, refreshTrash, restoreBook, purgeBook, emptyTrash, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile, applyChapterGists, applyBookSummary, loadChapterText,
+    shelves, toggleBookShelf, booksLoading, booksError, retryLoadBooks, loadFocus } = useApp();
+  // Reading is not a question about notebooks. Opening a book from here opens
+  // the reader and leaves what Counsel has loaded alone; taking something to
+  // Counsel is its own button ("Ask Counsel") on a book and on a shelf.
+  const requestBookLoad = useCallback((bookId: string) => {
+    void loadFocus({ kind: "book", bookId, neurons: { kind: "keep" }, alongside: true });
+  }, [loadFocus]);
   const { apiKey, imageExtractionModel, selectedModel, geminiApiKey, nvidiaKeyLast4, autoCatalogOnUpload } = useChatSettings();
   const { user } = useAuth();
-  const shelfMarks = useShelfMarks();
   const { isPaid, loaded: planLoaded } = usePlan();
   const { isAdmin, loaded: adminLoaded } = useIsAdmin();
   const jobs = useStructureJobs();
@@ -195,13 +183,10 @@ const Library: React.FC = () => {
   // Values from retired views (grid/folders/collections) fall back to
   // Shelves, which absorbed all three.
   const [view, setView] = useState<ViewMode>(() => {
-    // The card collection is the default. A view someone chose before it
-    // existed is honoured once; "shelves" was the old default, not a choice,
-    // so it is only kept when picked again after cards arrived.
+    // Cards — shelves included — are the default. The old Shelves view is
+    // gone, so a stored "shelves" lands on the cards too.
     const v = localStorage.getItem(VIEW_KEY);
-    const chosenSinceCards = localStorage.getItem(VIEW_CHOSEN_KEY) === "1";
-    if (v === "list" || v === "graph" || v === "showcase") return v;
-    return v === "shelves" && chosenSinceCards ? "shelves" : "cards";
+    return v === "list" ? v : "cards";
   });
   useEffect(() => {
     try { localStorage.setItem(SORT_KEY, sortBy); } catch { /* private mode */ }
@@ -419,25 +404,6 @@ const Library: React.FC = () => {
     return sortedBooks.filter((b) => matchesAll(haystacks.get(b.id) || "", tokens));
   }, [sortedBooks, query, haystacks]);
 
-  const queryTokens = useMemo(() => tokenize(query), [query]);
-
-  /**
-   * Why a book matched, precomputed for the filtered set.
-   *
-   * This used to be called inline in the render prop — `chapterMatch(book,
-   * queryTokens)` once per card, on every render. `chapterMatch` normalizes
-   * (lowercase + NFD + a diacritic regex) every chapter of every book that did
-   * not match on its spine, so sixty cards of a thirty-chapter book was
-   * roughly eighteen hundred Unicode normalizations per keystroke, thrown away
-   * and redone on the next one. The haystack map above was memoized for
-   * exactly this reason; this was simply left out of it.
-   */
-  const matchByBook = useMemo(() => {
-    const map = new Map<string, { name: string; gist?: string | null } | null>();
-    if (queryTokens.length === 0) return map;
-    for (const b of filteredBooks) map.set(b.id, chapterMatch(b, queryTokens));
-    return map;
-  }, [filteredBooks, queryTokens]);
 
   /**
    * One line from something you already own.
@@ -955,33 +921,10 @@ const Library: React.FC = () => {
       className="h-full flex flex-col overflow-auto"
     >
       <main className="cc-vault-main cc-page-main max-w-7xl mx-auto px-6 py-10 flex flex-col gap-6 w-full">
-        {/* Masthead. What this is and how much is in it on the left; how you
-            are looking at it on the right. The tagline that used to sit under
-            the title said nothing a reader could use — the count does. */}
-        <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
-          <div className="min-w-0">
-            <h1 className="cc-vault-title cc-page-title font-headline text-4xl md:text-5xl font-bold tracking-tighter text-primary italic">
-              My Library
-            </h1>
-            <p className="mt-1.5 text-sm text-on-surface-variant" aria-live="polite">
-              {librarySummary}
-            </p>
-          </div>
-          <SegmentedControl<ViewMode>
-            ariaLabel="Library view"
-            options={VIEW_OPTIONS}
-            value={view}
-            onChange={(v) => {
-              try { localStorage.setItem(VIEW_CHOSEN_KEY, "1"); } catch { /* private mode */ }
-              setView(v);
-            }}
-            labelClassName="hidden xl:inline"
-            onOptionHover={(id) => {
-              // Warm the three.js chunk on hover so the switch feels instant.
-              if (id === "graph") void import("@/components/LibraryGraph");
-            }}
-          />
-        </header>
+        {/* The dock already says where you are, so the page opens on its
+            tools. The heading stays for screen readers and the outline. */}
+        <h1 className="sr-only">My Library</h1>
+        <p className="sr-only" aria-live="polite">{librarySummary}</p>
 
         {/* Tools, one row: find, order, add, and the rare things behind "more".
             Sort, Auto-tag and Trash used to be three equal-weight buttons on a
@@ -989,6 +932,16 @@ const Library: React.FC = () => {
             into two ragged rows. */}
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-2">
+            {view !== "cards" && (
+              <button
+                onClick={() => setView("cards")}
+                className="cc-tap-44 shrink-0 flex items-center gap-1.5 px-3 py-3 bg-surface-container-high rounded-xl text-foreground text-sm font-bold border border-outline-variant/10 hover:bg-surface-container-highest transition-all"
+              >
+                <span className="material-symbols-outlined text-lg leading-none" aria-hidden>arrow_back</span>
+                <span className="hidden sm:inline">Cards</span>
+                <span className="sr-only sm:hidden">Back to cards</span>
+              </button>
+            )}
             {books.length > 0 ? (
               <div className="relative flex-1 min-w-0">
                 <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant text-xl pointer-events-none">
@@ -1024,19 +977,6 @@ const Library: React.FC = () => {
               </div>
             ) : (
               <span className="flex-1" />
-            )}
-            {books.length > 1 && (
-              <button
-                onClick={() => setSortBy((v) => (v === "date" ? "name" : "date"))}
-                title={sortBy === "date" ? "Sorted by date added — switch to A–Z" : "Sorted A–Z — switch to date added"}
-                aria-label={sortBy === "date" ? "Sort: recently added. Switch to by name" : "Sort: by name. Switch to recently added"}
-                className="cc-tap-44 shrink-0 flex items-center gap-1.5 px-3 py-3 bg-surface-container-high rounded-xl text-foreground text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-all"
-              >
-                <span className="material-symbols-outlined text-lg leading-none" aria-hidden>
-                  {sortBy === "date" ? "schedule" : "sort_by_alpha"}
-                </span>
-                <span className="hidden md:inline">{sortBy === "date" ? "Recent" : "A–Z"}</span>
-              </button>
             )}
             {/* Add: one click to the file picker, the arrow for YouTube. */}
             <div className="shrink-0 flex items-stretch rounded-xl">
@@ -1090,6 +1030,21 @@ const Library: React.FC = () => {
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-60">
+                {/* The other way to look at the same books. Rarely used,
+                    so it lives here instead of on a switch. */}
+                {OTHER_VIEWS.map((v) => (
+                  <DropdownMenuItem
+                    key={v.id}
+                    onSelect={() => setView(view === v.id ? "cards" : v.id)}
+                  >
+                    <span className="material-symbols-outlined text-base mr-2" aria-hidden>{view === v.id ? "check" : v.icon}</span>
+                    <span className="flex flex-col">
+                      <span>{v.label}</span>
+                      <span className="text-[11px] text-on-surface-variant">{v.hint}</span>
+                    </span>
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={handleAutoTag} disabled={!!tagProgress || books.length === 0}>
                   <span className="material-symbols-outlined text-base mr-2" aria-hidden>sell</span>
                   <span className="flex flex-col">
@@ -1129,38 +1084,6 @@ const Library: React.FC = () => {
             )}
         </div>
 
-        {/* A line from something already on the shelves. One line, in the
-            reader's case — it is a quotation, not a control label, so it opts
-            out of the themes that capitalise every button. */}
-        {resurfaced && view !== "graph" && (
-          <div className="flex items-center gap-3 rounded-xl pl-4 pr-1.5 py-1.5 bg-surface-container-low/60 border border-outline-variant/10">
-            <span className="material-symbols-outlined text-on-surface-variant/70 text-lg" aria-hidden>
-              auto_stories
-            </span>
-            <button
-              data-no-sticker
-              onClick={() => requestBookLoad(resurfaced.book.id)}
-              title={`${resurfaced.book.title} — ${resurfaced.line}`}
-              style={{ textTransform: "none", letterSpacing: "normal", fontWeight: 400 }}
-              className="group/res min-w-0 flex-1 truncate text-left text-sm py-1"
-            >
-              <span className="text-[11px] uppercase tracking-widest text-on-surface-variant/70 mr-2">From your library</span>
-              <span className="font-semibold text-primary group-hover/res:underline underline-offset-2">
-                {resurfaced.book.title}
-              </span>
-              <span className="text-on-surface-variant"> — {resurfaced.line}</span>
-            </button>
-            <button
-              onClick={dismissResurfaced}
-              aria-label="Hide this for today"
-              title="Hide this for today"
-              className="cc-tap-44 shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-highest"
-            >
-              <span className="material-symbols-outlined text-lg" aria-hidden>close</span>
-            </button>
-          </div>
-        )}
-
         {/* File-on-arrival. An offer, never a gate — see fileJustAdded. */}
         {justAdded.length > 0 && !isUploading && (
           <div className="flex items-center gap-3 flex-wrap bg-surface-container-low rounded-xl px-5 py-4 border border-outline-variant/10">
@@ -1169,7 +1092,7 @@ const Library: React.FC = () => {
               {justAdded.length} book{justAdded.length === 1 ? "" : "s"} added.
               {shelves.length > 0
                 ? " Put them on a shelf while they're fresh?"
-                : " Create a shelf in Shelves view to file them."}
+                : " Make a shelf with “New shelf” to file them."}
             </p>
             {shelves.length > 0 && (
               <DropdownMenu>
@@ -1332,7 +1255,7 @@ const Library: React.FC = () => {
           className="hidden"
         />
 
-        {/* Shelves / list / 3D mind map (search filters all views the same way) */}
+        {/* Cards / list (search filters both views the same way) */}
         {booksError ? (
           /* A failed read used to be indistinguishable from an empty library:
              the only trace was a console.error, and the upsell stayed up
@@ -1384,22 +1307,10 @@ const Library: React.FC = () => {
               Clear search
             </button>
           </div>
-        ) : view === "graph" ? (
-          <LazyErrorBoundary title="The mind map couldn't load" hint="Check your connection and try toggling it again.">
-            <Suspense
-              fallback={
-                <div className="flex flex-col items-center justify-center h-[60vh] min-h-[min(420px,60dvh)] rounded-2xl bg-surface-container-low border border-outline-variant/10 text-on-surface-variant">
-                  <span className="material-symbols-outlined text-4xl animate-spin mb-3">progress_activity</span>
-                  <p className="text-sm">Loading mind map…</p>
-                </div>
-              }
-            >
-              <LibraryGraph books={filteredBooks} onOpenBook={(id) => requestBookLoad(id)} />
-            </Suspense>
-          </LazyErrorBoundary>
         ) : view === "cards" ? (
           <LibraryDeck
             books={filteredBooks}
+            allBooks={sortedBooks}
             shelves={shelves}
             filtered={query.trim().length > 0}
             softDelete={softDelete}
@@ -1407,15 +1318,7 @@ const Library: React.FC = () => {
             handlers={cardHandlers}
             highlight={(text) => <Highlight text={text} query={query} />}
           />
-        ) : view === "showcase" ? (
-          <LibraryShowcase
-            books={filteredBooks}
-            shelves={shelves}
-            onOpenBook={(id) => requestBookLoad(id)}
-            highlight={(text) => <Highlight text={text} query={query} />}
-          />
-        ) : view === "list" ? (
-
+        ) : (
           <LibraryList
             books={filteredBooks}
             sortBy={sortBy}
@@ -1428,27 +1331,40 @@ const Library: React.FC = () => {
             }}
             highlight={(text) => <Highlight text={text} query={query} />}
           />
-        ) : (
-          <LibraryShelves
-            books={filteredBooks}
-            allBooks={sortedBooks}
-            filtered={query.trim().length > 0}
-            renderBook={(book) => (
-              <BookCard
-                key={book.id}
-                book={book}
-                query={query}
-                job={jobs[book.id]}
-                figJob={figJobs[book.id]}
-                catJob={catJobs[book.id]}
-                match={matchByBook.get(book.id) ?? null}
-                softDelete={softDelete}
-                shelves={shelves}
-                shelfMarks={shelfMarks}
-                {...cardHandlers}
-              />
-            )}
-          />
+        )}
+
+        {/* A line from something already on the shelves, under the books
+            rather than above them: a nice thing to come across, not something
+            to get past on the way to a book. One line, in the
+            reader's case — it is a quotation, not a control label, so it opts
+            out of the themes that capitalise every button. */}
+        {resurfaced && (
+          <div className="flex items-center gap-3 rounded-xl pl-4 pr-1.5 py-1.5 bg-surface-container-low/60 border border-outline-variant/10">
+            <span className="material-symbols-outlined text-on-surface-variant/70 text-lg" aria-hidden>
+              auto_stories
+            </span>
+            <button
+              data-no-sticker
+              onClick={() => requestBookLoad(resurfaced.book.id)}
+              title={`${resurfaced.book.title} — ${resurfaced.line}`}
+              style={{ textTransform: "none", letterSpacing: "normal", fontWeight: 400 }}
+              className="group/res min-w-0 flex-1 truncate text-left text-sm py-1"
+            >
+              <span className="text-[11px] uppercase tracking-widest text-on-surface-variant/70 mr-2">From your library</span>
+              <span className="font-semibold text-primary group-hover/res:underline underline-offset-2">
+                {resurfaced.book.title}
+              </span>
+              <span className="text-on-surface-variant"> — {resurfaced.line}</span>
+            </button>
+            <button
+              onClick={dismissResurfaced}
+              aria-label="Hide this for today"
+              title="Hide this for today"
+              className="cc-tap-44 shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-highest"
+            >
+              <span className="material-symbols-outlined text-lg" aria-hidden>close</span>
+            </button>
+          </div>
         )}
 
         {/* The Trash: deleted books, restorable for 30 days. The only hard
@@ -1566,473 +1482,5 @@ const Library: React.FC = () => {
     </div>
   );
 };
-
-/**
- * A card's secondary actions (detect chapters, extract figures, delete) rest
- * invisible and appear on hover or keyboard focus. Twenty-five cards each
- * showing three icon buttons put ~75 identical controls on the page, which
- * is what made the grid read as noise; Open stays, always. The space stays
- * reserved (opacity, not display), so nothing shifts when they appear, and
- * `.cc-hover-reveal` shows them for good where there is no hover.
- */
-const quietUntilHover = "cc-hover-reveal opacity-0 group-hover:opacity-100 focus-visible:opacity-100 group-focus-within:opacity-100";
-
-const BookCardImpl: React.FC<{
-  book: BookDocument;
-  query?: string;
-  job?: StructureJob;
-  figJob?: FigureJob;
-  catJob?: CatalogJob;
-  /** The chapter that answered the search, when the title did not. */
-  match?: { name: string; gist?: string | null } | null;
-  /* These take the book rather than closing over it. Closures would be new
-     on every render of Library, which silently defeats React.memo below —
-     the memo would compare five fresh function identities and re-render
-     every card anyway. */
-  onDetect: (book: BookDocument) => void;
-  onExtractFigures: (book: BookDocument) => void;
-  onRead: (book: BookDocument) => void;
-  onRemove: (book: BookDocument) => void;
-  /** True while books go to the Trash rather than being destroyed. */
-  softDelete?: boolean;
-  onRename: (book: BookDocument, newTitle: string) => void;
-  /** The shelf roster and every shelf's mark (src/lib/shelfMarks.ts). Both
-   *  are stable identities from context, so they don't defeat the memo. */
-  shelves?: BookFolder[];
-  shelfMarks?: Map<string, ShelfMark>;
-}> = ({ book, query = "", job, figJob, catJob, match, onDetect, onExtractFigures, onRead, onRemove, onRename, softDelete = false, shelves = [], shelfMarks }) => {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(book.title);
-  const renameFromMenu = useRef(false);
-
-  const startRename = () => { setDraft(book.title); setEditing(true); };
-  /**
-   * The title is the biggest, most obvious target on the card, and on a touch
-   * screen tapping it opened an inline rename and raised the keyboard — when
-   * what a tap on a book plainly means is "open this book". Pointer capability
-   * decides the AFFORDANCE here, never the layout; rename stays reachable on
-   * touch through the card's overflow menu.
-   */
-  const onTitleClick = (e: React.MouseEvent) => {
-    const pointerType = (e.nativeEvent as Partial<PointerEvent>).pointerType;
-    const touch = pointerType ? pointerType === "touch" || pointerType === "pen" : isTouchPrimary();
-    if (touch) onRead(book);
-    else startRename();
-  };
-  const isPdf = book.fileName.toLowerCase().endsWith(".pdf");
-  const detecting = job?.status === "queued" || job?.status === "running";
-  const extracting = figJob?.status === "queued" || figJob?.status === "running";
-  const isHtml = book.fileName.toLowerCase().endsWith(".html");
-  const metadataText = isPdf
-    ? `${book.pageCount} pages · ${book.chapters.length} chapters · PDF`
-    : isHtml
-    ? `${book.chapters.length > 0 ? `${book.chapters.length} sections · ` : ""}${isYoutubeTranscript(book) ? "Video transcript" : "HTML"}`
-    : "Document file";
-
-  // One label per action, shared by the wide icon button's tooltip, its
-  // aria-label, and the narrow card's menu item — so the only description of
-  // what a control does cannot be a `title` a touch screen never shows.
-  // Every branch CONTAINS the visible menu-item text ("Detect chapters" /
-  // "Extract figures") — WCAG 2.5.3 label-in-name: a speech-input user invokes
-  // a control by the label they can SEE, and an aria-label that drops it makes
-  // the command silently match nothing. The error branches are the ones casual
-  // testing never renders.
-  const detectLabel = detecting
-    ? "Detecting chapters…"
-    : job?.status === "error"
-      ? "Detect chapters (retry)"
-      : book.chapters.length > 0
-        ? "Re-detect chapters with AI"
-        : "Auto-detect chapters with AI";
-  const extractLabel = extracting
-    ? "Extracting figures…"
-    : figJob?.status === "error"
-      ? "Extract figures (retry)"
-      : "Extract figures (signs, diagrams, charts) into your Images, tagged with their chapter — and paired with this book's notebooks where they exist";
-  const removeLabel = softDelete ? `Move “${book.title}” to the Trash` : `Delete “${book.title}”`;
-
-  // Warm gradient hues, chosen by the book's id rather than its position.
-  // Keying on the array index meant a book was olive in one sort order and
-  // amber in another, and every card restained when a search narrowed the
-  // list. A cover should be the book's face, not its seat number.
-  const hues = [35, 25, 40, 15, 45, 20];
-  const hue = hues[seedOf(book.id) % hues.length];
-
-  // The shelves this book is on, wearing their marks: ribbons on the cover, a
-  // spine down the card's edge, and — with no cover image — a jacket in the
-  // first shelf's color, so a shelf's books read as a set across the grid.
-  const onShelves = shelfMarks ? marksForBook(book.folderIds, shelves, shelfMarks) : [];
-  const jacket = !book.coverImageUrl && onShelves.length > 0 ? onShelves[0] : null;
-  const jacketLook = jacket ? jacketLayout(seedOf(book.id), jacket.mark.color) : null;
-  const dated = jacket ? titleDate(book.title) : null;
-
-  return (
-    <div
-      data-book-card
-      /* No entry animation. It was `animate-slide-up` with a per-card
-         animationDelay and no animation-fill-mode: backwards, so during the
-         delay each card sat fully visible, then snapped to opacity 0 and faded
-         back in — every card flashed, on every search keystroke. It was also
-         not covered by the reduced-motion block. Removing it fixes the flash,
-         the stagger cost, and a standing request for less motion at once. */
-      className="group relative h-full bg-surface-container-high rounded-xl overflow-hidden flex flex-col transition-all hover:-translate-y-1 hover:shadow-2xl hover:shadow-black/40"
-    >
-      {/* The spine: one stripe per shelf, full height of the card. */}
-      {onShelves.length > 0 && (
-        <div
-          data-shelf-spine
-          aria-hidden
-          className="absolute left-0 top-0 bottom-0 w-1.5 z-10"
-          style={{ background: markStripes(onShelves.map((s) => s.mark.color)) }}
-        />
-      )}
-      {/* Cover */}
-      <div
-        data-book-cover-placeholder={book.coverImageUrl || jacket ? undefined : ""}
-        className="cc-book-cover aspect-[5/2] relative overflow-hidden bg-surface-container-highest flex items-center justify-center"
-        style={{
-          background: book.coverImageUrl
-            ? undefined
-            : `linear-gradient(135deg, hsl(${hue}, 30%, 18%), hsl(${hue}, 25%, 12%))`,
-        }}
-      >
-        {book.coverImageUrl ? (
-          <img src={book.coverImageUrl} alt={book.title} className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
-        ) : jacket ? (
-          // Its own layer, not the placeholder's background: themes restyle
-          // the placeholder with !important, and the jacket must win.
-          // Composition varies per book (src/lib/bookJacket.ts) so a shelf of
-          // jackets reads as a series, not one picture repeated.
-          <div
-            data-shelf-jacket
-            className="absolute inset-0"
-            style={{ background: jacketLook!.background }}
-          >
-            <span
-              className="material-symbols-outlined absolute leading-none transition-transform duration-500 group-hover:scale-110"
-              style={{
-                ...jacketLook!.glyph,
-                color: jacket.mark.color,
-                fontVariationSettings: "'FILL' 1",
-                filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.5)) brightness(1.25)",
-              }}
-              aria-hidden
-            >
-              {jacket.mark.glyph}
-            </span>
-            <span className="absolute bottom-1.5 left-3 right-3 flex items-baseline gap-2 text-[10px] font-bold uppercase tracking-widest text-white/85 drop-shadow">
-              <span className="truncate">{jacket.name}</span>
-              {dated && <span className="ml-auto shrink-0 text-white/70">{dated}</span>}
-            </span>
-          </div>
-        ) : (
-          <span className="material-symbols-outlined text-4xl text-primary/30">
-            {isPdf ? "auto_stories" : isHtml ? "article" : "description"}
-          </span>
-        )}
-        {!jacket && (
-          <div data-book-cover-overlay className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-60" />
-        )}
-        <YoutubeTranscriptBadge book={book} className={`absolute ${onShelves.length > 0 ? "bottom-2 right-2" : "top-3 left-3"} shadow-lg`} />
-        {/* Ribbons: a bookmark per shelf hanging from the top edge, each in
-            its shelf's color with its glyph. Hover names the shelf. */}
-        {onShelves.length > 0 && (
-          <div data-shelf-ribbons className="absolute top-0 left-3 flex gap-1 z-10">
-            {onShelves.slice(0, 5).map(({ id, name, mark }) => (
-              <span
-                key={id}
-                title={`On “${name}”`}
-                aria-label={`On shelf ${name}`}
-                className="flex h-7 w-5 items-start justify-center pt-0.5 shadow-md"
-                style={{
-                  background: mark.color,
-                  color: mark.ink,
-                  clipPath: "polygon(0 0, 100% 0, 100% 100%, 50% 78%, 0 100%)",
-                }}
-              >
-                <span className="material-symbols-outlined text-[13px]" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden>
-                  {mark.glyph}
-                </span>
-              </span>
-            ))}
-            {onShelves.length > 5 && (
-              <span className="self-start mt-1 rounded bg-black/60 px-1 text-[10px] font-bold text-white">
-                +{onShelves.length - 5}
-              </span>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Info */}
-      <div className="cc-book-info p-4 flex flex-col flex-1">
-        {editing ? (
-          <input
-            className="cc-book-title w-full text-base font-headline font-bold bg-transparent border border-outline-variant rounded-lg px-2 py-1 mb-1 text-primary focus:outline-none focus:ring-1 focus:ring-primary/40"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && draft.trim()) { onRename(book, draft.trim()); setEditing(false); }
-              if (e.key === "Escape") { setDraft(book.title); setEditing(false); }
-            }}
-            onBlur={() => {
-              if (draft.trim() && draft.trim() !== book.title) onRename(book, draft.trim());
-              setEditing(false);
-            }}
-          />
-        ) : (
-          <h4
-            className="cc-book-title font-headline text-base leading-snug font-bold text-primary mb-1 cursor-pointer hover:text-accent transition-colors line-clamp-2"
-            onClick={onTitleClick}
-          >
-            <Highlight text={book.title} query={query} />
-          </h4>
-        )}
-        <p className="cc-book-meta text-on-surface-variant text-[10px] font-medium uppercase tracking-wider mb-2">
-          {metadataText}
-        </p>
-
-        {/* The book summary. Generated with the user's own key and, until
-            now, displayed nowhere — the only way to read one was to send a
-            chat message. Attributed rather than presented as book metadata:
-            readers can't reliably tell model-written summaries apart, but
-            their beliefs about authorship move their judgement of it
-            (CHI 2026), so the label is not optional. */}
-        {book.summary && (
-          <div className="cc-book-summary mb-2">
-            <p className="text-xs leading-relaxed text-on-surface-variant line-clamp-2" title={book.summary}>
-              <Highlight text={book.summary} query={query} />
-            </p>
-            <p className="text-[10px] text-on-surface-variant/60 mt-1">
-              AI summary{book.summaryModel ? ` · ${book.summaryModel}` : ""}
-            </p>
-          </div>
-        )}
-
-        {/* Why this book matched, when the title didn't say. */}
-        {match && (
-          <p className="cc-book-match text-[11px] text-primary/90 mb-2 line-clamp-2">
-            <span className="material-symbols-outlined text-[13px] align-[-2px] mr-1" aria-hidden>subdirectory_arrow_right</span>
-            <Highlight text={match.gist ? `${match.name} — ${match.gist}` : match.name} query={query} />
-          </p>
-        )}
-
-        {/* Category + tags (set by Auto-tag; they drive the mind map) */}
-        {(book.category || topicTags(book.tags).length > 0) && (
-          <div className="cc-book-tags flex flex-wrap gap-1.5 mb-2">
-            {book.category && (
-              <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[11px] font-medium">
-                {book.category}
-              </span>
-            )}
-            {topicTags(book.tags).slice(0, 3).map((t) => (
-              <span
-                key={t}
-                className="px-2 py-0.5 rounded-full bg-surface-container-highest text-on-surface-variant text-[11px]"
-              >
-                #{t}
-              </span>
-            ))}
-            {(book.tags?.length ?? 0) > 3 && (
-              <span className="px-1 py-0.5 text-on-surface-variant/60 text-[11px]">
-                +{book.tags!.length - 3}
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* Auto-structure + figure-extraction status */}
-        <div className="cc-book-status mb-3 space-y-1 empty:mb-0">
-          {detecting ? (
-            <p className="flex items-center gap-1.5 text-xs text-primary">
-              <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>
-              <span className="truncate">{job?.progress || "Detecting chapters…"}</span>
-            </p>
-          ) : job?.status === "done" ? (
-            <p className="flex items-center gap-1.5 text-xs text-primary">
-              <span className="material-symbols-outlined text-sm">check_circle</span>
-              {job.savedCount} chapter{job.savedCount === 1 ? "" : "s"} detected
-              {job.method === "outline" ? " (from PDF outline)" : ""}
-            </p>
-          ) : job?.status === "error" ? (
-            <p className="flex items-center gap-1.5 text-xs text-destructive">
-              <span className="material-symbols-outlined text-sm">error</span>
-              <span className="truncate" title={job.error}>{job.error || "Detection failed"}</span>
-            </p>
-          ) : null}
-          {/* Catalog run (chapter gists + book summary). Shown here because
-              this is where its result appears — the summary lands on this
-              card. A missing migration reads as a note, not an error: the
-              gists did land and are useful without it. */}
-          {catJob?.status === "queued" || catJob?.status === "running" ? (
-            <p className="flex items-center gap-1.5 text-xs text-primary">
-              <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>
-              <span className="truncate">{catJob.progress || "Building catalog…"}</span>
-            </p>
-          ) : catJob?.status === "done" ? (
-            <p className="flex items-center gap-1.5 text-xs text-primary">
-              <span className="material-symbols-outlined text-sm">menu_book</span>
-              <span className="truncate" title={catJob.note}>
-                {catJob.note
-                  ? catJob.note
-                  : `Catalog ready${catJob.gistsWritten ? ` · ${catJob.gistsWritten} chapter${catJob.gistsWritten === 1 ? "" : "s"}` : ""}` +
-                    (catJob.gistsRejected ? ` · ${catJob.gistsRejected} summary check${catJob.gistsRejected === 1 ? "" : "s"} failed` : "")}
-              </span>
-            </p>
-          ) : catJob?.status === "error" ? (
-            <p className="flex items-center gap-1.5 text-xs text-destructive">
-              <span className="material-symbols-outlined text-sm">error</span>
-              <span className="truncate" title={catJob.error}>{catJob.error || "Catalog failed"}</span>
-            </p>
-          ) : null}
-          {extracting ? (
-            <p className="flex items-center gap-1.5 text-xs text-primary">
-              <span className="material-symbols-outlined text-sm animate-spin">progress_activity</span>
-              <span className="truncate">{figJob?.progress || "Extracting figures…"}</span>
-            </p>
-          ) : figJob?.status === "done" ? (
-            <p className="flex items-center gap-1.5 text-xs text-primary">
-              <span className="material-symbols-outlined text-sm">imagesmode</span>
-              {figJob.kept === 0
-                ? "No usable figures found"
-                : `${figJob.kept} figure${figJob.kept === 1 ? "" : "s"} saved to Images${(figJob.skipped ?? 0) > 0 ? ` (${figJob.skipped} skipped)` : ""}`}
-            </p>
-          ) : figJob?.status === "error" ? (
-            <p className="flex items-center gap-1.5 text-xs text-destructive">
-              <span className="material-symbols-outlined text-sm">error</span>
-              <span className="truncate" title={figJob.error}>{figJob.error || "Figure extraction failed"}</span>
-            </p>
-          ) : null}
-        </div>
-
-        {/* Actions. Both the wide row and the narrow overflow menu are always
-            in the DOM; `[data-cc-wide]` / `[data-cc-narrow]` in index.css pick
-            one from the CARD's own width. Rendering them as two JSX branches
-            instead would remount the subtree on every column-count change and
-            drop the dropdown's open state mid-interaction. */}
-        <div className="cc-book-actions mt-auto flex items-center gap-2">
-          <button
-            onClick={() => onRead(book)}
-            className="cc-book-open mr-auto flex items-center gap-1 pl-4 pr-3 py-2 text-sm bg-primary/10 text-primary font-bold rounded-lg hover:bg-primary hover:text-on-primary-container transition-all active:scale-95"
-          >
-            Open
-            <span className="material-symbols-outlined text-base leading-none" aria-hidden>arrow_forward</span>
-          </button>
-          {isPdf && (
-            <button
-              data-cc-wide
-              onClick={(e) => { e.stopPropagation(); onDetect(book); }}
-              disabled={detecting}
-              title={detectLabel}
-              aria-label={detectLabel}
-              className={`${detecting ? "" : quietUntilHover} p-2 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed`}
-            >
-              <span className={`material-symbols-outlined text-lg leading-none ${detecting ? "animate-spin" : ""}`}>
-                {detecting ? "progress_activity" : "auto_awesome"}
-              </span>
-            </button>
-          )}
-          {isPdf && (
-            <button
-              data-cc-wide
-              onClick={(e) => { e.stopPropagation(); onExtractFigures(book); }}
-              disabled={extracting}
-              title={extractLabel}
-              aria-label={extractLabel}
-              className={`${extracting ? "" : quietUntilHover} p-2 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-primary/10 hover:text-primary transition-all disabled:opacity-50 disabled:cursor-not-allowed`}
-            >
-              <span className={`material-symbols-outlined text-lg leading-none ${extracting ? "animate-spin" : ""}`}>
-                {extracting ? "progress_activity" : "image_search"}
-              </span>
-            </button>
-          )}
-          <button
-            data-cc-wide
-            onClick={(e) => { e.stopPropagation(); onRemove(book); }}
-            title={removeLabel}
-            aria-label={removeLabel}
-            className={`${quietUntilHover} p-2 bg-surface-container-highest text-on-surface-variant rounded-lg hover:bg-error-container/20 hover:text-destructive transition-all`}
-          >
-            <span className="material-symbols-outlined text-lg leading-none">delete</span>
-          </button>
-
-          {/* Narrow cards: the same three actions behind one 44px target. */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                data-cc-narrow
-                onClick={(e) => e.stopPropagation()}
-                aria-label={`More actions for “${book.title}”`}
-                className="shrink-0 w-11 h-11 items-center justify-center bg-surface-container-highest text-on-surface-variant rounded-lg transition-all"
-              >
-                <span className={`material-symbols-outlined text-xl ${detecting || extracting ? "animate-spin" : ""}`}>
-                  {detecting || extracting ? "progress_activity" : "more_vert"}
-                </span>
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              /* Items are one flex row of nowrap text, so a long label makes
-                 the MENU that wide — `removeLabel` embeds the book title and
-                 rendered a 600px menu in a 375px viewport. Bound it to the
-                 screen and let long text truncate. */
-              className="min-w-52 max-w-[min(18rem,calc(100vw-2rem))]"
-              onCloseAutoFocus={(e) => {
-                // Radix restores focus to the trigger on close, which would
-                // pull it straight back out of the rename input.
-                if (renameFromMenu.current) { renameFromMenu.current = false; e.preventDefault(); }
-              }}
-            >
-              <DropdownMenuItem
-                aria-label={`Rename “${book.title}”`}
-                onSelect={() => { renameFromMenu.current = true; startRename(); }}
-              >
-                <span className="material-symbols-outlined text-base mr-2 shrink-0" aria-hidden>edit</span>
-                <span className="truncate">Rename</span>
-              </DropdownMenuItem>
-              {isPdf && (
-                <DropdownMenuItem disabled={detecting} aria-label={detectLabel} onSelect={() => onDetect(book)}>
-                  <span className={`material-symbols-outlined text-base mr-2 shrink-0 ${detecting ? "animate-spin" : ""}`} aria-hidden>
-                    {detecting ? "progress_activity" : "auto_awesome"}
-                  </span>
-                  <span className="truncate">{detecting ? "Detecting chapters…" : "Detect chapters"}</span>
-                </DropdownMenuItem>
-              )}
-              {isPdf && (
-                <DropdownMenuItem disabled={extracting} aria-label={extractLabel} onSelect={() => onExtractFigures(book)}>
-                  <span className={`material-symbols-outlined text-base mr-2 shrink-0 ${extracting ? "animate-spin" : ""}`} aria-hidden>
-                    {extracting ? "progress_activity" : "image_search"}
-                  </span>
-                  <span className="truncate">{extracting ? "Extracting figures…" : "Extract figures"}</span>
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuItem
-                className="text-destructive focus:text-destructive"
-                aria-label={removeLabel}
-                onSelect={() => onRemove(book)}
-              >
-                <span className="material-symbols-outlined text-base mr-2 shrink-0" aria-hidden>delete</span>
-                <span className="truncate">{softDelete ? "Move to Trash" : "Delete"}</span>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-/**
- * Memoized, because the Vault renders up to sixty of these at once and each
- * one mounts two Radix dropdown roots. Every keystroke in the search box
- * re-renders `Library`, and without this that re-rendered every card on
- * screen — about a hundred and twenty menu roots — to change nothing.
- *
- * The props are all primitives, stable objects from context, or callbacks; the
- * one that used to defeat this was `match`, which was a fresh object from
- * `chapterMatch` on every render. It comes from a memoized map now.
- */
-const BookCard = React.memo(BookCardImpl);
 
 export default Library;

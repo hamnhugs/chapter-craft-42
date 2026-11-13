@@ -22,6 +22,7 @@ const read = (p: string) => stripComments(readFileSync(resolve(process.cwd(), "s
 
 const LIBRARY = read("components/Library.tsx");
 const SHELVES = read("components/LibraryShelves.tsx");
+const DECK = read("components/LibraryDeck.tsx");
 const LIST = read("components/LibraryList.tsx");
 const APP = read("context/AppContext.tsx");
 
@@ -100,22 +101,15 @@ describe("the Vault keeps your place", () => {
 });
 
 describe("the Vault stops doing pointless work", () => {
-  it("computes why a book matched once per query, not once per card per render", () => {
-    // chapterMatch normalizes every chapter of every book that did not match
-    // on its spine. Called inline in the render prop, that was roughly
-    // eighteen hundred Unicode normalizations per keystroke.
-    expect(LIBRARY).toContain("const matchByBook = useMemo(");
-    expect(LIBRARY).toContain("match={matchByBook.get(book.id) ?? null}");
-    expect(LIBRARY).not.toMatch(/match=\{chapterMatch\(/);
-  });
-
   it("memoizes the book card, with props stable enough for the memo to bite", () => {
-    expect(LIBRARY).toContain("const BookCard = React.memo(BookCardImpl);");
-    // React.memo is decorative if the props are fresh closures. Passing
-    // `onDetect={() => runDetect(book)}` and four more like it built five new
-    // function identities per card per render, so every card re-rendered on
-    // every parent render regardless.
-    expect(LIBRARY).toContain("{...cardHandlers}");
+    // The card is the deck's tile now. React.memo is decorative if the props
+    // are fresh closures — and here a re-render would also close the menu a
+    // tapped card has open — so the tile takes ONE actions object that is
+    // built once, and the page hands the deck one stable handlers object.
+    expect(DECK).toContain("}> = React.memo(({ card, busy, compact, shelf, actions, highlight }) => {");
+    expect(DECK).toContain("const actions = useMemo<CardActions>(() => ({");
+    expect(DECK).not.toMatch(/<BookCardTile[^>]*on[A-Z]\w*=\{\(/);
+    expect(LIBRARY).toContain("handlers={cardHandlers}");
     expect(LIBRARY).not.toMatch(/onDetect=\{\(\) =>/);
     expect(LIBRARY).not.toMatch(/onRead=\{\(\) =>/);
   });
@@ -159,8 +153,10 @@ describe("the Vault stopped flashing", () => {
   });
 
   it("gives a book the same cover whatever order it is sorted in", () => {
-    expect(LIBRARY).toContain("hues[seedOf(book.id) % hues.length]");
-    expect(LIBRARY).not.toContain("hues[index % hues.length]");
+    // Generated art is seeded from the book's id, never from where it
+    // happens to sit in the grid.
+    expect(DECK).toContain("coverArt(seedOf(book.id))");
+    expect(DECK).not.toMatch(/coverArt\((index|i)\b/);
   });
 });
 

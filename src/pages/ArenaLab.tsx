@@ -4,6 +4,7 @@ import LibraryDeck from "@/components/LibraryDeck";
 import type { BookDocument } from "@/types/library";
 import { saveLastPage } from "@/hooks/useReaderPrefs";
 import { AppContext, useApp } from "@/context/AppContext";
+import type { BookFolder } from "@/lib/bookFolders";
 
 /**
  * ARENA LAB — dev-only. Route: #/arena-lab  (and #/arena-lab?deck)
@@ -18,6 +19,8 @@ import { AppContext, useApp } from "@/context/AppContext";
  *                      its empty state.
  *   #/arena-lab?deck   `LibraryDeck` over a fixture library covering every
  *                      tier, every level band, covers and no covers.
+ *   #/arena-lab?library the shell on the Library tab over the same fixture
+ *                      library, with four shelves you can edit (in memory).
  *   #/arena-lab?reader the shell on the Read tab with a real PDF open (a
  *                      document from docs/, served by the dev server), with
  *                      three chapters. `&html` opens an HTML book instead.
@@ -46,8 +49,8 @@ function cover(i: number): string | undefined {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
-const DeckLab: React.FC = () => {
-  const books = useMemo<BookDocument[]>(() => TITLES.map((title, i) => {
+function fixtureBooks(): BookDocument[] {
+  return TITLES.map((title, i) => {
     const id = `lab-book-${i}`;
     const lastPage = Math.round(PAGES[i] * READ[i]);
     if (lastPage > 0) saveLastPage(id, lastPage);
@@ -65,13 +68,18 @@ const DeckLab: React.FC = () => {
       summaryModel: i % 4 === 0 ? "example/model" : null,
       folderIds: [],
     };
-  }), []);
+  });
+}
+
+const DeckLab: React.FC = () => {
+  const books = useMemo<BookDocument[]>(fixtureBooks, []);
   const noop = () => {};
   return (
     <div className="h-app overflow-auto bg-background">
       <main className="max-w-7xl mx-auto px-6 py-8">
         <LibraryDeck
           books={books}
+          allBooks={books}
           shelves={[]}
           filtered={false}
           softDelete
@@ -115,6 +123,55 @@ const ReaderLab: React.FC<{ html: boolean }> = ({ html }) => {
   return <AppContext.Provider value={value as typeof real}><Index /></AppContext.Provider>;
 };
 
+const LAB_SHELVES = ["Information theory", "Stoics", "Programming craft", "Design"];
+/** Fixture index → the shelves it sits on. Index 3 is on two; half are on none. */
+const LAB_MEMBERS: Record<number, number[]> = { 0: [0], 12: [0], 14: [0], 4: [1], 7: [1], 2: [2], 8: [2], 3: [2, 3], 11: [3], 15: [3], 16: [3] };
+
+/** `Index` on the Library tab over the fixture library, with shelves that can
+ *  be created, renamed, deleted and filled — all in memory. */
+const LibraryLab: React.FC = () => {
+  const real = useApp();
+  const [shelves, setShelves] = React.useState<BookFolder[]>(() => LAB_SHELVES.map((name, i) => ({
+    id: `lab-shelf-${i}`, user_id: "lab", name, sort_index: i, created_at: "", updated_at: "",
+  })));
+  const [books, setBooks] = React.useState<BookDocument[]>(() => fixtureBooks().map((b, i) => ({
+    ...b, folderIds: (LAB_MEMBERS[i] ?? []).map((s) => `lab-shelf-${s}`),
+  })));
+  const [tab, setTab] = React.useState<typeof real.activeTab>("library");
+  const value = useMemo(() => ({
+    ...real,
+    books, shelves,
+    booksLoading: false, shelvesLoading: false, multiShelf: true, membershipLoaded: true,
+    getBooks: () => books,
+    getShelves: () => shelves,
+    activeTab: tab,
+    setActiveTab: setTab,
+    toggleBookShelf: async (bookId: string, shelfId: string) => {
+      setBooks((prev) => prev.map((b) => b.id !== bookId ? b : {
+        ...b, folderIds: b.folderIds.includes(shelfId) ? b.folderIds.filter((x) => x !== shelfId) : [...b.folderIds, shelfId],
+      }));
+    },
+    createShelf: async (name: string) => {
+      const shelf: BookFolder = { id: `lab-shelf-${Date.now()}`, user_id: "lab", name, sort_index: 99, created_at: "", updated_at: "" };
+      setShelves((prev) => [...prev, shelf]);
+      return shelf;
+    },
+    renameShelf: async (id: string, name: string) => { setShelves((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s))); },
+    deleteShelf: async (id: string) => {
+      setShelves((prev) => prev.filter((s) => s.id !== id));
+      setBooks((prev) => prev.map((b) => ({ ...b, folderIds: b.folderIds.filter((x) => x !== id) })));
+    },
+    updateBookTitle: (id: string, title: string) => setBooks((prev) => prev.map((b) => (b.id === id ? { ...b, title } : b))),
+    // The real loader navigates the real (signed-out) shell; point it at the lab's tab.
+    loadFocus: async (action: Parameters<typeof real.loadFocus>[0]) => {
+      const report = await real.loadFocus(action, { navigate: false });
+      setTab(action.kind === "book" ? "viewer" : "chat");
+      return report;
+    },
+  }), [real, books, shelves, tab]);
+  return <AppContext.Provider value={value as typeof real}><Index /></AppContext.Provider>;
+};
+
 /**
  * `&open` clicks the first card (the profile), `?tab=<Label>` clicks a dock
  * tab — so a headless screenshot can reach states that need a tap.
@@ -129,6 +186,7 @@ const ArenaLab: React.FC = () => {
     }, 600);
     return () => clearTimeout(t);
   }, [hash]);
+  if (hash.includes("?library")) return <LibraryLab />;
   if (hash.includes("?reader")) return <ReaderLab html={hash.includes("html")} />;
   return hash.includes("?deck") ? <DeckLab /> : <Index />;
 };
