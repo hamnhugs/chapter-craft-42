@@ -20,7 +20,9 @@ export const useAuth = () => {
     return () => subscription.unsubscribe();
   }, []);
 
-  const signOut = () => supabase.auth.signOut();
+  // "local" ends the session on this device only — other devices stay signed
+  // in — and clears it here even when the server can't be reached.
+  const signOut = () => supabase.auth.signOut({ scope: "local" });
 
   return { user, loading, signOut };
 };
