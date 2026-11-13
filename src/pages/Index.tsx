@@ -112,7 +112,7 @@ const ArenaDock: React.FC<{
 };
 
 const Index: React.FC = () => {
-  const { activeTab, setActiveTab, signOut, activeWiki, activeWikis } = useApp();
+  const { activeTab, setActiveTab, activeWiki, activeWikis } = useApp();
   const { isAdmin } = useIsAdmin();
   useAutoSleepCycle();
   // One "Notebooks" destination: it lights up for the list and for an open
@@ -167,9 +167,9 @@ const Index: React.FC = () => {
           )}
           <PlanBadgeButton />
           <ConflictNotifier />
-          {/* Themes are also in Settings → Appearance; the bar drops the
-              shortcut where there is no room for it. */}
-          <span className="hidden sm:contents"><ThemeSwitcher /></span>
+          {/* Also in Settings → Appearance. Shown at every width: a half-tiled
+              window is narrower than a phone in landscape. */}
+          <ThemeSwitcher />
           {isAdmin && (
             <button
               onClick={() => setActiveTab("admin")}
@@ -189,9 +189,6 @@ const Index: React.FC = () => {
             className={barButton}
           >
             <span className="material-symbols-outlined text-[22px]" style={activeTab === "settings" ? { fontVariationSettings: "'FILL' 1" } : undefined}>settings</span>
-          </button>
-          <button onClick={signOut} aria-label="Sign out" title="Sign out" className={barButton}>
-            <span className="material-symbols-outlined text-[22px]">logout</span>
           </button>
         </div>
       </header>

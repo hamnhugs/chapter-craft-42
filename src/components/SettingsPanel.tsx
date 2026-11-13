@@ -250,7 +250,17 @@ const KeyRow: React.FC<{
 };
 
 const SettingsPanel: React.FC = () => {
-  const { user } = useAuth();
+  const { user, signOut } = useAuth();
+  const [signingOut, setSigningOut] = useState(false);
+  const logOut = async () => {
+    setSigningOut(true);
+    const { error } = await signOut();
+    // A cleared session unmounts this panel; we are only still here if it failed.
+    if (error) {
+      setSigningOut(false);
+      toast.error("Couldn't log out", { description: error.message });
+    }
+  };
   const { isPaid, plan } = usePlan();
   const { themeId, setThemeId, themes, season, seasonal, setSeasonal, hemispherePref, setHemispherePref } = useTheme();
   const {
@@ -633,6 +643,21 @@ const SettingsPanel: React.FC = () => {
               <div className="space-y-0.5">{SECTIONS.filter((s) => s.power).map(navButton)}</div>
             </>
           )}
+        </div>
+
+        {/* Leaving is the last thing in the menu, and the only red thing. */}
+        <div className="px-3 py-3 border-t border-outline-variant/10">
+          <button
+            data-no-sticker
+            onClick={logOut}
+            disabled={signingOut}
+            className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm text-left font-medium text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-60"
+          >
+            {signingOut
+              ? <Loader2 className="w-5 h-5 animate-spin" aria-hidden />
+              : <span className="material-symbols-outlined text-[20px]" aria-hidden>logout</span>}
+            <span className="flex-1 min-w-0 truncate">{signingOut ? "Logging out…" : "Log out"}</span>
+          </button>
         </div>
       </nav>
 
