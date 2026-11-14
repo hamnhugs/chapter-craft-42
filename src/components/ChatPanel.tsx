@@ -26,6 +26,7 @@ import { isEmbeddingModel } from "@/lib/utils";
 import { describeModel } from "@/lib/providers/registry";
 import { useDictation } from "@/hooks/useDictation";
 import { requestSettingsSection } from "@/lib/settingsNav";
+import { WORKSPACE_OPEN_EVENT } from "@/lib/appNav";
 import VoiceNotesPanel, { appendVoiceNote, deleteVoiceNote } from "@/components/VoiceNotesPanel";
 import { classifyNotePress, NOTE_PRESS } from "@/lib/notePress";
 // Lazy: ResponseBlocks pulls recharts (~large) but only renders when a model emits chart blocks
@@ -244,11 +245,17 @@ const ChatPanel: React.FC = () => {
   const workspaceItems = useWorkspaceItems();
   // A file opened from the Notebooks tab: this panel was unmounted then, so
   // the request waits in the store and is taken here on the way in.
+  // Counsel's open_view asks the same way while this panel is already up.
   useEffect(() => {
-    const id = workspaceStore.takeOpenRequest();
-    if (!id) return;
-    setWorkspaceSelectedId(id);
-    setWorkspaceOpen(true);
+    const take = () => {
+      const id = workspaceStore.takeOpenRequest();
+      if (!id) return;
+      setWorkspaceSelectedId(id);
+      setWorkspaceOpen(true);
+    };
+    take();
+    window.addEventListener(WORKSPACE_OPEN_EVENT, take);
+    return () => window.removeEventListener(WORKSPACE_OPEN_EVENT, take);
   }, []);
   const workspaceCount = workspaceItems.filter((i) => i.userId == null || i.userId === user?.id).length;
   // Guarded because this was the repo's only unguarded storage write, and it

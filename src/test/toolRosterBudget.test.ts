@@ -64,7 +64,20 @@ import { CHAT_TOOL_DEFINITIONS } from "@/lib/chatTools";
 // as an action enum without the verb's own name lying about half its
 // behaviour, and it is the cheapest kind of slot to add: one object, one
 // intent, a description that names no sibling.
-const ROSTER_BUDGET = 80;
+//
+// +5 (the Notebooks tab, hands-free): update_wiki, manage_chain, review_notes,
+// move_workspace_item, open_view. The user asked that Counsel be able to work
+// every notebook feature, and five of them had no verb at all: renaming,
+// recolouring and moving a notebook; making and changing saved sets; Daily
+// recall; refiling a Workspace file; and simply SHOWING a notebook, note or
+// file. Consolidation came first, as above: nesting and colour went onto
+// create_wiki and list_wikis rather than new verbs, files-in-a-notebook onto
+// list_workspace_items, "Just chat" onto set_active_neurons, saved sets got
+// ONE action-enum verb instead of three, recall ONE instead of two, and
+// open_view is a single navigation verb for every screen rather than one per
+// tab. Five slots for five distinct objects (notebook · saved set · review ·
+// file filing · the screen).
+const ROSTER_BUDGET = 85;
 
 describe("the tool roster stays within its stated budget", () => {
   it(`ships at most ${ROSTER_BUDGET} tools`, () => {
