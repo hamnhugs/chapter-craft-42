@@ -711,7 +711,7 @@ const PdfViewer: React.FC = () => {
   );
 
   const contentsButton = hasContents && (
-    <button type="button" className={slot} onClick={() => { setContentsOpen(true); showChrome(); }} aria-label="Contents: chapters">
+    <button type="button" className={slot} onClick={() => { setContentsOpen(true); showChrome(); }} aria-label="Contents: chapters" data-tour="reader-contents">
       <span className={slotIcon} aria-hidden>toc</span>
       <span className={slotLabel}>Contents</span>
     </button>

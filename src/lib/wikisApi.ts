@@ -105,6 +105,26 @@ export async function deleteWiki(id: string): Promise<void> {
 }
 
 /**
+ * Where notebooks are read from and written to. The Notebooks screens take
+ * one of these instead of calling Supabase themselves, so the dev lab
+ * (#/arena-lab?notebooks) can run the real screens over notebooks held in
+ * memory.
+ */
+export interface NotebookStore {
+  list(): Promise<WikiWithStats[]>;
+  create(input: { name: string; description?: string; cover_color?: string; tags?: string[] }): Promise<Wiki>;
+  update(id: string, updates: { name?: string; description?: string; cover_color?: string; tags?: string[] }): Promise<void>;
+  remove(id: string): Promise<void>;
+}
+
+export const supabaseNotebooks: NotebookStore = {
+  list: fetchWikisWithStats,
+  create: createWiki,
+  update: updateWiki,
+  remove: deleteWiki,
+};
+
+/**
  * Persist the loaded neuron set. ids[0] is the PRIMARY (written to
  * active_wiki_id — the value every existing single-neuron code path and the
  * knowledge-extract edge function read); the full ordered set goes to

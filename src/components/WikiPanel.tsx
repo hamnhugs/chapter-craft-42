@@ -42,6 +42,11 @@ import EntryLocatorPanel from "@/components/EntryLocatorPanel";
 import { fetchImagesForEntries, deleteImageAttachment, type ImageAttachmentRow } from "@/lib/imageGen";
 import DailyRecall from "@/components/DailyRecall";
 import NotebookFormDialog, { deleteNotebookWithConfirm } from "@/components/NotebookFormDialog";
+import { MAX_NOTEBOOK_DEPTH, ancestorsOf, buildNotebookTree } from "@/lib/notebookTree";
+import { isSystemWiki } from "@/lib/wikisApi";
+import { usePlan } from "@/hooks/usePlan";
+import { openPricing } from "@/components/PricingDialog";
+import { FREE_NEURON_LIMIT } from "@/lib/neuronAccess";
 import { useWorkspaceItems, workspaceStore } from "@/lib/workspaceStore";
 import { KIND_ICON, KIND_LABEL, languageLabel } from "@/lib/workspaceFiles";
 import { dailyRecallDoneToday, locatorBookId, DAILY_RECALL_SIZE } from "@/lib/dailyRecall";
@@ -77,8 +82,15 @@ interface ConfirmRequest {
  * chip row and ⌘K.
  */
 const WikiPanel: React.FC = () => {
-  const { books, wikis, activeWikiId, activeWikiIds, setActiveTab, setActiveBook, viewedWikiId, refreshWikis } = useApp();
+  const { books, wikis, activeWikiId, activeWikiIds, setActiveTab, setActiveBook, viewedWikiId, refreshWikis, openNotebook } = useApp();
   const wiki = wikis.find((w) => w.id === (viewedWikiId ?? activeWikiId)) || null;
+  // Where this notebook sits among the others: what it is inside, and what is inside it.
+  const tree = useMemo(() => buildNotebookTree(wikis.filter((w) => !isSystemWiki(w))), [wikis]);
+  const node = wiki ? tree.byId.get(wiki.id) : undefined;
+  const trail = wiki ? ancestorsOf(tree, wiki.id) : [];
+  const inside = node?.children ?? [];
+  const canNestInside = !!node && node.depth < MAX_NOTEBOOK_DEPTH;
+  const [formInside, setFormInside] = useState(false);
   const wikiId = wiki?.id ?? null;
 
   const [entries, setEntries] = useState<KnowledgeEntry[]>([]);
@@ -111,6 +123,16 @@ const WikiPanel: React.FC = () => {
   // Where Back from a note should land.
   const [returnView, setReturnView] = useState<"conflicts" | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const { isPaid, loaded: planLoaded } = usePlan();
+  const openForm = (insideThis: boolean) => {
+    // A new notebook counts against the free plan wherever it is made.
+    if (insideThis && planLoaded && !isPaid && wikis.length >= FREE_NEURON_LIMIT) {
+      openPricing("neuron-limit");
+      return;
+    }
+    setFormInside(insideThis);
+    setFormOpen(true);
+  };
   const [refreshNonce, setRefreshNonce] = useState(0);
 
   // Only the newest in-flight loadData may commit results (stale-response guard).
@@ -423,7 +445,7 @@ const WikiPanel: React.FC = () => {
 
   const handleDeleteNotebook = async () => {
     if (!wiki) return;
-    if (await deleteNotebookWithConfirm(wiki, entries.length, activeWikiIds)) {
+    if (await deleteNotebookWithConfirm(wiki, entries.length, activeWikiIds, { notebooks: wikis })) {
       await refreshWikis();
       setActiveTab("wikis");
     }
@@ -444,6 +466,21 @@ const WikiPanel: React.FC = () => {
       <main className="max-w-3xl mx-auto px-4 sm:px-6 pt-4 pb-32 w-full min-w-0">
         {view === "entries" ? (
           <>
+            {/* Where this notebook sits, when it sits inside another. */}
+            {trail.length > 0 && (
+              <nav aria-label="Notebook location" className="mb-1 flex items-center gap-1 overflow-x-auto hide-scrollbar text-xs text-on-surface-variant [&>*]:shrink-0">
+                <button onClick={() => setActiveTab("wikis")} className="hover:text-foreground hover:underline">Notebooks</button>
+                {trail.map((n) => (
+                  <React.Fragment key={n.wiki.id}>
+                    <span aria-hidden>›</span>
+                    <button onClick={() => openNotebook(n.wiki.id)} className="max-w-[10rem] truncate font-medium hover:text-foreground hover:underline">
+                      {n.wiki.name}
+                    </button>
+                  </React.Fragment>
+                ))}
+                <span aria-hidden>›</span>
+              </nav>
+            )}
             {/* ── One header line ───────────────────────────────────────── */}
             <section className="flex items-center gap-2 mb-3 min-w-0">
               <button
@@ -490,6 +527,7 @@ const WikiPanel: React.FC = () => {
                 onClick={() => setReviewOpen(true)}
                 disabled={entries.length === 0}
                 title="Three notes a day: answer first, then check against the note and its page."
+                data-tour="daily-recall"
                 className="h-9 shrink-0 gap-1"
               >
                 <span className="sm:hidden">{recallDone ? "Done" : dueCount > 0 ? `Recall · ${dueCount}` : "Recall"}</span>
@@ -505,7 +543,8 @@ const WikiPanel: React.FC = () => {
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onSelect={() => setFormOpen(true)} disabled={!wiki}>Rename or recolor…</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => openForm(true)} disabled={!wiki || !canNestInside}>New notebook inside…</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => openForm(false)} disabled={!wiki}>Rename, recolor or move…</DropdownMenuItem>
                   <DropdownMenuItem asChild>
                     <Link to="/memory-guide">How notes work</Link>
                   </DropdownMenuItem>
@@ -516,6 +555,33 @@ const WikiPanel: React.FC = () => {
                 </DropdownMenuContent>
               </DropdownMenu>
             </section>
+
+            {/* Notebooks kept inside this one */}
+            {inside.length > 0 && (
+              <div className="mb-3 flex items-center gap-1.5 overflow-x-auto hide-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0 [&>*]:shrink-0">
+                <span className="text-xs text-on-surface-variant mr-0.5">Inside:</span>
+                {inside.map((n) => (
+                  <button
+                    key={n.wiki.id}
+                    onClick={() => openNotebook(n.wiki.id)}
+                    className="max-w-[11rem] h-8 flex items-center gap-1.5 pl-2.5 pr-3 rounded-full border border-outline-variant/20 bg-surface-container-low hover:bg-surface-container-high text-xs font-semibold text-foreground"
+                  >
+                    <span aria-hidden className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: n.wiki.cover_color || "#7C3AED" }} />
+                    <span className="truncate">{n.wiki.name}</span>
+                  </button>
+                ))}
+                {canNestInside && (
+                  <button
+                    onClick={() => openForm(true)}
+                    aria-label="New notebook inside this one"
+                    title="New notebook inside this one"
+                    className="h-8 w-8 flex items-center justify-center rounded-full border border-dashed border-outline-variant/40 text-on-surface-variant hover:border-primary/50 hover:text-primary"
+                  >
+                    <span className="material-symbols-outlined text-base" aria-hidden>add</span>
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Search */}
             <div className="relative mb-3">
@@ -887,7 +953,14 @@ const WikiPanel: React.FC = () => {
         </AlertDialogContent>
       </AlertDialog>
 
-      <NotebookFormDialog open={formOpen} onOpenChange={setFormOpen} wiki={wiki} onSaved={refreshWikis} />
+      <NotebookFormDialog
+        open={formOpen}
+        onOpenChange={setFormOpen}
+        wiki={formInside ? null : wiki}
+        parentId={formInside ? wiki?.id ?? null : null}
+        notebooks={wikis}
+        onSaved={refreshWikis}
+      />
 
       {reviewOpen && (
         <DailyRecall

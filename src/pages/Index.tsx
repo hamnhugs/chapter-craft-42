@@ -16,6 +16,8 @@ import SetupWizard from "@/components/SetupWizard";
 import AdBanner from "@/components/ads/AdBanner";
 import AdInterstitial from "@/components/ads/AdInterstitial";
 import WelcomeGate from "@/components/WelcomeGate";
+import WormCoach from "@/components/onboarding/WormCoach";
+import GettingStarted from "@/components/onboarding/GettingStarted";
 import LoadNeuronDialog from "@/components/LoadNeuronDialog";
 import ChainDialog from "@/components/ChainDialog";
 import { useTheme } from "@/context/ThemeContext";
@@ -165,6 +167,8 @@ const Index: React.FC = () => {
               )}
             </button>
           )}
+          {/* New accounts only, until the four steps are done or it is put away. */}
+          <GettingStarted />
           <PlanBadgeButton />
           <ConflictNotifier />
           {/* Also in Settings → Appearance. Shown at every width: a half-tiled
@@ -243,6 +247,8 @@ const Index: React.FC = () => {
       <PricingDialog />
       <WelcomeGate />
       <SetupWizard />
+      {/* Bookworm explains each tab the first time it is opened. */}
+      <WormCoach />
       <AdInterstitial />
     </div>
   );

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -12,30 +12,45 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { createWiki, updateWiki, deleteWiki, type Wiki } from "@/lib/wikisApi";
+import { isSystemWiki, supabaseNotebooks, type NotebookStore, type Wiki } from "@/lib/wikisApi";
 import { emitChainsChanged } from "@/lib/chainsApi";
+import { allRows, buildNotebookTree, parentIdOf, whyCannotNest, withParent } from "@/lib/notebookTree";
 
 export const COVER_PALETTE = [
   "#7C3AED", "#2563EB", "#0EA5E9", "#10B981",
   "#F59E0B", "#EF4444", "#EC4899", "#8B5CF6",
 ];
 
+type Listed = Pick<Wiki, "id" | "name" | "tags">;
+
 /** Confirm, then delete a notebook. Refuses one Counsel is using. Resolves
- *  true when it was deleted. */
+ *  true when it was deleted.
+ *
+ *  Notebooks inside it are never deleted with it: they move up to where the
+ *  deleted notebook was. Pass `notebooks` (every notebook) so they can be found. */
 export async function deleteNotebookWithConfirm(
-  wiki: Pick<Wiki, "id" | "name">,
+  wiki: Listed,
   noteCount: number,
   loadedIds: string[],
+  opts: { notebooks?: Listed[]; store?: NotebookStore } = {},
 ): Promise<boolean> {
+  const store = opts.store ?? supabaseNotebooks;
   if (loadedIds.includes(wiki.id)) {
     toast.error("Counsel is using this notebook. Switch Counsel to another one — or to Just chat — then delete this one.");
     return false;
   }
-  if (!confirm(`Delete "${wiki.name}" and all ${noteCount} ${noteCount === 1 ? "note" : "notes"}? This can't be undone.`)) {
+  const inside = (opts.notebooks || []).filter((w) => parentIdOf(w) === wiki.id);
+  const kept = inside.length
+    ? `\n\nThe ${inside.length === 1 ? "notebook" : `${inside.length} notebooks`} inside it will be kept and moved up a level.`
+    : "";
+  if (!confirm(`Delete "${wiki.name}" and all ${noteCount} ${noteCount === 1 ? "note" : "notes"}? This can't be undone.${kept}`)) {
     return false;
   }
   try {
-    await deleteWiki(wiki.id);
+    // Move the contents out first: if this fails nothing has been deleted.
+    const newParent = parentIdOf(wiki);
+    await Promise.all(inside.map((w) => store.update(w.id, { tags: withParent(w.tags, newParent) })));
+    await store.remove(wiki.id);
     toast.success("Notebook deleted");
     // Membership rows cascade away — refresh chain lists everywhere (the
     // globally-mounted ⌘K switcher would otherwise hold dangling ids).
@@ -47,17 +62,25 @@ export async function deleteNotebookWithConfirm(
   }
 }
 
-/** Create a notebook (wiki = null) or rename/recolor one. Shared by the
- *  Notebooks list and the open notebook's ⋯ menu. */
+/** Create a notebook (wiki = null) or rename / recolor / move one. Shared by
+ *  the Notebooks list and the open notebook's ⋯ menu.
+ *
+ *  `notebooks` is every notebook the user has; with it the dialog offers
+ *  "Keep it inside", which is how a notebook is nested or moved. `parentId`
+ *  preselects that for a new notebook ("New notebook inside"). */
 const NotebookFormDialog: React.FC<{
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  wiki: Pick<Wiki, "id" | "name" | "description" | "cover_color"> | null;
+  wiki: Pick<Wiki, "id" | "name" | "description" | "cover_color" | "tags"> | null;
   onSaved: () => void | Promise<void>;
-}> = ({ open, onOpenChange, wiki, onSaved }) => {
+  notebooks?: Listed[];
+  parentId?: string | null;
+  store?: NotebookStore;
+}> = ({ open, onOpenChange, wiki, onSaved, notebooks, parentId = null, store = supabaseNotebooks }) => {
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
   const [color, setColor] = useState(COVER_PALETTE[0]);
+  const [parent, setParent] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   // Re-seed each time the dialog opens.
@@ -66,20 +89,45 @@ const NotebookFormDialog: React.FC<{
     setName(wiki?.name ?? "");
     setDesc(wiki?.description ?? "");
     setColor(wiki?.cover_color ?? COVER_PALETTE[Math.floor(Math.random() * COVER_PALETTE.length)]);
-  }, [open, wiki]);
+    setParent(wiki ? parentIdOf(wiki) : parentId);
+  }, [open, wiki, parentId]);
+
+  // Every notebook this one could sit inside, in tree order. The ones it
+  // can't (itself, its own contents, anything too deep) are listed but
+  // disabled, so the tree still reads as the tree.
+  const tree = useMemo(() => buildNotebookTree((notebooks || []).filter((w) => !isSystemWiki(w))), [notebooks]);
+  const places = useMemo(
+    () => allRows(tree)
+      .filter((n) => n.wiki.id !== wiki?.id)
+      .map((n) => ({ id: n.wiki.id, name: n.wiki.name, depth: n.depth, blocked: whyCannotNest(tree, wiki?.id ?? null, n.wiki.id) })),
+    [tree, wiki?.id],
+  );
+  // A parent that has since been deleted reads as the top level.
+  const parentValue = parent && tree.byId.has(parent) ? parent : "";
 
   const handleSubmit = async () => {
     if (!name.trim()) {
       toast.error("Name is required");
       return;
     }
+    const blocked = whyCannotNest(tree, wiki?.id ?? null, parentValue || null);
+    if (blocked) {
+      toast.error(blocked);
+      return;
+    }
     setSubmitting(true);
     try {
       if (wiki) {
-        await updateWiki(wiki.id, { name: name.trim(), description: desc, cover_color: color });
+        await store.update(wiki.id, {
+          name: name.trim(),
+          description: desc,
+          cover_color: color,
+          // Only when nesting is on offer here — otherwise leave tags alone.
+          ...(notebooks ? { tags: withParent(wiki.tags, parentValue || null) } : {}),
+        });
         toast.success("Notebook updated");
       } else {
-        await createWiki({ name: name.trim(), description: desc, cover_color: color });
+        await store.create({ name: name.trim(), description: desc, cover_color: color, tags: withParent([], parentValue || null) });
         toast.success("Notebook created");
       }
       onOpenChange(false);
@@ -113,6 +161,27 @@ const NotebookFormDialog: React.FC<{
               autoFocus
             />
           </div>
+
+          {places.length > 0 && (
+            <div>
+              <label htmlFor="notebook-parent" className="text-xs font-semibold text-on-surface-variant mb-1.5 block">
+                Keep it inside
+              </label>
+              <select
+                id="notebook-parent"
+                value={parentValue}
+                onChange={(e) => setParent(e.target.value || null)}
+                className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="">Nothing — top level</option>
+                {places.map((p) => (
+                  <option key={p.id} value={p.id} disabled={!!p.blocked}>
+                    {"   ".repeat(p.depth - 1)}{p.depth > 1 ? "› " : ""}{p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div>
             <label className="text-xs font-semibold text-on-surface-variant mb-1.5 block">

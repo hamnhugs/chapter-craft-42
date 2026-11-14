@@ -15,15 +15,24 @@ import {
 import { useConsentResolved } from "@/components/WelcomeGate";
 import { fetchCatalog, isFreeModel, type ORModel } from "@/lib/openrouterCatalog";
 import { namespacedNvidiaId, NVIDIA_FEATURED, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
+import { useApp } from "@/context/AppContext";
+import { beginOnboarding } from "@/lib/onboarding";
+import WormSays from "@/components/onboarding/WormSays";
 
-// First-run setup helper. Research-backed shape: 4 steps max (completion
-// roughly halves per extra step), skippable everywhere, teaches the
-// brain/neuron metaphor with one labeled diagram-style screen, and ends by
-// pointing at a real first task instead of a dead "you're done" screen.
-// Re-launchable from Counsel → Settings.
+// First-run setup helper, hosted by Bookworm. Three screens:
+//
+//   0  hello — the three things it takes to get going
+//   1  connect an AI — the only real setup there is (models fold in here)
+//   2  go — straight to the Library to add a first book
+//
+// Three, because every screen past the third loses people (Chameleon's
+// benchmark: ~72% finish a 3-step tour, ~16% a 7-step one). It no longer
+// tours the tabs: Bookworm explains each tab the first time it is opened
+// (onboarding/WormCoach), which is when the explanation is of any use.
+// Skippable everywhere; re-launchable from Settings → Account.
 
 const DONE_KEY = "setup_wizard_done";
-const STEP_COUNT = 4;
+const STEP_COUNT = 3;
 
 let wizState = { open: false, step: 0 };
 const listeners = new Set<() => void>();
@@ -41,16 +50,21 @@ export function openSetupWizard(step = 0) {
   setWizState({ open: true, step });
 }
 
-const TOUR_ROWS: { icon: string; name: string; metaphor: string; real: string }[] = [
-  { icon: "archive", name: "The Library", metaphor: "Your card collection.", real: "Upload PDFs and EPUBs — they live here." },
-  { icon: "psychology", name: "Counsel", metaphor: "Your reading companion.", real: "Chat (or talk) with an AI about any book." },
-  { icon: "auto_stories", name: "Read", metaphor: "Your reading desk.", real: "Open a book, highlight what matters, ask about any page." },
-  { icon: "menu_book", name: "Notebooks", metaphor: "Notes that know their page.", real: "Counsel keeps short notes as you read and chat, each linked to the page it came from — plus three recall questions a day." },
+/** True while the setup helper is on screen — tab tours wait for it. */
+export function useSetupWizardOpen(): boolean {
+  return useSyncExternalStore(subscribeWiz, getWizState, getWizState).open;
+}
+
+const START_STEPS: { icon: string; title: string; detail: string }[] = [
+  { icon: "bolt", title: "Connect an AI", detail: "About a minute, and there are free ones. That's next." },
+  { icon: "upload_file", title: "Add a book", detail: "A PDF or EPUB from your device, or a YouTube link." },
+  { icon: "forum", title: "Ask me about it", detail: "I answer from the book and keep notes for you." },
 ];
 
 const SetupWizard: React.FC = () => {
   const { open, step } = useSyncExternalStore(subscribeWiz, getWizState, getWizState);
   const { user } = useAuth();
+  const { setActiveTab } = useApp();
   const consentResolved = useConsentResolved();
   const { apiKey, nvidiaKeyLast4, savedModels, selectedModel, addModel, saveApiKey, saveNvidiaKey, loaded: settingsLoaded } = useChatSettings();
 
@@ -65,7 +79,6 @@ const SetupWizard: React.FC = () => {
   const [checkingRemote, setCheckingRemote] = useState(false);
   const [showManual, setShowManual] = useState(false);
   const [picks, setPicks] = useState<ORModel[] | null>(null);
-  const [dontShowAgain, setDontShowAgain] = useState(true);
   const autoOpenedRef = useRef(false);
 
   // Finish the OAuth round trip if OpenRouter just redirected back with a code.
@@ -76,7 +89,7 @@ const SetupWizard: React.FC = () => {
         if (key) {
           saveApiKey(key);
           toast.success("OpenRouter connected — you're ready to chat");
-          openSetupWizard(2);
+          openSetupWizard(1);
         }
       } catch (err: any) {
         toast.error(err.message || "Connection failed — try again");
@@ -91,20 +104,22 @@ const SetupWizard: React.FC = () => {
   useEffect(() => {
     if (autoOpenedRef.current || open) return;
     if (!user || !settingsLoaded || !consentResolved) return;
-    if (localStorage.getItem(DONE_KEY)) return;
-    if (apiKey || nvidiaKeyLast4) {
-      // Existing user who set up before the wizard existed (either provider
-      // counts as configured) — never nag them.
+    // Someone who has been through this, or who set up before it existed
+    // (either provider counts as configured), is never nagged — and gets no
+    // tab tours either unless they ask for them in Settings.
+    if (localStorage.getItem(DONE_KEY) || apiKey || nvidiaKeyLast4) {
       localStorage.setItem(DONE_KEY, "1");
+      beginOnboarding(user.id, "veteran");
       return;
     }
+    beginOnboarding(user.id, "new");
     autoOpenedRef.current = true;
     openSetupWizard(0);
   }, [user, settingsLoaded, apiKey, nvidiaKeyLast4, open, consentResolved]);
 
   // Lazy-load quick picks for the models step: top free models by real usage.
   useEffect(() => {
-    if (!open || step !== 2 || picks !== null) return;
+    if (!open || step !== 1 || !apiKey || picks !== null) return;
     void (async () => {
       try {
         const all = await fetchCatalog({ sort: "top-weekly" });
@@ -115,7 +130,7 @@ const SetupWizard: React.FC = () => {
         setPicks([]); // explorer page still available as the fallback
       }
     })();
-  }, [open, step, picks]);
+  }, [open, step, apiKey, picks]);
 
   const close = (markDone: boolean) => {
     if (markDone) localStorage.setItem(DONE_KEY, "1");
@@ -207,46 +222,54 @@ const SetupWizard: React.FC = () => {
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) close(true); }}>
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-        {/* Step content */}
+      {/* Only the step scrolls: the progress dots and Next stay on screen
+          however short the window is. */}
+      <DialogContent className="max-w-lg w-[calc(100vw-1.5rem)] max-h-[calc(100dvh-1.5rem)] flex flex-col gap-3 p-5 sm:p-6">
+        <div className="min-h-0 flex-1 overflow-y-auto -mx-1 px-1">
         {step === 0 && (
-          <div className="space-y-4">
-            <div className="space-y-1">
-              <h2 className="font-headline font-bold text-3xl text-foreground">Welcome to Bookworm Studio</h2>
-              <p className="text-sm text-on-surface-variant">
-                Read books, talk them over with an AI, and keep notes on everything you learn. Here's the
-                whole loop in four pieces:
+          <div className="space-y-3">
+            <WormSays mood="cheer" size={72}>
+              <h2 className="font-headline font-bold text-2xl leading-tight text-foreground">Hi, I'm Bookworm.</h2>
+              <p className="mt-1 text-sm text-on-surface-variant">
+                I read your books with you, answer questions about them, and keep notes on what you learn.
               </p>
-            </div>
-            <div className="space-y-2.5">
-              {TOUR_ROWS.map((row) => (
-                <div key={row.name} className="flex items-start gap-3 p-3 rounded-xl bg-surface-container-high">
-                  <span className="material-symbols-outlined text-primary text-[22px] mt-0.5">{row.icon}</span>
-                  <div className="min-w-0">
-                    <div className="text-sm font-bold text-foreground">
-                      {row.name} <span className="font-normal italic text-on-surface-variant">— {row.metaphor}</span>
-                    </div>
-                    <div className="text-xs text-on-surface-variant mt-0.5">{row.real}</div>
-                  </div>
-                </div>
+            </WormSays>
+            <p className="text-sm font-semibold text-foreground">Getting started takes three things:</p>
+            <ol className="space-y-1.5">
+              {START_STEPS.map((s, i) => (
+                <li key={s.icon} className="flex items-center gap-3 px-3 py-2 rounded-xl bg-surface-container-high">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/15 font-headline text-sm font-bold text-primary">{i + 1}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-bold text-foreground">{s.title}</span>
+                    <span className="block text-xs text-on-surface-variant">{s.detail}</span>
+                  </span>
+                  <span className="material-symbols-outlined text-primary text-[20px]" aria-hidden>{s.icon}</span>
+                </li>
               ))}
-            </div>
-            <p className="text-xs text-on-surface-variant text-center">
-              Library → Counsel → Notebooks. Read, talk, remember.
+            </ol>
+            <p className="text-xs text-on-surface-variant">
+              No tour to sit through. I'll explain each tab the first time you open it.
             </p>
           </div>
         )}
 
         {step === 1 && (
           <div className="space-y-4">
-            <div className="space-y-1">
-              <h2 className="font-headline font-bold text-3xl text-foreground">Power up the AI</h2>
-              <p className="text-sm text-on-surface-variant">
-                Bookworm Studio's AI runs through <strong>OpenRouter</strong> — one account that unlocks hundreds of
-                AI models. You bring your own key, pay only for exactly what you use, and several models are
-                completely free.
+            <WormSays mood={apiKey || nvidiaKeyLast4 ? "cheer" : "think"} size={64}>
+              <h2 className="font-headline font-bold text-2xl leading-tight text-foreground">
+                {apiKey || nvidiaKeyLast4 ? "I can think now!" : "I need an AI to think with"}
+              </h2>
+              <p className="mt-1 text-sm text-on-surface-variant">
+                {apiKey || nvidiaKeyLast4 ? (
+                  <>That was the only setup there is. Press Next and we'll add your first book.</>
+                ) : (
+                  <>
+                    One <strong>OpenRouter</strong> account unlocks hundreds of AI models. You pay only for what you
+                    use, and several are completely free.
+                  </>
+                )}
               </p>
-            </div>
+            </WormSays>
 
             {apiKey ? (
               <div className="flex items-center gap-2.5 p-3.5 rounded-xl bg-primary-container/15 border border-primary/20">
@@ -359,121 +382,109 @@ const SetupWizard: React.FC = () => {
               )}
             </div>
 
+            {(apiKey || nvidiaOnly) && (
+              <details className="rounded-xl border border-outline-variant/20 px-3 py-2 text-sm">
+                <summary className="cursor-pointer select-none text-xs font-semibold text-primary">
+                  Choose other AI models (optional)
+                </summary>
+                <div className="mt-2 space-y-2">
+                  <p className="text-xs text-on-surface-variant">
+                    Counsel will use <span className="font-mono">{selectedModel}</span>. Add more here, or any time in Settings.
+                  </p>
+            {/* NVIDIA-only setup: the OpenRouter rankings below are unusable
+                      without an OpenRouter key, so offer curated NVIDIA picks
+                      instead — adding one here keeps the first chat working. */}
+                  {nvidiaOnly ? (
+                    <div className="space-y-2">
+                      {NVIDIA_FEATURED.filter((m) => m.featured).slice(0, 4).map((m) => {
+                        const nsId = namespacedNvidiaId(m.localId);
+                        const saved = savedModels.includes(nsId);
+                        return (
+                          <div key={m.localId} className="flex items-center gap-3 p-3 rounded-xl bg-surface-container-high">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-bold text-foreground truncate">{m.label}</span>
+                                <span className="px-1.5 py-0.5 rounded bg-primary-container/25 text-primary text-[9px] font-bold uppercase tracking-widest shrink-0">
+                                  NVIDIA
+                                </span>
+                              </div>
+                              <div className="font-mono text-[10px] text-on-surface-variant truncate">{m.localId}</div>
+                            </div>
+                            <Button size="sm" variant={saved ? "outline" : "default"} disabled={saved} onClick={() => addModel(nsId)}>
+                              {saved ? <Check className="w-3.5 h-3.5" /> : "Add"}
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : picks === null ? (
+                    <div className="flex items-center justify-center py-6">
+                      <Loader2 className="w-5 h-5 animate-spin text-on-surface-variant" />
+                    </div>
+                  ) : picks.length > 0 ? (
+                    <div className="space-y-2">
+                      {picks.map((m) => {
+                        const saved = savedModels.includes(m.id);
+                        return (
+                          <div key={m.id} className="flex items-center gap-3 p-3 rounded-xl bg-surface-container-high">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-bold text-foreground truncate">{m.name}</span>
+                                {isFreeModel(m) && (
+                                  <span className="px-1.5 py-0.5 rounded bg-primary-container/25 text-primary text-[9px] font-bold uppercase tracking-widest shrink-0">
+                                    Free
+                                  </span>
+                                )}
+                              </div>
+                              <div className="font-mono text-[10px] text-on-surface-variant truncate">{m.id}</div>
+                            </div>
+                            <Button size="sm" variant={saved ? "outline" : "default"} disabled={saved} onClick={() => addModel(m.id)}>
+                              {saved ? <Check className="w-3.5 h-3.5" /> : "Add"}
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                  <Button variant="secondary" size="sm" className="w-full gap-2" onClick={() => window.open("#/models", "_blank")}>
+                    <span className="material-symbols-outlined text-[18px]">leaderboard</span>
+                    Browse all top models
+                  </Button>
+                </div>
+              </details>
+            )}
+
             <p className="text-[11px] text-on-surface-variant">
-              You can skip this — your Library works without it — but Counsel and Notebooks need a key to think.
+              You can skip this. Your Library and the reader work without it, but I can't answer or take notes until it's done.
             </p>
           </div>
         )}
 
         {step === 2 && (
           <div className="space-y-4">
-            <div className="space-y-1">
-              <h2 className="font-headline font-bold text-3xl text-foreground">Pick your thinkers</h2>
-              <p className="text-sm text-on-surface-variant">
-                A "model" is the AI brain Counsel uses. You're set up with
-                (<span className="font-mono text-xs">{selectedModel}</span>) — add more if you like.
-                Switching later is one tap in Settings.
+            <WormSays mood="cheer" size={72}>
+              <h2 className="font-headline font-bold text-2xl leading-tight text-foreground">Now give me something to read</h2>
+              <p className="mt-1 text-sm text-on-surface-variant">
+                Add a book and ask me anything about it. Your next steps stay in the ring at the top of the screen
+                until they're done.
               </p>
-            </div>
-            {/* NVIDIA-only setup: the OpenRouter rankings below are unusable
-                without an OpenRouter key, so offer curated NVIDIA picks
-                instead — adding one here keeps the first chat working. */}
-            {nvidiaOnly ? (
-              <div className="space-y-2">
-                {NVIDIA_FEATURED.filter((m) => m.featured).slice(0, 4).map((m) => {
-                  const nsId = namespacedNvidiaId(m.localId);
-                  const saved = savedModels.includes(nsId);
-                  return (
-                    <div key={m.localId} className="flex items-center gap-3 p-3 rounded-xl bg-surface-container-high">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-bold text-foreground truncate">{m.label}</span>
-                          <span className="px-1.5 py-0.5 rounded bg-primary-container/25 text-primary text-[9px] font-bold uppercase tracking-widest shrink-0">
-                            NVIDIA
-                          </span>
-                        </div>
-                        <div className="font-mono text-[10px] text-on-surface-variant truncate">{m.localId}</div>
-                      </div>
-                      <Button size="sm" variant={saved ? "outline" : "default"} disabled={saved} onClick={() => addModel(nsId)}>
-                        {saved ? <Check className="w-3.5 h-3.5" /> : "Add"}
-                      </Button>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : picks === null ? (
-              <div className="flex items-center justify-center py-6">
-                <Loader2 className="w-5 h-5 animate-spin text-on-surface-variant" />
-              </div>
-            ) : picks.length > 0 ? (
-              <div className="space-y-2">
-                {picks.map((m) => {
-                  const saved = savedModels.includes(m.id);
-                  return (
-                    <div key={m.id} className="flex items-center gap-3 p-3 rounded-xl bg-surface-container-high">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-bold text-foreground truncate">{m.name}</span>
-                          {isFreeModel(m) && (
-                            <span className="px-1.5 py-0.5 rounded bg-primary-container/25 text-primary text-[9px] font-bold uppercase tracking-widest shrink-0">
-                              Free
-                            </span>
-                          )}
-                        </div>
-                        <div className="font-mono text-[10px] text-on-surface-variant truncate">{m.id}</div>
-                      </div>
-                      <Button size="sm" variant={saved ? "outline" : "default"} disabled={saved} onClick={() => addModel(m.id)}>
-                        {saved ? <Check className="w-3.5 h-3.5" /> : "Add"}
-                      </Button>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : null}
-            <Button
-              variant="secondary"
-              className="w-full gap-2"
-              onClick={() => window.open("#/models", "_blank")}
-            >
-              <span className="material-symbols-outlined text-[18px]">leaderboard</span>
-              Browse all top models by category
+            </WormSays>
+            <Button size="lg" className="w-full gap-2" onClick={() => { close(true); setActiveTab("library"); }}>
+              <span className="material-symbols-outlined text-[20px]" aria-hidden>upload_file</span>
+              Add my first book
             </Button>
+            <button
+              onClick={() => { close(true); setActiveTab("chat"); }}
+              className="block w-full text-center text-xs font-semibold text-primary hover:underline"
+            >
+              No book handy? Just start chatting
+            </button>
           </div>
         )}
 
-        {step === 3 && (
-          <div className="space-y-4">
-            <div className="space-y-1">
-              <h2 className="font-headline font-bold text-3xl text-foreground">You're set 🎉</h2>
-              <p className="text-sm text-on-surface-variant">Three good first moves, in order:</p>
-            </div>
-            <div className="space-y-2.5">
-              {[
-                { icon: "upload_file", text: "Drop a PDF or EPUB into the Library — title and cover set themselves." },
-                { icon: "forum", text: "Open Counsel and ask anything about it." },
-                { icon: "history_edu", text: 'Tell Counsel what to remember — and watch your first notebook grow.' },
-              ].map((s, i) => (
-                <div key={s.icon} className="flex items-center gap-3 p-3 rounded-xl bg-surface-container-high">
-                  <span className="font-headline font-bold text-primary">{i + 1}</span>
-                  <span className="material-symbols-outlined text-primary text-[20px]">{s.icon}</span>
-                  <span className="text-sm text-foreground">{s.text}</span>
-                </div>
-              ))}
-            </div>
-            <label className="flex items-center gap-2.5 text-xs text-on-surface-variant cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={dontShowAgain}
-                onChange={(e) => setDontShowAgain(e.target.checked)}
-                className="h-4 w-4 rounded"
-              />
-              Don't show this walkthrough again (you can rerun it anytime from Counsel → Settings)
-            </label>
-          </div>
-        )}
-
+        </div>
         {/* Footer: progress + nav */}
-        <div className="flex items-center justify-between pt-2 border-t border-outline-variant/15">
+        <div className="shrink-0 flex items-center justify-between pt-2 border-t border-outline-variant/15">
           <div className="flex items-center gap-1.5" aria-label={`Step ${step + 1} of ${STEP_COUNT}`}>
             {Array.from({ length: STEP_COUNT }).map((_, i) => (
               <span
@@ -489,9 +500,9 @@ const SetupWizard: React.FC = () => {
               <Button variant="ghost" size="sm" onClick={() => close(true)}>Skip for now</Button>
             )}
             {step < STEP_COUNT - 1 ? (
-              <Button size="sm" onClick={next}>Next</Button>
+              <Button size="sm" onClick={next}>{step === 0 ? "Let's go" : "Next"}</Button>
             ) : (
-              <Button size="sm" onClick={() => close(dontShowAgain)}>Finish</Button>
+              <Button variant="ghost" size="sm" onClick={() => close(true)}>Close</Button>
             )}
           </div>
         </div>
