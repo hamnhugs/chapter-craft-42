@@ -459,8 +459,12 @@ describe("the additive contract: omitting offeredTools changes nothing", () => {
   // "notebooks"/"saved sets" in every model-facing sentence, the curating
   // block names notes and asks for a one-line summary, and one sentence tells
   // the model which words to use with the user (+230).
-  const BASELINE_LENGTH = 23333;
-  const BASELINE_DIGEST = "f596db16";
+  // Re-captured 2026-11-13 (Counsel works the Notebooks tab): the saved-set
+  // sentence names manage_chain and one new gated line covers update_wiki,
+  // review_notes, move_workspace_item and open_view, including the
+  // open-is-not-load rule (+830).
+  const BASELINE_LENGTH = 24163;
+  const BASELINE_DIGEST = "82a4703a";
   const fnv1a = (s: string) => {
     let h = 0x811c9dc5;
     for (let i = 0; i < s.length; i++) {

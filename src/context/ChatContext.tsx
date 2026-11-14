@@ -49,6 +49,7 @@ import { TOOL_ROUNDS_PER_REPLY } from "@/lib/deepResearchPrompt";
 import { attachTurnContext, isModelVisibleMessage, resolveUtilityModel, toolTraceNote } from "@/lib/chatHistory";
 import { namespacedNvidiaId, nvidiaModelInfo, nvidiaNoThinkingBody, NVIDIA_STARTER_MODEL } from "@/lib/nvidiaCatalog";
 import { namespacedGeminiId, GEMINI_STARTER_MODEL } from "@/lib/geminiCatalog";
+import { openAppView, type AppViewTarget } from "@/lib/appNav";
 
 /** Every registered tool name, in registration order — the input to the gate
  *  map, and the denominator for "how many did we offer this turn". */
@@ -459,6 +460,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     getBooks, getActiveBookId, getShelves, multiShelf, createShelf, renameShelf, deleteShelf, setBookShelfMembership,
     addBook, addChapters, removeBook, loadFocus, applyChapterGists, applyBookSummary,
     trashAvailable, trashedBooks, refreshTrash, restoreBook,
+    // open_view goes places through the same two calls a tap makes.
+    setActiveTab, openNotebook,
   } = useApp();
 
   const { utilityModel, studioTools, autoCatalogOnUpload, apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, selectedModel, setSelectedModel, savedModels, addModel, deepResearchModel, customSystemPrompt, burplexityApiToken, accessAllNeurons, maxReplySentences, autoShowMemoryImages, chatToolPermissions, visionModel, imageModelPrimary, imageModelFallback,
@@ -2193,6 +2196,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               refreshTrash,
               restoreBook,
               loadFocus,
+              openView: (target: AppViewTarget) => openAppView({ setActiveTab, openNotebook }, target),
               enqueueCatalog,
               getReplyText,
               currentModel: model,
@@ -2626,7 +2630,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // opt-in and availability distinction itself, so the pre-combined
     // forgeEnabled/runEnabled are no longer read here).
     [forgeProgramOptIn, runProgramOptIn, programEnabled, programReady, programRunnerConfigured, imageModelPrimary, imageModelFallback, plainOnRecall, promptRoutingEnabled, routingSchemaReady, apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, studioTools, books, activeBookId, chatDeepResearch, voiceDeepResearch, isPaid, planLoaded, accessAllNeurons, maxReplySentences, autoShowMemoryImages, foundryEnabled, forgeOptIn, runOptIn, foundryReady, chatToolPermissions, wikis, activeWiki, activeWikiId, activeWikis, selectedModel, savedModels, addModel, setSelectedModel, deepResearchModel, visionModel, videoModelPrimary, videoDefaultDuration, videoDefaultResolution, videoDefaultAspect, videoGenerateAudio, videoConfirmThreshold, videoIdentityScale, videoQcEnabled, videoMotionModel, falApiKey, splatModelPrimary, splatDefaultQuality, splatMaxFileMb, splatConfirmThreshold, splatMonthlyQuota, splatAutoFallback, customSystemPrompt, getActiveBodyForScope, presets, burplexityApiToken, persistMessage, updateRollingSummary, addChapter, updateChapter, removeChapter, updateBookTitle, loadChapterText, loadChapterTextStrict, setActiveBookSilent,
-      getBooks, getActiveBookId, getShelves, multiShelf, createShelf, renameShelf, deleteShelf, setBookShelfMembership, addBook, addChapters, removeBook, loadFocus, enqueueCatalog, trashAvailable, refreshTrash, restoreBook]
+      getBooks, getActiveBookId, getShelves, multiShelf, createShelf, renameShelf, deleteShelf, setBookShelfMembership, addBook, addChapters, removeBook, loadFocus, enqueueCatalog, trashAvailable, refreshTrash, restoreBook, setActiveTab, openNotebook]
   );
 
 

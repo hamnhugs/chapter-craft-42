@@ -50,6 +50,7 @@ import { FREE_NEURON_LIMIT } from "@/lib/neuronAccess";
 import { useWorkspaceItems, workspaceStore } from "@/lib/workspaceStore";
 import { KIND_ICON, KIND_LABEL, languageLabel } from "@/lib/workspaceFiles";
 import { dailyRecallDoneToday, locatorBookId, DAILY_RECALL_SIZE } from "@/lib/dailyRecall";
+import { NOTEBOOK_TAB_EVENT, takeNotebookTab } from "@/lib/appNav";
 
 type WikiView = "entries" | "detail" | "conflicts";
 
@@ -106,7 +107,9 @@ const WikiPanel: React.FC = () => {
   const [moreOpen, setMoreOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   // Notes or the Workspace files filed in this notebook. A search looks in both.
-  const [listTab, setListTab] = useState<"notes" | "files">("notes");
+  // Counsel can ask for Files outright (open_view); the request is for one
+  // notebook and is taken once.
+  const [listTab, setListTab] = useState<"notes" | "files">(() => takeNotebookTab(wikiId) ?? "notes");
   const workspaceItems = useWorkspaceItems();
   const files = useMemo(
     () => (wikiId ? workspaceItems.filter((i) => i.meta?.wikiId === wikiId) : []),
@@ -177,7 +180,20 @@ const WikiPanel: React.FC = () => {
     if (!switched) return;
     setView((v) => (v === "conflicts" ? v : "entries"));
     setSearchQuery("");
-    setListTab("notes");
+    setListTab(takeNotebookTab(wikiId) ?? "notes");
+  }, [wikiId]);
+
+  // The same request when this notebook is already the one on screen.
+  useEffect(() => {
+    const onTab = () => {
+      const tab = takeNotebookTab(wikiId);
+      if (!tab) return;
+      setView("entries");
+      setSearchQuery("");
+      setListTab(tab);
+    };
+    window.addEventListener(NOTEBOOK_TAB_EVENT, onTab);
+    return () => window.removeEventListener(NOTEBOOK_TAB_EVENT, onTab);
   }, [wikiId]);
 
   const entryById = useMemo(() => {

@@ -550,11 +550,22 @@ export async function buildChatSystemPrompt({
   ];
 
   const neuronStudy = clause(["set_active_neurons"], " When they ask to study/load multiple notebooks together, call `set_active_neurons` (first id = primary, where new knowledge is saved).");
-  const neuronChains = clause(["list_chains", "activate_chain"], " For saved sets use `list_chains` and `activate_chain` (activating a saved set REPLACES the loaded set).");
+  const neuronChains = clause(["list_chains", "activate_chain"], " For saved sets use `list_chains` and `activate_chain` (activating a saved set REPLACES the loaded set).") +
+    clause(["manage_chain"], " Make, change or delete a saved set with `manage_chain`.");
   const neuronLine = !neuronStudy && !neuronChains ? [] : [
     "The user can also load SEVERAL notebooks at once (up to 5), and save named saved sets that load together." + neuronStudy + neuronChains +
     " Never claim notebooks or saved sets were loaded without the tool call succeeding. If the user asks to load more than 5, explain that 2–3 related notebooks is the research-backed sweet spot and 5 is the ceiling.",
   ];
+  // Everything else the Notebooks tab does, one gated sentence per verb. The
+  // open/load split is the Notebooks-audit rule in the model's words: looking
+  // at a notebook is not loading it into the chat.
+  const notebookCare = [
+    clause(["update_wiki"], " Rename, recolor, re-describe or move one with `update_wiki` (notebooks can sit inside other notebooks, three levels at most)."),
+    clause(["review_notes"], " When the user asks to be quizzed, to review, or what is due, run Daily recall with `review_notes`: ask from the title first, show the note only after they answer, then record how it went."),
+    clause(["move_workspace_item"], " Every Workspace file is filed under a notebook; refile with `move_workspace_item`."),
+    clause(["open_view"], " When the user says 'open', 'show me' or 'take me to' — a notebook, a note, a file, a tab — call `open_view`. Opening only changes what is on screen; it never changes which notebooks are loaded, so 'open my X notebook' is `open_view` and 'use', 'load' or 'switch to X' is a load."),
+  ].join("");
+  const notebookCareLine = notebookCare ? ["Around the notebooks themselves:" + notebookCare + " Never say any of this was done without the tool call succeeding."] : [];
 
   // The library agent (docs/library-agent.md §2.3): one gated line per verb,
   // in the user's words. Every line names only the tool it is gated on (plus
@@ -844,7 +855,7 @@ export async function buildChatSystemPrompt({
       " — do not ask again, do not narrate that you did it without calling the tool.");
     const voiceWikiVerbs = ["switch_wiki", "create_wiki"].filter(has);
     const wikiLine = voiceWikiVerbs.length === 0 ? [] : [
-      `Same rule for notebooks: any 'switch to X', 'open my Y notebook', 'make a new notebook for Z' must trigger ${voiceWikiVerbs.map((n) => `\`${n}\``).join(" or ")}. Never claim a switch happened from narration alone.`,
+      `Same rule for notebooks: any 'switch to X', ${has("open_view") ? "'use my Y notebook'" : "'open my Y notebook'"}, 'make a new notebook for Z' must trigger ${voiceWikiVerbs.map((n) => `\`${n}\``).join(" or ")}. Never claim a switch happened from narration alone.`,
     ];
     // The library verbs by voice: a spoken "yes" after you named the book or
     // shelf IS the confirmation, and the object must be named again in the
@@ -869,6 +880,7 @@ export async function buildChatSystemPrompt({
     ...searchBullets,
     ...wikiToolsLine,
     ...neuronLine,
+    ...notebookCareLine,
     ...libraryAgentLines,
     ...curateBlock,
     ...imagesBlock,

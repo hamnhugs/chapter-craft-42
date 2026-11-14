@@ -37,7 +37,9 @@ export const TOOL_PERMISSION: Record<string, string> = {
   // Wikis (neurons)
   switch_wiki: "switch_wiki",
   create_wiki: "create_wiki",
+  update_wiki: "update_wiki",
   delete_wiki: "delete_wiki",
+  manage_chain: "manage_chains",
   // Library
   set_active_book: "set_active_book",
   isolate_chapter: "isolate_chapter",
@@ -117,7 +119,9 @@ export const PERMISSION_GROUPS: PermGroup[] = [
     items: [
       { id: "switch_wiki", label: "Switch active notebook", description: "Allow the AI to change which notebook is in focus." },
       { id: "create_wiki", label: "Create new notebooks", description: "Allow the AI to spin up new notes." },
-      { id: "delete_wiki", label: "Delete notebooks", description: "Allow the AI to permanently delete a notebook after you confirm.", danger: true },
+      { id: "update_wiki", label: "Rename, recolor and move notebooks", description: "Allow the AI to rename a notebook, change its description or color, and move it inside another notebook or back out." },
+      { id: "delete_wiki", label: "Delete notebooks", description: "Allow the AI to permanently delete a notebook after you confirm. Notebooks inside it are kept and move up a level.", danger: true },
+      { id: "manage_chains", label: "Manage saved sets", description: "Allow the AI to create, change and delete saved sets of notebooks. Deleting a set asks you first and never deletes the notebooks in it." },
     ],
   },
   {
