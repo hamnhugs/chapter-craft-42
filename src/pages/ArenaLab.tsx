@@ -6,6 +6,12 @@ import { saveLastPage } from "@/hooks/useReaderPrefs";
 import { AppContext, useApp } from "@/context/AppContext";
 import { useChat } from "@/context/ChatContext";
 import type { BookFolder } from "@/lib/bookFolders";
+import WikiLibrary from "@/components/WikiLibrary";
+import WikiPanel from "@/components/WikiPanel";
+import WormCoach from "@/components/onboarding/WormCoach";
+import { openSetupWizard } from "@/components/SetupWizard";
+import { beginOnboarding, replayOnboarding } from "@/lib/onboarding";
+import type { NotebookStore, WikiWithStats } from "@/lib/wikisApi";
 
 /**
  * ARENA LAB — dev-only. Route: #/arena-lab  (and #/arena-lab?deck)
@@ -27,6 +33,13 @@ import type { BookFolder } from "@/lib/bookFolders";
  *                      three chapters. `&html` opens an HTML book instead.
  *   #/arena-lab?chat   the shell on Counsel with a reply on it that has every
  *                      kind of prose in it (heading, list, quote, rule, code).
+ *   #/arena-lab?notebooks the Notebooks list and an open notebook over a
+ *                      fixture tree held in memory: create, nest, move and
+ *                      delete all work. `&flat` has no nesting, `&empty` none.
+ *   #/arena-lab?onboarding the shell as a brand-new account sees it: the
+ *                      setup helper, then the getting-started ring and the
+ *                      tab tours. `&step=1` opens the helper on a later
+ *                      screen; `&tips` skips it and goes straight to the tours.
  *
  * Like WorkspaceLab it is gated on `import.meta.env.DEV` in App.tsx, so a
  * production build never emits it.
@@ -211,6 +224,80 @@ const ChatLab: React.FC = () => {
   return <Index />;
 };
 
+const NB = (id: string, name: string, color: string, notes: number, parent?: string, due = 0): WikiWithStats => ({
+  id, user_id: "lab", name, description: "", cover_color: color, tags: parent ? [`in:${parent}`] : [],
+  is_default: false, is_meta: false, last_loaded_at: null, created_at: "", updated_at: "",
+  entry_count: notes, due_count: due,
+});
+const LAB_NOTEBOOKS: WikiWithStats[] = [
+  NB("n-my", "My notes", "#7C3AED", 42, undefined, 3),
+  NB("n-stoics", "Stoics", "#10B981", 18),
+  NB("n-med", "Meditations", "#0EA5E9", 31, "n-stoics", 2),
+  NB("n-med-5", "Book 5 — on rising early", "#2563EB", 6, "n-med"),
+  NB("n-seneca", "Seneca's letters", "#F59E0B", 12, "n-stoics"),
+  NB("n-prog", "Programming craft", "#EF4444", 9),
+  NB("n-sicp", "SICP exercises", "#EC4899", 27, "n-prog", 1),
+  NB("n-prag", "Pragmatic Programmer", "#8B5CF6", 14, "n-prog"),
+  NB("n-dune", "Dune lore", "#F59E0B", 57),
+  NB("n-startup", "Startup strategy", "#2563EB", 0),
+];
+
+/** The Notebooks list and an open notebook over a tree held in memory. */
+const NotebooksLab: React.FC<{ variant: "tree" | "flat" | "empty" }> = ({ variant }) => {
+  const real = useApp();
+  const [list, setList] = React.useState<WikiWithStats[]>(() =>
+    variant === "empty" ? [] : variant === "flat" ? LAB_NOTEBOOKS.slice(0, 4).map((w) => ({ ...w, tags: [] })) : LAB_NOTEBOOKS);
+  const listRef = React.useRef(list);
+  listRef.current = list;
+  const store = useMemo<NotebookStore>(() => ({
+    list: async () => listRef.current,
+    create: async (input) => {
+      const w = { ...NB(`n-${Date.now()}`, input.name, input.cover_color || "#7C3AED", 0), tags: input.tags || [] };
+      setList((l) => (listRef.current = [...l, w]));
+      return w;
+    },
+    update: async (id, updates) => setList((l) => (listRef.current = l.map((w) => (w.id === id ? { ...w, ...updates } : w)))),
+    remove: async (id) => setList((l) => (listRef.current = l.filter((w) => w.id !== id))),
+  }), []);
+  const [tab, setTab] = React.useState<typeof real.activeTab>("wikis");
+  const [viewed, setViewed] = React.useState<string | null>(null);
+  const value = useMemo(() => ({
+    ...real,
+    wikis: list,
+    activeWikiId: "n-my",
+    activeWikiIds: ["n-my"],
+    viewedWikiId: viewed,
+    activeTab: tab,
+    setActiveTab: setTab,
+    openNotebook: (id: string) => { setViewed(id); setTab("wiki"); },
+    refreshWikis: async () => {},
+  }), [real, list, tab, viewed]);
+  useEffect(() => {
+    // `&tips` runs Bookworm's Notebooks tour over the list.
+    beginOnboarding("lab-notebooks", "veteran");
+    if (window.location.hash.includes("tips")) replayOnboarding();
+  }, []);
+  return (
+    <AppContext.Provider value={value as typeof real}>
+      <div className="h-app bg-background">
+        {tab === "wiki" ? <WikiPanel /> : <WikiLibrary store={store} />}
+        <WormCoach />
+      </div>
+    </AppContext.Provider>
+  );
+};
+
+/** The shell as a brand-new account meets it. */
+const OnboardingLab: React.FC = () => {
+  useEffect(() => {
+    const hash = window.location.hash;
+    beginOnboarding("lab", "new");
+    replayOnboarding();
+    if (!hash.includes("tips")) openSetupWizard(Number(/step=(\d)/.exec(hash)?.[1] ?? 0));
+  }, []);
+  return <Index />;
+};
+
 const ArenaLab: React.FC = () => {
   const hash = window.location.hash;
   useEffect(() => {
@@ -224,6 +311,8 @@ const ArenaLab: React.FC = () => {
   if (hash.includes("?library")) return <LibraryLab />;
   if (hash.includes("?reader")) return <ReaderLab html={hash.includes("html")} />;
   if (hash.includes("?chat")) return <ChatLab />;
+  if (hash.includes("?notebooks")) return <NotebooksLab variant={hash.includes("empty") ? "empty" : hash.includes("flat") ? "flat" : "tree"} />;
+  if (hash.includes("?onboarding")) return <OnboardingLab />;
   return hash.includes("?deck") ? <DeckLab /> : <Index />;
 };
 

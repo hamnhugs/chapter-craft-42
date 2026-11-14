@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { PARENT_TAG_PREFIX, buildNotebookTree, parentIdOf, pathLabel } from "@/lib/notebookTree";
 import { toast } from "sonner";
 import { Check, Lock, Plus, Minus, Link2, Pencil } from "lucide-react";
 import {
@@ -176,6 +177,8 @@ const WikiQuickSwitcher: React.FC = () => {
     return a.name.localeCompare(b.name);
   });
 
+  // A nested notebook is listed with where it sits, so two with one name can be told apart.
+  const tree = useMemo(() => buildNotebookTree(wikis), [wikis]);
   const wikiNameById = useMemo(() => new Map(wikis.map((w) => [w.id, w])), [wikis]);
 
   return (
@@ -261,7 +264,7 @@ const WikiQuickSwitcher: React.FC = () => {
             return (
               <CommandItem
                 key={wiki.id}
-                value={`${wiki.name} ${wiki.tags.join(" ")} ${wiki.id}`}
+                value={`${wiki.name} ${wiki.tags.filter((t) => !t.startsWith(PARENT_TAG_PREFIX)).join(" ")} ${wiki.id}`}
                 onSelect={() => {
                   if (mode === "add" && !isPrimary) {
                     if (isLoaded) { setOpen(false); return; }
@@ -278,7 +281,12 @@ const WikiQuickSwitcher: React.FC = () => {
                 />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="font-medium truncate">{wiki.name}</span>
+                    <span className="font-medium truncate">
+                      {parentIdOf(wiki) && tree.byId.get(wiki.id)?.parent && (
+                        <span className="font-normal text-muted-foreground">{pathLabel(tree, tree.byId.get(wiki.id)!.parent!.wiki.id)} › </span>
+                      )}
+                      {wiki.name}
+                    </span>
                   </div>
                   {wiki.description && (
                     <div className="text-xs text-muted-foreground truncate">{wiki.description}</div>

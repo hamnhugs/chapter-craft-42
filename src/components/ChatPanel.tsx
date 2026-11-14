@@ -1104,7 +1104,7 @@ const ChatPanel: React.FC = () => {
       {/* Plain chat: no notebook loaded. Said out loud, with the one tap back,
           so "nothing is being saved" is never a surprise later. */}
       {activeWikis.length === 0 && (
-        <div className="cc-counsel-px cc-counsel-context pt-3 pb-1 flex flex-nowrap overflow-x-auto hide-scrollbar items-center gap-1.5 text-xs font-body text-on-surface-variant [&>*]:shrink-0">
+        <div data-tour="counsel-notebooks" data-tour-fit="content" className="cc-counsel-px cc-counsel-context pt-3 pb-1 flex flex-nowrap overflow-x-auto hide-scrollbar items-center gap-1.5 text-xs font-body text-on-surface-variant [&>*]:shrink-0">
           <span className="inline-flex items-center gap-1.5 pl-2 pr-2.5 py-0.5 rounded-full bg-surface-container-high border border-outline-variant/20">
             <span className="material-symbols-outlined text-[14px]" aria-hidden>chat_bubble</span>
             <span className="font-semibold text-primary">Just chatting</span>
@@ -1121,7 +1121,7 @@ const ChatPanel: React.FC = () => {
         </div>
       )}
       {activeWikis.length > 0 && (
-        <div className="cc-counsel-px cc-counsel-context pt-3 pb-1 flex flex-nowrap overflow-x-auto hide-scrollbar items-center gap-1.5 text-xs font-body text-on-surface-variant [&>*]:shrink-0">
+        <div data-tour="counsel-notebooks" data-tour-fit="content" className="cc-counsel-px cc-counsel-context pt-3 pb-1 flex flex-nowrap overflow-x-auto hide-scrollbar items-center gap-1.5 text-xs font-body text-on-surface-variant [&>*]:shrink-0">
           <span className="mr-0.5">
             {activeWikis.length > 1 ? "Open notebooks:" : "Notebook:"}
           </span>
@@ -1860,6 +1860,7 @@ const ChatPanel: React.FC = () => {
                 onKeyUp={syncMention} onClick={syncMention} onBlur={() => setMention(null)}
                 inputMode={handsFree.active ? "none" : undefined}
                 aria-label="Message The Librarian"
+                data-tour="composer"
                 placeholder={composerPlaceholder}
                 rows={1} className={`bg-surface-container-high border-none rounded-xl text-foreground py-3 pl-4 ${composerPadRight} focus:ring-1 focus:ring-primary/40 resize-none min-h-[50px] max-h-[220px] overflow-y-auto`}
               />

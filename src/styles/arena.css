@@ -490,3 +490,42 @@
   .cc-card[data-tier="opus"]::after { animation: none; }
   .cc-card:hover { transform: none; }
 }
+
+/* ── Onboarding: Bookworm's tab tours ─────────────────────────────────── */
+/* The card sits just above the dock, or just under the app bar when the
+   control it is talking about is in the lower half of the window. It is not
+   a modal: nothing behind it is covered by a scrim or blocked. */
+.cc-coach {
+  position: fixed;
+  left: 0.75rem;
+  right: 0.75rem;
+  z-index: 45;
+  margin-inline: auto;
+  max-width: 26rem;
+  box-shadow: 0 12px 40px -8px rgb(0 0 0 / 0.55);
+  animation: cc-coach-in 260ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+}
+.cc-coach-bottom { bottom: calc(var(--cc-dock-h) + env(safe-area-inset-bottom, 0px) + 0.75rem); }
+.cc-coach-top { top: 4.25rem; }
+/* The ring round the control a step points at. Clicks pass through it. */
+.cc-coach-ring {
+  position: fixed;
+  z-index: 45;
+  pointer-events: none;
+  border-radius: 0.9rem;
+  border: 2px solid hsl(var(--accent));
+  box-shadow: 0 0 0 4px hsl(var(--accent) / 0.22);
+  animation: cc-coach-pulse 1.6s ease-in-out infinite;
+  transition: top 160ms ease, left 160ms ease, width 160ms ease, height 160ms ease;
+}
+@keyframes cc-coach-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes cc-coach-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px hsl(var(--accent) / 0.28); }
+  50% { box-shadow: 0 0 0 9px hsl(var(--accent) / 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cc-coach, .cc-coach-ring { animation: none; transition: none; }
+}

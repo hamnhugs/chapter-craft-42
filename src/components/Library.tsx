@@ -979,7 +979,7 @@ const Library: React.FC = () => {
               <span className="flex-1" />
             )}
             {/* Add: one click to the file picker, the arrow for YouTube. */}
-            <div className="shrink-0 flex items-stretch rounded-xl">
+            <div data-tour="add-books" className="shrink-0 flex items-stretch rounded-xl">
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isUploading}

@@ -13,6 +13,7 @@ import { useChatSettings } from "@/hooks/useChatSettings";
 import { useTheme } from "@/context/ThemeContext";
 import { openPricing } from "@/components/PricingDialog";
 import { openSetupWizard } from "@/components/SetupWizard";
+import { replayOnboarding } from "@/lib/onboarding";
 import PromptLibrary from "@/components/PromptLibrary";
 import ApiKeyManager from "@/components/ApiKeyManager";
 import ImageModelsSettings from "@/components/ImageModelsSettings";
@@ -1377,8 +1378,17 @@ const SettingsPanel: React.FC = () => {
                   {isPaid ? "Manage plan" : "Upgrade"}
                 </Button>
               </Row>
-              <Row id="setup" label="Setup helper" description="Walks through keys, models and voice step by step.">
+              <Row id="setup" label="Setup helper" description="Bookworm walks you through connecting an AI and adding a first book.">
                 <Button size="sm" variant="outline" onClick={() => openSetupWizard(0)}>Run</Button>
+              </Row>
+              <Row id="tips" label="Bookworm's tips" description="Explains each tab the first time you open it, and brings back the getting-started list.">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => { replayOnboarding(); toast.success("Tips are back on — open any tab and I'll show you around."); }}
+                >
+                  Replay
+                </Button>
               </Row>
               <Disclosure id="dev-keys" icon="code" label="Developer API keys" summary="Keys for the Bookworm API — separate from your AI provider keys">
                 <ApiKeyManager />
