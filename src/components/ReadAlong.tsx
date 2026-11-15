@@ -17,7 +17,7 @@ import {
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { useAuth } from "@/hooks/useAuth";
 import { useReadAlongStats } from "@/hooks/useReadAlongStats";
-import { fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
+import { fetchInworldVoices, type InworldVoice, type VoiceStyle } from "@/lib/inworldTts";
 import {
   comboMultiplier,
   creditWords,
@@ -103,8 +103,14 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
   const { stats, latest: statsRef, update: updateStats, flush: flushStats } = useReadAlongStats(user?.id ?? null);
 
   // ── Voice & speed: default to exactly what Counsel uses ─────────────────
+  const voiceStyle: VoiceStyle = {
+    model: settings.inworldModel,
+    delivery: settings.inworldDelivery,
+    direction: settings.inworldDirection,
+    scene: "An audiobook narrator is reading a book aloud to one listener. This is the next passage.",
+  };
   const counselVoice: ReadAlongVoice = settings.inworldEnabled && settings.inworldVoiceId
-    ? { engine: "inworld", inworldVoiceId: settings.inworldVoiceId }
+    ? { engine: "inworld", inworldVoiceId: settings.inworldVoiceId, style: voiceStyle }
     : { engine: "browser" };
   const [voiceOverride, setVoiceOverride] = useState<ReadAlongVoice | null>(null);
   const voice = voiceOverride ?? counselVoice;
@@ -717,7 +723,7 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
               <DropdownMenuSubContent className="max-h-[50dvh] overflow-y-auto">
                 <DropdownMenuRadioGroup
                   value={voice.engine === "inworld" ? `inworld:${voice.inworldVoiceId}` : "browser"}
-                  onValueChange={(v) => changeVoice(v === "browser" ? { engine: "browser" } : { engine: "inworld", inworldVoiceId: v.slice("inworld:".length) })}
+                  onValueChange={(v) => changeVoice(v === "browser" ? { engine: "browser" } : { engine: "inworld", inworldVoiceId: v.slice("inworld:".length), style: voiceStyle })}
                 >
                   {counselVoice.engine === "inworld" && (
                     <DropdownMenuRadioItem value={`inworld:${counselVoice.inworldVoiceId}`}>
