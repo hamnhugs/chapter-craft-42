@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useChatSettings } from "@/hooks/useChatSettings";
-import { synthesizeSpeech } from "@/lib/inworldTts";
+import { contextBefore, synthesizeSpeech, type VoiceStyle } from "@/lib/inworldTts";
 import { computeBackTarget, computeForwardTarget, type SeekPos } from "@/lib/ttsSeek";
 import {
   addTtsChunkAt,
@@ -67,6 +67,10 @@ export interface ReadAloudProgress {
   /** Which engine is speaking — decides skip semantics (±10s vs sentence). */
   mode: ReadAloudMode;
 }
+
+/** What Reasoning ("the voice decides") is told about a chat reply. */
+const CHAT_SCENE =
+  "A warm, well-read companion is talking with a reader about their books and notes. This is one of its spoken replies.";
 
 /** No audible/synth progress for this long = the session is stuck. */
 const STALL_MS = 12000;
@@ -218,7 +222,10 @@ interface SeekSession {
 }
 
 export function useReadAloud(): ReadAloudController {
-  const { ttsRate, inworldEnabled, inworldApiKey, inworldVoiceId } = useChatSettings();
+  const {
+    ttsRate, inworldEnabled, inworldApiKey, inworldVoiceId,
+    inworldModel, inworldDelivery, inworldDirection,
+  } = useChatSettings();
   const [speakingId, setSpeakingId] = useState<string | null>(null);
   const [progress, setProgress] = useState<ReadAloudProgress | null>(null);
   const [isPaused, setIsPaused] = useState(false);
@@ -597,6 +604,14 @@ export function useReadAloud(): ReadAloudController {
       // without re-synthesizing (Inworld bills per character).
       beginTtsCapture(id, chunks.length);
 
+      // Fixed for the session: a setting changed mid-read must not switch
+      // the performance halfway through a reply (or its cached download).
+      const style: VoiceStyle = {
+        model: inworldModel,
+        delivery: inworldDelivery,
+        direction: inworldDirection,
+        scene: CHAT_SCENE,
+      };
       const inflight = new Map<number, Promise<ArrayBuffer>>();
       const getChunk = (idx: number): Promise<ArrayBuffer> => {
         const cached = st.buffers[idx];
@@ -605,8 +620,12 @@ export function useReadAloud(): ReadAloudController {
         if (!p) {
           const controller = new AbortController();
           abortRef.current = controller; // latest wins; terminate() aborts it
-          p = synthesizeSpeech(chunks[idx], inworldApiKey, inworldVoiceId, "inworld-tts-2", {
+          p = synthesizeSpeech(chunks[idx], inworldApiKey, inworldVoiceId, undefined, {
             signal: controller.signal,
+            style,
+            // The sentences just before this one, so the voice carries on
+            // from them instead of starting each chunk cold.
+            context: { previous: contextBefore(chunks, idx) },
           })
             .then((buf) => {
               st.buffers[idx] = buf;
@@ -753,7 +772,7 @@ export function useReadAloud(): ReadAloudController {
         settleSession(session, "ended");
       }
     },
-    [inworldApiKey, inworldVoiceId, clearId, settleSession, terminate, bumpHeartbeat, browserSpeakChunks],
+    [inworldApiKey, inworldVoiceId, inworldModel, inworldDelivery, inworldDirection, clearId, settleSession, terminate, bumpHeartbeat, browserSpeakChunks],
   );
 
   const speak = useCallback(

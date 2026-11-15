@@ -22,6 +22,49 @@ function basicAuth(rawKey: string): string {
   return `Basic ${key}`;
 }
 
+const MODELS = ["inworld-tts-2", "inworld-tts-2-flash"];
+const DELIVERIES = ["STABLE", "BALANCED", "CREATIVE"];
+
+/** Markdown and line breaks out; brackets too, so nothing in the text itself
+ *  can be taken for a steering tag. */
+function cleanText(raw: unknown): string {
+  return String(raw ?? "")
+    .replace(/[#*_`~[\]()>|]/g, "")
+    .replace(/\n+/g, ". ")
+    .trim();
+}
+
+const tokenKey = (s: unknown) =>
+  String(s ?? "").toLowerCase().normalize("NFKD").replace(/[^\p{L}\p{N}]/gu, "");
+
+/**
+ * If the word timing opens with the steering direction's own words, drop
+ * them: read-along maps timed words onto the page, and a dozen words that
+ * are not on the page would throw its alignment off.
+ */
+function dropDirectionWords(info: any, direction: string) {
+  const wa = info?.wordAlignment;
+  const want = tokenKey(direction);
+  if (!want || !Array.isArray(wa?.words)) return info;
+  let acc = "";
+  let n = 0;
+  while (n < wa.words.length && acc.length < want.length) {
+    acc += tokenKey(wa.words[n]);
+    n++;
+    if (!want.startsWith(acc)) return info;
+  }
+  if (acc !== want) return info;
+  return {
+    ...info,
+    wordAlignment: {
+      ...wa,
+      words: wa.words.slice(n),
+      wordStartTimeSeconds: (wa.wordStartTimeSeconds ?? []).slice(n),
+      wordEndTimeSeconds: (wa.wordEndTimeSeconds ?? []).slice(n),
+    },
+  };
+}
+
 function jsonError(message: string, status = 400) {
   return new Response(JSON.stringify({ error: message }), {
     status,
@@ -77,7 +120,12 @@ Deno.serve(async (req) => {
 
     if (req.method === "POST") {
       const payload = await req.json().catch(() => null) as
-        | { text?: string; voice_id?: string; voiceId?: string; model?: string; sample_rate?: number; timestamp_type?: string }
+        | {
+          text?: string; voice_id?: string; voiceId?: string; model?: string;
+          sample_rate?: number; timestamp_type?: string;
+          delivery?: string; direction?: string;
+          reasoning?: boolean; reasoning_context?: string; previous?: unknown;
+        }
         | null;
       let voiceId = String(payload?.voice_id ?? payload?.voiceId ?? "").trim();
       if (!payload?.text) {
@@ -87,10 +135,7 @@ Deno.serve(async (req) => {
         console.warn("inworld-tts: empty voiceId, falling back to 'Ashley'");
         voiceId = "Ashley";
       }
-      const clean = String(payload.text)
-        .replace(/[#*_`~[\]()>|]/g, "")
-        .replace(/\n+/g, ". ")
-        .trim();
+      const clean = cleanText(payload.text);
 
       const sampleRate = Number(payload.sample_rate) > 0 ? Number(payload.sample_rate) : 24000;
       // Read-along (the Read tab's word highlighting) asks for WORD timing.
@@ -99,25 +144,70 @@ Deno.serve(async (req) => {
         ? payload.timestamp_type
         : null;
 
-      const resp = await fetch(`${INWORLD_BASE}/tts/v1/voice`, {
-        method: "POST",
-        headers: {
-          Authorization: basicAuth(inworldKey),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          text: clean,
-          voiceId,
-          modelId: payload.model || "inworld-tts-2",
-          audioConfig: {
-            audioEncoding: "MP3",
-            sampleRateHertz: sampleRate,
+      // The 1.x models are discontinued or deprecated; anything unknown gets
+      // the flagship.
+      const modelId = MODELS.includes(String(payload.model)) ? String(payload.model) : "inworld-tts-2";
+      // Steering, delivery modes and Reasoning are TTS-2 only — Flash ignores
+      // or rejects them.
+      const flagship = modelId === "inworld-tts-2";
+      const delivery = DELIVERIES.includes(String(payload.delivery)) ? String(payload.delivery) : "BALANCED";
+      // A written direction rides in front of the text as one bracket tag and
+      // holds for the whole request.
+      const direction = flagship ? cleanText(payload.direction).slice(0, 300) : "";
+      // What was said just before this chunk (not billed): the voice carries
+      // its pace and tone across sentence boundaries instead of starting cold.
+      // Inworld caps this at 5 entries / 2,000 characters; we stay well inside.
+      const previous = (Array.isArray(payload.previous) ? payload.previous : [])
+        .map(cleanText)
+        .filter(Boolean)
+        .slice(-3)
+        .map((t) => ({ text: t.slice(0, 400) }));
+      // Reasoning: the model reads the line and writes its own direction
+      // first. A written direction wins, so the two are never sent together.
+      const reasoning = flagship && payload.reasoning === true && !direction;
+      const synthesisContext = {
+        ...(previous.length ? { previousRequests: previous } : {}),
+        ...(reasoning
+          ? {
+            reasoning: "REASONING_ON",
+            ...(payload.reasoning_context
+              ? { reasoningContext: cleanText(payload.reasoning_context).slice(0, 600) }
+              : {}),
+          }
+          : {}),
+      };
+      const hasContext = Object.keys(synthesisContext).length > 0;
+
+      const synth = (withContext: boolean) =>
+        fetch(`${INWORLD_BASE}/tts/v1/voice`, {
+          method: "POST",
+          headers: {
+            Authorization: basicAuth(inworldKey),
+            "Content-Type": "application/json",
           },
-          deliveryMode: "BALANCED",
-          applyTextNormalization: "ON",
-          ...(timestampType ? { timestampType } : {}),
-        }),
-      });
+          body: JSON.stringify({
+            text: direction ? `[${direction}] ${clean}` : clean,
+            voiceId,
+            modelId,
+            audioConfig: {
+              audioEncoding: "MP3",
+              sampleRateHertz: sampleRate,
+            },
+            ...(flagship ? { deliveryMode: delivery } : {}),
+            applyTextNormalization: "ON",
+            ...(timestampType ? { timestampType } : {}),
+            ...(withContext && hasContext ? { synthesisContext } : {}),
+          }),
+        });
+
+      let resp = await synth(true);
+      // The context is a nicety. If Inworld refuses the request with it, speak
+      // the line plainly rather than fail the whole read.
+      if (!resp.ok && hasContext && resp.status >= 400 && resp.status < 500 && resp.status !== 401 && resp.status !== 429) {
+        const why = await resp.text().catch(() => resp.statusText);
+        console.warn(`inworld-tts: retrying without synthesisContext (${resp.status}): ${why}`);
+        resp = await synth(false);
+      }
 
       if (!resp.ok) {
         const body = await resp.text().catch(() => resp.statusText);
@@ -131,7 +221,10 @@ Deno.serve(async (req) => {
         // JSON so the timing rides with the audio in one round trip; the
         // client decodes the base64 itself.
         return new Response(
-          JSON.stringify({ audioContent: base64, timestampInfo: result?.timestampInfo ?? null }),
+          JSON.stringify({
+            audioContent: base64,
+            timestampInfo: dropDirectionWords(result?.timestampInfo ?? null, direction),
+          }),
           { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }

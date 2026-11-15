@@ -26,7 +26,7 @@ import {
   type SourceWord,
   type WordTimes,
 } from "@/lib/readAlong";
-import { synthesizeSpeechWithTimestamps } from "@/lib/inworldTts";
+import { contextBefore, synthesizeSpeechWithTimestamps, type VoiceStyle } from "@/lib/inworldTts";
 
 export type ReadAlongEngine = "inworld" | "browser";
 export type ReadAlongStatus = "idle" | "loading" | "playing" | "paused";
@@ -44,6 +44,8 @@ export interface ReadAlongHandlers {
 export interface ReadAlongVoice {
   engine: ReadAlongEngine;
   inworldVoiceId?: string;
+  /** Model, delivery and direction — the Voice settings, with a book scene. */
+  style?: VoiceStyle;
 }
 
 interface PreparedChunk {
@@ -222,7 +224,12 @@ export class ReadAlongPlayer {
     let p = this.prepared.get(i);
     if (!p) {
       const signal = this.abort?.signal;
-      p = synthesizeSpeechWithTimestamps(chunk.text, this.voice.inworldVoiceId || "", undefined, { signal }).then(
+      p = synthesizeSpeechWithTimestamps(chunk.text, this.voice.inworldVoiceId || "", undefined, {
+        signal,
+        style: this.voice.style,
+        // The passage just read, so the narration flows across chunks.
+        context: { previous: contextBefore(this.chunks.map((c) => c.text), i) },
+      }).then(
         ({ audio, words }) => ({ url: URL.createObjectURL(new Blob([audio], { type: "audio/mpeg" })), tokens: words }),
       );
       // Unhandled-rejection guard for prefetches nobody awaits yet.

@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { isEmbeddingModel } from "@/lib/utils";
+import { INWORLD_DELIVERIES, type InworldDelivery } from "@/lib/inworldTts";
 import { modelProvider, providerConfigured, providerLabel } from "@/lib/providers/registry";
 
 export type LeanMode = "full" | "lean" | "chat_only";
@@ -64,6 +65,13 @@ interface ChatSettings {
   inworldApiKey: string;
   inworldEnabled: boolean;
   inworldVoiceId: string;
+  /** Inworld model id; "" = the flagship (inworld-tts-2). */
+  inworldModel: string;
+  /** How much the voice may range: STABLE / BALANCED / CREATIVE. */
+  inworldDelivery: InworldDelivery;
+  /** How to perform: "" = plain · "auto" = the voice decides · else a written
+   *  direction ("speak like a warm storyteller…"). */
+  inworldDirection: string;
   /** When true (paid feature), chat retrieval draws on every neuron instead of only the active one. */
   accessAllNeurons: boolean;
   /** Hard cap on sentences per assistant reply (0 = off). Enforced by prompt
@@ -146,6 +154,9 @@ const defaults: ChatSettings = {
   inworldApiKey: "",
   inworldEnabled: false,
   inworldVoiceId: "",
+  inworldModel: "",
+  inworldDelivery: "BALANCED",
+  inworldDirection: "",
   accessAllNeurons: false,
   maxReplySentences: 0,
   autoShowMemoryImages: true,
@@ -292,6 +303,9 @@ function rowToSettings(data: any): ChatSettings {
     inworldApiKey: data.inworld_api_key || "",
     inworldEnabled: !!data.inworld_enabled,
     inworldVoiceId: data.inworld_voice_id || "",
+    inworldModel: data.inworld_model || "",
+    inworldDelivery: INWORLD_DELIVERIES.includes(data.inworld_delivery) ? data.inworld_delivery : "BALANCED",
+    inworldDirection: data.inworld_direction || "",
     accessAllNeurons: !!data.access_all_neurons,
     maxReplySentences: typeof data.max_reply_sentences === "number" && data.max_reply_sentences > 0
       ? Math.min(12, Math.floor(data.max_reply_sentences))
@@ -353,7 +367,8 @@ function ensureLoaded(userId: string | null) {
       "user_id", "openrouter_api_key", "nvidia_key_last4", "saved_models", "selected_model",
       "deep_research_model", "voice_model", "tts_rate", "hands_free_tts_rate", "auto_read_replies",
       "wiki_model", "custom_system_prompt", "burplexity_api_token", "inworld_api_key",
-      "inworld_enabled", "inworld_voice_id", "access_all_neurons", "max_reply_sentences",
+      "inworld_enabled", "inworld_voice_id", "inworld_model", "inworld_delivery", "inworld_direction",
+      "access_all_neurons", "max_reply_sentences",
       "auto_show_memory_images", "auto_approve_tool_updates", "auto_catalog_on_upload", "vision_model",
       "image_extraction_model", "image_model_primary", "image_model_fallback", "image_quality",
       "image_size", "saved_image_models", "chat_tool_permissions", "video_model_primary",
@@ -386,6 +401,7 @@ function ensureLoaded(userId: string | null) {
       "splat_default_quality", "splat_max_file_mb", "splat_confirm_threshold",
       "splat_click_to_activate", "splat_monthly_quota", "splat_auto_fallback",
       "program_runner_url", "program_runner_key_id", "program_runner_last4",
+      "inworld_model", "inworld_delivery", "inworld_direction",
     ];
     let cols = [...READ_COLUMNS];
     let { data, error } = await sel(cols.join(", "));
@@ -481,6 +497,9 @@ function persistSettings(userId: string, next: ChatSettings, changed?: Array<key
       tavily_api_key: next.tavilyApiKey || "",
       inworld_enabled: next.inworldEnabled,
       inworld_voice_id: next.inworldVoiceId || "",
+      inworld_model: next.inworldModel || "",
+      inworld_delivery: next.inworldDelivery,
+      inworld_direction: next.inworldDirection || "",
       access_all_neurons: next.accessAllNeurons,
       max_reply_sentences: next.maxReplySentences || 0,
       auto_show_memory_images: next.autoShowMemoryImages,
@@ -528,7 +547,8 @@ function persistSettings(userId: string, next: ChatSettings, changed?: Array<key
       "video_default_aspect", "video_generate_audio", "video_confirm_threshold",
       "video_identity_scale", "video_qc_enabled", "video_motion_model",
       "gemini_api_key", "tavily_api_key", "fal_api_key", "splat_model_primary", "splat_default_quality", "splat_max_file_mb",
-      "splat_confirm_threshold", "splat_click_to_activate", "splat_monthly_quota", "splat_auto_fallback"];
+      "splat_confirm_threshold", "splat_click_to_activate", "splat_monthly_quota", "splat_auto_fallback",
+      "inworld_model", "inworld_delivery", "inworld_direction"];
     for (let pass = 0; error && pass < optionalColumns.length; pass++) {
       const offender = optionalColumns.find(
         (col) => col in payload && (error!.message || "").toLowerCase().includes(col),
@@ -768,6 +788,9 @@ export function useChatSettings() {
     setInworldApiKey: (k: string) => update({ inworldApiKey: k.trim() }),
     setInworldEnabled: (v: boolean) => update({ inworldEnabled: v }),
     setInworldVoiceId: (v: string) => update({ inworldVoiceId: v }),
+    setInworldModel: (m: string) => update({ inworldModel: m }),
+    setInworldDelivery: (d: InworldDelivery) => update({ inworldDelivery: d }),
+    setInworldDirection: (d: string) => update({ inworldDirection: d.slice(0, 300) }),
     setAccessAllNeurons: (v: boolean) => update({ accessAllNeurons: v }),
     setMaxReplySentences: (n: number) => update({ maxReplySentences: Math.max(0, Math.min(12, Math.floor(Number(n) || 0))) }),
     setAutoShowMemoryImages: (v: boolean) => update({ autoShowMemoryImages: v }),

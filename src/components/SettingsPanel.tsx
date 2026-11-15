@@ -27,7 +27,10 @@ import ProgramRunnerSettings from "@/components/ProgramRunnerSettings";
 import { Choice, Disclosure, Group, Pill, Row, selectCls } from "@/components/settings/SettingsUI";
 import { getMemoryMode, setMemoryMode, MemoryMode } from "@/lib/knowledgeApi";
 import { consumeSettingsSection } from "@/lib/settingsNav";
-import { synthesizeSpeech, fetchInworldVoices, type InworldVoice } from "@/lib/inworldTts";
+import {
+  AUTO_DIRECTION, DEFAULT_INWORLD_MODEL, DIRECTION_PRESETS, INWORLD_MODELS,
+  synthesizeSpeech, fetchInworldVoices, type InworldDelivery, type InworldVoice,
+} from "@/lib/inworldTts";
 import { isEmbeddingModel, isBatchOnlyModel } from "@/lib/utils";
 import { allProviders, describeModel, freeChatProviders, isNvidiaModel, localModelId, modelProvider, namespacedId, providerConfigured, providerLabel } from "@/lib/providers/registry";
 import type { ProviderId } from "@/lib/providers/types";
@@ -116,6 +119,9 @@ const SEARCH_INDEX: { s: SectionId; label: string; anchor?: string; k?: string }
   { s: "voice", label: "Read replies aloud", anchor: "auto-read", k: "tts speak" },
   { s: "voice", label: "Reading speed", anchor: "tts-rate", k: "playback rate" },
   { s: "voice", label: "Inworld voice", anchor: "inworld", k: "tts character voice" },
+  { s: "voice", label: "Voice direction", anchor: "voice-direction", k: "tts emotion style storyteller whisper tone steering" },
+  { s: "voice", label: "Voice expressiveness", anchor: "voice-delivery", k: "tts steady expressive stable creative delivery" },
+  { s: "voice", label: "Voice engine", anchor: "voice-engine", k: "tts model flash fast cheap inworld" },
   { s: "voice", label: "Hands-free speech speed", anchor: "hf-rate", k: "rate" },
   { s: "voice", label: "Interrupt by talking (barge-in)", anchor: "barge-in", k: "echo headphones" },
   { s: "voice", label: "Pocket screen", anchor: "pocket", k: "phone dim battery" },
@@ -270,7 +276,8 @@ const SettingsPanel: React.FC = () => {
     apiKey, nvidiaKeyLast4, geminiApiKey, tavilyApiKey, leanMode, savedModels, selectedModel, deepResearchModel, voiceModel, visionModel, ttsRate,
     handsFreeTtsRate, maxReplySentences,
     autoReadReplies, wikiModel, customSystemPrompt, burplexityApiToken,
-    inworldApiKey, inworldEnabled, inworldVoiceId, accessAllNeurons, loaded,
+    inworldApiKey, inworldEnabled, inworldVoiceId, inworldModel, inworldDelivery, inworldDirection,
+    setInworldModel, setInworldDelivery, setInworldDirection, accessAllNeurons, loaded,
     imageExtractionModel, autoCatalogOnUpload,
     saveApiKey, saveNvidiaKey, setGeminiApiKey, setTavilyApiKey, setLeanMode, addModel, removeModel, setSelectedModel, setDeepResearchModel,
     setVoiceModel, setVisionModel, setTtsRate, setHandsFreeTtsRate, setMaxReplySentences, setAutoReadReplies, setWikiModel,
@@ -468,11 +475,32 @@ const SettingsPanel: React.FC = () => {
     else { setInworldEnabled(false); setInworldVoices([]); }
   };
 
+  // Direction: "" / "auto" / a preset sentence select themselves; anything
+  // else typed is the user's own. `customDirection` keeps "My own…" selected
+  // while its box is still empty.
+  const flashVoice = !!inworldModel && inworldModel !== DEFAULT_INWORLD_MODEL;
+  const [customDirection, setCustomDirection] = useState(false);
+  const directionIsListed = inworldDirection === "" || inworldDirection === AUTO_DIRECTION
+    || DIRECTION_PRESETS.some((d) => d.value === inworldDirection);
+  const directionChoice = customDirection || !directionIsListed ? "custom" : inworldDirection;
+  const pickDirection = (v: string) => {
+    setCustomDirection(v === "custom");
+    setInworldDirection(v === "custom" ? "" : v);
+  };
+
   const testInworldVoice = async () => {
     if (!inworldVoiceId) { toast.error("Pick a voice first"); return; }
     setTestingVoice(true);
     try {
-      const buf = await synthesizeSpeech("Testing one, two, three.", inworldApiKey, inworldVoiceId);
+      // A line with some feeling in it, performed with the current settings —
+      // "testing one two three" gives a direction nothing to act on.
+      const buf = await synthesizeSpeech(
+        "Oh, there you are! Pull up a chair. I just found the most wonderful chapter, and I can't wait to read it to you.",
+        inworldApiKey,
+        inworldVoiceId,
+        undefined,
+        { style: { model: inworldModel, delivery: inworldDelivery, direction: inworldDirection, scene: "A friendly reading companion greets the reader." } },
+      );
       const url = URL.createObjectURL(new Blob([buf], { type: "audio/mpeg" }));
       const audio = new Audio(url);
       audio.onended = audio.onerror = () => { try { URL.revokeObjectURL(url); } catch { /* no-op */ } };
@@ -1097,6 +1125,78 @@ const SettingsPanel: React.FC = () => {
                       <Button size="sm" variant="outline" onClick={loadInworldVoices}>Retry loading voices</Button>
                     )}
                   </Row>
+                )}
+                {inworldApiKey && (
+                  <>
+                    <Row
+                      id="voice-direction"
+                      label="Direction"
+                      description={flashVoice
+                        ? "The Flash engine can't take direction — switch the engine below to use this."
+                        : "How the voice performs what it reads."}
+                      more="Storyteller, Calm and the rest tell the voice how to speak, in plain words. “Voice decides” lets it read each line first and pick its own delivery — the most natural, with a slightly slower start. “My own” takes any description you write. Press play above to hear the result."
+                      after={directionChoice === "custom" && !flashVoice ? (
+                        <input
+                          type="text"
+                          value={inworldDirection}
+                          maxLength={300}
+                          onChange={(e) => setInworldDirection(e.target.value)}
+                          placeholder="e.g. speak like a wry old sea captain telling a tall tale"
+                          className={selectCls.replace("sm:w-64", "")}
+                          aria-label="Your own voice direction"
+                        />
+                      ) : undefined}
+                    >
+                      <select
+                        value={directionChoice}
+                        onChange={(e) => pickDirection(e.target.value)}
+                        disabled={flashVoice}
+                        className={`${selectCls} sm:w-52`}
+                        aria-label="Voice direction"
+                      >
+                        <option value="">Plain</option>
+                        <option value={AUTO_DIRECTION}>Voice decides</option>
+                        {DIRECTION_PRESETS.map((d) => <option key={d.label} value={d.value}>{d.label}</option>)}
+                        <option value="custom">My own…</option>
+                      </select>
+                    </Row>
+                    <Row
+                      id="voice-delivery"
+                      label="Expressiveness"
+                      description={inworldDelivery === "STABLE"
+                        ? "Even and consistent — good for long reads."
+                        : inworldDelivery === "CREATIVE"
+                          ? "More range and feeling; less predictable."
+                          : "A middle ground."}
+                    >
+                      <Choice<InworldDelivery>
+                        ariaLabel="Voice expressiveness"
+                        value={flashVoice ? "BALANCED" : inworldDelivery}
+                        onChange={(v) => { if (!flashVoice) setInworldDelivery(v); }}
+                        options={[
+                          { value: "STABLE", label: "Steady" },
+                          { value: "BALANCED", label: "Balanced" },
+                          { value: "CREATIVE", label: "Expressive" },
+                        ]}
+                      />
+                    </Row>
+                    <Row
+                      id="voice-engine"
+                      label="Engine"
+                      description={flashVoice
+                        ? "Quickest to start and cheapest. No direction or expressiveness."
+                        : "Inworld's flagship — takes direction."}
+                    >
+                      <select
+                        value={inworldModel || DEFAULT_INWORLD_MODEL}
+                        onChange={(e) => setInworldModel(e.target.value === DEFAULT_INWORLD_MODEL ? "" : e.target.value)}
+                        className={`${selectCls} sm:w-52`}
+                        aria-label="Voice engine"
+                      >
+                        {INWORLD_MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                      </select>
+                    </Row>
+                  </>
                 )}
               </Group>
 
