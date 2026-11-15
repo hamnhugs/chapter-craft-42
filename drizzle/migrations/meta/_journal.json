@@ -106,6 +106,13 @@
       "when": 1794552487956,
       "tag": "0014_memory_redesign_additive",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1794764383950,
+      "tag": "0015_inworld_voice_style",
+      "breakpoints": true
     }
   ]
 }

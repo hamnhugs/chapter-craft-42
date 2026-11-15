@@ -2476,7 +2476,10 @@ export type Database = {
           image_safety_check: boolean
           image_size: string | null
           inworld_api_key: string
+          inworld_delivery: string
+          inworld_direction: string
           inworld_enabled: boolean
+          inworld_model: string
           inworld_voice_id: string
           is_recording_mode: boolean
           lean_mode: string
@@ -2546,7 +2549,10 @@ export type Database = {
           image_safety_check?: boolean
           image_size?: string | null
           inworld_api_key?: string
+          inworld_delivery?: string
+          inworld_direction?: string
           inworld_enabled?: boolean
+          inworld_model?: string
           inworld_voice_id?: string
           is_recording_mode?: boolean
           lean_mode?: string
@@ -2616,7 +2622,10 @@ export type Database = {
           image_safety_check?: boolean
           image_size?: string | null
           inworld_api_key?: string
+          inworld_delivery?: string
+          inworld_direction?: string
           inworld_enabled?: boolean
+          inworld_model?: string
           inworld_voice_id?: string
           is_recording_mode?: boolean
           lean_mode?: string
