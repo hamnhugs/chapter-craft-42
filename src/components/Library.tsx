@@ -132,7 +132,7 @@ const Library: React.FC = () => {
   const requestBookLoad = useCallback((bookId: string) => {
     void loadFocus({ kind: "book", bookId, neurons: { kind: "keep" }, alongside: true });
   }, [loadFocus]);
-  const { apiKey, imageExtractionModel, selectedModel, geminiApiKey, nvidiaKeyLast4, autoCatalogOnUpload } = useChatSettings();
+  const { apiKey, imageExtractionModel, selectedModel, geminiApiKey, nvidiaKeyLast4, autoCatalogOnUpload, autoExtractFigures } = useChatSettings();
   const { user } = useAuth();
   const { isPaid, loaded: planLoaded } = usePlan();
   const { isAdmin, loaded: adminLoaded } = useIsAdmin();
@@ -357,6 +357,23 @@ const Library: React.FC = () => {
   const openTrash = () => {
     setTrashOpen(true);
     void refreshTrash();
+  };
+
+  // Automatic figure extraction for a new upload. Silent when it cannot run
+  // (switched off, or no way to pay for the vision call) — the manual button
+  // on the book card is where the reasons are explained.
+  const enqueueFigures = (bookId: string, file: File) => {
+    if (!autoExtractFigures) return;
+    if (!apiKey && !isAdmin) return;
+    const book = booksRef.current.find((b) => b.id === bookId);
+    figureJobs.enqueue({
+      bookId,
+      bookTitle: book?.title || file.name.replace(/\.[^.]+$/, ""),
+      model: imageExtractionModel || undefined,
+      getChapters: () => booksRef.current.find((b) => b.id === bookId)?.chapters
+        .map((c) => ({ name: c.name, startPage: c.startPage, endPage: c.endPage })),
+      load: async () => ({ file }),
+    });
   };
 
   const enqueueCatalog = (bookId: string) => {
@@ -715,7 +732,9 @@ const Library: React.FC = () => {
               deps: { addChapter, removeChapter },
               // Tag once the chapters exist: their names place a book far
               // better than its title alone.
-              onComplete: () => { enqueueCatalog(finalBookId); void autoTagArrivals([finalBookId]); },
+              // Figures ride with the chapters: the scan needs the chapter
+              // ranges to file each picture under the right one.
+              onComplete: () => { enqueueCatalog(finalBookId); void autoTagArrivals([finalBookId]); enqueueFigures(finalBookId, fileToUpload); },
             });
             structuring.add(finalBookId);
           }

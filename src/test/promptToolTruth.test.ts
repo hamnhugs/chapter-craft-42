@@ -463,8 +463,12 @@ describe("the additive contract: omitting offeredTools changes nothing", () => {
   // sentence names manage_chain and one new gated line covers update_wiki,
   // review_notes, move_workspace_item and open_view, including the
   // open-is-not-load rule (+830).
-  const BASELINE_LENGTH = 24163;
-  const BASELINE_DIGEST = "82a4703a";
+  // Re-captured 2026-11-18 (book figures in chat): one gated sentence in the
+  // library section says books can carry extracted figures, which tools list
+  // them, and the [[fig:<handle>]] placement rule with its two-figure ceiling
+  // (+575).
+  const BASELINE_LENGTH = 24738;
+  const BASELINE_DIGEST = "d5448b64";
   const fnv1a = (s: string) => {
     let h = 0x811c9dc5;
     for (let i = 0; i < s.length; i++) {

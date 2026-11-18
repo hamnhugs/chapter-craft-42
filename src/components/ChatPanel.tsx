@@ -35,7 +35,9 @@ import GeneratedImage from "@/components/GeneratedImage";
 import VideoBubble from "@/components/VideoBubble";
 import SplatBubble from "@/components/SplatBubble";
 import MediaReveal from "@/components/MediaReveal";
-import { openNote } from "@/lib/openPassage";
+import { openNote, openPassage } from "@/lib/openPassage";
+import BookFigureInline from "@/components/BookFigureInline";
+import { splitFigureMarkers, stripFigureMarkers } from "@/lib/bookFigures";
 import WorkspaceShell from "@/components/WorkspaceShell";
 import ToolStatusPanel from "@/components/ToolStatusPanel";
 import PromptSwitcher from "@/components/PromptSwitcher";
@@ -64,7 +66,7 @@ const SEARCH_INTENT_RE =
   /\b(search|look up|look for|find|google|what is|what are|who is|who are|tell me about|research|check online|latest|current|news about)\b/i;
 
 const ChatPanel: React.FC = () => {
-  const { books, activeBookId, activeWiki, activeWikiId, activeWikis, activeWikiIds, toggleNeuronInSession, unloadAllNeurons, setActiveTab, shelves } = useApp();
+  const { books, activeBookId, activeWiki, activeWikiId, activeWikis, activeWikiIds, toggleNeuronInSession, unloadAllNeurons, setActiveTab, setActiveBook, shelves } = useApp();
   const { user } = useAuth();
   const {
     apiKey, nvidiaKeyLast4, geminiApiKey, leanMode, savedModels, selectedModel, voiceModel, autoReadReplies, burplexityApiToken, accessAllNeurons, loaded,
@@ -737,6 +739,15 @@ const ChatPanel: React.FC = () => {
   };
 
   const bubbleId = (msg: { id?: string }, i: number) => `chat-${msg.id || i}`;
+  // Book figures placed in a reply: provenance + the jump to their page.
+  const booksRefForFigures = useRef(books);
+  booksRefForFigures.current = books;
+  const figureBookTitle = useCallback((bookId: string) => booksRefForFigures.current.find((b) => b.id === bookId)?.title, []);
+  const openFigurePage = useCallback(
+    (bookId: string, page: number) => openPassage({ setActiveBook, setActiveTab }, bookId, page),
+    [setActiveBook, setActiveTab],
+  );
+
   const handleSpeak = (msg: { id?: string; content: string }, i: number) => {
     const id = bubbleId(msg, i);
     if (speakingId === id) { stopSpeaking(); return; }
@@ -1379,7 +1390,7 @@ const ChatPanel: React.FC = () => {
             <div
               className={`relative group max-w-full min-w-0 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:block [&_table]:max-w-full [&_table]:overflow-x-auto ${msg.role === "user" ? "message-bubble-user bg-primary-container text-on-primary-container" : "message-bubble-ai bg-surface-container-high text-foreground border-l-2 border-primary-container/20"} p-5 shadow-sm leading-relaxed select-text`}
               style={{ WebkitTouchCallout: "none" } as React.CSSProperties}
-              onTouchStart={(e) => startLongPress(msg.content, e)}
+              onTouchStart={(e) => startLongPress(stripFigureMarkers(msg.content), e)}
               // The fired flag must be CONSUMED here, not just read: media frames
               // stop touchstart propagation (so startLongPress never re-arms and
               // resets it), and a stale true would preventDefault — i.e. kill —
@@ -1459,7 +1470,21 @@ const ChatPanel: React.FC = () => {
                       <div className="mt-1 text-xs text-on-surface-variant/80 whitespace-pre-wrap max-h-56 overflow-y-auto">{msg.reasoning}</div>
                     </details>
                   )}
-                  {msg.content && <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown urlTransform={safeUrlTransform} components={safeMarkdownComponents}>{msg.content}</ReactMarkdown></div>}
+                  {msg.content && (
+                    <div className="prose prose-sm prose-invert max-w-none">
+                      {/* Book figures sit where the reply placed them — next
+                          to the words about them — not in the grid above. A
+                          figure already shown by show_image this turn is not
+                          repeated. */}
+                      {splitFigureMarkers(msg.content, { streaming: true, alreadyShown: new Set((msg.images || []).map((im) => im.id)) }).map((seg, si) =>
+                        seg.kind === "figure" ? (
+                          <BookFigureInline key={`f${si}-${seg.ref}`} figureRef={seg.ref} bookTitle={figureBookTitle} onOpenPage={openFigurePage} />
+                        ) : (
+                          <ReactMarkdown key={`t${si}`} urlTransform={safeUrlTransform} components={safeMarkdownComponents}>{seg.text}</ReactMarkdown>
+                        ),
+                      )}
+                    </div>
+                  )}
                   {msg.blocks && msg.blocks.length > 0 && (
                     <React.Suspense fallback={null}>
                       <ResponseBlocks blocks={msg.blocks} />
@@ -1520,7 +1545,7 @@ const ChatPanel: React.FC = () => {
                 </button>
               )}
               <button
-                onClick={() => saveBubbleToNotes(msg.content)}
+                onClick={() => saveBubbleToNotes(stripFigureMarkers(msg.content))}
                 className="hidden md:flex absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 transition-opacity items-center justify-center w-7 h-7 rounded-full bg-surface-container-highest text-on-surface-variant hover:text-primary shadow-md"
                 title="Save to notes"
                 aria-label="Save to notes"

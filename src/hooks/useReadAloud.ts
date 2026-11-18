@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { stripFigureMarkers } from "@/lib/bookFigures";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { contextBefore, synthesizeSpeech, type VoiceStyle } from "@/lib/inworldTts";
 import { computeBackTarget, computeForwardTarget, type SeekPos } from "@/lib/ttsSeek";
@@ -81,7 +82,9 @@ const SKIP_SECONDS = 10;
 const SMART_RESUME_MS = 60_000;
 
 const stripMarkdownForTts = (s: string) =>
-  (s || "")
+  // Figure markers first: the bracket strip below would otherwise leave
+  // "fig:3fa85f64" to be read aloud.
+  stripFigureMarkers(s || "")
     .replace(/[#*_`~\[\]()>|]/g, "")
     .replace(/\n+/g, ". ")
     .replace(/\s+/g, " ")

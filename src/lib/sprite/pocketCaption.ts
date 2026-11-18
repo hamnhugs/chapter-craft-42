@@ -62,6 +62,7 @@ export const CAPTION_MAX = 8000;
  */
 export function plainText(s: string): string {
   return s
+    .replace(/\[\[\s*fig(?:ure)?\s*[:=]\s*[0-9a-fA-F-]{8,36}\s*\]\]/g, "")
     .replace(/```[\s\S]*?```/g, " [code] ")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/!\[[^\]]*\]\([^)]*\)/g, "")

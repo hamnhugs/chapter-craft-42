@@ -278,7 +278,7 @@ const SettingsPanel: React.FC = () => {
     autoReadReplies, wikiModel, customSystemPrompt, burplexityApiToken,
     inworldApiKey, inworldEnabled, inworldVoiceId, inworldModel, inworldDelivery, inworldDirection,
     setInworldModel, setInworldDelivery, setInworldDirection, accessAllNeurons, loaded,
-    imageExtractionModel, autoCatalogOnUpload,
+    imageExtractionModel, autoCatalogOnUpload, autoExtractFigures, setAutoExtractFigures,
     saveApiKey, saveNvidiaKey, setGeminiApiKey, setTavilyApiKey, setLeanMode, addModel, removeModel, setSelectedModel, setDeepResearchModel,
     setVoiceModel, setVisionModel, setTtsRate, setHandsFreeTtsRate, setMaxReplySentences, setAutoReadReplies, setWikiModel,
     setCustomSystemPrompt, setBurplexityApiToken, setInworldApiKey,
@@ -1322,6 +1322,14 @@ const SettingsPanel: React.FC = () => {
                   more="Off by default because it uses your own model key — roughly one short call per eight chapters, plus one for the book. You can always catalog a book by hand from the book-context picker in Counsel."
                 >
                   <Switch checked={autoCatalogOnUpload} onCheckedChange={setAutoCatalogOnUpload} aria-label="Catalog new books automatically" />
+                </Row>
+                <Row
+                  id="auto-figures"
+                  label="Pull figures from new books"
+                  description="Saves each book's diagrams, charts and photos with its chapters, so the assistant can show the real picture while explaining."
+                  more="Runs once the chapters are detected. Finding the pictures is free and happens on this device; describing them takes about one vision-model call per four figures on your OpenRouter key (the model is set under AI Models → Book figures). Books already in your library: open the book's card and press Extract figures."
+                >
+                  <Switch checked={autoExtractFigures} onCheckedChange={setAutoExtractFigures} aria-label="Pull figures from new books" />
                 </Row>
               </Group>
             </>

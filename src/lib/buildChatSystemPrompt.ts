@@ -953,6 +953,22 @@ export async function buildChatSystemPrompt({
     // failure is models SMOOTHING quotes — "modem"→"modern").
     ...ifTools(["search_book_text"], "To quote or locate exact wording, `search_book_text` finds where it appears across the loaded books — search first, then copy the excerpt byte-for-byte (odd spellings and OCR artifacts included; never smooth them)."),
   ];
+  // Book figures. The candidate list and the full rule arrive just-in-time
+  // in the tool results that carry figures; this is the standing half — that
+  // the convention exists, and that a picture is the exception. Named per
+  // offered tool, so the sentence never points at a door this turn lacks.
+  const figureDoors = [
+    ...(has("get_chapter_text") ? ["`get_chapter_text`"] : []),
+    ...(has("search_book_text") ? ["`search_book_text`"] : []),
+  ];
+  if (figureDoors.length > 0) {
+    catalogTail.push(
+      `Books can carry extracted figures — real diagrams, charts and photos from their pages. ${figureDoors.join(" and ")} list${figureDoors.length === 1 ? "s" : ""} them as \`figures\`, each with a description and a \`fig\` handle. ` +
+      "When one depicts exactly what you are explaining, write [[fig:<handle>]] on its own line right after the paragraph about it and refer to it in your words. " +
+      "Use only handles a tool result gave you; most replies need no figure, and two is the ceiling unless the user asks for pictures." +
+      (has("search_book_text") ? " Asked to see a picture from a book, find it with `search_book_text` (1-3 plain subject words)." : ""),
+    );
+  }
   if (catalogTail.length > 0) parts.push(catalogTail.join(" "));
 
   // No inline chapter text here — ever. The active book's full text used to be

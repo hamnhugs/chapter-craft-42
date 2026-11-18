@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import BookFiguresSection from "@/components/BookFiguresSection";
 import * as MenuPrimitive from "@radix-ui/react-dropdown-menu";
 import { toast } from "sonner";
 import { BookDocument } from "@/types/library";
@@ -480,6 +481,8 @@ const BookProfileDialog: React.FC<{
               </ul>
             </section>
           )}
+
+          <BookFiguresSection book={book} />
 
           {profile.tags.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
