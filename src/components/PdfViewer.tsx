@@ -97,7 +97,7 @@ function readTapHintSeen(): boolean {
  * a tap on either side turns the page.
  */
 const PdfViewer: React.FC = () => {
-  const { getActiveBook, addChapter, updateChapter, removeChapter, setBookCover, activeBookId, loadBookFile, loadChapterTextStrict, setActiveTab } = useApp();
+  const { getActiveBook, addChapter, updateChapter, removeChapter, setBookCover, activeBookId, loadBookFile, loadChapterTextStrict, setActiveTab, setActiveBookSilent } = useApp();
   const book = getActiveBook();
   const isPdfBook = book?.fileName.toLowerCase().endsWith(".pdf") ?? false;
   const isHtmlBook = book?.fileName.toLowerCase().endsWith(".html") ?? false;
@@ -702,6 +702,10 @@ const PdfViewer: React.FC = () => {
             <span className="flex-1">Read a paper book</span>
           </DropdownMenuItem>
         )}
+        <DropdownMenuItem onSelect={() => { if (focused) exitFocus(); setActiveBookSilent(null); }}>
+          <span className="material-symbols-outlined text-lg mr-2" aria-hidden>close</span>
+          <span className="flex-1">Close this book</span>
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         {!isHtmlBook && (
           <DropdownMenuCheckboxItem checked={swipeEnabled} onCheckedChange={(v) => setSwipeEnabled(!!v)}>

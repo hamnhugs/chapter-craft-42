@@ -947,7 +947,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!user) return;
     try {
       if (activeBookId) localStorage.setItem(`cc_active_book_${user.id}`, activeBookId);
-      else localStorage.removeItem(`cc_active_book_${user.id}`);
+      // Only forget the book once the restore above has had its turn. On a
+      // reload nothing is open yet when this first runs, and clearing the key
+      // here erased the very book the restore was about to read back — which
+      // is why the open book never survived a refresh.
+      else if (restoredBookRef.current) localStorage.removeItem(`cc_active_book_${user.id}`);
     } catch {
       /* localStorage unavailable — non-fatal */
     }

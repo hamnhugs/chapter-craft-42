@@ -485,6 +485,10 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
               <DropdownMenuItem onSelect={() => { stopListening(); paperSession.start(); setActiveBookSilent(null); }}>
                 <span className="material-symbols-outlined text-base mr-2" aria-hidden>add</span> Start a different paper book
               </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => { stopListening(); paperSession.end(); setActiveBookSilent(null); }}>
+                <span className="material-symbols-outlined text-base mr-2" aria-hidden>close</span>
+                <span className="flex flex-col"><span>Close this book</span><span className="text-[11px] text-on-surface-variant">It stays in Unfinished, with every page you added.</span></span>
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         )}
