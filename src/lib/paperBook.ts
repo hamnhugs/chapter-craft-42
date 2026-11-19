@@ -209,6 +209,47 @@ const squash = (text: string): string => text.toLowerCase().replace(/[^\p{L}\p{N
  * the reader to ignore the mark; a missed bad page is still one tap to delete.
  */
 export function pageDoubts(page: PaperPage, all: readonly PaperPage[] = []): string[] {
+  const own = ownDoubts(page);
+  const twin = twinOf(page, all);
+  return twin === -1 ? own : [...own, `It is the same as ${pageLabel(all[twin], twin)}.`];
+}
+
+// A page object is never changed after it is made (an edit makes a new one),
+// and neither is a page list — so what is worked out from one can be kept for
+// as long as it lives. Without this, every page added re-read every other
+// page twice over, and a 300-page book froze for seconds on each new page.
+const squashed = new WeakMap<PaperPage, string>();
+const squashOf = (page: PaperPage): string => {
+  let s = squashed.get(page);
+  if (s === undefined) { s = squash(page.text); squashed.set(page, s); }
+  return s;
+};
+const ownCache = new WeakMap<PaperPage, string[]>();
+const twinCache = new WeakMap<readonly PaperPage[], Map<string, number[]>>();
+
+/** Index of the first OTHER page with the same words, or -1. */
+function twinOf(page: PaperPage, all: readonly PaperPage[]): number {
+  const mine = squashOf(page);
+  if (mine.length < 80 || all.length === 0) return -1;
+  let index = twinCache.get(all);
+  if (!index) {
+    index = new Map();
+    for (let i = 0; i < all.length; i++) {
+      const key = squashOf(all[i]);
+      if (key.length < 80) continue;
+      const at = index.get(key);
+      if (!at) index.set(key, [i]); else at.push(i);
+    }
+    twinCache.set(all, index);
+  }
+  for (const i of index.get(mine) ?? []) if (all[i].id !== page.id) return i;
+  return -1;
+}
+
+/** The doubts a page raises by itself, whatever else is in the book. */
+function ownDoubts(page: PaperPage): string[] {
+  const kept = ownCache.get(page);
+  if (kept) return kept;
   const out: string[] = [];
   const words = wordsOf(page.text);
   const picturesOnly = words.length === 0 && page.figures.length > 0;
@@ -235,11 +276,7 @@ export function pageDoubts(page: PaperPage, all: readonly PaperPage[] = []): str
     const distinct = new Set(words.map((w) => w.toLowerCase())).size;
     if (distinct / words.length < 0.2) out.push("The same words repeat over and over.");
   }
-  const mine = squash(page.text);
-  if (mine.length >= 80) {
-    const twin = all.findIndex((p) => p.id !== page.id && squash(p.text) === mine);
-    if (twin !== -1) out.push(`It is the same as ${pageLabel(all[twin], twin)}.`);
-  }
+  ownCache.set(page, out);
   return out;
 }
 
