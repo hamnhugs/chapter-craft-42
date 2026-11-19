@@ -41,7 +41,7 @@ const FIXTURE: PaperPage[] = [
 ];
 
 declare global {
-  interface Window { __paperLab?: { next?: "cover" | "spread" | "unreadable" | "offline"; given: number } }
+  interface Window { __paperLab?: { next?: "cover" | "spread" | "unreadable" | "offline"; given: number; started?: number; flying?: number; peak?: number; plain?: boolean } }
 }
 
 function labBook(id: string, title: string, pages: PaperPage[], status: "open" | "done", ago: number): { book: BookDocument; html: string } {
@@ -99,7 +99,13 @@ const PaperLab: React.FC<{ resume: boolean }> = ({ resume }) => {
       async setCover() { /* the lab keeps no images at all */ },
     };
     const transcribe: Transcriber = async (_photo, opts) => {
-      await new Promise((r) => setTimeout(r, 900));
+      const lab = window.__paperLab!;
+      // Pages are handed out in the order reads START, and finish out of
+      // order on purpose: the engine must still file them in the order given.
+      const mine = lab.started = (lab.started ?? 0) + 1;
+      lab.flying = (lab.flying ?? 0) + 1;
+      lab.peak = Math.max(lab.peak ?? 0, lab.flying);
+      try { await new Promise((r) => setTimeout(r, mine % 3 === 1 ? 1100 : 500)); } finally { lab.flying--; }
       if (opts.signal?.aborted) throw new DOMException("aborted", "AbortError");
       const state = window.__paperLab!;
       const forced = state.next;
@@ -111,6 +117,13 @@ const PaperLab: React.FC<{ resume: boolean }> = ({ resume }) => {
       }
       if (forced === "unreadable") return { ...base, kind: "other", problem: "blurry" };
       if (forced === "cover") return { ...base, kind: "cover", bookTitle: "The Keeper's Rules", author: "A. N. Author" };
+      // `plain`: unnumbered pages named after the PHOTO (its height encodes
+      // which one it is), so a test can see that pages are filed in the order
+      // the photos were taken even though the reads finish out of order.
+      if (lab.plain) {
+        const height = await new Promise<number>((resolve) => { const im = new Image(); im.onload = () => resolve(im.naturalHeight); im.onerror = () => resolve(0); im.src = _photo; });
+        return { ...base, pages: [{ ...FIXTURE[0], id: newPageId(), at: Date.now(), printed: null, heading: null, text: `Photo number ${height - 1300}.` }] };
+      }
       const fresh = (i: number) => ({ ...FIXTURE[i % FIXTURE.length], id: newPageId(), at: Date.now(), printed: String(41 + i) });
       const i = state.given;
       if (forced === "spread") { state.given += 2; return { ...base, kind: "spread", pages: [fresh(i), fresh(i + 1)] }; }

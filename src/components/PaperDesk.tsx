@@ -80,15 +80,8 @@ const ShotRow: React.FC<{
   shot: Shot;
   onUse: () => void; onRetry: () => void; onDiscard: () => void; onRetake: () => void;
 }> = ({ shot, onUse, onRetry, onDiscard, onRetake }) => {
-  if (shot.status === "checking" || shot.status === "reading") {
-    return (
-      <div className="cc-paper-shot" role="status">
-        <span className="material-symbols-outlined animate-spin text-accent" aria-hidden>progress_activity</span>
-        <span className="flex-1 min-w-0 truncate">{shot.status === "checking" ? "Checking the photo…" : "Reading the page…"}</span>
-        <button type="button" className="cc-paper-link" onClick={onDiscard}>Cancel</button>
-      </div>
-    );
-  }
+  // Photos in line or being read are one summary row (the queue), not a row each.
+  if (shot.status === "queued" || shot.status === "checking" || shot.status === "reading") return null;
   const warn = shot.status === "warn" && shot.problem ? PROBLEM_COPY[shot.problem] : null;
   return (
     <div className="cc-paper-shot" data-tone="warn" role="alert">
@@ -457,6 +450,22 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
           <button type="button" className="cc-btn3d !py-1.5 !px-3 text-sm" data-tone="accent" onClick={snap}>Snap it again</button>
         </div>
       )}
+      {scan.busy > 0 && (
+        <div className="cc-paper-shot cc-paper-queue" role="status">
+          <span className="material-symbols-outlined animate-spin text-accent" aria-hidden>progress_activity</span>
+          <span className="flex-1 min-w-0">
+            <span className="block truncate">
+              {scan.batch.total > 1
+                ? `Reading page ${Math.min(scan.batch.total, scan.batch.done + 1)} of ${scan.batch.total}…`
+                : "Reading the page…"}
+            </span>
+            {scan.batch.total > 1 && (
+              <span className="cc-meter block mt-1" aria-hidden><span style={{ width: `${Math.round((scan.batch.done / scan.batch.total) * 100)}%` }} /></span>
+            )}
+          </span>
+          <button type="button" className="cc-paper-link" onClick={scan.cancelQueue}>{scan.busy > 1 ? "Cancel the rest" : "Cancel"}</button>
+        </div>
+      )}
       {scan.shots.map((s) => (
         <ShotRow
           key={s.id}
@@ -514,7 +523,7 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
                 <span className="flex flex-col"><span>Snap the cover</span><span className="text-[11px] text-on-surface-variant">Names the book and gives its card a face.</span></span>
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setTimeout(() => galleryInput.current?.click(), 0)}>
-                <span className="material-symbols-outlined text-base mr-2" aria-hidden>photo_library</span> Add photos you already took
+                <span className="material-symbols-outlined text-base mr-2" aria-hidden>photo_library</span> Upload several photos at once
               </DropdownMenuItem>
               {page && (
                 <DropdownMenuItem onSelect={removeCurrent}>
@@ -567,7 +576,11 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
               <span className="material-symbols-outlined" aria-hidden>{touch ? "photo_camera" : "add_photo_alternate"}</span> {touch ? "Snap a page" : "Add a page photo"}
             </button>
             {touch
-              ? <button type="button" className="cc-paper-link" onClick={() => galleryInput.current?.click()}>or choose photos you already took</button>
+              ? (
+                <button type="button" className="cc-btn3d cc-paper-snap-wide !min-h-[48px] !text-base" data-tone="quiet" onClick={() => galleryInput.current?.click()}>
+                  <span className="material-symbols-outlined" aria-hidden>photo_library</span> Upload several photos at once
+                </button>
+              )
               : <p className="text-xs text-on-surface-variant">or drop photos anywhere here. On your phone this button opens the camera.</p>}
             <ul className="cc-paper-tips">
               {TIPS.map((t) => <li key={t}><span className="material-symbols-outlined" aria-hidden>check</span>{t}</li>)}
@@ -663,10 +676,18 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
               <span className="material-symbols-outlined" aria-hidden>{playing ? "pause" : status === "paused" ? "play_arrow" : "headphones"}</span>
               <span>{playing ? "Pause" : status === "paused" ? "Resume" : "Listen"}</span>
             </button>
-            <button type="button" className="cc-paper-snap" data-pulse={waitingAt !== null || undefined} onClick={snap} aria-label="Snap the next page">
-              <span className="material-symbols-outlined" aria-hidden>photo_camera</span>
-              <span>{!touch ? "Add page" : scan.busy > 0 ? "Snap another" : "Snap page"}</span>
-            </button>
+            <span className="cc-paper-snap-group">
+              <button type="button" className="cc-paper-snap" data-pulse={waitingAt !== null || undefined} onClick={snap} aria-label={touch ? "Snap the next page" : "Add page photos"}>
+                <span className="material-symbols-outlined" aria-hidden>{touch ? "photo_camera" : "add_photo_alternate"}</span>
+                <span>{!touch ? "Add pages" : scan.busy > 0 ? "Snap more" : "Snap page"}</span>
+              </button>
+              {touch && (
+                <button type="button" className="cc-paper-upload" onClick={() => { setNudge(false); galleryInput.current?.click(); }} aria-label="Upload several photos at once">
+                  <span className="material-symbols-outlined" aria-hidden>photo_library</span>
+                  <span>Upload</span>
+                </button>
+              )}
+            </span>
             <button type="button" className="cc-paper-side" onClick={askCounsel} disabled={!scan.bookId}>
               <span className="material-symbols-outlined" aria-hidden>psychology</span>
               <span>Ask</span>

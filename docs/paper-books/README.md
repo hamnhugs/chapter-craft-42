@@ -16,6 +16,7 @@ from any device.
 | Listen | Reads the page aloud in the voice Counsel uses, highlights the word, and keeps going as new pages arrive. A sentence that runs over the page turn is held and spoken whole when the next page lands. At the end of what is scanned it says "Turn the page and snap the next one" and the shutter pulses. |
 | Ask | Takes the book so far to Counsel with a draft "About p. 47 of “Title”: ". Counsel gets a **Snap the next page** strip above the composer, so pages can be added without leaving the chat. |
 | Library | A pinned **Unfinished** tab (only there when something is unfinished). The card has a stitched frame, loose sheets behind it, an "Unfinished" ribbon, a camera badge and "12 pages · last p. 57". Its menu says **Keep scanning**. |
+| Many at once | **Upload** beside Snap (and "Upload several photos at once" on the start screen) takes any number of photos. They wait in a queue, three are read at a time, and one row shows "Reading page 4 of 12…" with **Cancel the rest**. Pages are filed in the order the photos were taken, whichever read finishes first. |
 | Resume | Opening an unfinished book lands on its last page. The start screen lists other unfinished books under "Pick up where you left off". |
 | Finish | Book options → **Finish this book**: it leaves Unfinished and opens in the normal reader (Contents lists every page, highlights and Listen work). More → **Add more pages** reopens it. |
 
@@ -102,6 +103,14 @@ page's id is its chapter row's id: adding a page is one insert, a retake is a
 new row replacing the old one, and a card made from page 47 still points
 there after page 300. Cost: a long book has a long chapter list.
 
+**A queue, three at a time.** A photo waiting in line is only the reader's
+own file handle; it is decoded when its turn comes. Three are in flight at
+once because each decoded photo is about half a megabyte and each read is a
+model call: fifty at once would be fifty megabytes and a rate limit. A "busy"
+answer from the provider is waited out (4 s, 10 s, 20 s) before the reader is
+told anything. A photo that fails the blur check steps out of the line and
+waits for "Use anyway" or "Retake"; the rest go on.
+
 **Order.** Capture order, except: the same printed number again is a retake
 and replaces in place; a lower number than one already in the book is filed
 before it. Small skipped runs are mentioned ("Not scanned: p. 43–44").
@@ -133,8 +142,8 @@ country.
 ## Checked
 
 - `npx tsc -p tsconfig.app.json --noEmit` clean; `npx vite build` builds.
-- `npx vitest run`: 123 files, 2,748 tests pass. `src/test/paperBook.test.ts`
-  (33) covers ordering, retakes, the HTML round trip, chapter planning, speech
+- `npx vitest run`: 123 files, 2,750 tests pass. `src/test/paperBook.test.ts`
+  (35) covers ordering, retakes, the HTML round trip, chapter planning, speech
   across the page turn, the parser, the model pick, the photo checks and the
   no-storage guards.
 - `node docs/paper-books/shoot.mjs` drives the real desk through the lab
@@ -148,6 +157,10 @@ country.
   Chromium's fake camera: Snap opens it without a file chooser, two shots in a
   row both become pages, the page never reloads, and a forced reload in the
   middle of a camera-app trip shows the recovery line once.
+- `node docs/paper-books/shoot-batch.mjs`: twelve photos at once give one
+  progress row, never more than three reads in flight, twelve pages in the
+  order given although the reads finish out of order, and "Cancel the rest"
+  keeps what is in. Sorting a scrambled pick by time taken is unit-tested.
 
 ## Not checked
 

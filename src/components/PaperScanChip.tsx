@@ -74,7 +74,7 @@ const PaperScanChip: React.FC<{ bookId: string; title: string }> = ({ bookId, ti
         <button type="button" data-main disabled={scan.loadState !== "ready"} onClick={snap} title={`Add the next page of ${title}`}>
           <span className={`material-symbols-outlined ${working ? "animate-spin" : ""}`} aria-hidden>{working ? "progress_activity" : "photo_camera"}</span>
           <span className="truncate">
-            {scan.busy > 0 ? "Reading the page…" : scan.saveState === "error" ? "Not saved. Tap to snap again" : "Snap the next page"}
+            {scan.busy > 0 ? (scan.batch.total > 1 ? `Reading ${Math.min(scan.batch.total, scan.batch.done + 1)} of ${scan.batch.total}…` : "Reading the page…") : scan.saveState === "error" ? "Not saved. Tap to snap again" : "Snap the next page"}
           </span>
           <span className="cc-paper-chip-meta truncate">{title} · {paperProgressLabel(scan.meta)}</span>
         </button>

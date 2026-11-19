@@ -6,7 +6,7 @@ import {
   paperFraction, paperMeta, paperProgressLabel, parsePaperHtml, placePages, planChapterSync, speechFor,
   splitTrailingFragment, type PaperPage,
 } from "@/lib/paperBook";
-import { judgePhoto, laplacianVariance } from "@/lib/pagePhoto";
+import { judgePhoto, laplacianVariance, orderPhotos } from "@/lib/pagePhoto";
 import { parseTranscription, pickPageModel, TRANSCRIBE_SYSTEM } from "@/lib/pageTranscribe";
 import { metaFor } from "@/lib/paperStore";
 
@@ -250,7 +250,22 @@ describe("photos are never stored", () => {
   it("every way a shot ends lets go of its photo", () => {
     const engine = src("hooks/usePaperScan.ts");
     // committed, cover made, unreadable, unreadable-by-error, discarded, unmounted
-    expect((engine.match(/dispose\(shotId\)/g) || []).length).toBeGreaterThanOrEqual(4);
+    expect((engine.match(/dispose\((shotId|id|job\.id)\)/g) || []).length).toBeGreaterThanOrEqual(6);
     expect(engine).toMatch(/held\.clear\(\)/);
+    // Photos waiting in line are file handles, and those are let go too.
+    expect(engine).toMatch(/files\.current\.clear\(\)/);
+  });
+});
+
+describe("orderPhotos", () => {
+  const f = (name: string, lastModified: number) => ({ name, lastModified });
+  it("puts a scrambled pick back in the order the photos were taken", () => {
+    const picked = [f("c.jpg", 3000), f("a.jpg", 1000), f("b.jpg", 2000)];
+    expect(orderPhotos(picked).map((x) => x.name)).toEqual(["a.jpg", "b.jpg", "c.jpg"]);
+    expect(picked[0].name).toBe("c.jpg"); // the caller's array is left alone
+  });
+  it("falls back to the name, counting numbers as numbers", () => {
+    const picked = [f("IMG_10.jpg", 5), f("IMG_9.jpg", 5), f("IMG_100.jpg", 5)];
+    expect(orderPhotos(picked).map((x) => x.name)).toEqual(["IMG_9.jpg", "IMG_10.jpg", "IMG_100.jpg"]);
   });
 });
