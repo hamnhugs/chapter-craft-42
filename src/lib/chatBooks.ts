@@ -1,3 +1,4 @@
+import { isPaperBook, POOR_SCAN_MARK } from "@/lib/paperBook";
 import { buildFenceNonce, fenced, sanitizeBlock, sanitizeInline } from "@/lib/buildChatSystemPrompt";
 import type { BookDocument, Chapter } from "@/types/library";
 import { supabase } from "@/integrations/supabase/client";
@@ -377,6 +378,21 @@ function sanitizedBody(ch: Chapter, nonce: string): string {
 }
 
 /**
+ * One extra line under the heading of a PAPER book (lib/paperBook.ts), and
+ * only of one — every other book's bytes are untouched.
+ *
+ * Such a book arrives a photographed page at a time, so each "chapter" here
+ * is one page. Left unsaid, a model treats the last page it was pointed at as
+ * the whole subject: asked "what has happened so far?", it answered from the
+ * single page on screen. This says what the units are and that they are one
+ * continuous text. App-authored, outside the data fence.
+ */
+function paperNote(book: BookDocument): string {
+  if (!isPaperBook(book)) return "";
+  return `\nThis is a paper book the reader is photographing page by page: each "chapter" is ONE PAGE, in reading order, and together they are one continuous text. Unless the reader names a specific page, answer from ALL the pages so far, not from any single one. A sentence may run on from one page to the next. A page whose name ends "${POOR_SCAN_MARK}" was photographed badly: do not rely on it, and say so if the answer would depend on it. Pages not scanned yet are simply not here.`;
+}
+
+/**
  * Build the "## Book context" system message. Returns null only when handed
  * an empty selection; when books exist but ALL end up omitted, `message` is
  * null while `used` still carries the honest omission receipts — the caller
@@ -505,7 +521,7 @@ export function buildBookContextBlock(
       // finding).
       used.push({ id: book.id, title: (book.title || "Untitled").slice(0, 120), state: "catalog", chaptersSent: listed, chaptersTotal });
       sections.push(
-        `### Book ${sections.length + 1}: "${title}" (book_id: ${book.id}, ${chaptersTotal} chapters — CATALOG: chapter map with one-line summaries, no text)\n` +
+        `### Book ${sections.length + 1}: "${title}" (book_id: ${book.id}, ${chaptersTotal} chapters — CATALOG: chapter map with one-line summaries, no text)${paperNote(book)}\n` +
         fenced(body, nonce)
       );
       continue;
@@ -599,7 +615,7 @@ export function buildBookContextBlock(
           : `OUTLINE — chapter map only, no text${has(READ_TOOL) ? `; ${READ_TOOL} with a chapter_id returns a chapter's text` : ""}`;
 
     sections.push(
-      `### Book ${sections.length + 1}: "${title}" (book_id: ${book.id}, ${chaptersTotal} chapters — ${stateNote})\n` +
+      `### Book ${sections.length + 1}: "${title}" (book_id: ${book.id}, ${chaptersTotal} chapters — ${stateNote})${paperNote(book)}\n` +
       fenced(body, nonce)
     );
   }

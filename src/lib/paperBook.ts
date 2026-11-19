@@ -357,15 +357,21 @@ export function pageTextForChat(page: PaperPage, index: number): string {
   return parts.join("\n\n");
 }
 
+/** What Counsel is told about a page that did not come in well. In the NAME,
+ *  because a name may change (a chapter's text may not) and the name is what
+ *  heads the page in everything Counsel is sent. */
+export const POOR_SCAN_MARK = "(poor scan, may be wrong)";
+
 /** "p. 41 · Chapter Four" where a title starts, else "p. 42" / "Scan 3". */
-export function chapterName(page: PaperPage, index: number): string {
+export function chapterName(page: PaperPage, index: number, poor = false): string {
   const label = pageLabel(page, index);
-  return (page.heading ? `${label} · ${page.heading.trim()}` : label).slice(0, 140);
+  const name = (page.heading ? `${label} · ${page.heading.trim()}` : label).slice(0, 110);
+  return poor ? `${name} ${POOR_SCAN_MARK}` : name;
 }
 
 export function chaptersForPages(pages: readonly PaperPage[]): PaperChapter[] {
   return pages.map((p, i) => ({
-    id: p.id, name: chapterName(p, i), startPage: i + 1, endPage: i + 1, textContent: pageTextForChat(p, i),
+    id: p.id, name: chapterName(p, i, needsLook(p, pages)), startPage: i + 1, endPage: i + 1, textContent: pageTextForChat(p, i),
   }));
 }
 

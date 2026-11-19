@@ -14,7 +14,7 @@ from any device.
 | Read tab | A paper book that is still being scanned opens on the **scanning desk** instead of the reader. Three controls under the thumb: **Listen · Snap page · Ask**. |
 | Start | Read tab with no book ("Read a paper book"), the reader's **More** menu, or Library → the arrow beside Add books → **Scan a paper book…**. |
 | Listen | Reads the page aloud in the voice Counsel uses, highlights the word, and keeps going as new pages arrive. A sentence that runs over the page turn is held and spoken whole when the next page lands. At the end of what is scanned it says "Turn the page and snap the next one" and the shutter pulses. |
-| Ask | Takes the book so far to Counsel with a draft "About p. 47 of “Title”: ". Counsel gets a **Snap the next page** strip above the composer, so pages can be added without leaving the chat. |
+| Ask | Takes the WHOLE book so far to Counsel, every page, not the page on screen. Counsel gets a **Snap the next page** strip above the composer, so pages can be added without leaving the chat. |
 | Library | A pinned **Unfinished** tab (only there when something is unfinished). The card has a stitched frame, loose sheets behind it, an "Unfinished" ribbon, a camera badge and "12 pages · last p. 57". Its menu says **Keep scanning**. |
 | Many at once | **Upload** beside Snap (and "Upload several photos at once" on the start screen) takes any number of photos. They wait in a queue, three are read at a time, and one row shows "Reading page 4 of 12…" with **Cancel the rest**. Pages are filed in the order the photos were taken, whichever read finishes first. |
 | Delete | A bin in the page bar deletes the page on screen, with **Undo**. Tapping the page label opens a **Pages** list: jump to any page, delete any page, or delete all flagged pages at once. |
@@ -125,6 +125,16 @@ the reader to ignore the mark; tests pin that ordinary prose, dialogue,
 numbers, French, Russian and Chinese are not flagged. "It is fine" is stored
 with the page. The thresholds are untuned against real bad scans.
 
+**Ask is about the book, not the page on screen.** The first version opened
+the chat with a draft "About p. 47 of …:". In use, a question about "the book
+so far" was then answered from that one page, which happened to be a garbled
+one. The draft is gone. Counsel was already sent every page; it is now also
+told, under the book's heading and only for a paper book, that each "chapter"
+is one page of one continuous text and to answer from all of them. A page
+that did not come in well carries "(poor scan, may be wrong)" in its name, so
+Counsel knows not to lean on it; the mark is in the name because a chapter's
+name may change and its text may not.
+
 **Delete with Undo, no confirmation.** Undoing is faster than confirming and
 also covers the slip. The page's chapter row goes and comes back with it.
 
@@ -159,8 +169,8 @@ country.
 ## Checked
 
 - `npx tsc -p tsconfig.app.json --noEmit` clean; `npx vite build` builds.
-- `npx vitest run`: 123 files, 2,758 tests pass. `src/test/paperBook.test.ts`
-  (43) covers ordering, retakes, the HTML round trip, chapter planning, speech
+- `npx vitest run`: 123 files, 2,761 tests pass. `src/test/paperBook.test.ts`
+  (46) covers ordering, retakes, the HTML round trip, chapter planning, speech
   across the page turn, the parser, the model pick, the photo checks and the
   no-storage guards.
 - `node docs/paper-books/shoot.mjs` drives the real desk through the lab

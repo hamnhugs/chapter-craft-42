@@ -370,13 +370,10 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
     if (!scan.bookId || !page) return;
     setNudge(false);
     playerRef.current?.pause();
-    let hasDraft = false;
-    try { hasDraft = !!(sessionStorage.getItem("counsel_draft") || "").trim(); } catch { /* no storage */ }
-    if (!hasDraft) {
-      const text = `About ${pageLabel(page, view)} of “${scan.title}”: `;
-      try { sessionStorage.setItem("counsel_draft", text); } catch { /* the event still lands */ }
-      window.dispatchEvent(new CustomEvent("chat-composer-insert", { detail: { text } }));
-    }
+    // No draft that names the page on screen. An earlier version opened the
+    // chat with "About p. 47 of …:", and Counsel then answered every
+    // question — including "what has happened so far?" — from that one page.
+    // Ask is about the BOOK; a reader who means one page can say so.
     void loadFocus({ kind: "books", bookIds: [scan.bookId], neurons: { kind: "keep" } });
   };
 

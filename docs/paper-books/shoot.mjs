@@ -124,7 +124,7 @@ for (const [size, [w, h, touch]] of Object.entries(SIZES)) {
   await page.waitForSelector(".cc-paper-chip");
   await shot("11-counsel-chip");
   check(size, "Counsel has the shutter", (await page.locator(".cc-paper-chip").innerText()).includes("Snap the next page"));
-  check(size, "draft names the page", (await page.locator("textarea").first().inputValue()).includes("About p."));
+  check(size, "Ask does not pin the page on screen", !(await page.locator("textarea").first().inputValue()).includes("About"));
   // 13. Finish: it becomes an ordinary book in the reader.
   await dock("Read");
   await page.getByRole("button", { name: "Book options" }).click();

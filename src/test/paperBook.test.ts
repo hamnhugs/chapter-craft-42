@@ -2,18 +2,26 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  buildPaperHtml, chaptersForPages, deskText, isUnfinishedPaper, joinAcrossPages, missingRuns, needsLook, pageDoubts,
+  buildPaperHtml, chaptersForPages, deskText, isUnfinishedPaper, joinAcrossPages, missingRuns, needsLook, pageDoubts, POOR_SCAN_MARK,
   paperFraction, paperMeta, paperProgressLabel, parsePaperHtml, placePages, planChapterSync, speechFor,
   splitTrailingFragment, type PaperPage,
 } from "@/lib/paperBook";
 import { judgePhoto, laplacianVariance, orderPhotos } from "@/lib/pagePhoto";
 import { parseTranscription, pickPageModel, TRANSCRIBE_SYSTEM } from "@/lib/pageTranscribe";
 import { metaFor } from "@/lib/paperStore";
+import { buildBookContextBlock } from "@/lib/chatBooks";
+import type { BookDocument } from "@/types/library";
 
 let seq = 0;
-const page = (printed: string | null, text = "Some words here.", extra: Partial<PaperPage> = {}): PaperPage => ({
-  id: `p${++seq}`, printed, heading: null, text, footnotes: [], figures: [], startsMid: false, endsMid: false, unclear: 0, flag: null, checked: false, at: seq, ...extra,
-});
+/** Ordinary prose, different for every n: a page nobody would flag. */
+const prose = (n: number) => `Some words here for page number ${n}, and then enough more of them that nobody would call this page nearly empty or badly scanned.`;
+const page = (printed: string | null, text?: string, extra: Partial<PaperPage> = {}): PaperPage => {
+  const n = ++seq;
+  return {
+    id: `p${n}`, printed, heading: null, text: text ?? prose(n), footnotes: [], figures: [], startsMid: false, endsMid: false,
+    unclear: 0, flag: null, checked: false, at: n, ...extra,
+  };
+};
 
 describe("placePages", () => {
   it("appends in capture order by default", () => {
@@ -72,7 +80,7 @@ describe("the book file", () => {
 
 describe("chapters", () => {
   it("is one row per page, with the page's own id", () => {
-    const pages = [page("1"), page("2", "x", { heading: "Two" }), page(null)];
+    const pages = [page("1"), page("2", prose(902), { heading: "Two" }), page(null)];
     const ch = chaptersForPages(pages);
     expect(ch.map((c) => [c.id, c.name, c.startPage, c.endPage])).toEqual([
       [pages[0].id, "p. 1", 1, 1], [pages[1].id, "p. 2 · Two", 2, 2], [pages[2].id, "Scan 3", 3, 3],
@@ -80,11 +88,11 @@ describe("chapters", () => {
     expect(ch[1].textContent.startsWith("[p. 2]\n\nTwo")).toBe(true);
   });
   it("gives Counsel the figures and footnotes speech leaves out", () => {
-    const p = page("9", "Body.", { figures: ["A map."], footnotes: ["See ch. 2."] });
+    const p = page("9", prose(904), { figures: ["A map."], footnotes: ["See ch. 2."] });
     const text = chaptersForPages([p])[0].textContent;
     expect(text).toContain("[Figure: A map.]");
     expect(text).toContain("[Footnote: See ch. 2.]");
-    expect(speechFor(p, { nextReady: true }).text).toBe("Body.");
+    expect(speechFor(p, { nextReady: true }).text).toBe(prose(904));
   });
   it("adds a page with one insert and touches nothing else", () => {
     const pages = [page("1"), page("2")];
@@ -94,7 +102,7 @@ describe("chapters", () => {
     expect(plan.remove).toEqual([]);
   });
   it("replaces a retaken page's row and never plans a text update", () => {
-    const a = page("1"), b = page("2"), again = page("1", "Sharper.");
+    const a = page("1"), b = page("2"), again = page("1", prose(903));
     const placed = placePages([a, b], [again]);
     const plan = planChapterSync(chaptersForPages([a, b]), chaptersForPages(placed.pages));
     expect(plan.remove).toEqual([a.id]);
@@ -317,5 +325,35 @@ describe("pageDoubts", () => {
     expect(t.pages[0]).toMatchObject({ flag: "poor", checked: false });
     expect(parseTranscription(JSON.stringify({ kind: "page", pages: [{ body: prose, legibility: "nonsense" }] })).pages[0].flag).toBeNull();
     expect(TRANSCRIBE_SYSTEM).toMatch(/legibility/);
+  });
+});
+
+describe("what Counsel is told about a paper book", () => {
+  const good = "The keeper had a rule about weather, which was that he never talked about it before breakfast, and Mara learned it in her first week at the light.";
+  const pages = [page("41", good), page("42", "xq zzt krp wqx bnm tr pl kj hg fd szx cvb nmq wrt ypl kjh gfd", { flag: "poor" }), page("43", good + " Then the wind came round.")];
+  const book = (paper: boolean): BookDocument => ({
+    id: "b1", title: "The Keeper's Rules", fileName: "paper-b1.html", fileData: "", pageCount: 3, addedAt: 0, folderIds: [],
+    chapters: chaptersForPages(pages),
+    sourceContext: paper ? { kind: "paper", status: "open", pages: 3 } : null,
+  });
+  it("names a poorly scanned page so, and only that page", () => {
+    expect(chaptersForPages(pages).map((c) => c.name)).toEqual(["p. 41", `p. 42 ${POOR_SCAN_MARK}`, "p. 43"]);
+    // Once the reader says it is fine, the mark goes (a rename, never a text change).
+    const cleared = chaptersForPages(pages.map((p) => ({ ...p, checked: true })));
+    expect(cleared[1].name).toBe("p. 42");
+    expect(planChapterSync(chaptersForPages(pages), cleared).move).toEqual([{ id: pages[1].id, name: "p. 42", startPage: 2, endPage: 2 }]);
+  });
+  it("sends every page, and says they are one continuous text", () => {
+    const block = buildBookContextBlock([book(true)], { mode: "full" })!.message!;
+    expect(block).toContain("each \"chapter\" is ONE PAGE");
+    expect(block).toContain("answer from ALL the pages so far");
+    expect(block).toContain("3 chapters — full text");
+    for (const label of ["[p. 41]", "[p. 42]", "[p. 43]"]) expect(block).toContain(label);
+    expect(block).toContain("Then the wind came round.");
+  });
+  it("leaves every other book's context exactly as it was", () => {
+    const block = buildBookContextBlock([book(false)], { mode: "full" })!.message!;
+    expect(block).not.toContain("ONE PAGE");
+    expect(block).not.toContain("paper book");
   });
 });
