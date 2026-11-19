@@ -314,6 +314,25 @@ describe("pageDoubts", () => {
     expect(pageDoubts(b, [a, b, c])).toEqual(["It is the same as Scan 1."]);
     expect(pageDoubts(c, [a, b, c])).toEqual([]);
   });
+  it("names the other copy from either side, and forgets it once that copy is gone", () => {
+    const a = page(null, prose), b = page(null, prose);
+    expect(pageDoubts(a, [a, b])).toEqual(["It is the same as Scan 2."]);
+    expect(pageDoubts(b, [a, b])).toEqual(["It is the same as Scan 1."]);
+    // A new list (the twin deleted) is judged afresh, not from the old answer.
+    expect(pageDoubts(a, [a])).toEqual([]);
+    // The same page under a new object (marked, retitled) is not its own twin.
+    expect(pageDoubts({ ...a }, [{ ...a }, page(null, "Something else entirely.")])).toEqual([]);
+  });
+  it("stays quick in a long book: the work per page does not grow with the book", () => {
+    const words = prose.split(" ");
+    const long = Array.from({ length: 400 }, (_, i) =>
+      page(String(i + 1), Array.from({ length: 300 }, (_, k) => words[(i * 7 + k * 3) % words.length]).join(" ") + ` Leaf ${i}.`));
+    const t = performance.now();
+    for (const p of long) pageDoubts(p, long);
+    chaptersForPages(long);
+    // Comparing every page with every other took seconds here; this is a few ms.
+    expect(performance.now() - t).toBeLessThan(400);
+  });
   it("goes quiet once the reader says the page is fine, and survives the file", () => {
     const p = page("9", prose, { flag: "poor", checked: true });
     expect(needsLook(p)).toBe(false);

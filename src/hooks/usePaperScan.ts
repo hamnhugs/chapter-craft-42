@@ -20,7 +20,8 @@ import { metaFor, PaperIOContext, supabasePaperIO, type PaperIO } from "@/lib/pa
  *     COMMITTED in the order the photos were taken, so a slow first page can
  *     never land after a fast second one;
  *   - SAVING is serial, so two saves can never interleave their file write
- *     and their chapter writes;
+ *     and their chapter writes — but it TRAILS: a page shows as soon as it is
+ *     read, and saves that pile up collapse into the newest one;
  *   - the book itself is created by the first page that commits — a blurry
  *     first shot leaves nothing behind in the library.
  *
@@ -84,6 +85,11 @@ export interface PaperScan {
 }
 
 let shotSeq = 0;
+/** Saves still on their way, from every engine. Saving trails behind the
+ *  page, so an engine opening a book (the chip in Counsel, a second after the
+ *  desk took a page) waits for these first — or it would load the book
+ *  without its newest pages and later save it back that way. */
+const savesInFlight = new Set<Promise<unknown>>();
 /** Photos decoded and being read at the same time. */
 const READ_AT_ONCE = 3;
 /** Waits before asking a busy provider again. */
@@ -194,7 +200,8 @@ export function usePaperScan(opts: {
     if (!ioRef.current) { setLoadState("error"); return; }
     let cancelled = false;
     setLoadState("loading");
-    ioRef.current.load(id).then(
+    const store = ioRef.current;
+    Promise.allSettled([...savesInFlight]).then(() => store.load(id)).then(
       (loaded) => { if (!cancelled && alive.current) { setPages(loaded); setLoadState("ready"); } },
       () => { if (!cancelled && alive.current) setLoadState("error"); },
     );
@@ -203,11 +210,18 @@ export function usePaperScan(opts: {
   }, [opts.bookId, loadTick, io]);
 
   // ── Saving ──────────────────────────────────────────────────────────────
+  // A save writes whatever the book is WHEN IT STARTS, so a save that is still
+  // waiting its turn already covers every change made since it was asked for:
+  // ten pages landing in a burst are one or two saves, not ten.
+  const queuedSave = useRef<Promise<void> | null>(null);
+  const savesOpen = useRef(0);
   const persist = useCallback((metaPatch: Partial<PaperMeta> = {}) => {
     const nextMeta = metaFor(pagesRef.current, metaRef.current, metaPatch);
     setMeta(nextMeta);
     setSaveState("saving");
+    if (queuedSave.current) return queuedSave.current;
     const run = async () => {
+      queuedSave.current = null;
       const store = ioRef.current;
       if (!store) throw new Error("Sign in to save pages.");
       if (!bookIdRef.current) {
@@ -219,10 +233,14 @@ export function usePaperScan(opts: {
       }
       await store.save(bookIdRef.current, { title: titleRef.current, pages: pagesRef.current, meta: metaRef.current });
     };
+    savesOpen.current++;
     const done = saveChain.current.then(run).then(
-      () => { if (alive.current) setSaveState("saved"); },
-      (e) => { console.error("Paper book save failed:", e); if (alive.current) setSaveState("error"); throw e; },
+      () => { savesOpen.current--; if (alive.current && savesOpen.current === 0) setSaveState("saved"); },
+      (e) => { savesOpen.current--; console.error("Paper book save failed:", e); if (alive.current) setSaveState("error"); throw e; },
     );
+    queuedSave.current = done;
+    const settled = done.catch(() => undefined).finally(() => savesInFlight.delete(settled));
+    savesInFlight.add(settled);
     saveChain.current = done.catch(() => undefined);
     return done;
   }, []);
@@ -241,8 +259,10 @@ export function usePaperScan(opts: {
       const thumb = photo ? await coverFromPhoto(photo) : null;
       dispose(shotId);
       dropShot(shotId);
-      await persist({ author });
-      if (thumb && bookIdRef.current) await ioRef.current?.setCover(bookIdRef.current, thumb).catch(() => undefined);
+      // Saving trails behind: the next photo does not wait for this one's save.
+      void persist({ author })
+        .then(() => (thumb && bookIdRef.current ? ioRef.current?.setCover(bookIdRef.current, thumb) : undefined))
+        .catch(() => undefined);
       cb.current.onEvent?.({ type: "cover", title: t.bookTitle });
       return;
     }
@@ -273,7 +293,9 @@ export function usePaperScan(opts: {
       type: "pages", firstIndex: placed.firstIndex, count: t.pages.length, replaced: placed.replaced.length,
       labels: t.pages.map((p) => (p.printed ? `p. ${p.printed}` : "a page")),
     });
-    await persist(t.author && !metaRef.current.author ? { author: t.author } : {}).catch(() => undefined);
+    // The page is on screen now; its save trails behind and never holds up
+    // the next page (a failed save shows "Not saved" with a way to retry).
+    void persist(t.author && !metaRef.current.author ? { author: t.author } : {}).catch(() => undefined);
   }, [persist]);
 
   // ── The queue ───────────────────────────────────────────────────────────

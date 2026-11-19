@@ -44,6 +44,9 @@ export interface PaperIO {
 /** Lab/test override for the save layer and the page reader. */
 export const PaperIOContext = createContext<{ io?: PaperIO; transcribe?: Transcriber } | null>(null);
 
+/** Position updates sent together when pages shift. */
+const MOVES_AT_ONCE = 8;
+
 export const paperFileName = (bookId: string) => `paper-${bookId}.html`;
 
 export function metaFor(pages: readonly PaperPage[], prev: PaperMeta | null, patch: Partial<PaperMeta> = {}): PaperMeta {
@@ -131,11 +134,16 @@ export function supabasePaperIO(deps: SupabasePaperDeps): PaperIO {
         const put = await supabase.from("chapters").upsert(rows, { onConflict: "id", ignoreDuplicates: true });
         if (put.error) throw put.error;
       }
-      for (const m of plan.move) {
-        const moved = await supabase.from("chapters")
-          .update({ name: m.name, start_page: m.startPage, end_page: m.endPage })
-          .eq("id", m.id).eq("user_id", deps.userId);
-        if (moved.error) throw moved.error;
+      // A page deleted or filed near the front shifts every row after it, and
+      // each row moves to its own position, so it is one request a row. Eight
+      // at a time: one at a time made a delete in a long book take half a minute.
+      for (let i = 0; i < plan.move.length; i += MOVES_AT_ONCE) {
+        const results = await Promise.all(plan.move.slice(i, i + MOVES_AT_ONCE).map((m) =>
+          supabase.from("chapters")
+            .update({ name: m.name, start_page: m.startPage, end_page: m.endPage })
+            .eq("id", m.id).eq("user_id", deps.userId)));
+        const failed = results.find((r) => r.error);
+        if (failed?.error) throw failed.error;
       }
 
       const { error } = await supabase.from("books")

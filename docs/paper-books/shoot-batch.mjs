@@ -47,7 +47,9 @@ out["no sideways overflow"] = !(await p.evaluate(() => document.documentElement.
 // Cancel the rest: what is in stays in, the line empties.
 await p.setInputFiles("[data-paper-gallery]", files);
 await p.waitForSelector(".cc-paper-queue");
-await p.waitForFunction(() => document.querySelector(".cc-paper-head")?.textContent.includes("13 pages"));
+// Pages no longer wait for each other's save, so several can land in one go:
+// wait for "13 or more", not for the moment the count reads exactly 13.
+await p.waitForFunction(() => Number(/^(\d+) pages/m.exec(document.querySelector(".cc-paper-head")?.innerText || "")?.[1]) >= 13);
 await p.getByRole("button", { name: /Cancel the rest/ }).click();
 await p.waitForTimeout(2500);
 const count = Number(/(\d+) pages/.exec(await p.locator(".cc-paper-head").innerText())[1]);
