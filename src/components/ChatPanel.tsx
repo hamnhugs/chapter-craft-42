@@ -46,6 +46,8 @@ import { markLastPromptRouteCorrected } from "@/lib/promptRoutingApi";
 import type { Artifact } from "@/lib/artifacts";
 import { workspaceStore, deriveResearchTitle, useWorkspaceItems } from "@/lib/workspaceStore";
 import { focusStatesForPinned } from "@/lib/chatFocus";
+import PaperScanChip from "@/components/PaperScanChip";
+import { isUnfinishedPaper } from "@/lib/paperBook";
 import { bookContextStore, selectContextBooks } from "@/lib/chatBooks";
 import { focusBookId } from "@/lib/counselFocus";
 import BookContextPicker from "@/components/BookContextPicker";
@@ -301,6 +303,7 @@ const ChatPanel: React.FC = () => {
     () => selectContextBooks(books, bookSelection, activeBookId ?? null),
     [books, bookSelection, activeBookId]
   );
+  const paperInContext = useMemo(() => contextBooks.find((b) => isUnfinishedPaper(b)) ?? null, [contextBooks]);
   const [booksPickerOpen, setBooksPickerOpen] = useState(false);
   // Collapsing only hides the chip row — the books still ride with every
   // message, and the collapsed summary keeps the count visible.
@@ -1655,6 +1658,8 @@ const ChatPanel: React.FC = () => {
 
       {/* Input Area */}
       <div className="cc-counsel-composer px-4 pb-4 pt-2">
+        {/* A paper book that is still being scanned: add its next page from here. */}
+        {paperInContext && <PaperScanChip key={paperInContext.id} bookId={paperInContext.id} title={paperInContext.title} />}
         {/* The ring is the state signal that survives typing. The `+` badge and
             the named summary in the placeholder are both gone or unread once
             the user starts a message; this stays, and it is why a bare count

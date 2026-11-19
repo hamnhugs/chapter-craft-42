@@ -1,3 +1,4 @@
+import { paperSession } from "@/lib/paperSession";
 import VaultDropzone, { VaultDropOverlay, dragCarriesBooks } from "@/components/VaultDropzone";
 import React, { useRef, useState, useMemo, useEffect, useCallback, lazy, Suspense } from "react";
 import { useApp, TRASH_RETENTION_DAYS } from "@/context/AppContext";
@@ -125,7 +126,7 @@ const OTHER_VIEWS: { id: ViewMode; icon: string; label: string; hint: string }[]
 
 const Library: React.FC = () => {
   const { books, addBook, setBookCover, removeBook, trashAvailable, trashedBooks, trashLoading, refreshTrash, restoreBook, purgeBook, emptyTrash, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile, applyChapterGists, applyBookSummary, loadChapterText,
-    shelves, toggleBookShelf, booksLoading, booksError, retryLoadBooks, loadFocus } = useApp();
+    shelves, toggleBookShelf, booksLoading, booksError, retryLoadBooks, loadFocus, setActiveTab } = useApp();
   // Reading is not a question about notebooks. Opening a book from here opens
   // the reader and leaves what Counsel has loaded alone; taking something to
   // Counsel is its own button ("Ask Counsel") on a book and on a shelf.
@@ -1024,6 +1025,13 @@ const Library: React.FC = () => {
                   <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
                     <span className="material-symbols-outlined text-base mr-2" aria-hidden>upload_file</span>
                     Upload files…
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => { paperSession.start(); setActiveTab("viewer"); }}>
+                    <span className="material-symbols-outlined text-base mr-2" aria-hidden>photo_camera</span>
+                    <span className="flex flex-col">
+                      <span>Scan a paper book…</span>
+                      <span className="text-[11px] text-on-surface-variant">Snap pages to hear them or ask about them.</span>
+                    </span>
                   </DropdownMenuItem>
                   <DropdownMenuItem onSelect={() => openYoutube()}>
                     <span className="material-symbols-outlined text-base mr-2" aria-hidden>smart_display</span>

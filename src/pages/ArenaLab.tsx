@@ -7,6 +7,7 @@ import { AppContext, useApp } from "@/context/AppContext";
 import { useChat } from "@/context/ChatContext";
 import type { BookFolder } from "@/lib/bookFolders";
 import WikiLibrary from "@/components/WikiLibrary";
+import PaperLab from "./PaperLab";
 import WikiPanel from "@/components/WikiPanel";
 import WormCoach from "@/components/onboarding/WormCoach";
 import { openSetupWizard } from "@/components/SetupWizard";
@@ -36,6 +37,8 @@ import type { NotebookStore, WikiWithStats } from "@/lib/wikisApi";
  *   #/arena-lab?notebooks the Notebooks list and an open notebook over a
  *                      fixture tree held in memory: create, nest, move and
  *                      delete all work. `&flat` has no nesting, `&empty` none.
+ *   #/arena-lab?paper  the paper-book scanning desk with a stand-in page
+ *                      reader and books held in memory (pages/PaperLab.tsx).
  *   #/arena-lab?onboarding the shell as a brand-new account sees it: the
  *                      setup helper, then the getting-started ring and the
  *                      tab tours. `&step=1` opens the helper on a later
@@ -308,6 +311,7 @@ const ArenaLab: React.FC = () => {
     }, 600);
     return () => clearTimeout(t);
   }, [hash]);
+  if (hash.includes("?paper")) return <PaperLab resume={hash.includes("resume")} />;
   if (hash.includes("?library")) return <LibraryLab />;
   if (hash.includes("?reader")) return <ReaderLab html={hash.includes("html")} />;
   if (hash.includes("?chat")) return <ChatLab />;

@@ -21,6 +21,7 @@ import { catalogJobs } from "@/lib/catalogJobs";
 import { acquireDigestRun, generateShelfDigest, releaseDigestRun } from "@/lib/shelfDigest";
 import { useShelfMarks, type ShelfMark } from "@/lib/shelfMarks";
 import { OPEN_NEURON_SWITCHER_EVENT } from "@/components/WikiQuickSwitcher";
+import { isUnfinishedPaper, paperFraction, paperMeta, paperProgressLabel } from "@/lib/paperBook";
 
 /**
  * The library as a deck builder.
@@ -55,6 +56,9 @@ const SORT_KEY = "vault_deck_sort";
 const DECK_KEY = "vault_deck_tab";
 /** The automatic tab: books in progress. Not a book_folders row. */
 const NOW_ID = "__reading_now__";
+/** The other automatic tab: paper books still being scanned. Only there when
+ *  there is one. */
+const UNFINISHED_ID = "__unfinished__";
 const SLOTS = BOOK_CONTEXT_MAX_BOOKS;
 /** Past this many shelves the "All shelves" list gets a filter box. */
 const FILTER_SHELVES_FROM = 8;
@@ -142,6 +146,10 @@ const BookCardTile: React.FC<{
   const time = readTimeLabel(book.pageCount);
   const fresh = !compact && level.pct === 0 && Date.now() - book.addedAt < 3 * 86_400_000;
   const onShelf = !!shelf && book.folderIds.includes(shelf.id);
+  // A paper book still being scanned: its own frame, and its own numbers —
+  // pages in, not a level, because nobody knows yet how long it will be.
+  const paper = isUnfinishedPaper(book) ? paperMeta(book) : null;
+  const paperPart = paper ? paperFraction(paper) : null;
   // OPEN ON TAP, NOT ON TOUCH-DOWN — the same fix as PromptSwitcher, for the
   // same reason: Radix opens a DropdownMenu from `onPointerDown`, so on a
   // phone the finger that lands on a card to SCROLL THE LIBRARY had already
@@ -174,10 +182,15 @@ const BookCardTile: React.FC<{
           data-deck-card
           data-tier={tier.id}
           data-compact={compact || undefined}
+          data-paper={paper ? "open" : undefined}
           className="cc-card w-full"
-          aria-label={`${book.title} — ${tier.label}, level ${level.level}${level.maxed ? " (finished)" : ""}${onShelf ? `, on ${shelf!.name}` : ""}`}
+          aria-label={paper
+            ? `${book.title} — unfinished paper book, ${paperProgressLabel(paper)}`
+            : `${book.title} — ${tier.label}, level ${level.level}${level.maxed ? " (finished)" : ""}${onShelf ? `, on ${shelf!.name}` : ""}`}
         >
-          {time && <span className="cc-card-cost" title={`About ${time} to read`}>{time}</span>}
+          {paper
+            ? <span className="cc-card-cost" title="A paper book you are still scanning"><span className="material-symbols-outlined" aria-hidden>photo_camera</span></span>
+            : time && <span className="cc-card-cost" title={`About ${time} to read`}>{time}</span>}
           {onShelf && !compact && (
             <span
               className="cc-card-onshelf"
@@ -190,7 +203,7 @@ const BookCardTile: React.FC<{
           <span className="cc-card-face">
             <span className="cc-card-art">
               <CardArt book={book} />
-              {fresh && <span className="cc-ribbon">New</span>}
+              {paper ? <span className="cc-ribbon" data-paper>Unfinished</span> : fresh && <span className="cc-ribbon">New</span>}
               {busy && (
                 <span className="absolute inset-x-0 bottom-0 px-1.5 py-1 text-[10px] font-bold text-center text-white bg-black/65 backdrop-blur-sm">
                   {busy}
@@ -198,12 +211,19 @@ const BookCardTile: React.FC<{
               )}
             </span>
             <span className="cc-card-name">{highlight ? highlight(book.title) : book.title}</span>
-            {!compact && (
+            {!compact && (paper ? (
+              <span className="cc-card-level" data-paper>
+                <span className="truncate">{paperProgressLabel(paper)}</span>
+                {paperPart !== null && (
+                  <span className="cc-meter" aria-hidden><span style={{ width: `${Math.round(paperPart * 100)}%` }} /></span>
+                )}
+              </span>
+            ) : (
               <span className="cc-card-level">
                 <span className="shrink-0">{level.maxed ? "MAX" : `Lv ${level.level}`}</span>
                 <LevelMeter card={card} />
               </span>
-            )}
+            ))}
           </span>
         </button>
       </DropdownMenuTrigger>
@@ -230,8 +250,8 @@ const BookCardTile: React.FC<{
         </MenuPrimitive.Item>
         <MenuPrimitive.Item asChild onSelect={() => actions.onRead(book)}>
           <button type="button" className="cc-btn3d">
-            <span className="material-symbols-outlined" aria-hidden>auto_stories</span>
-            {level.pct > 0 && !level.maxed ? "Continue" : "Read"}
+            <span className="material-symbols-outlined" aria-hidden>{paper ? "photo_camera" : "auto_stories"}</span>
+            {paper ? "Keep scanning" : level.pct > 0 && !level.maxed ? "Continue" : "Read"}
           </button>
         </MenuPrimitive.Item>
         {shelf && (
@@ -604,6 +624,11 @@ const LibraryDeck: React.FC<{
   const showLoose = looseOnly && shelves.length > 0 && loose.length > 0;
   const sorted = useMemo(() => sortCards(showLoose ? loose : cards, sort), [cards, loose, showLoose, sort]);
   const now = useMemo(() => readingNow(allCards, SLOTS), [allCards]);
+  const unfinished = useMemo(
+    () => allCards.filter((c) => isUnfinishedPaper(c.book))
+      .sort((a, b) => (paperMeta(b.book)?.updated_at ?? b.book.addedAt) - (paperMeta(a.book)?.updated_at ?? a.book.addedAt)),
+    [allCards],
+  );
   const openCard = openId ? cardById.get(openId) ?? null : null;
 
   // Which tab is open. Remembered; a shelf that has since been deleted falls
@@ -612,15 +637,16 @@ const LibraryDeck: React.FC<{
     try { return localStorage.getItem(DECK_KEY) || ""; } catch { return ""; }
   });
   const deckId = useMemo(() => {
+    if (tab === UNFINISHED_ID && unfinished.length > 0) return tab;
     if (tab === NOW_ID || shelves.some((s) => s.id === tab)) return tab;
     if (loaded.shelfId && shelves.some((s) => s.id === loaded.shelfId)) return loaded.shelfId;
     return now.length > 0 || shelves.length === 0 ? NOW_ID : shelves[0].id;
-  }, [tab, shelves, loaded.shelfId, now.length]);
+  }, [tab, shelves, loaded.shelfId, now.length, unfinished.length]);
   const pickTab = (id: string) => {
     setTab(id);
     try { localStorage.setItem(DECK_KEY, id); } catch { /* private mode */ }
   };
-  const shelf = deckId === NOW_ID ? null : shelves.find((s) => s.id === deckId) ?? null;
+  const shelf = deckId === NOW_ID || deckId === UNFINISHED_ID ? null : shelves.find((s) => s.id === deckId) ?? null;
   const openShelf = useMemo<OpenShelf | null>(
     () => (shelf ? { id: shelf.id, name: shelf.name, mark: marks.get(shelf.id) } : null),
     [shelf, marks],
@@ -631,8 +657,8 @@ const LibraryDeck: React.FC<{
     return m;
   }, [allBooks]);
   const deckCards = useMemo(
-    () => (shelf ? sortCards(allCards.filter((c) => c.book.folderIds.includes(shelf.id)), "recent") : now),
-    [shelf, allCards, now],
+    () => (shelf ? sortCards(allCards.filter((c) => c.book.folderIds.includes(shelf.id)), "recent") : deckId === UNFINISHED_ID ? unfinished : now),
+    [shelf, allCards, now, deckId, unfinished],
   );
   const inCounsel = shelf ? loaded.shelfId === shelf.id : false;
 
@@ -802,6 +828,13 @@ const LibraryDeck: React.FC<{
               Reading now
               <span className="cc-deck-count">{now.length}</span>
             </button>
+            {unfinished.length > 0 && (
+              <button type="button" role="tab" aria-selected={deckId === UNFINISHED_ID} className="cc-deck-tab" data-paper onClick={() => pickTab(UNFINISHED_ID)}>
+                <span className="material-symbols-outlined text-[18px] text-accent" aria-hidden>photo_camera</span>
+                Unfinished
+                <span className="cc-deck-count">{unfinished.length}</span>
+              </button>
+            )}
             {shelves.map((s) => {
               const mark = marks.get(s.id);
               return (
@@ -871,6 +904,8 @@ const LibraryDeck: React.FC<{
                         : deckCards.length > SLOTS
                           ? `${deckCards.length} books. Counsel reads ${SLOTS} at a time — pick which in the chat.`
                           : `${deckCards.length} of ${SLOTS} — the books Counsel reads together.`
+                      : deckId === UNFINISHED_ID
+                        ? "Paper books you are still scanning."
                       : now.length === 0
                         ? "Books you have started show up here by themselves."
                         : "Filled in for you: the books you are part-way through."}
@@ -1050,6 +1085,15 @@ const LibraryDeck: React.FC<{
                   <span className="min-w-0 flex-1 truncate text-left">Reading now</span>
                   <span className="cc-deck-count">{now.length}</span>
                 </button>
+                {unfinished.length > 0 && (
+                  <button type="button" className="cc-shelf-row" aria-current={deckId === UNFINISHED_ID || undefined} onClick={() => pickFromList(UNFINISHED_ID)}>
+                    <span className="cc-deck-mark" aria-hidden>
+                      <span className="material-symbols-outlined text-accent">photo_camera</span>
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-left">Unfinished</span>
+                    <span className="cc-deck-count">{unfinished.length}</span>
+                  </button>
+                )}
               </li>
             )}
             {listedShelves.map((s) => {
