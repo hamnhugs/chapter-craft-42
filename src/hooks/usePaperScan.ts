@@ -6,7 +6,7 @@ import {
   isPlaceholderPaperTitle, paperMeta, placePages, untitledPaperTitle,
   type PaperMeta, type PaperPage,
 } from "@/lib/paperBook";
-import { coverFromPhoto, preparePagePhoto, type PhotoProblem } from "@/lib/pagePhoto";
+import { coverFromPhoto, orderPhotos, preparePagePhoto, type PhotoProblem } from "@/lib/pagePhoto";
 import { makeTranscriber, SHOT_PROBLEM_COPY, TranscribeError, type Transcription } from "@/lib/pageTranscribe";
 import { metaFor, PaperIOContext, supabasePaperIO, type PaperIO } from "@/lib/paperStore";
 
@@ -29,10 +29,11 @@ import { metaFor, PaperIOContext, supabasePaperIO, type PaperIO } from "@/lib/pa
  * the model reports it unreadable, or the reader discards it — and all of
  * them on unmount. The only time one outlives its first read is a failure the
  * reader can retry (no connection, a busy provider), because then it still
- * has a use. Nothing is ever written to storage.
+ * has a use. Nothing is ever written to storage. Photos still waiting in line
+ * are not decoded at all: only the reader's own file handles are held.
  */
 
-export type ShotStatus = "checking" | "warn" | "reading" | "failed";
+export type ShotStatus = "queued" | "checking" | "warn" | "reading" | "failed";
 
 export interface Shot {
   id: string;
@@ -58,8 +59,12 @@ export interface PaperScan {
   pages: PaperPage[];
   loadState: "idle" | "loading" | "ready" | "error";
   shots: Shot[];
-  /** Photos being checked or read right now. */
+  /** Photos waiting, being checked or being read. */
   busy: number;
+  /** The current run of photos: how many were handed over, how many are dealt with. */
+  batch: { total: number; done: number };
+  /** Drop everything not yet read. */
+  cancelQueue: () => void;
   saveState: SaveState;
   addPhotos: (files: File[]) => void;
   useAnyway: (shotId: string) => void;
@@ -74,6 +79,10 @@ export interface PaperScan {
 }
 
 let shotSeq = 0;
+/** Photos decoded and being read at the same time. */
+const READ_AT_ONCE = 3;
+/** Waits before asking a busy provider again. */
+const RATE_WAITS = [4000, 10_000, 20_000];
 
 export function usePaperScan(opts: {
   bookId: string | null;
@@ -157,6 +166,8 @@ export function usePaperScan(opts: {
       running.forEach((a) => a.abort());
       running.clear();
       held.clear();
+      waiting.current = [];
+      files.current.clear();
     };
   }, []);
 
@@ -245,58 +256,162 @@ export function usePaperScan(opts: {
     await persist(t.author && !metaRef.current.author ? { author: t.author } : {}).catch(() => undefined);
   }, [persist]);
 
-  const read = useCallback((shotId: string) => {
-    const photo = photos.current.get(shotId);
-    if (!photo) { dropShot(shotId); return; }
-    patchShot(shotId, { status: "reading", problem: undefined, message: undefined });
-    const abort = new AbortController();
-    aborts.current.set(shotId, abort);
-    const known = isPlaceholderPaperTitle(titleRef.current) ? null : titleRef.current;
-    const reading = transcribeRef.current(photo, { signal: abort.signal, bookTitle: known });
-    reading.catch(() => undefined); // handled in order, below
+  // ── The queue ───────────────────────────────────────────────────────────
+  // Any number of photos can be handed over at once. They wait in line as
+  // FILE HANDLES (nothing decoded), are worked READ_AT_ONCE at a time — a
+  // decoded photo is ~0.5 MB and every read is a model call, so fifty at once
+  // would be fifty megabytes and a rate limit — and are COMMITTED in the
+  // order given, whichever read happens to finish first.
+  type Job = { id: string; skipCheck: boolean };
+  type Outcome = { t: Transcription } | { error: unknown } | "parked";
+  const waiting = useRef<Job[]>([]);
+  const files = useRef(new Map<string, File>());
+  const running = useRef(0);
+  const settle = useRef(new Map<string, (o: Outcome) => void>());
+  /** Shots the reader took back; work already under way for them stops at its next step. */
+  const discarded = useRef(new Set<string>());
+  const [batch, setBatch] = useState({ total: 0, done: 0 });
+  const finishOne = () => setBatch((b) => ({ ...b, done: Math.min(b.total, b.done + 1) }));
+
+  /** Reserve this shot's place in the commit order. */
+  const reserve = useCallback((id: string) => {
+    const outcome = new Promise<Outcome>((resolve) => settle.current.set(id, resolve));
     commitChain.current = commitChain.current.then(async () => {
+      const o = await outcome;
+      settle.current.delete(id);
+      if (o === "parked" || !alive.current) return;
       try {
-        const t = await reading;
-        if (!alive.current || abort.signal.aborted) return;
-        await apply(shotId, t);
+        if ("error" in o) throw o.error;
+        await apply(id, o.t);
       } catch (e) {
-        if (!alive.current || abort.signal.aborted) return;
+        if ((e as Error)?.name === "AbortError") return;
         const err = e instanceof TranscribeError ? e : null;
         // Worth another go with the same photo only when the photo was never
         // the problem.
         const retryable = !err || err.code === "network" || err.code === "rate" || err.code === "no_key" || err.code === "auth" || err.code === "credits";
-        if (!retryable) dispose(shotId);
-        patchShot(shotId, { status: "failed", retryable, message: err?.message ?? "That page could not be read. Try again." });
+        if (!retryable) dispose(id);
+        patchShot(id, { status: "failed", retryable, message: err?.message ?? "That page could not be read. Try again." });
       } finally {
-        aborts.current.delete(shotId);
+        finishOne();
       }
     });
   }, [apply]);
 
-  const addPhotos = useCallback((files: File[]) => {
-    for (const file of files) {
-      const id = `shot-${++shotSeq}`;
-      setShots((prev) => [...prev, { id, status: "checking" }]);
-      // Checked one after another, in the order taken: reading order follows.
-      commitChain.current = commitChain.current.then(async () => {
-        try {
-          const photo = await preparePagePhoto(file);
-          if (!alive.current) return;
-          photos.current.set(id, photo.dataUrl);
-          if (photo.problem) patchShot(id, { status: "warn", problem: photo.problem });
-          else read(id);
-        } catch (e) {
-          patchShot(id, { status: "failed", retryable: false, message: (e as Error)?.message || "That photo could not be opened." });
+  const work = useCallback(async (job: Job): Promise<Outcome> => {
+    if (!job.skipCheck) {
+      const file = files.current.get(job.id);
+      files.current.delete(job.id);
+      if (!file) return "parked"; // discarded while it waited
+      patchShot(job.id, { status: "checking" });
+      try {
+        const photo = await preparePagePhoto(file);
+        if (!alive.current || discarded.current.has(job.id)) return "parked";
+        photos.current.set(job.id, photo.dataUrl);
+        if (photo.problem) {
+          // Waits for the reader; the line moves on without it.
+          patchShot(job.id, { status: "warn", problem: photo.problem });
+          finishOne();
+          return "parked";
         }
+      } catch (e) {
+        patchShot(job.id, { status: "failed", retryable: false, message: (e as Error)?.message || "That photo could not be opened." });
+        finishOne();
+        return "parked";
+      }
+    }
+    const photo = photos.current.get(job.id);
+    if (!photo || discarded.current.has(job.id)) { dispose(job.id); return "parked"; }
+    patchShot(job.id, { status: "reading", problem: undefined, message: undefined });
+    const abort = new AbortController();
+    aborts.current.set(job.id, abort);
+    const known = isPlaceholderPaperTitle(titleRef.current) ? null : titleRef.current;
+    try {
+      // A busy provider is a reason to wait, not to bother the reader: a big
+      // batch on a free key will hit the per-minute limit as a matter of course.
+      for (let attempt = 0; ; attempt++) {
+        try {
+          return { t: await transcribeRef.current(photo, { signal: abort.signal, bookTitle: known }) };
+        } catch (e) {
+          const rate = e instanceof TranscribeError && e.code === "rate";
+          if (!rate || attempt >= RATE_WAITS.length || abort.signal.aborted) throw e;
+          await new Promise((r) => setTimeout(r, RATE_WAITS[attempt]));
+          if (abort.signal.aborted) throw new DOMException("aborted", "AbortError");
+        }
+      }
+    } catch (error) {
+      return { error };
+    } finally {
+      aborts.current.delete(job.id);
+    }
+  }, []);
+
+  const pump = useCallback(() => {
+    while (running.current < READ_AT_ONCE && waiting.current.length > 0) {
+      const job = waiting.current.shift()!;
+      running.current++;
+      void work(job).then((o) => {
+        running.current--;
+        settle.current.get(job.id)?.(o);
+        if (alive.current) pump();
       });
     }
-  }, [read]);
+  }, [work]);
+
+  const startBatch = (n: number) =>
+    setBatch((b) => (b.done >= b.total ? { total: n, done: 0 } : { total: b.total + n, done: b.done }));
+
+  const addPhotos = useCallback((incoming: File[]) => {
+    if (incoming.length === 0) return;
+    const ordered = incoming.length > 1 ? orderPhotos(incoming) : incoming;
+    const jobs = ordered.map((file) => {
+      const id = `shot-${++shotSeq}`;
+      files.current.set(id, file);
+      return { id, skipCheck: false };
+    });
+    setShots((prev) => [...prev, ...jobs.map((j) => ({ id: j.id, status: "queued" as const }))]);
+    startBatch(jobs.length);
+    jobs.forEach((j) => reserve(j.id));
+    waiting.current.push(...jobs);
+    pump();
+  }, [pump, reserve]);
+
+  /** Read a photo that is already checked (Use anyway / Try again). It goes
+   *  to the FRONT of the line: the reader just asked for it. */
+  const read = useCallback((shotId: string) => {
+    if (!photos.current.has(shotId)) { dropShot(shotId); return; }
+    patchShot(shotId, { status: "queued", problem: undefined, message: undefined });
+    startBatch(1);
+    reserve(shotId);
+    waiting.current.unshift({ id: shotId, skipCheck: true });
+    pump();
+  }, [pump, reserve]);
 
   const discardShot = useCallback((shotId: string) => {
+    discarded.current.add(shotId);
     aborts.current.get(shotId)?.abort();
     aborts.current.delete(shotId);
+    const wasWaiting = waiting.current.some((j) => j.id === shotId);
+    waiting.current = waiting.current.filter((j) => j.id !== shotId);
+    files.current.delete(shotId);
     dispose(shotId);
     dropShot(shotId);
+    // Still in line: nothing will ever settle it, so settle it here.
+    if (wasWaiting) { settle.current.get(shotId)?.("parked"); finishOne(); }
+  }, []);
+
+  /** Drop everything that has not been read yet. Pages already in stay in. */
+  const cancelQueue = useCallback(() => {
+    const ids = waiting.current.map((j) => j.id);
+    waiting.current = [];
+    for (const id of ids) {
+      discarded.current.add(id);
+      files.current.delete(id);
+      dispose(id);
+      settle.current.get(id)?.("parked");
+    }
+    aborts.current.forEach((a) => a.abort());
+    setShots((prev) => prev.filter((s) => s.status === "warn" || s.status === "failed"));
+    setBatch({ total: 0, done: 0 });
   }, []);
 
   const removePage = useCallback((pageId: string) => {
@@ -326,7 +441,9 @@ export function usePaperScan(opts: {
 
   return {
     bookId, title, meta, pages, loadState, shots,
-    busy: shots.filter((s) => s.status === "checking" || s.status === "reading").length,
+    busy: shots.filter((s) => s.status === "queued" || s.status === "checking" || s.status === "reading").length,
+    batch,
+    cancelQueue,
     saveState,
     addPhotos,
     useAnyway: read,

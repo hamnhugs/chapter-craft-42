@@ -47,7 +47,7 @@ for (const [size, [w, h, touch]] of Object.entries(SIZES)) {
   // 1. Start screen.
   await page.goto(BASE); await page.waitForSelector(".cc-paper-start");
   await shot("1-start");
-  check(size, "start screen has one primary button", await page.locator(".cc-paper-snap-wide").count() === 1);
+  check(size, "start screen has one primary button", await page.locator(".cc-paper-snap-wide[data-tone=\"accent\"]").count() === 1);
   check(size, "no sideways overflow (start)", !(await overflow()));
 
   // 2. A soft photo is caught before any model call.
@@ -64,7 +64,7 @@ for (const [size, [w, h, touch]] of Object.entries(SIZES)) {
   check(size, "header counts the page", (await page.locator(".cc-paper-head").innerText()).includes("1 page · last p. 41"));
   check(size, "no sideways overflow (page)", !(await overflow()));
   const targets = await page.evaluate(() => [...document.querySelectorAll(".cc-paper-bar button")].map((b) => { const r = b.getBoundingClientRect(); return Math.min(r.width, r.height); }));
-  check(size, "bar targets are 48px or more", targets.length === 3 && targets.every((t) => t >= 48), JSON.stringify(targets));
+  check(size, "bar targets are 48px or more", targets.length >= 3 && targets.every((t) => t >= 48), JSON.stringify(targets));
 
   // 4. Two more pages, quickly: they land in the order taken.
   await give(photo); await give(photo);

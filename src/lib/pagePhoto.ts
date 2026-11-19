@@ -156,3 +156,13 @@ export async function coverFromPhoto(dataUrl: string, width = 420): Promise<Blob
     return null;
   }
 }
+
+/**
+ * Several photos picked together arrive in whatever order the picker likes.
+ * The order they were TAKEN is the order of the pages: oldest first, and by
+ * name (numbers compared as numbers, so IMG_9 comes before IMG_10) when the
+ * times cannot tell them apart.
+ */
+export function orderPhotos<T extends { name: string; lastModified: number }>(files: readonly T[]): T[] {
+  return files.slice().sort((a, b) => (a.lastModified - b.lastModified) || a.name.localeCompare(b.name, undefined, { numeric: true }));
+}
