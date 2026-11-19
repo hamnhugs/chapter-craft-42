@@ -1,6 +1,6 @@
 # Paper books: read a physical book with the app
 
-2026-11-19 · branch `new1` · not committed
+2026-11-19 · branch `new1`
 
 Hold a paper book, snap the page you are on, and either have it read aloud or
 talk it over with Counsel. Every page you add builds the book in the Library,
@@ -45,6 +45,7 @@ vision model of the reader's own key (Gemini or OpenRouter) and nowhere else.
 | `src/lib/pageTranscribe.ts` | The prompt, the model pick, and the parser for the model's JSON. |
 | `src/lib/paperStore.ts` | Saving: book file, chapter rows, book row. `PaperIOContext` swaps it out in the lab. |
 | `src/hooks/usePaperScan.ts` | The engine: photo queue, ordered commits, serial saves, photo lifetime. |
+| `src/components/PaperCamera.tsx` | The camera inside the app. |
 | `src/components/PaperDesk.tsx` | The desk. `ReadTab.tsx` chooses desk or reader. `PaperScanChip.tsx` is the shutter in Counsel. |
 | `src/lib/paperSession.ts` | "Start a paper book" / "add pages to a finished one" signals. |
 | `src/styles/arena.css` | "Paper books" block: the card and the desk. |
@@ -57,16 +58,27 @@ already scrolls to); the desk parses it back.
 
 ## Decisions and what they rest on
 
-**Native camera, not an in-page viewfinder.** `<input capture="environment">`
-hands off to the phone's camera app: a full-sensor still with real autofocus
-and flash, and no site permission prompt
-([web.dev](https://web.dev/articles/media-capturing-images)). Full-resolution
-stills from a web page (`ImageCapture.takePhoto`) exist only on Chrome Android
-([caniuse](https://caniuse.com/imagecapture)), and iOS home-screen apps have
-open bugs that re-prompt for the camera or stop the stream on a route change
-(WebKit [215884](https://bugs.webkit.org/show_bug.cgi?id=215884),
-[212040](https://bugs.webkit.org/show_bug.cgi?id=212040)). With a mouse the
-same button is a file picker and says "Add a page photo"; drag and drop works.
+**The camera is inside the app.** The first version opened the phone's own
+camera app for each page, on the grounds that it returns the sharpest still
+([web.dev](https://web.dev/articles/media-capturing-images)). In use on
+Android that failed the same day: with the camera app in front the browser is
+in the background, the phone discarded the tab, and the reader came back to a
+reloaded app on the Counsel tab with the photo gone. A live preview in the
+page (`PaperCamera.tsx`) never leaves the page, so there is nothing to reload,
+and it is one tap a page instead of three. It stays open between shots; pages
+are read while the next one is framed. Where the browser can take a real still
+(`ImageCapture.takePhoto`, Chrome Android only —
+[caniuse](https://caniuse.com/imagecapture)) it does; elsewhere it takes a
+frame of the preview, requested at up to 3840×2160. The lens is released when
+the camera closes and whenever the app goes to the background.
+
+The phone's camera app is still offered ("Use the phone's camera"), and is the
+automatic fallback when the site's camera permission is blocked. Because that
+route can still reload the app, the trip is marked in `sessionStorage`; a
+reload in the middle of one lands back on the Read tab with a line saying the
+photo was lost and a "Snap it again" button. The marker holds a timestamp, not
+the photo. With a mouse the same button is a file picker ("Add a page photo");
+drag and drop works.
 
 **Verbatim transcription with named exceptions.** Vision models tidy what
 they read. DAISY's 317-page test found silent typo and grammar fixes and one
@@ -132,14 +144,18 @@ country.
   offline retry, an unreadable shot, the cover naming the book, the Library
   tab and card, Keep scanning, Ask and the Counsel strip, Finish, and resume.
 
+- `node docs/paper-books/shoot-camera.mjs` drives the in-app camera with
+  Chromium's fake camera: Snap opens it without a file chooser, two shots in a
+  row both become pages, the page never reloads, and a forced reload in the
+  middle of a camera-app trip shows the recovery line once.
+
 ## Not checked
 
 - **A real page through a real model.** The lab uses a stand-in that returns
   fixture pages. The prompt, the JSON it returns and how well it reads a
   curved or badly lit page have not been tried against Gemini or OpenRouter.
-- **A real phone.** The camera hand-off, and whether Android reloads the tab
-  while the camera app is open (if it does, the page being taken is lost; the
-  book itself is already saved).
+- **The in-app camera on a real phone**: focus, sharpness of the result, the
+  light button, and iOS.
 - **Signed in.** Creating the book, the storage write, chapter rows and
   `source_context` have only run against the lab's in-memory stand-in.
 - **Real speech.** Headless Chromium has no voice. Word highlight timing and
@@ -147,7 +163,8 @@ country.
 
 ## Not built
 
-- A live viewfinder with auto-capture (Chrome Android only; see above).
+- Auto-capture when the page is steady, and edge detection in the live preview.
+- How sharp a preview frame is on an iPhone, where there is no real still to take.
 - Editing a page's text by hand.
 - Reordering pages by hand, or scanning from a document feeder PDF.
 - Keeping page photos, by design.

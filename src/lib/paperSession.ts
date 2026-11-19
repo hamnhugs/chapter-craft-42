@@ -26,3 +26,46 @@ export const paperSession = {
   clearResume() { if (resume !== null) { resume = null; listeners.forEach((l) => l()); } },
   end() { if (starting || adopted) { starting = false; adopted = null; listeners.forEach((l) => l()); } },
 };
+
+/**
+ * A trip to the phone's own camera app.
+ *
+ * While that app is in front the browser is in the background, and a phone
+ * short on memory may discard the tab: the reader comes back to a freshly
+ * loaded app. The photo cannot be saved from that (and must not be stored
+ * anyway), but the reader can at least be put back where they were and told
+ * what happened. The marker lives in sessionStorage, which survives exactly
+ * this kind of reload and nothing longer.
+ */
+const TRIP_KEY = "cc_paper_camera_trip";
+const TRIP_MAX_MS = 15 * 60_000;
+let lostShot = false;
+
+export const cameraTrip = {
+  begin(starting: boolean) {
+    try { sessionStorage.setItem(TRIP_KEY, JSON.stringify({ at: Date.now(), starting })); } catch { /* no storage */ }
+  },
+  /** The page is still here, so the trip ended normally. */
+  end() { try { sessionStorage.removeItem(TRIP_KEY); } catch { /* no storage */ } },
+  /** Was the app reloaded in the middle of a trip? Does not clear it. */
+  pending(): { starting: boolean } | null {
+    try {
+      const raw = sessionStorage.getItem(TRIP_KEY);
+      if (!raw) return null;
+      const t = JSON.parse(raw) as { at?: number; starting?: boolean };
+      if (!t.at || Date.now() - t.at > TRIP_MAX_MS) { sessionStorage.removeItem(TRIP_KEY); return null; }
+      return { starting: !!t.starting };
+    } catch { return null; }
+  },
+  /** Run once at startup: put the desk back and remember to say why. */
+  recover(): boolean {
+    const trip = cameraTrip.pending();
+    if (!trip) return false;
+    cameraTrip.end();
+    lostShot = true;
+    if (trip.starting) paperSession.start();
+    return true;
+  },
+  /** True once, for the desk's "that photo was lost" line. */
+  takeLostShot(): boolean { const v = lostShot; lostShot = false; return v; },
+};
