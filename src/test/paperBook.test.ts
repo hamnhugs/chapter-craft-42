@@ -7,7 +7,7 @@ import {
   splitTrailingFragment, type PaperPage,
 } from "@/lib/paperBook";
 import { judgePhoto, laplacianVariance, orderPhotos } from "@/lib/pagePhoto";
-import { parseTranscription, pickPageModel, TRANSCRIBE_SYSTEM } from "@/lib/pageTranscribe";
+import { parseTranscription, partialBody, pickPageModel, quickReadBody, TRANSCRIBE_SYSTEM } from "@/lib/pageTranscribe";
 import { metaFor } from "@/lib/paperStore";
 import { buildBookContextBlock } from "@/lib/chatBooks";
 import type { BookDocument } from "@/types/library";
@@ -208,6 +208,34 @@ describe("parseTranscription", () => {
     expect(TRANSCRIBE_SYSTEM).toMatch(/verbatim, character for character/);
     expect(TRANSCRIBE_SYSTEM).toMatch(/\[unclear\]/);
     expect(TRANSCRIBE_SYSTEM).toMatch(/Never guess/);
+  });
+});
+
+describe("reading a page as it arrives", () => {
+  const full = JSON.stringify({ kind: "page", book_title: null, pages: [{ page_number: "9", chapter_title: null, body: 'He said "no".\n\nThen — caf\u00e9, twice.', footnotes: [] }] });
+  it("shows the words so far from a reply cut off anywhere, and never more than was sent", () => {
+    const whole = 'He said "no".\n\nThen — café, twice.';
+    let last = "";
+    for (let cut = 0; cut <= full.length; cut++) {
+      const got = partialBody(full.slice(0, cut));
+      expect(whole.startsWith(got)).toBe(true);
+      expect(got.length).toBeGreaterThanOrEqual(last.length);
+      last = got;
+    }
+    expect(last).toBe(whole);
+  });
+  it("copes with escapes split across chunks and with no body yet", () => {
+    expect(partialBody('{"kind":"page","pages":[{"page_number":"4"')).toBe("");
+    expect(partialBody('{"pages":[{"body":"a\\')).toBe("a");
+    expect(partialBody('{"pages":[{"body":"a\\u00e')).toBe("a");
+    expect(partialBody('{"pages":[{"body":"a\\u00e9b')).toBe("aéb");
+  });
+  it("asks each provider not to think first, in the form that provider accepts", () => {
+    expect(quickReadBody("gemini", "gemini-2.5-flash")).toEqual({ reasoning_effort: "none" });
+    // Gemini 3 cannot switch thinking off: the lowest level, not a refusal.
+    expect(quickReadBody("gemini", "gemini-3-flash-preview")).toEqual({ reasoning_effort: "minimal" });
+    expect(quickReadBody("openrouter", "google/gemini-3-flash-preview")).toEqual({ reasoning: { effort: "minimal" } });
+    expect(quickReadBody("openrouter", "google/gemini-2.5-flash")).toEqual({ reasoning: { effort: "none" } });
   });
 });
 

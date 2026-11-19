@@ -5,7 +5,7 @@ the app was changed by this audit.
 
 ## Built so far (2026-11-19, branch new1)
 
-Findings 1, 2 and 3. Findings 4 to 8 and the experiments are not started.
+Findings 1 to 5. Findings 6 to 8 and the experiments are not started.
 
 - **1, the freeze:** each page's own doubts and its squashed text are worked
   out once and kept; twins are found through a map. Per-page cost at 500
@@ -19,7 +19,21 @@ Findings 1, 2 and 3. Findings 4 to 8 and the experiments are not started.
   `text_content` or adding a server function), so a delete near the front of
   a 200-page book is about 25 rounds instead of 197.
 
-Checked with the lab only (stand-in reader and store): type-check, 2,763
+- **4, thinking first:** the page call now asks each provider for no
+  thinking, or the least it allows (`quickReadBody`): Gemini 2.5 Flash off,
+  Gemini 3 "minimal" (Google's docs say it cannot be turned off there),
+  OpenRouter the matching `reasoning.effort`. A model that rejects the
+  setting is asked again without it and not asked that way again.
+- **5, silence until done:** the call is streamed, and the words of the page
+  being read show under "Reading the page…" as they arrive. The page that is
+  kept is still parsed from the finished reply. Speaking the first sentence
+  early (Listen) is not built.
+
+4 and 5 are tested against a fake streamed reply only
+(`pageTranscribeStream.test.ts`). Whether thinking really switches off, and
+how much time it saves, has NOT been checked against a real model.
+
+Checked with the lab only (stand-in reader and store): type-check, 2,769
 tests, build, and the four headless walkthroughs. Not run signed-in.
 
 ## How it was measured

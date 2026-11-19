@@ -105,7 +105,15 @@ const PaperLab: React.FC<{ resume: boolean }> = ({ resume }) => {
       const mine = lab.started = (lab.started ?? 0) + 1;
       lab.flying = (lab.flying ?? 0) + 1;
       lab.peak = Math.max(lab.peak ?? 0, lab.flying);
-      try { await new Promise((r) => setTimeout(r, mine % 3 === 1 ? 1100 : 500)); } finally { lab.flying--; }
+      try {
+        // Words arrive while the page is still being read, as they do live.
+        const wait = mine % 3 === 1 ? 1100 : 500;
+        const sample = FIXTURE[0].text;
+        for (let step = 1; step <= 4; step++) {
+          await new Promise((r) => setTimeout(r, wait / 4));
+          if (step < 4) opts.onText?.(sample.slice(0, Math.round((sample.length * step) / 4)));
+        }
+      } finally { lab.flying--; }
       if (opts.signal?.aborted) throw new DOMException("aborted", "AbortError");
       const state = window.__paperLab!;
       const forced = state.next;

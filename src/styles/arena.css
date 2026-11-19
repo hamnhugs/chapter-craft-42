@@ -924,6 +924,8 @@
 .cc-paper-upload:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
 .cc-paper-upload .material-symbols-outlined { font-size: 1.4rem; }
 .cc-paper-queue .cc-meter { flex: none; height: 0.35rem; }
+/* The page's words while they are still being read. */
+.cc-paper-live { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 0.15rem; font-size: 0.78rem; line-height: 1.3; color: hsl(var(--on-surface-variant)); font-style: italic; overflow-wrap: anywhere; }
 @media (max-width: 400px) { .cc-paper-snap { width: 5.25rem; } .cc-paper-bar { gap: 0.35rem; } }
 @media (max-height: 560px) { .cc-paper-upload { flex-direction: row; gap: 0.3rem; width: auto; min-height: 48px; padding: 0 0.7rem; font-size: 0.8rem; } }
 
