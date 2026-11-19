@@ -11,7 +11,8 @@ import {
   speechFor, type PaperPage,
 } from "@/lib/paperBook";
 import { PROBLEM_COPY } from "@/lib/pagePhoto";
-import { paperSession } from "@/lib/paperSession";
+import { cameraTrip, paperSession } from "@/lib/paperSession";
+import PaperCamera, { inPageCameraUsable } from "@/components/PaperCamera";
 import { tokenizeWords, wordAtOffset, type SourceWord } from "@/lib/readAlong";
 import { ReadAlongPlayer, type ReadAlongStatus, type ReadAlongVoice } from "@/lib/readAlongPlayer";
 import type { VoiceStyle } from "@/lib/inworldTts";
@@ -131,15 +132,25 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
     noticeTimer.current = window.setTimeout(() => setNotice(null), 5000);
   }, []);
   useEffect(() => () => window.clearTimeout(noticeTimer.current), []);
+  /** A line shown over the live camera for a moment ("p. 47 added"). */
+  const [camNote, setCamNote] = useState<string | null>(null);
+  const camTimer = useRef(0);
+  const flashCam = useCallback((m: string) => {
+    setCamNote(m);
+    window.clearTimeout(camTimer.current);
+    camTimer.current = window.setTimeout(() => setCamNote(null), 2500);
+  }, []);
+  useEffect(() => () => window.clearTimeout(camTimer.current), []);
   const onEvent = useCallback((e: ScanEvent) => {
     if (e.type === "cover") {
       say(e.title ? `Cover added: ${e.title}` : "Cover added");
       return;
     }
     arrived.current = arrived.current === null ? e.firstIndex : Math.min(arrived.current, e.firstIndex);
+    flashCam(`${e.labels.join(" and ")} added`.replace(/^a page/, "Page").replace(/^p\./, "p."));
     if (e.replaced > 0) say(`Replaced ${e.labels.join(" and ")} with the new photo`);
     try { navigator.vibrate?.(15); } catch { /* not supported */ }
-  }, [say]);
+  }, [say, flashCam]);
   const onCreated = useCallback((id: string) => {
     paperSession.adopt(id);
     setActiveBookSilent(id);
@@ -157,9 +168,31 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
   const takeFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []).filter((f) => f.type.startsWith("image/") || /\.(heic|heif)$/i.test(f.name));
     e.target.value = "";
+    cameraTrip.end();
     if (files.length > 0) scan.addPhotos(files);
   };
-  const snap = () => { setNudge(false); cameraInput.current?.click(); };
+  /** The phone's own camera app. The browser goes to the background for it,
+   *  so the trip is marked in case the phone reloads the app meanwhile. */
+  const snapNative = () => {
+    if (touch) cameraTrip.begin(!scan.bookId);
+    cameraInput.current?.click();
+  };
+  const [camOpen, setCamOpen] = useState(false);
+  /** Snap: the camera inside the app on a phone, a file picker with a mouse. */
+  const snap = () => {
+    setNudge(false);
+    setLost(false);
+    if (touch && inPageCameraUsable()) setCamOpen(true);
+    else snapNative();
+  };
+  // Back in the app with the page intact: the trip ended normally.
+  useEffect(() => {
+    const back = () => { if (!document.hidden) window.setTimeout(() => cameraTrip.end(), 1500); };
+    document.addEventListener("visibilitychange", back);
+    return () => document.removeEventListener("visibilitychange", back);
+  }, []);
+  /** The app was reloaded while the phone's camera was open. */
+  const [lost, setLost] = useState(() => cameraTrip.takeLostShot());
 
   // ── Which page is on screen ─────────────────────────────────────────────
   const [view, setView] = useState(0);
@@ -411,8 +444,19 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
     </>
   );
 
-  const shotRows = scan.shots.length > 0 && (
+  const shotRows = (scan.shots.length > 0 || lost) && (
     <div className="cc-paper-shots" aria-live="polite">
+      {lost && (
+        <div className="cc-paper-shot" data-tone="warn" role="alert">
+          <span className="material-symbols-outlined" aria-hidden>refresh</span>
+          <span className="flex-1 min-w-0">
+            <span className="block font-bold">Your phone reloaded the app while its camera was open</span>
+            <span className="block text-xs opacity-80">That photo was lost. Your book and every page already added are safe.</span>
+          </span>
+          <button type="button" className="cc-paper-link" onClick={() => setLost(false)}>Dismiss</button>
+          <button type="button" className="cc-btn3d !py-1.5 !px-3 text-sm" data-tone="accent" onClick={snap}>Snap it again</button>
+        </div>
+      )}
       {scan.shots.map((s) => (
         <ShotRow
           key={s.id}
@@ -635,6 +679,16 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
           )}
         </>
       )}
+
+      <PaperCamera
+        open={camOpen}
+        onClose={() => setCamOpen(false)}
+        onPhoto={(file) => scan.addPhotos([file])}
+        onUseNative={snapNative}
+        busy={scan.busy}
+        pages={pages.length}
+        note={scan.shots.some((s) => s.status === "warn" || s.status === "failed") ? "A photo needs a look. Tap Done to see it." : camNote}
+      />
 
       {dragOver && <div className="cc-paper-drop" aria-hidden>Drop page photos here</div>}
 

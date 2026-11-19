@@ -1,4 +1,6 @@
-import React, { useCallback, useRef } from "react";
+import React, { useCallback, useRef, useState } from "react";
+import PaperCamera, { inPageCameraUsable } from "@/components/PaperCamera";
+import { cameraTrip } from "@/lib/paperSession";
 import { toast } from "sonner";
 import { usePaperScan, type ScanEvent } from "@/hooks/usePaperScan";
 import { paperProgressLabel } from "@/lib/paperBook";
@@ -22,9 +24,27 @@ const PaperScanChip: React.FC<{ bookId: string; title: string }> = ({ bookId, ti
   const scan = usePaperScan({ bookId, onEvent });
   const trouble = scan.shots.find((s) => s.status === "warn" || s.status === "failed");
   const working = scan.busy > 0 || scan.saveState === "saving";
+  const [camOpen, setCamOpen] = useState(false);
+  const native = () => { cameraTrip.begin(false); input.current?.click(); };
+  // The camera inside the app where there is one: leaving for the phone's
+  // camera app can make the phone reload this page (see PaperCamera).
+  const snap = () => {
+    const touch = !!window.matchMedia?.("(pointer: coarse)").matches;
+    if (touch && inPageCameraUsable()) setCamOpen(true);
+    else native();
+  };
 
   return (
     <div className="cc-paper-chip" data-trouble={trouble ? true : undefined}>
+      <PaperCamera
+        open={camOpen}
+        onClose={() => setCamOpen(false)}
+        onPhoto={(file) => scan.addPhotos([file])}
+        onUseNative={native}
+        busy={scan.busy}
+        pages={scan.pages.length}
+        note={trouble ? "A photo needs a look. Tap Done to see it." : null}
+      />
       <input
         ref={input}
         type="file"
@@ -34,6 +54,7 @@ const PaperScanChip: React.FC<{ bookId: string; title: string }> = ({ bookId, ti
         onChange={(e) => {
           const files = Array.from(e.target.files ?? []);
           e.target.value = "";
+          cameraTrip.end();
           if (files.length > 0) scan.addPhotos(files);
         }}
       />
@@ -44,13 +65,13 @@ const PaperScanChip: React.FC<{ bookId: string; title: string }> = ({ bookId, ti
           </span>
           {trouble.status === "warn" && <button type="button" onClick={() => scan.useAnyway(trouble.id)}>Use anyway</button>}
           {trouble.status === "failed" && trouble.retryable && <button type="button" onClick={() => scan.retryShot(trouble.id)}>Try again</button>}
-          <button type="button" data-strong onClick={() => { scan.discardShot(trouble.id); input.current?.click(); }}>Retake</button>
+          <button type="button" data-strong onClick={() => { scan.discardShot(trouble.id); snap(); }}>Retake</button>
           <button type="button" aria-label="Dismiss" onClick={() => scan.discardShot(trouble.id)}>
             <span className="material-symbols-outlined" aria-hidden>close</span>
           </button>
         </>
       ) : (
-        <button type="button" data-main disabled={scan.loadState !== "ready"} onClick={() => input.current?.click()} title={`Add the next page of ${title}`}>
+        <button type="button" data-main disabled={scan.loadState !== "ready"} onClick={snap} title={`Add the next page of ${title}`}>
           <span className={`material-symbols-outlined ${working ? "animate-spin" : ""}`} aria-hidden>{working ? "progress_activity" : "photo_camera"}</span>
           <span className="truncate">
             {scan.busy > 0 ? "Reading the page…" : scan.saveState === "error" ? "Not saved. Tap to snap again" : "Snap the next page"}

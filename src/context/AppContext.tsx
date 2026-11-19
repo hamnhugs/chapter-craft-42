@@ -1,4 +1,4 @@
-import { paperSession } from "@/lib/paperSession";
+import { cameraTrip, paperSession } from "@/lib/paperSession";
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
 import { flushSync } from "react-dom";
 import { toast } from "sonner";
@@ -340,7 +340,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Home is the middle of the dock: Counsel. It works from the first second
   // (no book, no notebook and no API key required), which the Library — empty
   // for a new account — does not.
-  const [activeTab, setActiveTab] = useState<TabId>("chat");
+  // One exception: a reload forced by a trip to the phone's camera app puts
+  // the reader back on the Read tab, where they were (lib/paperSession.ts).
+  const [activeTab, setActiveTab] = useState<TabId>(() => (cameraTrip.recover() ? "viewer" : "chat"));
   const [wikis, setWikis] = useState<Wiki[]>([]);
   const [activeWikiId, setActiveWikiId] = useState<string | null>(null);
   // Full ordered loaded set — invariant: activeWikiIds[0] === activeWikiId.
