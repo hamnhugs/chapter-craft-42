@@ -45,6 +45,8 @@ export interface Shot {
   message?: string;
   /** The photo is still held and "Try again" will re-read it. */
   retryable?: boolean;
+  /** The page's words so far, while it is still being read. */
+  preview?: string;
 }
 
 export type ScanEvent =
@@ -363,7 +365,15 @@ export function usePaperScan(opts: {
     }
     const photo = photos.current.get(job.id);
     if (!photo || discarded.current.has(job.id)) { dispose(job.id); return "parked"; }
-    patchShot(job.id, { status: "reading", problem: undefined, message: undefined });
+    patchShot(job.id, { status: "reading", problem: undefined, message: undefined, preview: undefined });
+    // Words arrive many times a second; the screen is told a few times.
+    let told = 0;
+    const onText = (body: string) => {
+      const now = Date.now();
+      if (now - told < 200 || !alive.current) return;
+      told = now;
+      patchShot(job.id, { preview: body });
+    };
     const abort = new AbortController();
     aborts.current.set(job.id, abort);
     const known = isPlaceholderPaperTitle(titleRef.current) ? null : titleRef.current;
@@ -372,7 +382,7 @@ export function usePaperScan(opts: {
       // batch on a free key will hit the per-minute limit as a matter of course.
       for (let attempt = 0; ; attempt++) {
         try {
-          return { t: await transcribeRef.current(photo, { signal: abort.signal, bookTitle: known }) };
+          return { t: await transcribeRef.current(photo, { signal: abort.signal, bookTitle: known, onText }) };
         } catch (e) {
           const rate = e instanceof TranscribeError && e.code === "rate";
           if (!rate || attempt >= RATE_WAITS.length || abort.signal.aborted) throw e;

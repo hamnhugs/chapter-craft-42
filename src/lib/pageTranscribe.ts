@@ -20,6 +20,7 @@
 
 import { GEMINI_STARTER_MODEL } from "@/lib/geminiCatalog";
 import { DEFAULT_FIGURE_MODEL } from "@/lib/figureModels";
+import { nvidiaNoThinkingBody } from "@/lib/nvidiaCatalog";
 import { namespacedId, modelProvider, providerConfigured, providerKey, providerLabel, resolveModel } from "@/lib/providers/registry";
 import { ProviderError } from "@/lib/providers/types";
 import { newPageId, type PaperPage } from "@/lib/paperBook";
@@ -44,7 +45,61 @@ export interface TranscribeSettings {
   keys: { apiKey?: string; geminiApiKey?: string; nvidiaKeyLast4?: string };
 }
 
-export type Transcriber = (dataUrl: string, opts: { signal?: AbortSignal; bookTitle?: string | null }) => Promise<Transcription>;
+export type Transcriber = (dataUrl: string, opts: {
+  signal?: AbortSignal;
+  bookTitle?: string | null;
+  /** The page's words so far, while the model is still writing them. */
+  onText?: (bodySoFar: string) => void;
+}) => Promise<Transcription>;
+
+/**
+ * The first page's `body` out of a reply that is still arriving. The reply is
+ * JSON cut off at an arbitrary byte, so this reads the string by hand and
+ * stops at the first thing it cannot be sure of (a half-written escape).
+ * For showing the reader that words are coming — the page that is KEPT is
+ * always parsed from the finished reply, never from this.
+ */
+export function partialBody(raw: string): string {
+  const key = /"body"\s*:\s*"/.exec(raw);
+  if (!key) return "";
+  let out = "";
+  for (let i = key.index + key[0].length; i < raw.length; i++) {
+    const c = raw[i];
+    if (c === '"') break;
+    if (c !== "\\") { out += c; continue; }
+    const n = raw[i + 1];
+    if (n === undefined) break;
+    if (n === "u") {
+      const hex = raw.slice(i + 2, i + 6);
+      if (!/^[0-9a-fA-F]{4}$/.test(hex)) break;
+      out += String.fromCharCode(parseInt(hex, 16));
+      i += 5;
+      continue;
+    }
+    out += n === "n" ? "\n" : n === "t" ? "\t" : n === "r" ? "" : n === "b" || n === "f" ? "" : n;
+    i++;
+  }
+  return out;
+}
+
+/**
+ * "Do not think first", in each provider's own words. Copying a page out
+ * needs no reasoning, and by default these models spend seconds on it before
+ * the first word. Not every model can switch it off (Gemini 2.5 Pro and
+ * Gemini 3 cannot), so the lowest setting each accepts is asked for — and a
+ * model that rejects the request outright is asked again without it
+ * (see makeTranscriber).
+ */
+export function quickReadBody(provider: string, localId: string): Record<string, unknown> | undefined {
+  const flash25 = /gemini-2\.5-flash/i.test(localId);
+  if (provider === "gemini") return { reasoning_effort: flash25 ? "none" : "minimal" };
+  if (provider === "openrouter") return { reasoning: { effort: flash25 ? "none" : "minimal" } };
+  if (provider === "nvidia") return nvidiaNoThinkingBody(localId);
+  return undefined;
+}
+
+/** Models that refused the quick-read setting this session: not asked again. */
+const noQuickRead = new Set<string>();
 
 export const TRANSCRIBE_SYSTEM = [
   "You transcribe photographs of printed book pages for a reader who owns the book.",
@@ -165,28 +220,55 @@ export function makeTranscriber(settings: TranscribeSettings): Transcriber {
     if (!modelId) throw new TranscribeError(NO_KEY_MESSAGE, "no_key");
     const { provider, adapter, localId } = resolveModel(modelId);
     let finish: string | undefined;
-    let reply: string;
-    try {
-      reply = await adapter.completeChat({
-        model: localId,
-        apiKey: providerKey(provider, settings.keys),
-        // A dense page is ~700 tokens of text; a spread twice that, plus JSON
-        // and whatever a thinking model spends before its first byte.
-        maxTokens: 6000,
-        signal: opts.signal,
-        extraBody: { temperature: 0 },
-        onMeta: (m) => { finish = m.finish; },
-        messages: [
-          { role: "system", content: TRANSCRIBE_SYSTEM },
-          {
-            role: "user",
-            content: [
-              { type: "text", text: opts.bookTitle ? `A photo from the book "${opts.bookTitle}". Transcribe it.` : "Transcribe this photo." },
-              { type: "image_url", image_url: { url: dataUrl } },
-            ],
-          },
+    let reply = "";
+    const key = providerKey(provider, settings.keys);
+    const messages = [
+      { role: "system", content: TRANSCRIBE_SYSTEM },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: opts.bookTitle ? `A photo from the book "${opts.bookTitle}". Transcribe it.` : "Transcribe this photo." },
+          { type: "image_url", image_url: { url: dataUrl } },
         ],
-      });
+      },
+    ];
+    // STREAMED, so the first words show in about the time the model takes to
+    // start writing rather than to finish the page.
+    const read = async (quick: Record<string, unknown> | undefined) => {
+      reply = "";
+      finish = undefined;
+      let shown = "";
+      for await (const ev of adapter.streamChat({
+        model: localId,
+        apiKey: key,
+        signal: opts.signal,
+        // A dense page is ~700 tokens of text; a spread twice that, plus JSON
+        // and whatever a model that cannot stop thinking spends first.
+        extraBody: { ...(quick || {}), temperature: 0, max_tokens: 6000 },
+        messages,
+      })) {
+        if (ev.type === "finish") finish = ev.reason;
+        if (ev.type !== "text") continue;
+        reply += ev.delta;
+        if (!opts.onText) continue;
+        const body = partialBody(reply);
+        if (body.length > shown.length) { shown = body; opts.onText(body); }
+      }
+    };
+    try {
+      const quick = noQuickRead.has(modelId) ? undefined : quickReadBody(provider, localId);
+      try {
+        await read(quick);
+      } catch (e) {
+        // A model that will not take the quick-read setting says so with a
+        // plain refusal. Ask once more without it, and remember.
+        const refused = quick && e instanceof ProviderError && e.status !== null && e.status >= 400 && e.status < 500
+          && e.status !== 401 && e.status !== 402 && e.status !== 403 && e.status !== 429
+          && !["no_key", "auth", "credits", "rate_limit"].includes(String(e.code));
+        if (!refused || opts.signal?.aborted) throw e;
+        noQuickRead.add(modelId);
+        await read(undefined);
+      }
     } catch (e) {
       if ((e as Error)?.name === "AbortError") throw e;
       if (e instanceof ProviderError) {
@@ -200,6 +282,7 @@ export function makeTranscriber(settings: TranscribeSettings): Transcriber {
       }
       throw new TranscribeError("No connection. The page is kept here until you try again.", "network");
     }
+    reply = reply.trim();
     const out = parseTranscription(reply);
     // Cut off by the token limit: the JSON is incomplete, so say so rather
     // than keep half a page as if it were whole.

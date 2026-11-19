@@ -464,6 +464,12 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
     </>
   );
 
+  // The words of the page being read, as they come: the tail, so it moves.
+  const livePreview = (() => {
+    const text = scan.shots.find((x) => x.status === "reading" && x.preview)?.preview?.replace(/\s+/g, " ").trim();
+    return text ? (text.length > 150 ? `…${text.slice(-150)}` : text) : null;
+  })();
+
   const shotRows = (scan.shots.length > 0 || lost) && (
     <div className="cc-paper-shots" aria-live="polite">
       {lost && (
@@ -486,6 +492,7 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
                 ? `Reading page ${Math.min(scan.batch.total, scan.batch.done + 1)} of ${scan.batch.total}…`
                 : "Reading the page…"}
             </span>
+            {livePreview && <span className="cc-paper-live" aria-hidden>{livePreview}</span>}
             {scan.batch.total > 1 && (
               <span className="cc-meter block mt-1" aria-hidden><span style={{ width: `${Math.round((scan.batch.done / scan.batch.total) * 100)}%` }} /></span>
             )}
