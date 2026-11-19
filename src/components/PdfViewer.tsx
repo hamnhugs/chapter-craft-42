@@ -8,6 +8,8 @@ import { Chapter } from "@/types/library";
 import ReaderContents from "@/components/ReaderContents";
 import CaptureQuoteDialog from "@/components/CaptureQuoteDialog";
 import HighlightActions, { type ReaderAction } from "@/components/HighlightActions";
+import { isPaperBook } from "@/lib/paperBook";
+import { paperSession } from "@/lib/paperSession";
 import { toast } from "sonner";
 import ReadAlong from "@/components/ReadAlong";
 import YoutubeTranscriptBadge from "@/components/YoutubeTranscriptBadge";
@@ -95,7 +97,7 @@ function readTapHintSeen(): boolean {
  * a tap on either side turns the page.
  */
 const PdfViewer: React.FC = () => {
-  const { getActiveBook, addChapter, updateChapter, removeChapter, setBookCover, activeBookId, loadBookFile, loadChapterTextStrict, setActiveTab } = useApp();
+  const { getActiveBook, addChapter, updateChapter, removeChapter, setBookCover, activeBookId, loadBookFile, loadChapterTextStrict, setActiveTab, setActiveBookSilent } = useApp();
   const book = getActiveBook();
   const isPdfBook = book?.fileName.toLowerCase().endsWith(".pdf") ?? false;
   const isHtmlBook = book?.fileName.toLowerCase().endsWith(".html") ?? false;
@@ -530,6 +532,10 @@ const PdfViewer: React.FC = () => {
         <span className="material-symbols-outlined text-6xl mb-4 opacity-30">auto_stories</span>
         <p className="text-lg font-headline">No document selected</p>
         <p className="text-sm mt-1">Choose a book from your library to start reading</p>
+        <button type="button" className="cc-btn3d mt-6" data-tone="accent" onClick={() => paperSession.start()}>
+          <span className="material-symbols-outlined" aria-hidden>photo_camera</span> Read a paper book
+        </button>
+        <p className="text-xs mt-2 max-w-xs text-center text-pretty">Snap the page you are on. Listen to it, or talk it over with Counsel.</p>
       </div>
     );
   }
@@ -684,6 +690,21 @@ const PdfViewer: React.FC = () => {
           <span className="material-symbols-outlined text-lg mr-2" aria-hidden>{focused ? "close_fullscreen" : "fullscreen"}</span>
           <span className="flex-1">{focused ? "Leave full screen" : "Full screen"}</span>
           {!phone && <span className="text-xs text-muted-foreground">F</span>}
+        </DropdownMenuItem>
+        {isPaperBook(book) ? (
+          <DropdownMenuItem onSelect={() => { if (focused) exitFocus(); paperSession.resume(book.id); }}>
+            <span className="material-symbols-outlined text-lg mr-2" aria-hidden>photo_camera</span>
+            <span className="flex-1">Add more pages</span>
+          </DropdownMenuItem>
+        ) : (
+          <DropdownMenuItem onSelect={() => { if (focused) exitFocus(); paperSession.start(); }}>
+            <span className="material-symbols-outlined text-lg mr-2" aria-hidden>photo_camera</span>
+            <span className="flex-1">Read a paper book</span>
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem onSelect={() => { if (focused) exitFocus(); setActiveBookSilent(null); }}>
+          <span className="material-symbols-outlined text-lg mr-2" aria-hidden>close</span>
+          <span className="flex-1">Close this book</span>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         {!isHtmlBook && (

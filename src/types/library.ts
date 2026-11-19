@@ -49,8 +49,15 @@ export interface BookDocument {
   sourceContext?: {
     book_ids?: string[];
     shelf_id?: string | null;
-    /** YouTube transcripts: the video it was transcribed from. */
-    kind?: "youtube";
+    /** YouTube transcripts: the video it was transcribed from. "paper" = a
+     *  physical book scanned page by page (lib/paperBook.ts reads the rest). */
+    kind?: "youtube" | "paper";
+    status?: "open" | "done";
+    pages?: number;
+    last_printed?: string | null;
+    author?: string | null;
+    total_pages?: number | null;
+    updated_at?: number;
     video_url?: string;
     channel?: string | null;
     duration_seconds?: number | null;

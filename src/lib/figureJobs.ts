@@ -43,6 +43,10 @@ interface JobInput {
   model?: string;
   /** The book's chapter ranges, for chapter provenance on stored figures. */
   chapters?: ChapterRange[];
+  /** Read when figures are about to be stored, in preference to `chapters` —
+   *  for a job queued the moment detection finishes, before the new chapters
+   *  have reached the caller's state. */
+  getChapters?: () => ChapterRange[] | undefined;
   /** Lazily provides the PDF (fresh-upload File, or a storage URL). */
   load: () => Promise<{ file?: File | Blob; fileUrl?: string }>;
 }
@@ -285,7 +289,8 @@ async function runJob(input: JobInput): Promise<void> {
       // and title (chapter ≤30, title ≤30 ⇒ provenance ≤ ~85 chars) means
       // truncation can only ever cost the alt's tail, never the provenance.
       const alt = (r.alt || "Figure").slice(0, 90);
-      const chapterName = chapterForPage(input.chapters, fig.page);
+      const liveChapters = input.getChapters?.();
+      const chapterName = chapterForPage(liveChapters && liveChapters.length > 0 ? liveChapters : input.chapters, fig.page);
       const path = `${uid}/figures/${bookId}/${crypto.randomUUID()}.jpg`;
       // Outside the per-figure try: a failed replace is a job error (the old
       // set's integrity is at stake), never a silent per-figure skip.

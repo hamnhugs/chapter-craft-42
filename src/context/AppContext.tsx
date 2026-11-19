@@ -1,3 +1,4 @@
+import { paperSession } from "@/lib/paperSession";
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
 import { flushSync } from "react-dom";
 import { toast } from "sonner";
@@ -84,6 +85,9 @@ interface AppState {
   updateChapter: (bookId: string, chapterId: string, name: string) => void;
   removeChapter: (bookId: string, chapterId: string) => void;
   updateBookTitle: (bookId: string, newTitle: string) => void;
+  /** Mirror a change that is ALREADY saved into the in-memory library. For
+   *  writers that own their own persistence (paper books save page by page). */
+  patchBookLocal: (bookId: string, patch: (book: BookDocument) => BookDocument) => void;
   /** Store `image` as the book's cover. Resolves false if it could not be saved. */
   setBookCover: (bookId: string, image: Blob) => Promise<boolean>;
   updateBookTags: (bookId: string, category: string | null, tags: string[]) => Promise<void>;
@@ -586,7 +590,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const summary = describeLoad(prev, effective, focusNames()) +
       (neuronError ? ` The notebook did not change: ${neuronError}` : "");
     if (opts.navigate !== false) {
-      if (action.kind === "book") navigateTab("viewer");
+      // Opening a book to read gives a half-started "new paper book" up.
+      if (action.kind === "book") { paperSession.end(); navigateTab("viewer"); }
       else if (action.kind === "shelf" || action.kind === "books") navigateTab("chat");
     }
     const any = effective.changed.selection || effective.changed.activeBookId || effective.changed.wikiIds;
@@ -942,7 +947,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!user) return;
     try {
       if (activeBookId) localStorage.setItem(`cc_active_book_${user.id}`, activeBookId);
-      else localStorage.removeItem(`cc_active_book_${user.id}`);
+      // Only forget the book once the restore above has had its turn. On a
+      // reload nothing is open yet when this first runs, and clearing the key
+      // here erased the very book the restore was about to read back — which
+      // is why the open book never survived a refresh.
+      else if (restoredBookRef.current) localStorage.removeItem(`cc_active_book_${user.id}`);
     } catch {
       /* localStorage unavailable — non-fatal */
     }
@@ -1313,6 +1322,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // They still bump the focus epoch: an Undo captured before them must not
   // run over them.
   const setActiveBook = useCallback((id: string) => {
+    // Opening a book is a decision: a half-started "new paper book" gives way.
+    paperSession.end();
     setActiveBookId(id);
     focusEpoch.bump();
     navigateTab("viewer");
@@ -1486,6 +1497,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       prev.map((b) => (b.id === bookId ? { ...b, title: newTitle } : b))
     );
   }, [user]);
+
+  const patchBookLocal = useCallback((bookId: string, patch: (book: BookDocument) => BookDocument) => {
+    setBooks((prev) => prev.map((b) => (b.id === bookId ? patch(b) : b)));
+  }, [setBooks]);
 
   const updateBookTags = useCallback(async (bookId: string, category: string | null, tags: string[]) => {
     if (!user) return;
@@ -1828,6 +1843,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         applyBookSummary,
         removeChapter,
         updateBookTitle,
+        patchBookLocal,
         setBookCover,
         updateBookTags,
         toggleBookShelf,

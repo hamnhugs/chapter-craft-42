@@ -1,6 +1,6 @@
 import React, { useEffect } from "react";
 import { useApp } from "@/context/AppContext";
-import PdfViewer from "@/components/PdfViewer";
+import ReadTab from "@/components/ReadTab";
 import Library from "@/components/Library";
 import ChatPanel from "@/components/ChatPanel";
 import WikiPanel from "@/components/WikiPanel";
@@ -234,7 +234,7 @@ const Index: React.FC = () => {
               <AdminPanel />
             </React.Suspense>
           ) : (
-            <PdfViewer />
+            <ReadTab />
           )}
         </div>
       </div>

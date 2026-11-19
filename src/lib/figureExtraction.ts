@@ -16,6 +16,14 @@ import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 //      thresholds plus a perceptual-hash pass that drops images repeating on
 //      3+ pages (logos, headers, watermarks, page furniture).
 //
+//   5. VECTOR figures — charts and diagrams drawn with path operators, which
+//      carry no image at all — are found the way pdffigures2 (Clark & Divvala,
+//      JCDL 2016) and PyMuPDF's cluster_drawings find them: take the bounding
+//      box of every painted path, cluster boxes that touch or nearly touch,
+//      and keep a cluster when a "Figure 3.2"-style caption sits beside it or
+//      when it is large and drawing-dense. Clusters join the image rectangles
+//      before the merge, so a raster plot and its vector axes become one crop.
+//
 // EPUB uploads are converted to PDF client-side before storage (epubToPdf.ts),
 // so their images arrive here as ordinary embedded rasters.
 
@@ -57,8 +65,21 @@ const FULL_PAGE_COVERAGE = 0.92;
 const HAMMING_DUP = 8;
 const FURNITURE_PAGE_COUNT = 3;
 const CONTEXT_CAP = 600;
+// Vector-figure clustering (all in PDF points; scaled to pixels per page).
+const VECTOR_CELL_PT = 6;          // occupancy-grid cell — boxes within ~1 cell cluster
+const VECTOR_MIN_DIM_PT = 60;      // a cluster smaller than this is a rule, bullet or icon
+const VECTOR_MAX_PATHS_SCANNED = 8000;
+const VECTOR_BACKGROUND_FRACTION = 0.85; // a single box this big is a page background/border
+const VECTOR_UNCAPTIONED_MIN_PATHS = 12;
+const VECTOR_UNCAPTIONED_MIN_DIM_PT = 100;
+const VECTOR_UNCAPTIONED_MAX_TEXT = 400; // chars inside — more is a text box or table, not a drawing
+const VECTOR_UNCAPTIONED_MAX_PATHS = 1500; // denser is usually text outlined to curves
+const VECTOR_UNCAPTIONED_MAX_PAGE_FRACTION = 0.6;
+/** A line that opens like a figure caption. Tables are left out on purpose:
+ *  their content is text the chapter already carries. */
+const CAPTION_RE = /^\s*(fig(?:ure)?\.?|plate|chart|diagram|map|exhibit|illustration|graph)\s*[A-Z]?\d+/i;
 
-interface Rect { x0: number; y0: number; x1: number; y1: number }
+export interface Rect { x0: number; y0: number; x1: number; y1: number }
 
 /** pdf.js matrix composition: result applies `m2` first, then `m1`. */
 function mat(m1: number[], m2: number[]): number[] {
@@ -101,7 +122,7 @@ function collectImageRects(
   opList: { fnArray: number[]; argsArray: unknown[] },
   viewport: { convertToViewportPoint: (x: number, y: number) => number[] },
   ocConfig: { isVisible: (group: unknown) => boolean } | null,
-): Rect[] {
+): { images: Rect[]; paths: Rect[] } {
   const OPS = pdfjsLib.OPS;
   const IDENTITY = [1, 0, 0, 1, 0, 0];
   let ctm = IDENTITY.slice();
@@ -111,6 +132,11 @@ function collectImageRects(
   let hiddenDepth = 0; // count of enclosing invisible marked-content groups
   let lastPathBox: Rect | null = null;
   const rects: Rect[] = [];
+  const pathRects: Rect[] = [];
+  const PAINT_OPS = new Set<number>([
+    OPS.stroke, OPS.closeStroke, OPS.fill, OPS.eoFill, OPS.fillStroke,
+    OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke,
+  ].filter((v) => typeof v === "number"));
   const { fnArray, argsArray } = opList;
 
   /** Bounding device rect of a user-space rectangle under matrix m. */
@@ -150,6 +176,14 @@ function collectImageRects(
       // in current user space — enough for a bounding-box clip.
       const mm = args?.[2];
       lastPathBox = isBox(mm) ? deviceRect(ctm, mm[0], mm[1], mm[2], mm[3]) : null;
+    } else if (PAINT_OPS.has(fn)) {
+      // A painted path: one stroke or fill of the box just constructed.
+      // (Clip-only paths end with endPath and never reach here.)
+      if (lastPathBox && hiddenDepth === 0 && pathRects.length < VECTOR_MAX_PATHS_SCANNED) {
+        const r = clip ? intersect(lastPathBox, clip) : lastPathBox;
+        if (r.x1 - r.x0 > 0.5 || r.y1 - r.y0 > 0.5) pathRects.push(r);
+      }
+      lastPathBox = null;
     } else if (fn === OPS.clip || fn === OPS.eoClip) {
       // Over-approximate non-rectangular clips by their bounding box.
       if (lastPathBox) clip = clip ? intersect(clip, lastPathBox) : lastPathBox;
@@ -200,7 +234,145 @@ function collectImageRects(
       }
     }
   }
-  return rects;
+  return { images: rects, paths: pathRects };
+}
+
+/**
+ * Cluster painted-path boxes into candidate drawings.
+ *
+ * An occupancy grid rather than pairwise unions: a chart can carry thousands
+ * of paths, and the grid is linear in paths + cells where repeated pairwise
+ * merging is quadratic. Boxes are stamped onto a coarse grid; connected
+ * cells (8-neighbourhood) are one cluster, which makes "within about one cell
+ * of each other" the merge tolerance.
+ */
+export function clusterPathRects(
+  rects: Rect[],
+  pageW: number,
+  pageH: number,
+  cell: number,
+): { rect: Rect; paths: number }[] {
+  if (rects.length === 0 || pageW <= 0 || pageH <= 0 || cell <= 0) return [];
+  const cols = Math.max(1, Math.ceil(pageW / cell));
+  const rows = Math.max(1, Math.ceil(pageH / cell));
+  const grid = new Uint8Array(cols * rows);
+  const pageArea = pageW * pageH;
+  const anchors: number[] = []; // one cell per stamped path, for counting
+  const clampCol = (v: number) => Math.max(0, Math.min(cols - 1, Math.floor(v / cell)));
+  const clampRow = (v: number) => Math.max(0, Math.min(rows - 1, Math.floor(v / cell)));
+  for (const r of rects) {
+    if (r.x1 <= 0 || r.y1 <= 0 || r.x0 >= pageW || r.y0 >= pageH) continue;
+    const w = r.x1 - r.x0, h = r.y1 - r.y0;
+    // One box the size of the page is a background fill or a border frame;
+    // stamping it would weld everything on the page into one cluster.
+    if (w * h >= pageArea * VECTOR_BACKGROUND_FRACTION) continue;
+    const c0 = clampCol(r.x0), c1 = clampCol(r.x1), r0 = clampRow(r.y0), r1 = clampRow(r.y1);
+    for (let y = r0; y <= r1; y++) grid.fill(1, y * cols + c0, y * cols + c1 + 1);
+    anchors.push(r0 * cols + c0);
+  }
+  const labels = new Int32Array(cols * rows);
+  const boxes: { c0: number; r0: number; c1: number; r1: number; paths: number }[] = [];
+  const stack: number[] = [];
+  for (let start = 0; start < grid.length; start++) {
+    if (!grid[start] || labels[start]) continue;
+    const label = boxes.length + 1;
+    const box = { c0: cols, r0: rows, c1: -1, r1: -1, paths: 0 };
+    labels[start] = label;
+    stack.push(start);
+    while (stack.length > 0) {
+      const idx = stack.pop()!;
+      const cx = idx % cols, cy = (idx - cx) / cols;
+      if (cx < box.c0) box.c0 = cx;
+      if (cx > box.c1) box.c1 = cx;
+      if (cy < box.r0) box.r0 = cy;
+      if (cy > box.r1) box.r1 = cy;
+      for (let dy = -1; dy <= 1; dy++) {
+        const ny = cy + dy;
+        if (ny < 0 || ny >= rows) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = cx + dx;
+          if (nx < 0 || nx >= cols) continue;
+          const n = ny * cols + nx;
+          if (grid[n] && !labels[n]) { labels[n] = label; stack.push(n); }
+        }
+      }
+    }
+    boxes.push(box);
+  }
+  for (const a of anchors) {
+    const l = labels[a];
+    if (l > 0) boxes[l - 1].paths += 1;
+  }
+  return boxes.map((b) => ({
+    rect: {
+      x0: b.c0 * cell, y0: b.r0 * cell,
+      x1: Math.min(pageW, (b.c1 + 1) * cell), y1: Math.min(pageH, (b.r1 + 1) * cell),
+    },
+    paths: b.paths,
+  }));
+}
+
+/**
+ * Which path clusters are figures. A caption beside the cluster is the strong
+ * signal (it is how a book itself says "this is a figure"); without one, a
+ * cluster has to be large, drawing-dense and nearly text-free, which keeps
+ * out the things that also draw paths: table grids, boxed sidebars, rules,
+ * underlines and text that was outlined to curves.
+ */
+export function pickVectorFigures(
+  clusters: { rect: Rect; paths: number }[],
+  textItems: { str: string; x: number; y: number; w?: number; h?: number }[],
+  pageW: number,
+  pageH: number,
+  ptToPx: number,
+): Rect[] {
+  // A drawing's own lettering — axis ticks, node names, legends — is text,
+  // not paths, and usually sits just outside the path cluster. Short text
+  // runs within a line's height of the cluster are pulled into the crop;
+  // sentences (body text, the caption itself) are not.
+  const reach = 16 * ptToPx;
+  const withLabels = (r: Rect): Rect => {
+    let g = { ...r };
+    for (let pass = 0; pass < 2; pass++) {
+      const before = g;
+      for (const it of textItems) {
+        if (it.str.trim().length > 28 || CAPTION_RE.test(it.str)) continue;
+        const ix0 = it.x, ix1 = it.x + (it.w || 0), iy1 = it.y, iy0 = it.y - (it.h || 0);
+        if (ix1 < before.x0 - reach || ix0 > before.x1 + reach || iy1 < before.y0 - reach || iy0 > before.y1 + reach) continue;
+        g = { x0: Math.min(g.x0, ix0), y0: Math.min(g.y0, iy0), x1: Math.max(g.x1, ix1), y1: Math.max(g.y1, iy1) };
+      }
+    }
+    return g;
+  };
+  const minDim = VECTOR_MIN_DIM_PT * ptToPx;
+  const pageArea = pageW * pageH;
+  const captions = textItems.filter((it) => CAPTION_RE.test(it.str));
+  const out: Rect[] = [];
+  for (const { rect: r, paths } of clusters) {
+    const w = r.x1 - r.x0, h = r.y1 - r.y0;
+    if (w < minDim || h < minDim) continue;
+    if (w * h >= pageArea * VECTOR_BACKGROUND_FRACTION) continue;
+    if (Math.max(w, h) / Math.min(w, h) > MAX_ASPECT) continue;
+    // Captioned: a caption line starting just below (or just above) the
+    // cluster, horizontally within its span.
+    const captioned = captions.some((c) =>
+      c.x >= r.x0 - w * 0.25 && c.x <= r.x1 &&
+      ((c.y >= r.y1 - 2 && c.y <= r.y1 + pageH * 0.08) || (c.y <= r.y0 + 2 && c.y >= r.y0 - pageH * 0.06)));
+    if (captioned && paths >= 3) { out.push(withLabels(r)); continue; }
+    if (paths < VECTOR_UNCAPTIONED_MIN_PATHS || paths > VECTOR_UNCAPTIONED_MAX_PATHS) continue;
+    if (w < VECTOR_UNCAPTIONED_MIN_DIM_PT * ptToPx || h < VECTOR_UNCAPTIONED_MIN_DIM_PT * ptToPx) continue;
+    if (w * h > pageArea * VECTOR_UNCAPTIONED_MAX_PAGE_FRACTION) continue;
+    // A page with no text layer at all gives no way to tell a drawing from
+    // outlined text — leave those to the raster path.
+    if (textItems.length === 0) continue;
+    let inside = 0;
+    for (const it of textItems) {
+      if (it.x >= r.x0 && it.x <= r.x1 && it.y >= r.y0 && it.y <= r.y1) inside += it.str.length;
+    }
+    if (inside > VECTOR_UNCAPTIONED_MAX_TEXT) continue;
+    out.push(withLabels(r));
+  }
+  return out;
 }
 
 /** Union rectangles that overlap or sit within `gap` px of each other. */
@@ -306,7 +478,7 @@ export async function blobToScaledJpegDataUrl(blob: Blob, maxEdge = VLM_MAX_EDGE
   }
 }
 
-interface TextItemPos { str: string; x: number; y: number }
+interface TextItemPos { str: string; x: number; y: number; w?: number; h?: number }
 
 async function getPageTextPositions(
   page: PDFPageProxy,
@@ -318,7 +490,10 @@ async function getPageTextPositions(
       .filter((it) => typeof it.str === "string" && it.str.trim().length > 0)
       .map((it) => {
         const [x, y] = viewport.convertToViewportPoint(it.transform?.[4] ?? 0, it.transform?.[5] ?? 0);
-        return { str: it.str as string, x, y };
+        // Extent in viewport pixels (x,y is the baseline's left end).
+        const [x2] = viewport.convertToViewportPoint((it.transform?.[4] ?? 0) + (Number(it.width) || 0), it.transform?.[5] ?? 0);
+        const [, yTop] = viewport.convertToViewportPoint(it.transform?.[4] ?? 0, (it.transform?.[5] ?? 0) + (Number(it.height) || 0));
+        return { str: it.str as string, x, y, w: Math.abs(x2 - x), h: Math.abs(y - yTop) };
       });
   } catch {
     return [];
@@ -392,7 +567,17 @@ export async function extractFiguresFromPdf(opts: {
         const pageArea = pageW * pageH;
 
         const opList = await page.getOperatorList();
-        const raw = collectImageRects(opList, viewport, ocConfig as any);
+        const collected = collectImageRects(opList, viewport, ocConfig as any);
+        if (collected.images.length === 0 && collected.paths.length < 3) continue;
+        const textItems = await getPageTextPositions(page, viewport);
+        // Vector drawings on this page, as extra rectangles for the merge.
+        const vectorRects = collected.paths.length >= 3
+          ? pickVectorFigures(
+              clusterPathRects(collected.paths, pageW, pageH, VECTOR_CELL_PT * scale),
+              textItems, pageW, pageH, scale,
+            )
+          : [];
+        const raw = [...collected.images, ...vectorRects];
         if (raw.length === 0) continue;
 
         // Clamp to the page, merge slices, then filter noise.
@@ -402,7 +587,6 @@ export async function extractFiguresFromPdf(opts: {
             x1: Math.min(pageW, r.x1), y1: Math.min(pageH, r.y1),
           }))
           .filter((r) => r.x1 - r.x0 > 2 && r.y1 - r.y0 > 2);
-        const textItems = await getPageTextPositions(page, viewport);
         const kept = mergeRects(clamped, MERGE_GAP_PX).filter((r) => {
           const w = r.x1 - r.x0, h = r.y1 - r.y0;
           if (w < MIN_DIM_PX || h < MIN_DIM_PX) return false;
