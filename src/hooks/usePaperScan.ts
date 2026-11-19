@@ -70,7 +70,12 @@ export interface PaperScan {
   useAnyway: (shotId: string) => void;
   retryShot: (shotId: string) => void;
   discardShot: (shotId: string) => void;
-  removePage: (pageId: string) => void;
+  removePages: (pageIds: string[]) => Array<{ page: PaperPage; index: number }>;
+  restorePages: (removed: Array<{ page: PaperPage; index: number }>) => void;
+  markChecked: (pageId: string) => void;
+  /** The page the next photo will replace, if the reader asked for a retake. */
+  retaking: string | null;
+  retake: (pageId: string | null) => void;
   rename: (title: string) => void;
   setTotalPages: (n: number | null) => void;
   setStatus: (status: "open" | "done") => Promise<void>;
@@ -136,6 +141,8 @@ export function usePaperScan(opts: {
   const [shots, setShots] = useState<Shot[]>([]);
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [loadTick, setLoadTick] = useState(0);
+  const [retaking, setRetaking] = useState<string | null>(null);
+  const retakeRef = useRef<string | null>(null);
 
   const bookIdRef = useRef<string | null>(opts.bookId);
   const pagesRef = useRef<PaperPage[]>([]);
@@ -246,7 +253,20 @@ export function usePaperScan(opts: {
       return;
     }
     if (t.bookTitle && isPlaceholderPaperTitle(titleRef.current)) setTitle(t.bookTitle);
-    const placed = placePages(pagesRef.current, t.pages);
+    // A retake asked for by name: the new reading takes that page's place,
+    // whether or not the two carry the same printed number.
+    const target = retakeRef.current;
+    retakeRef.current = null;
+    if (alive.current) setRetaking(null);
+    const at = target ? pagesRef.current.findIndex((p) => p.id === target) : -1;
+    let placed;
+    if (at !== -1) {
+      const next = pagesRef.current.slice();
+      next.splice(at, 1, ...t.pages);
+      placed = { pages: next, replaced: [target!], firstIndex: at };
+    } else {
+      placed = placePages(pagesRef.current, t.pages);
+    }
     setPages(placed.pages);
     dropShot(shotId);
     cb.current.onEvent?.({
@@ -414,12 +434,38 @@ export function usePaperScan(opts: {
     setBatch({ total: 0, done: 0 });
   }, []);
 
-  const removePage = useCallback((pageId: string) => {
-    const next = pagesRef.current.filter((p) => p.id !== pageId);
-    if (next.length === pagesRef.current.length) return;
+  /** Take pages out. Resolves to what was removed and where, for an Undo. */
+  const removePages = useCallback((pageIds: string[]): Array<{ page: PaperPage; index: number }> => {
+    const gone = new Set(pageIds);
+    const removed = pagesRef.current.map((page, index) => ({ page, index })).filter((x) => gone.has(x.page.id));
+    if (removed.length === 0) return [];
+    setPages(pagesRef.current.filter((p) => !gone.has(p.id)));
+    if (retakeRef.current && gone.has(retakeRef.current)) { retakeRef.current = null; setRetaking(null); }
+    void persist().catch(() => undefined);
+    return removed;
+  }, [persist]);
+
+  /** Put removed pages back where they were (Undo). */
+  const restorePages = useCallback((removed: Array<{ page: PaperPage; index: number }>) => {
+    const next = pagesRef.current.slice();
+    for (const { page, index } of removed.slice().sort((a, b) => a.index - b.index)) {
+      if (!next.some((p) => p.id === page.id)) next.splice(Math.min(index, next.length), 0, page);
+    }
     setPages(next);
     void persist().catch(() => undefined);
   }, [persist]);
+
+  /** The reader looked at a doubted page and it is fine. */
+  const markChecked = useCallback((pageId: string) => {
+    setPages(pagesRef.current.map((p) => (p.id === pageId ? { ...p, checked: true } : p)));
+    void persist().catch(() => undefined);
+  }, [persist]);
+
+  /** The next photo read replaces this page (null = never mind). */
+  const retake = useCallback((pageId: string | null) => {
+    retakeRef.current = pageId;
+    setRetaking(pageId);
+  }, []);
 
   const rename = useCallback((next: string) => {
     const t = next.trim().slice(0, 160);
@@ -449,7 +495,11 @@ export function usePaperScan(opts: {
     useAnyway: read,
     retryShot: read,
     discardShot,
-    removePage,
+    removePages,
+    restorePages,
+    markChecked,
+    retaking,
+    retake,
     rename,
     setTotalPages,
     setStatus,

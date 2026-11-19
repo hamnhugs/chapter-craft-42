@@ -86,7 +86,7 @@ for (const [size, [w, h, touch]] of Object.entries(SIZES)) {
   // 7. Unreadable: nothing to retry with, only Retake.
   await page.evaluate(() => { window.__paperLab.next = "unreadable"; });
   await give(photo); await page.waitForSelector('.cc-paper-shot[data-tone="warn"]');
-  check(size, "unreadable offers Retake, not Try again", await page.getByRole("button", { name: "Try again" }).count() === 0 && await page.getByRole("button", { name: "Retake" }).count() === 1);
+  check(size, "unreadable offers Retake, not Try again", await page.locator(".cc-paper-shot").getByRole("button", { name: "Try again" }).count() === 0 && await page.locator(".cc-paper-shot").getByRole("button", { name: "Retake" }).count() === 1);
   await page.getByRole("button", { name: "Dismiss" }).click();
   // 8. Cover names the book.
   await page.evaluate(() => { window.__paperLab.next = "cover"; });

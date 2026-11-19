@@ -17,6 +17,8 @@ from any device.
 | Ask | Takes the book so far to Counsel with a draft "About p. 47 of “Title”: ". Counsel gets a **Snap the next page** strip above the composer, so pages can be added without leaving the chat. |
 | Library | A pinned **Unfinished** tab (only there when something is unfinished). The card has a stitched frame, loose sheets behind it, an "Unfinished" ribbon, a camera badge and "12 pages · last p. 57". Its menu says **Keep scanning**. |
 | Many at once | **Upload** beside Snap (and "Upload several photos at once" on the start screen) takes any number of photos. They wait in a queue, three are read at a time, and one row shows "Reading page 4 of 12…" with **Cancel the rest**. Pages are filed in the order the photos were taken, whichever read finishes first. |
+| Delete | A bin in the page bar deletes the page on screen, with **Undo**. Tapping the page label opens a **Pages** list: jump to any page, delete any page, or delete all flagged pages at once. |
+| Spotting bad pages | A page that probably did not come in well gets a banner saying why, with **Retake · Delete · It is fine**. A flag chip in the page bar counts them and jumps to the next. Retake makes the next photo take that page's place. Reading aloud steps over flagged pages. |
 | Resume | Opening an unfinished book lands on its last page. The start screen lists other unfinished books under "Pick up where you left off". |
 | Finish | Book options → **Finish this book**: it leaves Unfinished and opens in the normal reader (Contents lists every page, highlights and Listen work). More → **Add more pages** reopens it. |
 
@@ -111,6 +113,21 @@ answer from the provider is waited out (4 s, 10 s, 20 s) before the reader is
 told anything. A photo that fails the blur check steps out of the line and
 waits for "Use anyway" or "Retake"; the rest go on.
 
+**Spotting bad pages without a second model call.** `pageDoubts` in
+`paperBook.ts` is local and free. It reports: the transcriber's own verdict
+(a `legibility` field the prompt now asks for), three or more `[unclear]`
+gaps, almost no text, text that is not words, letters spaced out one by one,
+the same words looping, and the same page scanned twice. A second model was
+not asked to judge the first: LLM correction passes over-correct clean text
+(arXiv 2607.08143), and it would double the cost of every page. Every
+threshold leans towards silence, because a false alarm on a good page teaches
+the reader to ignore the mark; tests pin that ordinary prose, dialogue,
+numbers, French, Russian and Chinese are not flagged. "It is fine" is stored
+with the page. The thresholds are untuned against real bad scans.
+
+**Delete with Undo, no confirmation.** Undoing is faster than confirming and
+also covers the slip. The page's chapter row goes and comes back with it.
+
 **Order.** Capture order, except: the same printed number again is a retake
 and replaces in place; a lower number than one already in the book is filed
 before it. Small skipped runs are mentioned ("Not scanned: p. 43–44").
@@ -142,8 +159,8 @@ country.
 ## Checked
 
 - `npx tsc -p tsconfig.app.json --noEmit` clean; `npx vite build` builds.
-- `npx vitest run`: 123 files, 2,750 tests pass. `src/test/paperBook.test.ts`
-  (35) covers ordering, retakes, the HTML round trip, chapter planning, speech
+- `npx vitest run`: 123 files, 2,758 tests pass. `src/test/paperBook.test.ts`
+  (43) covers ordering, retakes, the HTML round trip, chapter planning, speech
   across the page turn, the parser, the model pick, the photo checks and the
   no-storage guards.
 - `node docs/paper-books/shoot.mjs` drives the real desk through the lab
@@ -161,6 +178,10 @@ country.
   progress row, never more than three reads in flight, twelve pages in the
   order given although the reads finish out of order, and "Cancel the rest"
   keeps what is in. Sorting a scrambled pick by time taken is unit-tested.
+- `node docs/paper-books/shoot-pages.mjs`: a rubbish page is flagged with
+  reasons, Retake replaces it in place, delete and Undo restore the same page
+  in the same place, the list marks and bulk-deletes flagged pages, and "It
+  is fine" is remembered (13 checks).
 
 ## Not checked
 
@@ -179,5 +200,6 @@ country.
 - Auto-capture when the page is steady, and edge detection in the live preview.
 - How sharp a preview frame is on an iPhone, where there is no real still to take.
 - Editing a page's text by hand.
+- Deleting pages from a finished book in the reader (reopen it with More → Add more pages).
 - Reordering pages by hand, or scanning from a document feeder PDF.
 - Keeping page photos, by design.

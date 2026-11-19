@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  buildPaperHtml, chaptersForPages, deskText, isUnfinishedPaper, joinAcrossPages, missingRuns,
+  buildPaperHtml, chaptersForPages, deskText, isUnfinishedPaper, joinAcrossPages, missingRuns, needsLook, pageDoubts,
   paperFraction, paperMeta, paperProgressLabel, parsePaperHtml, placePages, planChapterSync, speechFor,
   splitTrailingFragment, type PaperPage,
 } from "@/lib/paperBook";
@@ -12,7 +12,7 @@ import { metaFor } from "@/lib/paperStore";
 
 let seq = 0;
 const page = (printed: string | null, text = "Some words here.", extra: Partial<PaperPage> = {}): PaperPage => ({
-  id: `p${++seq}`, printed, heading: null, text, footnotes: [], figures: [], startsMid: false, endsMid: false, unclear: 0, at: seq, ...extra,
+  id: `p${++seq}`, printed, heading: null, text, footnotes: [], figures: [], startsMid: false, endsMid: false, unclear: 0, flag: null, checked: false, at: seq, ...extra,
 });
 
 describe("placePages", () => {
@@ -66,7 +66,7 @@ describe("the book file", () => {
     expect(parsePaperHtml("")).toEqual([]);
   });
   it("has no field that could hold a photo", () => {
-    expect(Object.keys(page("1")).sort()).toEqual(["at", "endsMid", "figures", "footnotes", "heading", "id", "printed", "startsMid", "text", "unclear"]);
+    expect(Object.keys(page("1")).sort()).toEqual(["at", "checked", "endsMid", "figures", "flag", "footnotes", "heading", "id", "printed", "startsMid", "text", "unclear"]);
   });
 });
 
@@ -267,5 +267,55 @@ describe("orderPhotos", () => {
   it("falls back to the name, counting numbers as numbers", () => {
     const picked = [f("IMG_10.jpg", 5), f("IMG_9.jpg", 5), f("IMG_100.jpg", 5)];
     expect(orderPhotos(picked).map((x) => x.name)).toEqual(["IMG_9.jpg", "IMG_10.jpg", "IMG_100.jpg"]);
+  });
+});
+
+describe("pageDoubts", () => {
+  const prose = "The lighthouse keeper had a rule about weather, which was that he never talked about it before breakfast. He would stand at the gallery rail with his tea and look at the sea as if it owed him money, and say nothing at all.";
+  it("says nothing about an ordinary page", () => {
+    expect(pageDoubts(page("41", prose))).toEqual([]);
+    expect(pageDoubts(page("41", prose, { unclear: 1 }))).toEqual([]);
+    // Numbers, names, short words, dialogue and a title-only page are all fine.
+    expect(pageDoubts(page("7", "In 1947, Dr. J. R. Okafor paid $3.50 for 12 lbs. of No. 9 wire at 221B Baker St. “Oh,” I said. “Is it so?” He did not answer me at all."))).toEqual([]);
+    expect(pageDoubts(page(null, "", { heading: "Part Two" }))).toEqual([]);
+    expect(pageDoubts(page(null, "", { figures: ["A map of the island."] }))).toEqual([]);
+  });
+  it("is not fooled by other languages and scripts", () => {
+    expect(pageDoubts(page("3", "Все счастливые семьи похожи друг на друга, каждая несчастливая семья несчастлива по-своему. Всё смешалось в доме Облонских."))).toEqual([]);
+    expect(pageDoubts(page("3", "Longtemps, je me suis couché de bonne heure. Parfois, à peine ma bougie éteinte, mes yeux se fermaient si vite que je n’avais pas le temps de me dire : « Je m’endors. »"))).toEqual([]);
+    expect(pageDoubts(page("3", "話說天下大勢分久必合合久必分周末七國分爭併入於秦及秦滅之後楚漢分爭又併入於漢漢朝自高祖斬白蛇而起義一統天下後來光武中興傳至獻帝遂分為三國"))).toEqual([]);
+  });
+  it("spots text that is not words", () => {
+    const rubbish = "Th qck brwn fx jmps vr th lzy dg. xq zzt krp wqx bnm tr pl kj hg fd szx cvb nmq wrt ypl kjh gfd szx cvb nm qw rt.";
+    expect(pageDoubts(page(null, rubbish))).toContain("The text does not read like sentences.");
+    // A page of marks and stray characters is flagged too (as nearly empty).
+    expect(pageDoubts(page(null, "|| ~~ ## 4 __ ^^ :: ;; %% && ** ++ == << >> ?? !! @@ $$ 1 2 3 x")).length).toBeGreaterThan(0);
+  });
+  it("spots letters spaced out, a loop, a near-empty page and too many gaps", () => {
+    expect(pageDoubts(page(null, "T h e k e e p e r h a d a r u l e a b o u t w e a t h e r t h a t h e n e v e r t a l k e d"))).toContain("The words came out broken into single letters.");
+    expect(pageDoubts(page(null, Array(40).fill("the rule the lamp").join(" ")))).toContain("The same words repeat over and over.");
+    expect(pageDoubts(page("9", "Chapter"))).toEqual(["Very little text was found on it."]);
+    expect(pageDoubts(page("9", prose, { unclear: 4 }))).toEqual(["4 spots could not be read."]);
+  });
+  it("passes on what the transcriber itself said", () => {
+    expect(pageDoubts(page("9", prose, { flag: "poor" }))[0]).toBe("Most of this page could not be read from the photo.");
+    expect(pageDoubts(page("9", prose, { flag: "partial" }))).toEqual(["Part of this page could not be read from the photo."]);
+  });
+  it("spots the same page scanned twice, by its words, not its spacing", () => {
+    const a = page(null, prose), b = page(null, prose.replace(/ /g, "  ").toUpperCase()), c = page(null, prose + " And then some more.");
+    expect(pageDoubts(b, [a, b, c])).toEqual(["It is the same as Scan 1."]);
+    expect(pageDoubts(c, [a, b, c])).toEqual([]);
+  });
+  it("goes quiet once the reader says the page is fine, and survives the file", () => {
+    const p = page("9", prose, { flag: "poor", checked: true });
+    expect(needsLook(p)).toBe(false);
+    expect(needsLook({ ...p, checked: false })).toBe(true);
+    expect(parsePaperHtml(buildPaperHtml("T", [p]))[0]).toMatchObject({ flag: "poor", checked: true });
+  });
+  it("reads the transcriber's legibility into the page", () => {
+    const t = parseTranscription(JSON.stringify({ kind: "page", pages: [{ body: prose, legibility: "poor" }] }));
+    expect(t.pages[0]).toMatchObject({ flag: "poor", checked: false });
+    expect(parseTranscription(JSON.stringify({ kind: "page", pages: [{ body: prose, legibility: "nonsense" }] })).pages[0].flag).toBeNull();
+    expect(TRANSCRIBE_SYSTEM).toMatch(/legibility/);
   });
 });

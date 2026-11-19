@@ -23,13 +23,13 @@ import { paperSession } from "@/lib/paperSession";
  *                              second unfinished book and a finished one
  *   &tab=Library               land on the Library instead
  *
- * `window.__paperLab.next = "cover" | "spread" | "unreadable" | "offline"`
+ * `window.__paperLab.next = "cover" | "spread" | "unreadable" | "offline" | "garbled"`
  * makes the NEXT photo come back as that instead of a page.
  */
 
 const P = (n: number, text: string, extra: Partial<PaperPage> = {}): PaperPage => ({
   id: newPageId(), printed: String(n), heading: null, text, footnotes: [], figures: [],
-  startsMid: false, endsMid: false, unclear: 0, at: Date.now() + n, ...extra,
+  startsMid: false, endsMid: false, unclear: 0, flag: null, checked: false, at: Date.now() + n, ...extra,
 });
 
 const FIXTURE: PaperPage[] = [
@@ -41,7 +41,7 @@ const FIXTURE: PaperPage[] = [
 ];
 
 declare global {
-  interface Window { __paperLab?: { next?: "cover" | "spread" | "unreadable" | "offline"; given: number; started?: number; flying?: number; peak?: number; plain?: boolean } }
+  interface Window { __paperLab?: { next?: "cover" | "spread" | "unreadable" | "offline" | "garbled"; given: number; started?: number; flying?: number; peak?: number; plain?: boolean } }
 }
 
 function labBook(id: string, title: string, pages: PaperPage[], status: "open" | "done", ago: number): { book: BookDocument; html: string } {
@@ -114,6 +114,11 @@ const PaperLab: React.FC<{ resume: boolean }> = ({ resume }) => {
       if (forced === "offline") {
         const { TranscribeError } = await import("@/lib/pageTranscribe");
         throw new TranscribeError("No connection. The page is kept here until you try again.", "network");
+      }
+      // A photo that "worked" but came back as rubbish: for the sense check.
+      if (forced === "garbled") {
+        lab.given += 1;
+        return { ...base, pages: [{ ...FIXTURE[0], id: newPageId(), at: Date.now(), printed: null, heading: null, flag: "poor", text: "Th qck brwn fx jmps vr th lzy dg. xq zzt krp wqx bnm tr pl kj hg fd szx cvb nmq wrt ypl kjh gfd szx cvb nm qw rt." }] };
       }
       if (forced === "unreadable") return { ...base, kind: "other", problem: "blurry" };
       if (forced === "cover") return { ...base, kind: "cover", bookTitle: "The Keeper's Rules", author: "A. N. Author" };
