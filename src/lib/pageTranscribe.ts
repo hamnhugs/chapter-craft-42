@@ -62,13 +62,14 @@ export const TRANSCRIBE_SYSTEM = [
   "Ignore anything that is not the book: fingers, the table, a facing page that is only partly visible.",
   "",
   "Return STRICT JSON only, no prose and no code fence:",
-  '{"kind":"page"|"spread"|"cover"|"other","book_title":string|null,"author":string|null,"problem":null|"blurry"|"cut_off"|"dark"|"glare"|"no_text","pages":[{"page_number":string|null,"chapter_title":string|null,"body":string,"footnotes":[string],"figures":[string],"starts_mid_sentence":boolean,"ends_mid_sentence":boolean}]}',
+  '{"kind":"page"|"spread"|"cover"|"other","book_title":string|null,"author":string|null,"problem":null|"blurry"|"cut_off"|"dark"|"glare"|"no_text","pages":[{"page_number":string|null,"chapter_title":string|null,"body":string,"footnotes":[string],"figures":[string],"starts_mid_sentence":boolean,"ends_mid_sentence":boolean,"legibility":"clear"|"partial"|"poor"}]}',
   "- kind: \"page\" = one page; \"spread\" = two full facing pages (return two entries in `pages`, left page first); \"cover\" = the front cover or title page (`pages` is empty; fill book_title and author); \"other\" = not a book.",
   "- book_title / author: only when printed in the photo (cover, title page, or a running header that is clearly the book's title). Otherwise null.",
   "- page_number: exactly as printed (\"47\", \"xii\"), or null if none is visible.",
   "- chapter_title: only when a chapter or section title STARTS on this page; then leave that title out of body.",
   "- starts_mid_sentence: true when the body's first words continue a sentence from the previous page.",
   "- ends_mid_sentence: true when the body's last sentence is not finished on this page.",
+  "- legibility: \"clear\" when you could read the whole page; \"partial\" when a noticeable part is missing or marked [unclear]; \"poor\" when most of the page could not be read, or what you could read does not form coherent sentences. Be honest: this is how the reader finds pages to photograph again.",
   "- problem: set it only when most of the text cannot be read; still return whatever you could read.",
 ].join("\n");
 
@@ -121,6 +122,8 @@ export function parseTranscription(raw: string, now = Date.now()): Transcription
       startsMid: r.starts_mid_sentence === true,
       endsMid: r.ends_mid_sentence === true,
       unclear: (text.match(/\[unclear\]/gi) || []).length,
+      flag: r.legibility === "poor" ? "poor" : r.legibility === "partial" ? "partial" : null,
+      checked: false,
       at: now + pages.length,
     });
   }

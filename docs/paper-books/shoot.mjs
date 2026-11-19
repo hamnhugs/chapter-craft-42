@@ -86,7 +86,7 @@ for (const [size, [w, h, touch]] of Object.entries(SIZES)) {
   // 7. Unreadable: nothing to retry with, only Retake.
   await page.evaluate(() => { window.__paperLab.next = "unreadable"; });
   await give(photo); await page.waitForSelector('.cc-paper-shot[data-tone="warn"]');
-  check(size, "unreadable offers Retake, not Try again", await page.getByRole("button", { name: "Try again" }).count() === 0 && await page.getByRole("button", { name: "Retake" }).count() === 1);
+  check(size, "unreadable offers Retake, not Try again", await page.locator(".cc-paper-shot").getByRole("button", { name: "Try again" }).count() === 0 && await page.locator(".cc-paper-shot").getByRole("button", { name: "Retake" }).count() === 1);
   await page.getByRole("button", { name: "Dismiss" }).click();
   // 8. Cover names the book.
   await page.evaluate(() => { window.__paperLab.next = "cover"; });
@@ -124,7 +124,7 @@ for (const [size, [w, h, touch]] of Object.entries(SIZES)) {
   await page.waitForSelector(".cc-paper-chip");
   await shot("11-counsel-chip");
   check(size, "Counsel has the shutter", (await page.locator(".cc-paper-chip").innerText()).includes("Snap the next page"));
-  check(size, "draft names the page", (await page.locator("textarea").first().inputValue()).includes("About p."));
+  check(size, "Ask does not pin the page on screen", !(await page.locator("textarea").first().inputValue()).includes("About"));
   // 13. Finish: it becomes an ordinary book in the reader.
   await dock("Read");
   await page.getByRole("button", { name: "Book options" }).click();

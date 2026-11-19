@@ -5,9 +5,10 @@ import { useChatSettings } from "@/hooks/useChatSettings";
 import { useWakeLock } from "@/hooks/useWakeLock";
 import { usePaperScan, type ScanEvent, type Shot } from "@/hooks/usePaperScan";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
-  deskText, isPlaceholderPaperTitle, isUnfinishedPaper, missingRuns, pageLabel, paperMeta, paperProgressLabel,
+  deskText, isPlaceholderPaperTitle, isUnfinishedPaper, missingRuns, needsLook, pageDoubts, pageLabel, paperMeta, paperProgressLabel,
   speechFor, type PaperPage,
 } from "@/lib/paperBook";
 import { PROBLEM_COPY } from "@/lib/pagePhoto";
@@ -119,10 +120,13 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
   // toasts rise from the bottom of the screen, which here is the shutter.
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimer = useRef(0);
-  const say = useCallback((message: string) => {
+  const [noticeAction, setNoticeAction] = useState<{ label: string; run: () => void } | null>(null);
+  const say = useCallback((message: string, action?: { label: string; run: () => void }) => {
     setNotice(message);
+    setNoticeAction(action ?? null);
     window.clearTimeout(noticeTimer.current);
-    noticeTimer.current = window.setTimeout(() => setNotice(null), 5000);
+    // An Undo gets longer on screen than a plain message.
+    noticeTimer.current = window.setTimeout(() => { setNotice(null); setNoticeAction(null); }, action ? 9000 : 5000);
   }, []);
   useEffect(() => () => window.clearTimeout(noticeTimer.current), []);
   /** A line shown over the live camera for a moment ("p. 47 added"). */
@@ -292,8 +296,16 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
       setSpeakingIndex(null);
       return;
     }
-    const next = cur.index + 1;
-    if (next < pagesRef.current.length) { playPageRef.current(next, undefined, cur.held); return; }
+    // Reading on by itself, a page that did not come in well is stepped over:
+    // nobody wants rubbish read aloud. (Tapping Listen ON such a page still
+    // reads it — that is the reader asking.)
+    const list = pagesRef.current;
+    let next = cur.index + 1;
+    const skipped: string[] = [];
+    while (next < list.length && needsLook(list[next], list)) { skipped.push(pageLabel(list[next], next)); next++; }
+    if (skipped.length > 0) sayRef.current(`Skipped ${skipped.join(", ")}: ${skipped.length === 1 ? "it needs" : "they need"} a look.`);
+    // A sentence cannot be carried across a page that was left out.
+    if (next < list.length) { playPageRef.current(next, undefined, skipped.length ? "" : cur.held); return; }
     // Out of pages: hold the unfinished sentence for the page still to come.
     setSpeakingIndex(null);
     setWaitingAt(cur.index);
@@ -358,13 +370,10 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
     if (!scan.bookId || !page) return;
     setNudge(false);
     playerRef.current?.pause();
-    let hasDraft = false;
-    try { hasDraft = !!(sessionStorage.getItem("counsel_draft") || "").trim(); } catch { /* no storage */ }
-    if (!hasDraft) {
-      const text = `About ${pageLabel(page, view)} of “${scan.title}”: `;
-      try { sessionStorage.setItem("counsel_draft", text); } catch { /* the event still lands */ }
-      window.dispatchEvent(new CustomEvent("chat-composer-insert", { detail: { text } }));
-    }
+    // No draft that names the page on screen. An earlier version opened the
+    // chat with "About p. 47 of …:", and Counsel then answered every
+    // question — including "what has happened so far?" — from that one page.
+    // Ask is about the BOOK; a reader who means one page can say so.
     void loadFocus({ kind: "books", bookIds: [scan.bookId], neurons: { kind: "keep" } });
   };
 
@@ -408,12 +417,30 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
     setDetails(false);
   };
 
-  const removeCurrent = () => {
-    if (!page) return;
+  /** Delete pages, with an Undo. Nothing asks "are you sure": undoing is
+   *  faster than confirming, and it is there for the slip as well. */
+  const deletePages = (ids: string[]) => {
+    if (ids.length === 0) return;
     if (speakingIndex !== null) stopListening();
-    scan.removePage(page.id);
-    say(`Removed ${pageLabel(page, view)}`);
+    const labels = pages.map((p, i) => (ids.includes(p.id) ? pageLabel(p, i) : null)).filter(Boolean);
+    const removed = scan.removePages(ids);
+    if (removed.length === 0) return;
+    say(removed.length === 1 ? `Deleted ${labels[0]}` : `Deleted ${removed.length} pages`, { label: "Undo", run: () => scan.restorePages(removed) });
   };
+  const removeCurrent = () => { if (page) deletePages([page.id]); };
+
+  // ── Pages that did not come in well ─────────────────────────────────────
+  const doubts = useMemo(() => new Map(pages.map((p) => [p.id, p.checked ? [] : pageDoubts(p, pages)])), [pages]);
+  const flagged = useMemo(() => pages.filter((p) => (doubts.get(p.id)?.length ?? 0) > 0), [pages, doubts]);
+  const pageDoubt = page ? doubts.get(page.id) ?? [] : [];
+  const nextFlagged = () => {
+    if (flagged.length === 0) return;
+    const after = pages.findIndex((p, i) => i > view && (doubts.get(p.id)?.length ?? 0) > 0);
+    setView(after !== -1 ? after : pages.findIndex((p) => p.id === flagged[0].id));
+  };
+  const retakePage = (id: string) => { scan.retake(id); snap(); };
+  const retakeTarget = scan.retaking ? pages.findIndex((p) => p.id === scan.retaking) : -1;
+  const [listOpen, setListOpen] = useState(false);
 
   const [dragOver, setDragOver] = useState(false);
   const onDrop = (e: React.DragEvent) => {
@@ -527,7 +554,7 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
               </DropdownMenuItem>
               {page && (
                 <DropdownMenuItem onSelect={removeCurrent}>
-                  <span className="material-symbols-outlined text-base mr-2" aria-hidden>delete</span> Remove {pageLabel(page, view)}
+                  <span className="material-symbols-outlined text-base mr-2" aria-hidden>delete</span> Delete {pageLabel(page, view)}
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />
@@ -614,12 +641,25 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
             <button type="button" className="cc-paper-icon" disabled={view === 0} onClick={() => setView(view - 1)} aria-label="Previous page">
               <span className="material-symbols-outlined" aria-hidden>chevron_left</span>
             </button>
-            <span className="text-sm font-bold text-foreground tabular-nums" aria-live="polite">
-              {page ? pageLabel(page, view) : ""}
-              <span className="font-normal text-on-surface-variant"> · {view + 1} of {pages.length}</span>
-            </span>
+            <button type="button" className="cc-paper-pages" onClick={() => setListOpen(true)} aria-label={`All pages. Showing ${page ? pageLabel(page, view) : ""}, ${view + 1} of ${pages.length}`} title="All pages">
+              <span className="text-sm font-bold text-foreground tabular-nums">
+                {page ? pageLabel(page, view) : ""}
+                <span className="font-normal text-on-surface-variant"> · {view + 1} of {pages.length}</span>
+              </span>
+              <span className="material-symbols-outlined text-on-surface-variant" aria-hidden>expand_more</span>
+            </button>
             <button type="button" className="cc-paper-icon" disabled={view >= pages.length - 1} onClick={() => setView(view + 1)} aria-label="Next page">
               <span className="material-symbols-outlined" aria-hidden>chevron_right</span>
+            </button>
+            <span className="flex-1" />
+            {flagged.length > 0 && (
+              <button type="button" className="cc-paper-flagchip" onClick={nextFlagged} title="Go to the next page that needs a look">
+                <span className="material-symbols-outlined" aria-hidden>flag</span>
+                {flagged.length}<span className="sr-only sm:not-sr-only"> to check</span>
+              </button>
+            )}
+            <button type="button" className="cc-paper-icon" onClick={removeCurrent} disabled={!page} aria-label="Delete this page" title="Delete this page">
+              <span className="material-symbols-outlined" aria-hidden>delete</span>
             </button>
           </div>
 
@@ -635,13 +675,31 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
           >
             {page && (
               <article className="cc-paper-sheet" key={page.id}>
+                {pageDoubt.length > 0 && (
+                  <div className="cc-paper-doubt" role="alert">
+                    <p className="cc-paper-doubt-title">
+                      <span className="material-symbols-outlined" aria-hidden>flag</span>
+                      This page may not have come in well
+                    </p>
+                    <ul>{pageDoubt.map((d) => <li key={d}>{d}</li>)}</ul>
+                    <div className="cc-paper-doubt-actions">
+                      <button type="button" className="cc-btn3d !py-1.5 !px-3 text-sm" data-tone="accent" onClick={() => retakePage(page.id)}>
+                        <span className="material-symbols-outlined" aria-hidden>{touch ? "photo_camera" : "add_photo_alternate"}</span> Retake
+                      </button>
+                      <button type="button" className="cc-btn3d !py-1.5 !px-3 text-sm" data-tone="quiet" onClick={removeCurrent}>
+                        <span className="material-symbols-outlined" aria-hidden>delete</span> Delete
+                      </button>
+                      <button type="button" className="cc-paper-link" onClick={() => scan.markChecked(page.id)}>It is fine</button>
+                    </div>
+                  </div>
+                )}
                 {page.startsMid && view === 0 && <p className="cc-paper-note">This page starts mid-sentence. The page before it is not scanned.</p>}
                 <PageText page={page} />
                 {page.figures.map((f, i) => <aside key={`f${i}`} className="cc-paper-aside"><span className="material-symbols-outlined" aria-hidden>image</span>{f}</aside>)}
                 {page.footnotes.map((f, i) => <aside key={`n${i}`} className="cc-paper-aside"><span className="material-symbols-outlined" aria-hidden>notes</span>{f}</aside>)}
-                {page.unclear > 0 && (
+                {pageDoubt.length === 0 && page.unclear > 0 && !page.checked && (
                   <p className="cc-paper-note" data-tone="warn">
-                    {page.unclear} spot{page.unclear === 1 ? "" : "s"} could not be read. Snap this page again to replace it.
+                    {page.unclear} spot{page.unclear === 1 ? "" : "s"} could not be read. Retake this page to replace it.
                   </p>
                 )}
                 {view === pages.length - 1 && gaps.length > 0 && (
@@ -662,9 +720,21 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
             </div>
           )}
 
+          {retakeTarget !== -1 && (
+            <div className="cc-paper-turn" data-quiet role="status">
+              <span>The next photo replaces {pageLabel(pages[retakeTarget], retakeTarget)}.</span>
+              <button type="button" className="cc-paper-undo" onClick={() => scan.retake(null)}>Cancel</button>
+            </div>
+          )}
+
           {notice ? (
-            <div className="cc-paper-turn" data-quiet role="status">{notice}</div>
-          ) : nudge && waitingAt === null && scan.busy === 0 && (
+            <div className="cc-paper-turn" data-quiet role="status">
+              <span>{notice}</span>
+              {noticeAction && (
+                <button type="button" className="cc-paper-undo" onClick={() => { noticeAction.run(); setNotice(null); setNoticeAction(null); }}>{noticeAction.label}</button>
+              )}
+            </div>
+          ) : nudge && pageDoubt.length === 0 && waitingAt === null && scan.busy === 0 && (
             <div className="cc-paper-turn" role="status">
               <span className="material-symbols-outlined" aria-hidden>check_circle</span>
               {page ? `${pageLabel(page, view)} is in.` : "Page added."} Listen to it, or ask Counsel about it.
@@ -712,6 +782,41 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
       />
 
       {dragOver && <div className="cc-paper-drop" aria-hidden>Drop page photos here</div>}
+
+      <Sheet open={listOpen} onOpenChange={setListOpen}>
+        <SheetContent side="bottom" className="cc-paper-list max-h-[80vh] flex flex-col gap-3">
+          <SheetTitle>Pages</SheetTitle>
+          <SheetDescription>
+            {flagged.length > 0
+              ? `${flagged.length} of ${pages.length} may not have come in well. Tap a page to see it.`
+              : `${pages.length} page${pages.length === 1 ? "" : "s"}. Tap one to see it.`}
+          </SheetDescription>
+          {flagged.length > 1 && (
+            <button type="button" className="cc-btn3d self-start !py-1.5 !px-3 text-sm" data-tone="quiet" onClick={() => { setListOpen(false); deletePages(flagged.map((p) => p.id)); }}>
+              <span className="material-symbols-outlined" aria-hidden>delete_sweep</span> Delete the {flagged.length} flagged pages
+            </button>
+          )}
+          <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain -mx-2">
+            {pages.map((p, i) => {
+              const why = doubts.get(p.id) ?? [];
+              return (
+                <li key={p.id} className="cc-paper-row" aria-current={i === view || undefined}>
+                  <button type="button" className="cc-paper-row-main" onClick={() => { setView(i); setListOpen(false); }}>
+                    <span className="cc-paper-row-label">
+                      {why.length > 0 && <span className="material-symbols-outlined" aria-label="Needs a look">flag</span>}
+                      {pageLabel(p, i)}
+                    </span>
+                    <span className="cc-paper-row-text">{why[0] ?? (p.heading || p.text.slice(0, 90) || p.figures[0] || "No text")}</span>
+                  </button>
+                  <button type="button" className="cc-paper-icon" onClick={() => deletePages([p.id])} aria-label={`Delete ${pageLabel(p, i)}`}>
+                    <span className="material-symbols-outlined" aria-hidden>delete</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </SheetContent>
+      </Sheet>
 
       <Dialog open={details} onOpenChange={setDetails}>
         <DialogContent className="max-w-sm">

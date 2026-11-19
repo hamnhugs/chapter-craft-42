@@ -48,6 +48,11 @@ export interface PaperPage {
   endsMid: boolean;
   /** How many spots the transcriber could not read (marked "[unclear]"). */
   unclear: number;
+  /** The transcriber's own doubt about this page ("poor" = most of it could
+   *  not be read or did not form sentences), or null. */
+  flag: "partial" | "poor" | null;
+  /** The reader looked at a doubted page and said it is fine. */
+  checked: boolean;
   /** When it was scanned (epoch ms). */
   at: number;
 }
@@ -175,6 +180,73 @@ export function missingRuns(pages: readonly PaperPage[], maxHole = 6): Array<[nu
 export const pageLabel = (page: PaperPage, index: number): string =>
   page.printed ? `p. ${page.printed}` : `Scan ${index + 1}`;
 
+// ── Pages that make no sense ────────────────────────────────────────────────
+
+const wordsOf = (text: string): string[] =>
+  text.replace(/\[unclear\]/gi, " ").split(/\s+/).map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "")).filter(Boolean);
+
+/** Letters and digits only, lower-cased: two readings of the same page come
+ *  out equal however their spacing and punctuation differ. */
+const squash = (text: string): string => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+
+/**
+ * Why a page probably did not come in well — in the reader's words, most
+ * serious first; empty when nothing looks wrong.
+ *
+ * Deliberately cheap and local: no second model call (a model asked to judge
+ * a transcription is the same kind of model that made it, and over-correction
+ * of clean text is a measured failure). These are the things a person
+ * flipping through would spot at a glance:
+ *
+ *   - the transcriber itself said it could not read most of the page;
+ *   - several "[unclear]" gaps;
+ *   - almost no text at all;
+ *   - text that is not words (a photo of a table top, a cover, a hand);
+ *   - the same words over and over (a model stuck in a loop);
+ *   - the very same page twice.
+ *
+ * Every threshold errs towards silence. A false alarm on a good page teaches
+ * the reader to ignore the mark; a missed bad page is still one tap to delete.
+ */
+export function pageDoubts(page: PaperPage, all: readonly PaperPage[] = []): string[] {
+  const out: string[] = [];
+  const words = wordsOf(page.text);
+  const picturesOnly = words.length === 0 && page.figures.length > 0;
+  if (page.flag === "poor") out.push("Most of this page could not be read from the photo.");
+  if (page.unclear >= 3) out.push(`${page.unclear} spots could not be read.`);
+  else if (page.flag === "partial" && page.unclear === 0) out.push("Part of this page could not be read from the photo.");
+  // Counted in letters as well as words: a page of Chinese is one "word" to a
+  // whitespace split and is not short.
+  const letters = (page.text.match(/\p{L}/gu) || []).length;
+  if (!picturesOnly && words.length < 12 && letters < 60 && !page.heading) out.push("Very little text was found on it.");
+  if (words.length >= 12) {
+    // "Wordlike": letters only, a sane length, and (for Latin script) a vowel.
+    const latin = words.filter((w) => /^[\p{Script=Latin}'’-]+$/u.test(w));
+    const mostlyLatin = latin.length >= words.length * 0.6;
+    const wordlike = words.filter((w) =>
+      /^[\p{L}'’-]+$/u.test(w) && w.length <= 24 && (!mostlyLatin || w.length === 1 || /[aeiouyáéíóúàèìòùâêîôûäëïöüæœ]/i.test(w)),
+    ).length;
+    const numeric = words.filter((w) => /^[\p{N}.,:/%-]+$/u.test(w)).length;
+    if ((wordlike + numeric * 0.5) / words.length < 0.6) out.push("The text does not read like sentences.");
+    const single = words.filter((w) => w.length === 1 && !/^[aAiIoO\d]$/.test(w)).length;
+    if (mostlyLatin && single / words.length > 0.3) out.push("The words came out broken into single letters.");
+  }
+  if (words.length >= 60) {
+    const distinct = new Set(words.map((w) => w.toLowerCase())).size;
+    if (distinct / words.length < 0.2) out.push("The same words repeat over and over.");
+  }
+  const mine = squash(page.text);
+  if (mine.length >= 80) {
+    const twin = all.findIndex((p) => p.id !== page.id && squash(p.text) === mine);
+    if (twin !== -1) out.push(`It is the same as ${pageLabel(all[twin], twin)}.`);
+  }
+  return out;
+}
+
+/** Does this page want a look? Not once the reader has said it is fine. */
+export const needsLook = (page: PaperPage, all: readonly PaperPage[] = []): boolean =>
+  !page.checked && pageDoubts(page, all).length > 0;
+
 // ── The book file ───────────────────────────────────────────────────────────
 
 const esc = (s: string) =>
@@ -208,6 +280,8 @@ export function buildPaperHtml(title: string, pages: readonly PaperPage[]): stri
       p.startsMid ? "data-starts-mid" : "",
       p.endsMid ? "data-ends-mid" : "",
       p.unclear ? `data-unclear="${p.unclear}"` : "",
+      p.flag ? `data-flag="${p.flag}"` : "",
+      p.checked ? "data-checked" : "",
     ].filter(Boolean).join(" ");
     const parts = [
       p.heading ? `<h2>${esc(p.heading)}</h2>` : "",
@@ -240,6 +314,8 @@ export function parsePaperHtml(html: string): PaperPage[] {
       startsMid: el.hasAttribute("data-starts-mid"),
       endsMid: el.hasAttribute("data-ends-mid"),
       unclear: Number(el.getAttribute("data-unclear")) || 0,
+      flag: el.getAttribute("data-flag") === "poor" ? "poor" : el.getAttribute("data-flag") === "partial" ? "partial" : null,
+      checked: el.hasAttribute("data-checked"),
       at: Number(el.getAttribute("data-at")) || 0,
     });
   });
@@ -281,15 +357,21 @@ export function pageTextForChat(page: PaperPage, index: number): string {
   return parts.join("\n\n");
 }
 
+/** What Counsel is told about a page that did not come in well. In the NAME,
+ *  because a name may change (a chapter's text may not) and the name is what
+ *  heads the page in everything Counsel is sent. */
+export const POOR_SCAN_MARK = "(poor scan, may be wrong)";
+
 /** "p. 41 · Chapter Four" where a title starts, else "p. 42" / "Scan 3". */
-export function chapterName(page: PaperPage, index: number): string {
+export function chapterName(page: PaperPage, index: number, poor = false): string {
   const label = pageLabel(page, index);
-  return (page.heading ? `${label} · ${page.heading.trim()}` : label).slice(0, 140);
+  const name = (page.heading ? `${label} · ${page.heading.trim()}` : label).slice(0, 110);
+  return poor ? `${name} ${POOR_SCAN_MARK}` : name;
 }
 
 export function chaptersForPages(pages: readonly PaperPage[]): PaperChapter[] {
   return pages.map((p, i) => ({
-    id: p.id, name: chapterName(p, i), startPage: i + 1, endPage: i + 1, textContent: pageTextForChat(p, i),
+    id: p.id, name: chapterName(p, i, needsLook(p, pages)), startPage: i + 1, endPage: i + 1, textContent: pageTextForChat(p, i),
   }));
 }
 
