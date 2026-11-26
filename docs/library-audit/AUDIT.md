@@ -144,3 +144,19 @@ it opens the existing "Shelves" list, which is now the one way to change shelf.
 "New shelf" stays beside it. The separate "All shelves" list button was folded
 into the new button. Checked in `#/arena-lab?library` at 956 and 390 wide;
 untested on a real phone.
+
+## The shelf looks like a shelf (2026-11-25)
+
+Each row of books in the open shelf now stands on a plank (`.cc-plank` in
+`src/styles/arena.css`, laid over its grid row from `LibraryDeck.tsx`). Every
+theme makes it from something of its own: Bookworm Studio a glass ledge with a
+neon lip, Aurora ice, Desolate Lab slotted steel racking, Dexter's Lab a bolted
+bench, Fruit Stripe a stick of striped gum, Scriptorium an oak board (darker by
+candle). Empty slots lost their dashed outline so the plank is the one line
+under a row. Checked in `#/arena-lab?library` at 956 and 360 wide in all six
+themes, one row and two; untested on a real phone.
+
+The same day: the notebook button under the shelf's books is gone (the line
+under Ask Counsel names the notebook that goes along instead), and under 640px
+the search box sits on a line of its own above "Add books", which now shows its
+label and fills the row beside "more".

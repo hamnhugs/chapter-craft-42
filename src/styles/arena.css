@@ -439,15 +439,109 @@
   .cc-deck-body { flex-direction: row; align-items: stretch; }
   .cc-deck-go { width: 13rem; flex-shrink: 0; justify-content: center; padding-left: 0.9rem; border-left: 1px solid hsl(var(--outline-variant) / 0.3); }
 }
-/* An empty slot is the same shape as a slotted card. */
+/* ── The shelf itself ─────────────────────────────────────────────────────
+   Each row of books stands on a plank. A plank is laid over its grid row
+   (an absolutely placed grid child takes the row as its box) and hangs just
+   below it, so the books' feet touch it. Every theme makes the plank out of
+   something of its own, further down; each keeps it to a lit top edge, a
+   front face and a shadow, so the books and buttons stay the loudest things. */
+.cc-shelf-rows {
+  position: relative;
+  isolation: isolate;
+  row-gap: 1.7rem;
+  padding-bottom: 1.15rem;
+}
+.cc-plank {
+  position: absolute;
+  z-index: -1;
+  grid-column: 1 / -1;
+  top: calc(100% + 3px);
+  left: -0.6rem;
+  right: -0.3rem;
+  height: 9px;
+  pointer-events: none;
+  border-radius: 2px;
+  background: linear-gradient(180deg, hsl(var(--on-surface-variant) / 0.5) 0 2px, hsl(var(--surface-container-highest)) 2px 100%);
+  box-shadow: 0 6px 10px -4px rgb(0 0 0 / 0.5);
+}
+@media (min-width: 640px) { .cc-plank[data-phone-only] { display: none; } }
+
+/* Bookworm Studio — a glass bar shelf with a neon tube along its lip. */
+[data-theme="bookworm-studio"] .cc-plank {
+  height: 8px;
+  border-radius: 999px 999px 3px 3px;
+  background:
+    linear-gradient(180deg, hsl(var(--accent)) 0 2px, transparent 2px),
+    linear-gradient(180deg, rgb(255 255 255 / 0.12), rgb(255 255 255 / 0.03));
+  box-shadow: 0 0 9px 0 hsl(var(--accent) / 0.4), 0 9px 14px -6px hsl(var(--accent) / 0.3);
+}
+/* Aurora — a ledge of ice with the sky's colours caught in it. */
+[data-theme="aurora"] .cc-plank {
+  height: 9px;
+  border-radius: 3px 3px 5px 5px;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.55) 0 1px, transparent 1px),
+    linear-gradient(90deg, rgb(94 234 212 / 0.4), rgb(125 211 252 / 0.26) 45%, rgb(167 139 250 / 0.36));
+  box-shadow: inset 0 -1px 0 rgb(255 255 255 / 0.1), 0 8px 12px -6px rgb(45 212 191 / 0.3);
+  backdrop-filter: blur(2px);
+}
+/* Desolate Lab — a length of slotted steel racking. */
+[data-theme="desolate-lab"] .cc-plank {
+  height: 10px;
+  border-radius: 0;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 9px, rgb(0 0 0 / 0.6) 9px 15px, transparent 15px 24px) 0 4px / 100% 3px no-repeat,
+    linear-gradient(180deg, #7b8188 0 1px, #474c52 1px 9px, #1b1d20 9px);
+  box-shadow: 0 5px 0 -2px rgb(0 0 0 / 0.45);
+}
+/* Dexter's Lab — a bolted lab bench, drawn like a cartoon. */
+[data-theme="dexters-lab"] .cc-plank {
+  height: 11px;
+  border-radius: 4px;
+  background:
+    radial-gradient(circle at 9px 6.5px, hsl(var(--accent)) 0 2px, transparent 2.6px),
+    radial-gradient(circle at calc(100% - 9px) 6.5px, hsl(var(--accent)) 0 2px, transparent 2.6px),
+    linear-gradient(180deg, #b9a4e6 0 2px, #5b3f96 2px 100%);
+  box-shadow: 0 3px 0 0 #2a1650, 0 10px 12px -8px rgb(0 0 0 / 0.6);
+}
+/* Fruit Stripe — a stick of striped gum. */
+[data-theme="fruit-stripe"] .cc-plank {
+  height: 10px;
+  border-radius: 3px;
+  border: 1.5px solid var(--fs-ink);
+  background:
+    linear-gradient(rgb(251 250 246 / 0.38), rgb(251 250 246 / 0.38)),
+    repeating-linear-gradient(115deg,
+      var(--fs-cherry) 0 22px, var(--fs-orange) 22px 44px, var(--fs-lemon) 44px 66px,
+      var(--fs-lime) 66px 88px, var(--fs-melon) 88px 110px);
+  box-shadow: 2px 2px 0 0 var(--fs-ink);
+}
+/* Scriptorium — an oak board, darker by candle. */
+[data-theme="scriptorium"] .cc-plank {
+  height: 10px;
+  border-radius: 1px;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 46px, rgb(60 32 10 / 0.16) 46px 47px, transparent 47px 113px, rgb(60 32 10 / 0.1) 113px 114px),
+    linear-gradient(180deg, #c99a5c 0 2px, #9a6a35 2px 8px, #6f4720 8px);
+  box-shadow: 0 6px 8px -4px rgb(60 32 10 / 0.5);
+}
+[data-theme="scriptorium"][data-face="night"] .cc-plank {
+  background:
+    repeating-linear-gradient(90deg, transparent 0 46px, rgb(0 0 0 / 0.25) 46px 47px, transparent 47px 113px, rgb(0 0 0 / 0.18) 113px 114px),
+    linear-gradient(180deg, #a87a3c 0 2px, #5e4020 2px 8px, #37240f 8px);
+  box-shadow: 0 6px 10px -4px rgb(0 0 0 / 0.7);
+}
+
+/* An empty slot is the same shape as a slotted card: a bare spot on the
+   shelf, outlined only once you point at it. */
 .cc-slot {
   display: grid;
   place-items: center;
   aspect-ratio: 4 / 6.1;
   border-radius: 0.7rem;
-  border: 2px dashed hsl(var(--outline-variant) / 0.55);
-  color: hsl(var(--on-surface-variant) / 0.7);
-  background: hsl(var(--background) / 0.35);
+  border: 1.5px dashed transparent;
+  color: hsl(var(--on-surface-variant) / 0.55);
+  background: hsl(var(--on-surface-variant) / 0.05);
   transition: border-color 120ms, color 120ms;
 }
 /* Slots past the end of a phone's row of four wait for a wider screen. */
@@ -455,19 +549,6 @@
 @media (min-width: 640px) { .cc-slot[data-wide] { display: grid; } }
 .cc-slot:hover { border-color: hsl(var(--accent) / 0.8); color: hsl(var(--accent)); }
 .cc-slot:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
-.cc-notebook-slot {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  min-height: 48px;
-  padding: 0.4rem 0.65rem;
-  border-radius: 0.8rem;
-  background: hsl(var(--background) / 0.55);
-  box-shadow: inset 0 0 0 1px hsl(var(--outline-variant) / 0.45);
-  transition: box-shadow 120ms;
-}
-.cc-notebook-slot:hover { box-shadow: inset 0 0 0 1.5px hsl(var(--primary) / 0.7); }
-.cc-notebook-slot:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
 
 @media (prefers-reduced-motion: reduce) {
   .cc-card, .cc-btn3d { transition: none; }

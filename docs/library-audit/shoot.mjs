@@ -70,7 +70,6 @@ for (const v of VIEWS) {
   await click(`document.querySelector('[aria-label^="More for shelf"]')`); await snap("7a-shelf-menu"); await esc(); await sleep(300);
   await click(byLabel("New shelf")); await send("Input.insertText", { text: "Physics" }); await snap("7b-new-shelf");
   await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" }); await snap("7c-empty-shelf");
-  await click(`document.querySelector('.cc-notebook-slot')`); await snap("7d-notebook-picker"); await esc(); await sleep(300);
   await click(`document.querySelector('input[type=search]')`); await send("Input.insertText", { text: "the" }); await snap("7e-search");
   await ev(`(() => { const i = document.querySelector('input[type=search]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(i, ''); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   await click(`document.querySelector('[aria-label="More library actions"]')`); await snap("7f-more-menu");
