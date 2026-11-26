@@ -48,6 +48,7 @@ import {
 } from "@/lib/toolFoundry";
 import { runToolSandboxed } from "@/lib/toolSandbox";
 import { FOUNDRY_TOOL_DEFINITIONS, FOUNDRY_TOOL_NAMES, executeFoundryTool } from "@/lib/foundryTools";
+import { CALENDAR_TOOL, CALENDAR_TOOL_DEFINITIONS, executeCalendarTool } from "@/lib/calendarTool";
 import { manifestFor, descriptionMatchesManifest, runConformance, type ConformanceReport } from "@/lib/toolConformance";
 import { TOOLSHED_WIKI_NAME, buildToolCard, withToolshed } from "@/lib/toolshed";
 import {
@@ -2206,6 +2207,9 @@ export const CHAT_TOOL_DEFINITIONS = [
   // their own definitions — being able to READ its own source is what makes
   // repair possible at all, so they live next to the code that serves them.
   ...FOUNDRY_TOOL_DEFINITIONS,
+  // The calendar (Equilibrium, a linked app): one verb, defined beside the
+  // code that makes its API calls.
+  ...CALENDAR_TOOL_DEFINITIONS,
   {
     type: "function",
     function: {
@@ -2619,6 +2623,10 @@ export async function executeChatTool(
       if (k in args) args[k] = resolveNoteRef(args[k]);
     }
   }
+
+  // The calendar lives in another app; its executor owns the "is one linked"
+  // answer and its own branch permission (change_calendar).
+  if (name === CALENDAR_TOOL) return executeCalendarTool(args, await readToolPermissions(deps));
 
   // Tool Foundry inspection verbs. Gated inline rather than through
   // TOOL_PERMISSION, for the same reason forge_tool and run_tool are: the

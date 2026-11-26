@@ -40,6 +40,9 @@ const OPEN: ToolGateInput = {
   programReady: true,
   providerSupportsTools: true,
   imageTurnDisablesTools: false,
+  // "Everything on" includes a linked calendar; calendarTool.test.ts pins
+  // the unlinked case.
+  calendarLinked: true,
 };
 
 const withInput = (patch: Partial<ToolGateInput>): ToolGateInput => ({ ...OPEN, ...patch });

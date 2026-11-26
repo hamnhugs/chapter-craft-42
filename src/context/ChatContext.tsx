@@ -15,6 +15,7 @@ import {
   computeToolGates, availableToolNames, groupWithheld,
   type ToolGate, type ToolGateCode,
 } from "@/lib/toolAvailability";
+import { getLink as getEquilibriumLink, useEquilibriumLinked } from "@/lib/equilibriumLink";
 import { foundryAvailable, countApprovedTools } from "@/lib/toolFoundry";
 import { programsAvailable, resetProgramsAvailability } from "@/lib/programFoundry";
 import { resetProgramEdgeAvailability } from "@/lib/programRunner";
@@ -1197,6 +1198,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         forgeProgramOptIn,
         runProgramOptIn,
         programReady,
+        // Read at send time: the link is per device and can be made mid-chat.
+        calendarLinked: !!getEquilibriumLink(),
         providerSupportsTools,
         imageTurnDisablesTools,
         // Sticky per conversation, never per query — see studioTools.ts.
@@ -2669,6 +2672,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
    *  Reads chatToolPermissions from STATE, not permissionsRef: a ref cannot
    *  re-render, and a chip that stayed stale after a toggle would send the
    *  user back to a switch they had already flipped. */
+  const calendarLinked = useEquilibriumLinked();
   const toolGatesForTurn = useCallback((hasImages: boolean): Map<string, ToolGate> => {
     const model = hasImages && visionModel
       ? visionModel
@@ -2685,6 +2689,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       forgeProgramOptIn,
       runProgramOptIn,
       programReady,
+      calendarLinked,
       // The SAME capability call the send path makes, for the same reason it
       // is a shared function and not two expressions: the chip and the wire
       // must be one computation, or the chip eventually claims a tool was
@@ -2696,7 +2701,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       imageTurnDisablesTools: !!nv && nv.imagesDisableTools === true && hasImages,
       studioActive: studioToolsActive({ mode: studioTools, userId: user?.id ?? null, history: messages }),
     });
-  }, [studioTools, messages, user?.id, visionModel, chatDeepResearch, isPaid, deepResearchModel, selectedModel, leanMode, chatToolPermissions, forgeOptIn, runOptIn, foundryReady, forgeProgramOptIn, runProgramOptIn, programReady]);
+  }, [studioTools, messages, user?.id, visionModel, chatDeepResearch, isPaid, deepResearchModel, selectedModel, leanMode, chatToolPermissions, forgeOptIn, runOptIn, foundryReady, forgeProgramOptIn, runProgramOptIn, programReady, calendarLinked]);
 
   const injectDisplayMessage = useCallback((content: string) => {
     setMessages((prev) => [

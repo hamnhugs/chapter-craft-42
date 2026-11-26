@@ -391,6 +391,7 @@ where it is worked out from how much of the schedule is getting done.
   Equilibrium's `GET /api/v1/health` every five minutes, with a link code the person pastes under
   Settings → Account → Equilibrium (or arrives with, as `#eq=<code>`). The link is kept in this
   browser only. A number older than three days is not shown.
+- The same link gives Chat a `calendar` tool that manages the calendar: see `docs/calendar-agent.md`.
 - Equilibrium draws its worm with these same three files (`wormGeometry.ts`, `wormAnimator.ts`,
   `BookWorm.tsx`), copied unchanged by its `scripts/sync-worm.sh`. Change the worm HERE, run
   `src/test/bookWorm.test.ts`, then run that script, or the two will drift apart.

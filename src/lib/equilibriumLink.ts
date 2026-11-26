@@ -143,3 +143,48 @@ export function takeLinkFromHash(hash: string): boolean {
   if (link) setLink(link);
   return !!link;
 }
+
+const linkedSnapshot = () => !!getLink();
+
+/** Is a calendar linked? The chat offers its calendar tool only when one is. */
+export function useEquilibriumLinked(): boolean {
+  return useSyncExternalStore(subscribe, linkedSnapshot, () => false);
+}
+
+export type EquilibriumAnswer =
+  | { ok: true; status: number; data: unknown }
+  | { ok: false; status: number; error: string };
+
+/**
+ * One call to Equilibrium's API with the linked key: how the chat reads and
+ * changes the calendar. The same rules run there as on Equilibrium's own
+ * screens, so a task marked missed here rolls to recovery exactly as it would
+ * there. Never throws; a failure comes back as a sentence.
+ */
+export async function callEquilibrium(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<EquilibriumAnswer> {
+  const link = getLink();
+  if (!link) return { ok: false, status: 0, error: "No calendar is linked." };
+  let res: Response;
+  try {
+    res = await fetch(`${link.url}/api/v1${path}`, {
+      method,
+      headers: { authorization: `Bearer ${link.key}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  } catch {
+    return { ok: false, status: 0, error: "Could not reach Equilibrium." };
+  }
+  let data: unknown = null;
+  try {
+    data = await res.json();
+  } catch {
+    /* not JSON: handled below */
+  }
+  if (res.status === 401) return { ok: false, status: 401, error: "Equilibrium did not accept the link code. A new one has to be made there and pasted in Settings." };
+  if (!res.ok) {
+    const said = data && typeof data === "object" && typeof (data as { error?: unknown }).error === "string" ? (data as { error: string }).error : "";
+    return { ok: false, status: res.status, error: said || `Equilibrium answered ${res.status}.` };
+  }
+  if (method !== "GET") void refreshHealth();
+  return { ok: true, status: res.status, data };
+}

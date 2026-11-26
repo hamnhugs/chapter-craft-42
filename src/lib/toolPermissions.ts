@@ -99,6 +99,8 @@ export const BRANCH_PERMISSIONS: Record<string, string> = {
   // chain_id branch honours the same switch (an off switch refuses the
   // branch, the load itself still runs).
   switch_wiki: "switch_wiki, and set_loaded_books (notebook branch)",
+  // Looking at the calendar is free; this is every action that changes it.
+  change_calendar: "calendar (every action that adds, changes or deletes)",
 };
 
 /** What the settings screen renders. Ids here MUST appear in TOOL_PERMISSION
@@ -179,6 +181,12 @@ export const PERMISSION_GROUPS: PermGroup[] = [
     group: "Program Foundry",
     items: [
       { id: "delete_program", label: "Delete Foundry programs", description: "Let the AI permanently delete a VPS program it built for you, including its earlier versions. It must ask you first.", danger: true },
+    ],
+  },
+  {
+    group: "Calendar",
+    items: [
+      { id: "change_calendar", label: "Change your calendar", description: "Allow the AI to add, change, move and delete tasks, time blocks and goals in your linked Equilibrium calendar, and to mark tasks started, done or missed. With this off it can still look. Deleting asks you first." },
     ],
   },
   {
