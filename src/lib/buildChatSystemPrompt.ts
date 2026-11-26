@@ -65,6 +65,9 @@ interface BuildOpts {
    *  spine is already there (catalog or text), so the library list does not
    *  repeat the active book's chapter lines — ~1k tokens per 20 chapters. */
   booksInContext?: readonly string[];
+  /** What the user LOADED into this conversation (a shelf or hand-picked
+   *  books), named — see LoadedFocus. Absent when nothing is loaded. */
+  loadedFocus?: LoadedFocus | null;
   /** Reader highlights chosen for this message (highlights.ts
    *  selectTurnHighlights) — rendered in the per-message context. */
   highlights?: TurnHighlights | null;
@@ -411,6 +414,36 @@ export function applyRetrievalBudget(
   return nodes.length === r.nodes.length ? r : { nodes, edges: keepEdges(r.edges, nodes) };
 }
 
+/**
+ * The loaded shelf/books, in the words the prompt needs. The book-context
+ * block carries the books' chapter maps or text, but it calls them
+ * "reference", never names the shelf, and changes silently at the top of the
+ * request when the user loads something else — so a conversation that had
+ * been about one shelf simply carried on about it (the user's report: "I
+ * loaded a new shelf and Counsel ignored it"). This is the part that says,
+ * in the instructions, WHAT the conversation is about now.
+ */
+export interface LoadedFocus {
+  /** The shelf's name; null for hand-picked books. */
+  shelfName: string | null;
+  /** Titles of the books that ride this turn, in block order. */
+  titles: string[];
+  /** Books on the shelf beyond the ones that ride (the 8-book limit). */
+  notLoaded?: number;
+  /** Set only on the first message after the loaded set changed in a
+   *  conversation that already has history: what was loaded before
+   *  ("" = nothing was). Rides in the per-message context, never the
+   *  stable prompt. */
+  replaced?: string | null;
+}
+
+/** One short label for a loaded set — shared by the standing section, the
+ *  switch note and the caller's "what was loaded last time" record. */
+export function loadedFocusLabel(f: Pick<LoadedFocus, "shelfName" | "titles">): string {
+  if (f.shelfName) return `the shelf "${f.shelfName}"`;
+  return f.titles.length === 1 ? `the book "${f.titles[0]}"` : `${f.titles.length} hand-picked books`;
+}
+
 // Section order follows two research findings:
 //  1. Prompt caching: stable content (instructions, tools, deep-research
 //     boilerplate) goes first so the cached prefix survives across turns.
@@ -418,7 +451,7 @@ export function applyRetrievalBudget(
 //     the context best, so the retrieved memories — the most query-specific,
 //     highest-value content — go LAST, right before the conversation.
 export async function buildChatSystemPrompt({
-  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeNeurons = [], plainChat = false, allNeurons, reflex = true, maxReplySentences = 0, foundryTools = false, programTools = false, leanMode = "full", offeredTools, previousAssistantText, booksInContext, highlights, routePrompts = null, memoryContext = "pointers",
+  books, selectedBook, deepResearch, voiceMode, latestUserQuery, customSystemPrompt, activeNeurons = [], plainChat = false, allNeurons, reflex = true, maxReplySentences = 0, foundryTools = false, programTools = false, leanMode = "full", offeredTools, previousAssistantText, booksInContext, loadedFocus = null, highlights, routePrompts = null, memoryContext = "pointers",
 }: BuildOpts): Promise<BuiltPrompt> {
   const pointerMode = memoryContext !== "full";
   const tier = deepResearch ? "deep" : voiceMode ? "voice" : "chat";
@@ -982,6 +1015,49 @@ export async function buildChatSystemPrompt({
   if (selectedBook) {
     parts.push("", `## Currently Active Book: "${libLabel(selectedBook.title, "Untitled")}" (id: ${selectedBook.id})`);
     parts.push(`File: ${sanitizeInline(selectedBook.fileName || "", SESSION_PROMPT_NONCE, 120)} | Pages: ${selectedBook.pageCount}${isAssistantBook(selectedBook) ? " | Written by the assistant at the user's request — a derived document, not a primary source" : isYoutubeTranscript(selectedBook) ? " | An automatic transcript of a YouTube video — spoken content that may contain transcription errors; say so when quoting it" : ""}`);
+  }
+
+  // WHAT THE CONVERSATION IS ABOUT. Stable bytes: they change only when the
+  // user loads something else. Everything untrusted (shelf and book names)
+  // goes through sanitizeInline like every other name in this prompt.
+  if (loadedFocus && loadedFocus.titles.length > 0) {
+    const safe = {
+      shelfName: loadedFocus.shelfName ? libLabel(loadedFocus.shelfName, "Untitled shelf") : null,
+      titles: loadedFocus.titles.map((t) => libLabel(t, "Untitled")),
+    };
+    const n = safe.titles.length;
+    const list = safe.titles.map((t) => `"${t}"`).join(", ");
+    const fetchVerbs = [
+      ...(has("get_chapter_text") ? ["read the chapter with `get_chapter_text`"] : []),
+      ...(has("search_book_text") ? ["find the passage with `search_book_text`"] : []),
+    ];
+    parts.push(
+      "",
+      "## What this conversation is about",
+      `The user loaded ${loadedFocusLabel(safe)} into this conversation` +
+        (safe.shelfName ? ` — ${n} book${n === 1 ? "" : "s"}: ${list}.` : n === 1 ? "." : `: ${list}.`) +
+        (loadedFocus.notLoaded && loadedFocus.notLoaded > 0
+          ? ` (${loadedFocus.notLoaded} more book${loadedFocus.notLoaded === 1 ? " is" : "s are"} on that shelf but over the ${n}-book limit, so not loaded.)`
+          : ""),
+      `${n === 1 ? "That book is" : "Those books are"} the subject of this chat. Read the user's messages as being about ${n === 1 ? "it" : "them"} unless they clearly say otherwise, and answer from ${n === 1 ? "it" : "them"} first — the "Book context" message at the top of this request carries ${n === 1 ? "its" : "their"} chapters.` +
+        (fetchVerbs.length > 0 ? ` When that message holds only a chapter map, ${fetchVerbs.join(" or ")} before you answer rather than answering from memory.` : ""),
+      "Loading replaces whatever was loaded before. Earlier messages in this conversation may be about other books, loaded at the time; do not carry that topic on, or answer from those books, unless the user asks for them. The user's notebook is their saved notes — use it alongside the loaded books, never in place of them.",
+    );
+    if (loadedFocus.replaced != null) {
+      const was = sanitizeInline(loadedFocus.replaced, SESSION_PROMPT_NONCE, 160);
+      turnParts.push(
+        "## The loaded books just changed",
+        `Since the user's previous message, what is loaded changed to ${loadedFocusLabel(safe)}${was ? ` (it was ${was})` : ""}. This message is the first since that change: it is about what is loaded NOW, not the earlier topic.`,
+        "",
+      );
+    }
+  } else if (loadedFocus && loadedFocus.replaced) {
+    const was = sanitizeInline(loadedFocus.replaced, SESSION_PROMPT_NONCE, 160);
+    turnParts.push(
+      "## The loaded books just changed",
+      `Since the user's previous message, ${was} was unloaded. Nothing is loaded into this conversation now.`,
+      "",
+    );
   }
 
   // The legacy "## Your Memory (from past conversations)" block used to be
