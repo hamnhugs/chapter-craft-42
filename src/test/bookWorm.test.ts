@@ -1331,7 +1331,7 @@ describe("the Equilibrium link code", () => {
   const code = (o: unknown) => "eqw1." + btoa(JSON.stringify(o)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   it("reads a code Equilibrium made", async () => {
     const { parseLinkCode } = await import("@/lib/equilibriumLink");
-    expect(parseLinkCode(code({ u: "https://example.test/x", k: "eq_abcdefgh1234" }))).toEqual({ url: "https://example.test", key: "eq_abcdefgh1234" });
+    expect(parseLinkCode(code({ u: "https://equilibrium-sigma-hazel.vercel.app/x", k: "eq_abcdefgh1234" }))).toEqual({ url: "https://equilibrium-sigma-hazel.vercel.app", key: "eq_abcdefgh1234" });
   });
   it("refuses anything else", async () => {
     const { parseLinkCode } = await import("@/lib/equilibriumLink");

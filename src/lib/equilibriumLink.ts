@@ -32,6 +32,17 @@ export interface WormHealth {
   at: number;
 }
 
+/**
+ * Where Equilibrium is served from. The production Content-Security-Policy
+ * (vite.config.ts, CONNECT_ORIGINS) lets the browser call only the addresses
+ * it lists, so a link to anywhere else could never work: it is refused here,
+ * when the code is pasted, with a reason, not later as "could not reach".
+ */
+export const EQUILIBRIUM_ORIGINS = [
+  "https://equilibrium-sigma-hazel.vercel.app",
+  "https://program-launchpad-starter.lovable.app",
+] as const;
+
 /** Read a pasted link code: `eqw1.` then base64url of {"u": address, "k": key}. */
 export function parseLinkCode(code: string): EquilibriumLink | null {
   const m = /^eqw1\.([A-Za-z0-9_-]+)$/.exec(code.trim());
@@ -41,7 +52,7 @@ export function parseLinkCode(code: string): EquilibriumLink | null {
     const raw = JSON.parse(atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4))) as { u?: unknown; k?: unknown };
     if (typeof raw.u !== "string" || typeof raw.k !== "string") return null;
     const url = new URL(raw.u);
-    if (url.protocol !== "https:" && url.hostname !== "localhost") return null;
+    if (url.hostname !== "localhost" && !(EQUILIBRIUM_ORIGINS as readonly string[]).includes(url.origin)) return null;
     if (!/^eq_[A-Za-z0-9_-]{8,}$/.test(raw.k)) return null;
     return { url: url.origin, key: raw.k };
   } catch {

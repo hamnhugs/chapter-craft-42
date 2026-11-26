@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { CALENDAR_ACTIONS, CALENDAR_TOOL, CALENDAR_TOOL_DEFINITIONS, executeCalendarTool } from "@/lib/calendarTool";
-import { setLink } from "@/lib/equilibriumLink";
+import { EQUILIBRIUM_ORIGINS, parseLinkCode, setLink } from "@/lib/equilibriumLink";
+import { readFileSync } from "node:fs";
 import { computeToolGates, availableToolNames, CALENDAR_TOOL_NAME, type ToolGateInput } from "@/lib/toolAvailability";
 import { CHAT_TOOL_DEFINITIONS } from "@/lib/chatTools";
 import { BRANCH_PERMISSIONS } from "@/lib/toolPermissions";
@@ -10,7 +11,7 @@ import { BRANCH_PERMISSIONS } from "@/lib/toolPermissions";
 // they drifted: what goes over the wire, what stops a write, and that the
 // verb is on the roster only while a calendar is linked.
 
-const LINK = { url: "https://eq.example", key: "eq_testkey12345" };
+const LINK = { url: EQUILIBRIUM_ORIGINS[0] as string, key: "eq_testkey12345" };
 type Call = { method: string; path: string; body: any; auth: string | null };
 let calls: Call[] = [];
 let answers: Record<string, { status?: number; json: unknown }> = {};
@@ -179,5 +180,21 @@ describe("the calendar tool is offered only while a calendar is linked", () => {
   it("linked: on the roster, and switching 'Change your calendar' off does not remove it", () => {
     const gates = computeToolGates({ ...base, calendarLinked: true, permissions: { change_calendar: false } });
     expect(availableToolNames(gates)).toContain(CALENDAR_TOOL);
+  });
+});
+
+describe("the browser is allowed to call Equilibrium in production", () => {
+  // The link shipped once with neither address in the Content-Security-Policy:
+  // it worked in dev, where no policy applies, and on the live site the
+  // browser refused every call, which the chat reported as "unreachable".
+  it("every address a link may point at is in the production connect-src", () => {
+    const config = readFileSync("vite.config.ts", "utf8");
+    expect(EQUILIBRIUM_ORIGINS.length).toBeGreaterThan(0);
+    for (const origin of EQUILIBRIUM_ORIGINS) expect(config, origin).toContain(`"${origin}"`);
+  });
+  it("a link code for any other address is refused when pasted", () => {
+    const code = (u: string) => "eqw1." + btoa(JSON.stringify({ u, k: "eq_testkey12345" })).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    for (const origin of EQUILIBRIUM_ORIGINS) expect(parseLinkCode(code(origin))).toEqual({ url: origin, key: "eq_testkey12345" });
+    expect(parseLinkCode(code("https://somewhere-else.example"))).toBeNull();
   });
 });
