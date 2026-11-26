@@ -3078,6 +3078,69 @@ html.cc-media-overlay-open .message-bubble-user {
 .read-along-pdf.read-along-pill { mix-blend-mode: multiply; background: color-mix(in oklab, var(--ra-fill) 70%, transparent); }
 .read-along-pdf.read-along-ghost { mix-blend-mode: multiply; }
 
+/* ── Hands-free reading ──────────────────────────────────────────────────
+   The lights go down on everything but the word being spoken. The page is
+   dimmed with a filter on the page itself, not a sheet laid over it, so the
+   highlight (a sibling of the page) keeps its full brightness; it switches
+   from tinting the paper to adding light to it. */
+[data-ra-dim] > :not(.read-along-pill):not(.read-along-ghost) {
+  filter: brightness(0.34) saturate(0.85);
+  transition: filter 500ms ease;
+}
+[data-ra-dark] { background-color: #050505 !important; transition: background-color 500ms ease; }
+html[data-ra-handsfree] [data-app-header],
+html[data-ra-handsfree] [data-mobile-nav] {
+  filter: brightness(0.3);
+  transition: filter 500ms ease;
+}
+[data-ra-dim] > .read-along-pill {
+  mix-blend-mode: screen;
+  background: color-mix(in oklab, var(--ra-fill) 82%, transparent);
+  box-shadow:
+    0 0 0 2px var(--ra-fill),
+    0 0 22px 6px color-mix(in oklab, var(--ra-glow) 70%, transparent);
+}
+[data-ra-dim] > .read-along-ghost { mix-blend-mode: screen; }
+/* Who is speaking, in words as well as colour. */
+.ra-handsfree-caption {
+  --ra-narrator: hsl(var(--primary));
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 0.6rem);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: min(22rem, calc(100vw - 2rem));
+  padding: 0.3rem 0.35rem 0.3rem 0.8rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: rgb(255 255 255 / 0.85);
+  background: rgb(0 0 0 / 0.72);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.12);
+}
+.ra-handsfree-dot { flex-shrink: 0; width: 0.6rem; height: 0.6rem; border-radius: 999px; }
+.ra-handsfree-exit {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.25rem;
+  margin-left: 0.15rem;
+  border-radius: 999px;
+  color: rgb(255 255 255 / 0.85);
+  background: rgb(255 255 255 / 0.1);
+}
+.ra-handsfree-exit:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  [data-ra-dim] > :not(.read-along-pill):not(.read-along-ghost),
+  [data-ra-dark],
+  html[data-ra-handsfree] [data-app-header],
+  html[data-ra-handsfree] [data-mobile-nav] { transition: none; }
+}
+
 @keyframes ra-burst {
   0% { transform: translate(-50%, -50%) rotate(var(--a)) translateY(0) scale(1); opacity: 1; }
   100% { transform: translate(-50%, -50%) rotate(var(--a)) translateY(-46px) scale(0.2); opacity: 0; }
@@ -3205,7 +3268,7 @@ html.cc-media-overlay-open .message-bubble-user {
 .cc-set-flash { animation: cc-set-flash 1.6s ease-out; }
 @media (prefers-reduced-motion: reduce) { .cc-set-flash { animation: none; outline: 2px solid hsl(var(--primary) / 0.5); } }
 
-/* ── Counsel's reading column ─────────────────────────────────────────────
+/* ── Chat's reading column ─────────────────────────────────────────────
  *
  * The composer was a centred 56rem card while the transcript, the context
  * rows above it and the TTS bar ran edge to edge. On a desktop window that

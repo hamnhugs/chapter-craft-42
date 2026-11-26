@@ -23,7 +23,7 @@ export const COVER_PALETTE = [
 
 type Listed = Pick<Wiki, "id" | "name" | "tags">;
 
-/** Confirm, then delete a notebook. Refuses one Counsel is using. Resolves
+/** Confirm, then delete a notebook. Refuses one Chat is using. Resolves
  *  true when it was deleted.
  *
  *  Notebooks inside it are never deleted with it: they move up to where the
@@ -36,7 +36,7 @@ export async function deleteNotebookWithConfirm(
 ): Promise<boolean> {
   const store = opts.store ?? supabaseNotebooks;
   if (loadedIds.includes(wiki.id)) {
-    toast.error("Counsel is using this notebook. Switch Counsel to another one — or to Just chat — then delete this one.");
+    toast.error("Chat is using this notebook. Switch Chat to another one — or to Just chat — then delete this one.");
     return false;
   }
   const inside = (opts.notebooks || []).filter((w) => parentIdOf(w) === wiki.id);

@@ -161,7 +161,7 @@ const PromptLibrary: React.FC<Props> = ({ scopeHint }) => {
         <div className="min-w-0">
           <p className="text-sm font-medium text-foreground">Saved prompts</p>
           <p className="text-xs text-on-surface-variant mt-0.5">
-            The active one shapes every {scopeHint === "voice" ? "voice " : scopeHint === "chat" ? "chat " : ""}reply. Switch from Counsel or with ⌘K.
+            The active one shapes every {scopeHint === "voice" ? "voice " : scopeHint === "chat" ? "chat " : ""}reply. Switch from Chat or with ⌘K.
           </p>
         </div>
         {editingId === null && (

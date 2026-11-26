@@ -3,7 +3,7 @@ import { readFileSync } from "fs";
 import { resolve } from "path";
 
 /**
- * Counsel's composer — the bottom of the tab, and the rules it now lives by.
+ * Chat's composer — the bottom of the tab, and the rules it now lives by.
  *
  * WHAT THIS PROTECTS. The composer used to end in a thirteen-chip
  * `overflow-x-auto` scroller sitting directly beneath the send button. Two
@@ -184,7 +184,7 @@ describe("the dock never covers the composer", () => {
   it("clears the dock's full height, safe-area inset included", () => {
     // The dock is var(--cc-dock-h) tall PLUS env(safe-area-inset-bottom). A
     // flat padding once covered only the bar, so a home indicator ate the
-    // last ~18px of the tab — in Counsel, the bottom of the composer.
+    // last ~18px of the tab — in Chat, the bottom of the composer.
     expect(INDEX).toContain('className="flex-1 overflow-hidden cc-dock-clearance"');
     expect(ARENA).toContain("padding-bottom: calc(var(--cc-dock-h) + env(safe-area-inset-bottom, 0px))");
     expect(ARENA).toContain(".cc-dock-row { height: var(--cc-dock-h); }");

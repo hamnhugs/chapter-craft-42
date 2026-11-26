@@ -14,7 +14,7 @@ import { metaFor, PaperIOContext, supabasePaperIO, type PaperIO } from "@/lib/pa
  * The scanning engine: photo in, page in the book.
  *
  * One instance per place that can scan (the desk in the Read tab, the chip in
- * Counsel). It owns three queues, each serial for its own reason:
+ * Chat). It owns three queues, each serial for its own reason:
  *
  *   - READING runs in parallel (a model call per photo) but pages are
  *     COMMITTED in the order the photos were taken, so a slow first page can
@@ -88,7 +88,7 @@ export interface PaperScan {
 
 let shotSeq = 0;
 /** Saves still on their way, from every engine. Saving trails behind the
- *  page, so an engine opening a book (the chip in Counsel, a second after the
+ *  page, so an engine opening a book (the chip in Chat, a second after the
  *  desk took a page) waits for these first — or it would load the book
  *  without its newest pages and later save it back that way. */
 const savesInFlight = new Set<Promise<unknown>>();

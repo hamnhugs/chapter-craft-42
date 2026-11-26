@@ -277,6 +277,19 @@ export class HighlightPill {
     return new DOMRect(r.left + ox - padX, r.top + oy - padY, w, h);
   }
 
+  /** A colour of its own (hands-free: the speaker's), or null for the theme's. */
+  tint(colour: string | null) {
+    for (const el of [this.pill, this.ghost]) {
+      if (colour) {
+        el.style.setProperty("--ra-fill", colour);
+        el.style.setProperty("--ra-glow", colour);
+      } else {
+        el.style.removeProperty("--ra-fill");
+        el.style.removeProperty("--ra-glow");
+      }
+    }
+  }
+
   hide() {
     this.pill.style.opacity = "0";
     this.ghost.style.opacity = "0";

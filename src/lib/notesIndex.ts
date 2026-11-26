@@ -4,7 +4,7 @@ import { parseLocators, type CardLocator } from "@/lib/cardLocators";
 /**
  * The notes index — the always-loaded half of the memory design.
  *
- * Counsel gets one line per note in the open notebooks: a short ref, the
+ * Chat gets one line per note in the open notebooks: a short ref, the
  * title, a one-line hook, and the page it points to. Bodies stay out of the
  * prompt; the model opens a note (search_wiki entry_id) or its book passage
  * (read_span) when it needs the detail. This is the pattern behind Claude

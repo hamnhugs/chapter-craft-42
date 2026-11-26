@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
  *
  * THE BUG THIS LOCKS OUT. Radix's `DropdownMenuTrigger` toggles the menu from
  * its `onPointerDown` handler. That is fine for a button sitting still on a
- * page, and wrong for this chip, because it lives in Counsel's horizontally
+ * page, and wrong for this chip, because it lives in Chat's horizontally
  * scrolling tool row: on a phone the finger that lands on "Prompt" in order to
  * FLICK THE ROW SIDEWAYS opens the menu before it has travelled a pixel. The
  * user reported exactly this — the prompt control firing while scrolling the

@@ -56,7 +56,7 @@ const MemoryGuide: React.FC = () => {
             How notes work
           </h1>
           <p className="text-on-surface-variant text-lg font-body leading-relaxed">
-            Counsel keeps notes as you read and chat. Each note is short, says where it came from,
+            Chat keeps notes as you read and chat. Each note is short, says where it came from,
             and points back to the page. That's the whole system.
           </p>
         </div>
@@ -77,7 +77,7 @@ const MemoryGuide: React.FC = () => {
         <div className="space-y-5 mb-16">
           <Section icon="sticky_note_2" title="Notes" analogy="Margin notes that know their page">
             <p>
-              When something worth keeping comes up — or when you say "remember this" — Counsel saves a
+              When something worth keeping comes up — or when you say "remember this" — Chat saves a
               note. Every note has a <strong>one-line summary</strong> and, when it came from a book, a
               link to the <strong>exact page</strong>.
             </p>
@@ -90,20 +90,20 @@ const MemoryGuide: React.FC = () => {
           <Section icon="menu_book" title="Notebooks" analogy="One per subject">
             <p>
               New notes go into the notebook that's open. Open two or three related notebooks
-              together and Counsel connects ideas across them. Save a combination you use often as a
+              together and Chat connects ideas across them. Save a combination you use often as a
               <strong> saved set</strong>.
             </p>
           </Section>
 
-          <Section icon="format_list_bulleted" title="How Counsel uses them" analogy="An index, not a pile">
+          <Section icon="format_list_bulleted" title="How Chat uses them" analogy="An index, not a pile">
             <p>
-              Counsel always sees a one-line list of your notes. It opens a full note only when it
+              Chat always sees a one-line list of your notes. It opens a full note only when it
               needs one, and reads the actual book page before quoting it. That keeps answers quick and
               lets it cite pages like <em>(Moby-Dick, p. 214)</em> — tap a cited note under a reply to
               open it.
             </p>
             <p>
-              If something you say or read disagrees with one of your notes, Counsel says so and shows
+              If something you say or read disagrees with one of your notes, Chat says so and shows
               you where the earlier note came from.
             </p>
           </Section>
@@ -126,8 +126,8 @@ const MemoryGuide: React.FC = () => {
 
           <Section icon="visibility_off" title="Off the record" analogy="Read, but don't write">
             <p>
-              Turn on <strong>Off the record</strong> in Counsel's tools when you don't want anything
-              saved. Counsel can still use the notes you have; it just won't add new ones. Asking it to
+              Turn on <strong>Off the record</strong> in Chat's tools when you don't want anything
+              saved. Chat can still use the notes you have; it just won't add new ones. Asking it to
               forget a note still works.
             </p>
           </Section>
@@ -140,7 +140,7 @@ const MemoryGuide: React.FC = () => {
           <Term word="Notebook">A collection of notes on one subject. New notes go to the one that's open.</Term>
           <Term word="Saved set">A few notebooks you open together in one tap.</Term>
           <Term word="Daily recall">Three notes a day to answer from memory.</Term>
-          <Term word="Off the record">Counsel reads your notes but saves nothing new.</Term>
+          <Term word="Off the record">Chat reads your notes but saves nothing new.</Term>
         </div>
 
         {/* How to use it */}
@@ -158,7 +158,7 @@ const MemoryGuide: React.FC = () => {
             <strong>Do your three a day.</strong> Daily recall takes about a minute.
           </li>
           <li>
-            <strong>Fix what's wrong.</strong> If a note is off, tell Counsel — it corrects the note
+            <strong>Fix what's wrong.</strong> If a note is off, tell Chat — it corrects the note
             and keeps the old version in the note's history. You can also edit it yourself.
           </li>
         </ol>

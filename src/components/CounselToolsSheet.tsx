@@ -4,7 +4,7 @@ import { Loader2 } from "lucide-react";
 import PromptSwitcher from "@/components/PromptSwitcher";
 
 /**
- * Counsel's tool sheet — every control that used to live in the composer's
+ * Chat's tool sheet — every control that used to live in the composer's
  * horizontally-scrolling chip row.
  *
  * WHY THE ROW HAD TO GO. Thirteen chips in a `overflow-x-auto` scroller sat
@@ -47,7 +47,7 @@ export interface CounselToolsSheetProps {
   onToggleWorkspace: () => void;
   notesOpen: boolean;
   onToggleNotes: () => void;
-  /** Counsel reads notes but saves nothing new. */
+  /** Chat reads notes but saves nothing new. */
   offTheRecord: boolean;
   onToggleOffTheRecord: () => void;
 
@@ -152,7 +152,7 @@ const CounselToolsSheet: React.FC<CounselToolsSheetProps> = (p) => {
             Tools
           </SheetTitle>
           <SheetDescription className="text-xs mt-1 text-on-surface-variant">
-            What Counsel can read, how it answers, and what happens to this conversation.
+            What Chat can read, how it answers, and what happens to this conversation.
           </SheetDescription>
         </div>
 
@@ -175,7 +175,7 @@ const CounselToolsSheet: React.FC<CounselToolsSheetProps> = (p) => {
           <Row
             icon={sym("visibility_off", p.offTheRecord)}
             label="Off the record"
-            detail={p.offTheRecord ? "Counsel reads your notes but saves nothing new" : "Counsel saves notes as you chat"}
+            detail={p.offTheRecord ? "Chat reads your notes but saves nothing new" : "Chat saves notes as you chat"}
             state={p.offTheRecord ? "ON" : "OFF"}
             active={p.offTheRecord}
             onClick={p.onToggleOffTheRecord}

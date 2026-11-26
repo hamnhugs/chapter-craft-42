@@ -127,7 +127,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
 
   // The shelf's headline AI action — the successor to the retired "Digest
   // folder into neuron". It routes through the same neuron-pick dialog a
-  // book load does, and the load REPLACES what Counsel was discussing
+  // book load does, and the load REPLACES what Chat was discussing
   // (docs/library-agent.md L1/L2) — the dialog says so, the toast undoes it.
   const chatWithShelf = (shelf: BookFolder) => requestShelfLoad(shelf.id);
   // The pile has no book_folders row, so it rides as a HAND-PICKED set — a
@@ -533,7 +533,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
             <button
               onClick={() => chatWithBooks(booksOnShelf, "Unshelved")}
               className="inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-on-primary-container text-xs font-bold"
-              title="Load these books as chat context and open Counsel"
+              title="Load these books as chat context and open Chat"
             >
               <span className="material-symbols-outlined text-sm">psychology</span>
               Chat with these
@@ -543,7 +543,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
             <button
               onClick={() => chatWithShelf(shelf)}
               className="inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-on-primary-container text-xs font-bold"
-              title="Load this shelf's books as chat context and open Counsel"
+              title="Load this shelf's books as chat context and open Chat"
             >
               <span className="material-symbols-outlined text-sm">psychology</span>
               Chat with this shelf
@@ -629,7 +629,7 @@ const LibraryShelves: React.FC<Props> = ({ books, allBooks, renderBook, filtered
             <button
               onClick={() => chatWithBooks(unionBooks, openIds.map(nameOf).join(" + "))}
               className="inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-on-primary-container text-xs font-bold"
-              title="Load the books on every open shelf as chat context and open Counsel"
+              title="Load the books on every open shelf as chat context and open Chat"
             >
               <span className="material-symbols-outlined text-sm">psychology</span>
               Chat with these {openIds.length} shelves

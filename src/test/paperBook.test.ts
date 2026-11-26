@@ -87,7 +87,7 @@ describe("chapters", () => {
     ]);
     expect(ch[1].textContent.startsWith("[p. 2]\n\nTwo")).toBe(true);
   });
-  it("gives Counsel the figures and footnotes speech leaves out", () => {
+  it("gives Chat the figures and footnotes speech leaves out", () => {
     const p = page("9", prose(904), { figures: ["A map."], footnotes: ["See ch. 2."] });
     const text = chaptersForPages([p])[0].textContent;
     expect(text).toContain("[Figure: A map.]");
@@ -375,7 +375,7 @@ describe("pageDoubts", () => {
   });
 });
 
-describe("what Counsel is told about a paper book", () => {
+describe("what Chat is told about a paper book", () => {
   const good = "The keeper had a rule about weather, which was that he never talked about it before breakfast, and Mara learned it in her first week at the light.";
   const pages = [page("41", good), page("42", "xq zzt krp wqx bnm tr pl kj hg fd szx cvb nmq wrt ypl kjh gfd", { flag: "poor" }), page("43", good + " Then the wind came round.")];
   const book = (paper: boolean): BookDocument => ({

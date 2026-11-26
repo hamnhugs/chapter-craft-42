@@ -7,7 +7,7 @@
  * worm is not miming to a timer — it is reacting to the same sound you are
  * hearing, sample for sample.
  *
- * WHAT IT CAN AND CANNOT SEE. Counsel has two speech engines. The Inworld path
+ * WHAT IT CAN AND CANNOT SEE. Chat has two speech engines. The Inworld path
  * decodes MP3 into a single long-lived `<audio>` element fed from a same-origin
  * `blob:` URL, which is exactly the case Web Audio can analyse: not
  * CORS-tainted, so the samples are readable. The browser path uses

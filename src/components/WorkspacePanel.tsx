@@ -33,7 +33,7 @@ import {
  * this inverted: the frame was the DEFAULT branch, so a `code` item would have
  * been executed as HTML. Keep the named-kinds-first shape.
  *
- * FILED BY NOTEBOOK. Every item belongs to the notebook Counsel had loaded
+ * FILED BY NOTEBOOK. Every item belongs to the notebook Chat had loaded
  * when it was made (meta.wikiId, stamped in the store). The list opens on the
  * loaded notebook's files, so one project's files are not buried under every
  * other project's; the row of chips under the header switches notebook, shows
@@ -69,7 +69,7 @@ export const WIDE_DENSITY_PX = 640;
 
 type Density = "narrow" | "wide";
 
-/** Which files the list shows. "auto" follows the notebook Counsel has
+/** Which files the list shows. "auto" follows the notebook Chat has
  *  loaded (everything, when it has none) until the person picks a chip. */
 type Scope = "auto" | "all" | "unfiled" | { wikiId: string };
 
@@ -626,7 +626,7 @@ const WorkspacePanel: React.FC<{
         </div>
       ) : (
         <>
-          {/* Notebook scope: one line that scrolls, like Counsel's chip row. */}
+          {/* Notebook scope: one line that scrolls, like Chat's chip row. */}
           {filingOn && (
             <div
               role="tablist"
@@ -639,7 +639,7 @@ const WorkspacePanel: React.FC<{
                   role="tab"
                   aria-selected={scopeWikiId === n.id}
                   onClick={() => setScope({ wikiId: n.id })}
-                  title={n.id === activeId ? `${n.name} — open in Counsel, new files go here` : n.name}
+                  title={n.id === activeId ? `${n.name} — open in Chat, new files go here` : n.name}
                   className={scopeWikiId === n.id ? SCOPE_CHIP_CLASS.on : SCOPE_CHIP_CLASS.off}
                 >
                   <span aria-hidden className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: n.color }} />
@@ -702,8 +702,8 @@ const WorkspacePanel: React.FC<{
                     ? "Pin a file with the bookmark to keep it here permanently."
                     : scopeNotebook
                       ? scopeNotebook.id === activeId
-                        ? "Whatever Counsel makes while this notebook is open is filed here."
-                        : "Open this notebook in Counsel and what it makes is filed here."
+                        ? "Whatever Chat makes while this notebook is open is filed here."
+                        : "Open this notebook in Chat and what it makes is filed here."
                       : "Everything the chat produces — artifacts, code, documents, data and research — collects here automatically."}
                 </p>
               </div>

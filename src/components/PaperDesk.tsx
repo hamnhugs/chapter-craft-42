@@ -28,7 +28,7 @@ import type { VoiceStyle } from "@/lib/inworldTts";
  *
  * Snap adds the page they are on. Listen reads the pages aloud and keeps
  * going as new ones arrive, carrying a sentence across the page turn. Ask
- * takes the book so far to Counsel. Everything else (rename, the cover, book
+ * takes the book so far to Chat. Everything else (rename, the cover, book
  * length, removing a page, finishing) is one tap down in the menu.
  *
  * The page's words are shown — not its photo. The photo is gone by the time
@@ -371,7 +371,7 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
     setNudge(false);
     playerRef.current?.pause();
     // No draft that names the page on screen. An earlier version opened the
-    // chat with "About p. 47 of …:", and Counsel then answered every
+    // chat with "About p. 47 of …:", and Chat then answered every
     // question — including "what has happened so far?" — from that one page.
     // Ask is about the BOOK; a reader who means one page can say so.
     void loadFocus({ kind: "books", bookIds: [scan.bookId], neurons: { kind: "keep" } });
@@ -530,7 +530,7 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
             {empty && !scan.bookId ? "Paper book" : scan.title}
           </span>
           <span className="block truncate text-xs text-on-surface-variant">
-            {empty && !scan.bookId ? "Read a real book with Counsel" : subtitle}
+            {empty && !scan.bookId ? "Read a real book with Chat" : subtitle}
             {saveNote && <span data-save={scan.saveState} className="cc-paper-save"> · {saveNote}</span>}
           </span>
         </button>
@@ -603,7 +603,7 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
               {scan.bookId ? "Snap the page you are on" : "Reading a paper book?"}
             </h1>
             <p className="text-sm text-on-surface-variant max-w-sm text-pretty">
-              Snap the page you are on. Have it read to you, or talk it over with Counsel. Every page you add builds the book in your Library, and you can pick it up again any time.
+              Snap the page you are on. Have it read to you, or talk it over with Chat. Every page you add builds the book in your Library, and you can pick it up again any time.
             </p>
             {shotRows}
             <button type="button" className="cc-btn3d cc-paper-snap-wide" data-tone="accent" onClick={snap} disabled={scan.busy > 0}>
@@ -744,7 +744,7 @@ const PaperDesk: React.FC<{ bookId: string | null }> = ({ bookId }) => {
           ) : nudge && pageDoubt.length === 0 && waitingAt === null && scan.busy === 0 && (
             <div className="cc-paper-turn" role="status">
               <span className="material-symbols-outlined" aria-hidden>check_circle</span>
-              {page ? `${pageLabel(page, view)} is in.` : "Page added."} Listen to it, or ask Counsel about it.
+              {page ? `${pageLabel(page, view)} is in.` : "Page added."} Listen to it, or ask Chat about it.
             </div>
           )}
 

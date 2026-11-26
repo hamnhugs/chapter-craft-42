@@ -7,7 +7,7 @@ import type { Mood } from "@/lib/sprite/wormAnimator";
  * helper, the getting-started list and the tab tours all speak through this,
  * so a new user meets one character instead of three kinds of popup.
  *
- * The worm is the same sprite that lives in Counsel (BookWorm.tsx): it stops
+ * The worm is the same sprite that lives in Chat (BookWorm.tsx): it stops
  * animating once it has settled and honours reduced motion on its own.
  */
 const WormSays = React.forwardRef<

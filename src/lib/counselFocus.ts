@@ -1,4 +1,4 @@
-// Counsel's FOCUS — what the assistant is discussing — as one pure reducer.
+// Chat's FOCUS — what the assistant is discussing — as one pure reducer.
 //
 // Three layers make up the focus: the loaded BOOKS (a shelf or a hand-picked
 // set, in bookContextStore), the READER's book (activeBookId — the Read tab),
@@ -13,7 +13,7 @@
 //      selection (the default) or opens the book ALONGSIDE it (the reader
 //      only) — the user picks in the dialog; nothing is replaced silently.
 //  L1' The READER is not the focus. A shelf load never closes the book the
-//      user is reading; instead every read door derives the book Counsel
+//      user is reading; instead every read door derives the book Chat
 //      discusses through `focusBookId`: the reader's book when nothing is
 //      loaded or when it is a member of the EFFECTIVE selection (excludedIds
 //      honoured), else null. That is what keeps the prompt, the tools' scope
@@ -53,7 +53,7 @@ export type LoadAction =
    *  opens the reader; otherwise the selection is replaced (cleared — the
    *  reader's book rides on its own, out of the block, as it does today). */
   | { kind: "book"; bookId: string; neurons: NeuronChoice; alongside?: boolean }
-  /** Unload everything Counsel discusses (the reader is untouched). */
+  /** Unload everything Chat discusses (the reader is untouched). */
   | { kind: "none"; neurons: NeuronChoice }
   /** A book was deleted: drop it from every layer it can appear in. */
   | { kind: "remove"; bookId: string };
@@ -160,7 +160,7 @@ export function applyLoad(prev: FocusState, action: LoadAction): LoadOutcome {
 }
 
 /**
- * The book Counsel is DISCUSSING, derived — never stored. Null means "no
+ * The book Chat is DISCUSSING, derived — never stored. Null means "no
  * single book is in focus" (a shelf is loaded and the reader's book is not
  * on it, or nothing is open). Every read door — the prompt's Currently
  * Active Book section, get_chapter_text's scope, the Now-discussing chip —

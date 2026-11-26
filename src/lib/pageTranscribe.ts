@@ -13,7 +13,7 @@
  * could not read this" instead of guessing.
  *
  * The answer is structured so each consumer takes only its part: speech reads
- * `body`; Counsel also gets figures and footnotes; the running head and the
+ * `body`; Chat also gets figures and footnotes; the running head and the
  * page number are lifted OUT of the text (nobody wants "one hundred and
  * twelve" read aloud mid-sentence) and used to title and order the book.
  */

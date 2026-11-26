@@ -535,7 +535,7 @@ const PdfViewer: React.FC = () => {
         <button type="button" className="cc-btn3d mt-6" data-tone="accent" onClick={() => paperSession.start()}>
           <span className="material-symbols-outlined" aria-hidden>photo_camera</span> Read a paper book
         </button>
-        <p className="text-xs mt-2 max-w-xs text-center text-pretty">Snap the page you are on. Listen to it, or talk it over with Counsel.</p>
+        <p className="text-xs mt-2 max-w-xs text-center text-pretty">Snap the page you are on. Listen to it, or talk it over with Chat.</p>
       </div>
     );
   }
@@ -761,7 +761,8 @@ const PdfViewer: React.FC = () => {
     />
   );
 
-  const viewSlot = !isHtmlBook && (
+  // A phone has no zoom button: the page is pinched (usePinchZoom).
+  const viewSlot = !isHtmlBook && !phone && (
     compact || containerWidth < 768 ? (
       <DropdownMenu onOpenChange={() => showChrome()}>
         <DropdownMenuTrigger asChild>
@@ -773,7 +774,6 @@ const PdfViewer: React.FC = () => {
         <DropdownMenuContent align="center" className="p-3 space-y-2">
           <p className="text-xs font-semibold text-muted-foreground text-center">Zoom</p>
           {zoomControls}
-          {phone && <p className="text-xs text-muted-foreground text-center">Or pinch the page</p>}
         </DropdownMenuContent>
       </DropdownMenu>
     ) : zoomControls

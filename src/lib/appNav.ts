@@ -1,9 +1,9 @@
-// Going somewhere in the app on Counsel's say-so (the open_view chat tool).
+// Going somewhere in the app on Chat's say-so (the open_view chat tool).
 //
 // A tool can't call React state setters, so it hands a target to the one
 // function here, which ChatContext wires to AppContext's own navigation — the
 // same calls a tap makes. Opening is only looking: nothing here changes which
-// notebooks Counsel has loaded, and nothing writes data.
+// notebooks Chat has loaded, and nothing writes data.
 //
 // Two of the places are inside a tab that may or may not be mounted (an open
 // notebook's Files list, a Workspace file beside the chat), so each has a

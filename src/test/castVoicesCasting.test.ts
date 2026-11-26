@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { castVoices, voiceTraits } from "@/lib/castVoices/casting";
+import { castVoices, rankVoices, voiceTraits } from "@/lib/castVoices/casting";
 import type { CastMember } from "@/lib/castVoices/attribute";
 import type { InworldVoice } from "@/lib/inworldTts";
 
@@ -95,5 +95,15 @@ describe("castVoices", () => {
   it("no usable voices: the cast comes back unchanged", () => {
     const cast = [m("Ann")];
     expect(castVoices(cast, [v("Narr", ["male"])], opts)).toBe(cast);
+  });
+});
+
+describe("rankVoices", () => {
+  it("offers the suggested voice first, then the right gender and age, never the narrator or another language", () => {
+    const ids = rankVoices(m("Gran", { gender: "female", age: "elder", voiceId: "Olivia" }), VOICES, opts).map((x) => x.voice_id);
+    expect(ids.slice(0, 3)).toEqual(["Olivia", "Edna", "Ashley"]);
+    expect(ids).not.toContain("Narr");
+    expect(ids).not.toContain("Hans");
+    expect(ids.indexOf("Mark")).toBeGreaterThan(ids.indexOf("Ashley"));
   });
 });

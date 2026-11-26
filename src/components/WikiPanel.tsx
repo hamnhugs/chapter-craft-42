@@ -78,8 +78,8 @@ interface ConfirmRequest {
 
 /**
  * One notebook: a header line, search, and note rows. The notebook shown is
- * the one opened from the list (viewedWikiId), else Counsel's primary.
- * Viewing never changes what Counsel has loaded — that lives in Counsel's
+ * the one opened from the list (viewedWikiId), else Chat's primary.
+ * Viewing never changes what Chat has loaded — that lives in Chat's
  * chip row and ⌘K.
  */
 const WikiPanel: React.FC = () => {
@@ -107,7 +107,7 @@ const WikiPanel: React.FC = () => {
   const [moreOpen, setMoreOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   // Notes or the Workspace files filed in this notebook. A search looks in both.
-  // Counsel can ask for Files outright (open_view); the request is for one
+  // Chat can ask for Files outright (open_view); the request is for one
   // notebook and is taken once.
   const [listTab, setListTab] = useState<"notes" | "files">(() => takeNotebookTab(wikiId) ?? "notes");
   const workspaceItems = useWorkspaceItems();
@@ -312,8 +312,8 @@ const WikiPanel: React.FC = () => {
     );
   }, [files, searchQuery]);
 
-  // Workspace lives in Counsel. Opening a file there is still only viewing:
-  // it changes neither the notebook Counsel has loaded nor this one.
+  // Workspace lives in Chat. Opening a file there is still only viewing:
+  // it changes neither the notebook Chat has loaded nor this one.
   const openFile = (id: string) => {
     workspaceStore.requestOpen(id);
     setActiveTab("chat");
@@ -359,7 +359,7 @@ const WikiPanel: React.FC = () => {
   const requestDeleteEntry = (entry: KnowledgeEntry) => {
     setConfirmRequest({
       title: `Forget "${entry.title}"?`,
-      description: "Counsel will no longer have this note. This can't be undone.",
+      description: "Chat will no longer have this note. This can't be undone.",
       confirmLabel: "Forget note",
       destructive: true,
       onConfirm: () => void handleDelete(entry.id),
@@ -521,7 +521,7 @@ const WikiPanel: React.FC = () => {
               <span className="flex-1" />
               {memoryMode !== "recording" && (
                 <span
-                  title="Off the record: Counsel still reads your notes but saves nothing new. Turn it off in Counsel."
+                  title="Off the record: Chat still reads your notes but saves nothing new. Turn it off in Chat."
                   className="hidden sm:inline-flex shrink-0 items-center gap-1.5 px-2 py-0.5 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-500 text-[11px] font-medium"
                 >
                   <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-amber-500" />
@@ -650,7 +650,7 @@ const WikiPanel: React.FC = () => {
                 <p className="py-12 text-sm text-center text-on-surface-variant max-w-sm mx-auto">
                   {searching
                     ? files.length > 0 ? "No notes or files match your search." : "No notes match your search."
-                    : "This notebook is empty. Chat with Counsel about what you're reading to fill it."}
+                    : "This notebook is empty. Chat about what you're reading to fill it."}
                 </p>
               )
             ) : (
@@ -744,7 +744,7 @@ const WikiPanel: React.FC = () => {
               <>
                 <Input id="note-edit-title" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} aria-label="Note title" className="text-xl font-headline font-bold bg-surface-container-high border-none" />
                 <div className="space-y-1">
-                  <label htmlFor="note-edit-hook" className="text-xs font-semibold text-on-surface-variant">One-line summary (what Counsel sees first)</label>
+                  <label htmlFor="note-edit-hook" className="text-xs font-semibold text-on-surface-variant">One-line summary (what Chat sees first)</label>
                   <Input id="note-edit-hook" value={editHook} maxLength={160} onChange={(e) => setEditHook(e.target.value)} placeholder="Leave empty and the nightly tidy-up writes one" className="text-sm bg-surface-container-high border-none" />
                 </div>
                 <Textarea id="note-edit-content" value={editContent} onChange={(e) => setEditContent(e.target.value)} rows={10} aria-label="Note text" className="text-sm font-mono bg-surface-container-high border-none" />
@@ -759,7 +759,7 @@ const WikiPanel: React.FC = () => {
               const firstPage = locs.find((l) => locatorBookId(l, books));
               const related = getRelatedEntries(selectedEntry.id);
               const book = selectedEntry.source_book_id ? books.find((b) => b.id === selectedEntry.source_book_id) : null;
-              const who = selectedEntry.author === "user" ? "You saved this" : "Counsel saved this";
+              const who = selectedEntry.author === "user" ? "You saved this" : "Chat saved this";
               return (
                 <>
                   <header className="space-y-1">

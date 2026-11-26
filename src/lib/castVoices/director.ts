@@ -26,9 +26,13 @@ import type { VoiceSpan } from "@/lib/readAlong";
 
 /** A window is roughly a printed page: enough context for a conversation,
  *  short enough that its answer is back before the voice reaches it. */
-const WINDOW_CHARS = 4500;
-/** How long a line will wait for its verdict before the narrator takes it. */
-const RESOLVE_TIMEOUT_MS = 7000;
+const WINDOW_CHARS = 2600;
+/** The first window is short, so the first answer comes back fast. */
+const FIRST_WINDOW_CHARS = 1400;
+/** How long a line will wait for its verdict before the narrator takes it.
+ *  Long on purpose: a real model takes 5–30 s for a window, and a short
+ *  pause is better than every line going to the narrator. */
+const RESOLVE_TIMEOUT_MS = 45000;
 const MAX_WINDOWS_STORED = 400;
 const RECENT_KEPT = 6;
 
@@ -102,13 +106,14 @@ interface Window {
 }
 
 /** Cut the page into windows that each end between quotes, never inside one. */
-export function planWindows(text: string, quotes: QuoteSpan[]): Window[] {
+export function planWindows(text: string, quotes: QuoteSpan[], firstChars = WINDOW_CHARS): Window[] {
   const out: Window[] = [];
   let first = 0;
   let from = 0;
   while (first < quotes.length) {
     let last = first + 1;
-    while (last < quotes.length && quotes[last].end - from <= WINDOW_CHARS) last++;
+    const size = out.length === 0 ? firstChars : WINDOW_CHARS;
+    while (last < quotes.length && quotes[last].end - from <= size) last++;
     const to = last < quotes.length ? quotes[last].start : text.length;
     out.push({ first, last, from, to, hash: textHash(text.slice(from, to)) });
     first = last;
@@ -129,11 +134,33 @@ export interface DirectorDeps {
   save: (book: CastBook) => void;
   /** The cast changed (someone new spoke, a voice was assigned). */
   onCast?: (cast: CastMember[]) => void;
+  /** What the casting is doing, for the listener to see. */
+  onState?: (state: CastState) => void;
+  /** Ask the listener before a character's first line (false = cast silently). */
+  ask?: () => boolean;
+  /**
+   * A character is about to speak for the first time: let the listener pick
+   * their voice. Resolves with the voice chosen, null for "pick for me", or
+   * undefined when dismissed without an answer (they are asked again later).
+   */
+  choose?: (member: CastMember, line: string) => Promise<string | null | undefined>;
   /** Text and speakers from the page before this one, when read in order. */
   carry?: { before: string; recent: Array<{ speaker: string; text: string }> };
 }
 
-export interface ResolvedVoice { voiceId: string; direction?: string; name: string }
+export interface ResolvedVoice {
+  voiceId: string; direction?: string; name: string;
+  /** The listener has not yet been asked about this character's voice. */
+  ask?: boolean;
+}
+
+export type CastState =
+  | { phase: "working" }
+  | { phase: "ready"; speakers: number }
+  /** The model call or its answer failed; the narrator reads on. */
+  | { phase: "failed"; error: string }
+  /** Speakers were found but the catalog has no voice to give them. */
+  | { phase: "novoices" };
 
 /**
  * One page's (or one HTML book's) casting. Created when reading starts,
@@ -153,7 +180,7 @@ export class CastDirector {
   constructor(private text: string, private deps: DirectorDeps) {
     this.quotes = findQuotes(text).filter(speechLike);
     this.spans = this.quotes.map((q, i) => ({ start: q.start, end: q.end, voice: String(i) }));
-    this.windows = planWindows(text, this.quotes);
+    this.windows = planWindows(text, this.quotes, FIRST_WINDOW_CHARS);
   }
 
   dispose() { this.abort.abort(); }
@@ -187,7 +214,8 @@ export class CastDirector {
     const { book } = this.deps;
     if (book.windows[w.hash] || this.abort.signal.aborted) return;
     // After repeated failures (no key, model down) stop asking for this page.
-    if (this.failed >= 2) return;
+    if (this.failed >= 3) return;
+    this.deps.onState?.({ phase: "working" });
     const count = w.last - w.first;
     const local = this.quotes.slice(w.first, w.last);
     const numbered = numberQuotes(this.text, local, { from: w.from, to: w.to });
@@ -201,11 +229,21 @@ export class CastDirector {
         this.abort.signal,
       );
     } catch (e) {
-      if (!this.abort.signal.aborted) this.failed++;
+      if (!this.abort.signal.aborted) {
+        this.failed++;
+        console.warn("[cast] model call failed", e);
+        this.deps.onState?.({ phase: "failed", error: e instanceof Error ? e.message : String(e) });
+      }
       throw e;
     }
     const parsed = parseAttribution(raw, count);
-    if (!parsed) { this.failed++; return; }
+    if (!parsed) {
+      this.failed++;
+      console.warn("[cast] unreadable answer", raw.slice(0, 600));
+      this.deps.onState?.({ phase: "failed", error: raw.trim() ? "the model's answer could not be read" : "the model sent back nothing" });
+      return;
+    }
+    this.failed = 0;
     const merged = mergeCast(book.cast, parsed);
     const voices = await this.deps.voices().catch(() => [] as InworldVoice[]);
     book.cast = castVoices(merged.cast, voices, { narratorVoiceId: this.deps.narratorVoiceId });
@@ -214,6 +252,9 @@ export class CastDirector {
     while (book.order.length > MAX_WINDOWS_STORED) delete book.windows[book.order.shift()!];
     this.deps.save(book);
     this.deps.onCast?.(book.cast);
+    const named = merged.speakers.filter(Boolean).length;
+    console.info(`[cast] window ${wi + 1}/${this.windows.length}: ${named} of ${count} lines named`, book.cast.map((m) => `${m.name}→${m.voiceId ?? "no voice"}`));
+    this.deps.onState?.(book.cast.length && book.cast.every((m) => !m.voiceId) ? { phase: "novoices" } : { phase: "ready", speakers: book.cast.length });
   }
 
   private recentFrom(w: Window): Array<{ speaker: string; text: string }> {
@@ -239,7 +280,28 @@ export class CastDirector {
     if (!v?.m) return null;
     const m = this.deps.book.cast.find((c) => c.id === v.m);
     if (!m?.voiceId) return null;
-    return { voiceId: m.voiceId, name: m.name, ...(v.how ? { direction: v.how } : {}) };
+    const ask = !m.asked && !m.locked && !!this.deps.choose && this.deps.ask?.() !== false;
+    return { voiceId: m.voiceId, name: m.name, ...(v.how ? { direction: v.how } : {}), ...(ask ? { ask: true } : {}) };
+  }
+
+  /**
+   * The listener picks the voice for whoever says this quote. Returns when
+   * they have answered (or dismissed it). Never rejects.
+   */
+  async choose(key: string): Promise<void> {
+    const quote = Number(key);
+    const w = this.windows[this.windowOf(quote)];
+    const v = w && this.deps.book.windows[w.hash]?.[quote - w.first];
+    const m = v?.m ? this.deps.book.cast.find((c) => c.id === v.m) : null;
+    if (!m || !this.deps.choose) return;
+    let picked: string | null | undefined;
+    try { picked = await this.deps.choose(m, this.quotes[quote].text); } catch { picked = undefined; }
+    if (picked === undefined) return;
+    // The cast may have been replaced while the prompt was open.
+    const book = this.deps.book;
+    book.cast = book.cast.map((c) => (c.id === m.id ? { ...c, asked: true, ...(picked ? { voiceId: picked, locked: true } : {}) } : c));
+    this.deps.save(book);
+    this.deps.onCast?.(book.cast);
   }
 
   /**

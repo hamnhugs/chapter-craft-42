@@ -3,7 +3,7 @@ import { readFileSync } from "fs";
 import { resolve } from "path";
 
 /**
- * The book-context picker — the sheet behind Counsel's `+` → Books.
+ * The book-context picker — the sheet behind Chat's `+` → Books.
  *
  * It had no coverage at all, which is how it kept a quadratic render path and
  * a nested scroller through every review of the feature. These are source

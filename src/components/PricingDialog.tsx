@@ -49,7 +49,7 @@ const REASON_COPY: Record<string, string> = {
   "deep-research": "Deep Research is a Pro feature. Upgrade to unlock it.",
   "auto-structure": "Auto-chapterize is a Pro feature. Upgrade and Bookworm will detect chapters in your books automatically.",
   "figure-extraction": "Extracting figures with the built-in AI is a Pro feature. Upgrade, or add your own OpenRouter key in Settings → AI Models & Keys to use it free.",
-  "all-neurons": "Letting Counsel read all your notebooks at once is a Pro feature. Upgrade to unlock it.",
+  "all-neurons": "Letting Chat read all your notebooks at once is a Pro feature. Upgrade to unlock it.",
   "neuron-chains": "Loading several notebooks together and saving saved sets is a Pro feature. Upgrade to unlock it.",
   ad: "Tired of ads? Upgrade and they're gone forever.",
 };

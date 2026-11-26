@@ -66,7 +66,7 @@ import { CHAT_TOOL_DEFINITIONS } from "@/lib/chatTools";
 // intent, a description that names no sibling.
 //
 // +5 (the Notebooks tab, hands-free): update_wiki, manage_chain, review_notes,
-// move_workspace_item, open_view. The user asked that Counsel be able to work
+// move_workspace_item, open_view. The user asked that Chat be able to work
 // every notebook feature, and five of them had no verb at all: renaming,
 // recolouring and moving a notebook; making and changing saved sets; Daily
 // recall; refiling a Workspace file; and simply SHOWING a notebook, note or

@@ -147,3 +147,33 @@ Measured after (shots/after/metrics.json): phone 360×740 reading = 740px for th
 Checked in headless Chromium at all eight sizes: side taps turn the page and return (2→3→2), middle tap shows the controls, typing a page number goes there, Space walks to the next page, selection menu shows the four actions, Listen swaps the bar for the player and Stop swaps it back, no console errors, no sideways page overflow. `tsc` clean, 2,630 tests pass, `vite build` builds.
 
 Not checked: a real Android device; pinch-zoom (needs two real fingers); real speech (the player was captured with a silent stand-in voice); HTML books beyond a typecheck; the tablet layout with a finger. Not built: double-tap zoom (it would delay every page-turn tap), continuous scrolling across pages, and step 6, the phone Text view.
+
+## Hands-free, recordings, and no zoom button on phones (2026-11-25)
+
+Research behind this: `reports/Read-along recordings and hands-free reading.md`.
+
+- **Listen is a choice.** The Listen button opens a small menu: Listen, or
+  Hands-free. Hands-free keeps the screen awake (`useWakeLock`), dims the page
+  and the app's header and dock, and lights the spoken word; each character's
+  words take a colour of their own (six Okabe–Ito hues, by the order the book
+  introduced them; the narrator keeps the theme's). A caption at the top names
+  the speaker, so colour is not the only cue, and holds the "lights up" button.
+  It can also be switched from the player's More menu.
+- **Recordings.** What an Inworld voice says is kept on the device
+  (`src/lib/readRecordings.ts`, IndexedDB, one row per clip, indexed by page)
+  and played back the next time instead of being paid for again. A clip is
+  found by a hash of its text, voice and voice settings, so a changed voice
+  never plays the wrong recording. "Record over this page" (Listen menu and
+  More menu) clears the page and reads it again from the top. The device voice
+  cannot be recorded. Clips are the player's existing chunks (up to 240
+  characters, a sentence or two), not whole paragraphs.
+- **Phones have no zoom button**; the page is pinched. Wider screens keep it.
+
+Checked: `src/test/readRecordingsPlayer.test.ts` (a line is paid for once; a
+different voice is not served another's clip; clearing records again), the
+store against a real IndexedDB in headless Chromium, and the menu and dimmed
+page in `#/arena-lab?reader` at 360 wide with a stand-in device voice.
+Not run: an Inworld voice end to end (so no real recording has been made or
+played), character colours with a real cast, the wake lock on a phone, an HTML
+book in hands-free, and playback with the phone locked. Recordings do not
+follow the listener to another device.

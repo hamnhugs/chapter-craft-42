@@ -10,7 +10,7 @@
  *   - how the pages become the book file the reader opens (`buildPaperHtml` /
  *     `parsePaperHtml` — the HTML is the one stored copy of the pages, so
  *     there is no second manifest to drift from it),
- *   - how they become chapters Counsel reads (`chaptersForPages` — one per
+ *   - how they become chapters Chat reads (`chaptersForPages` — one per
  *     page, written once and never rewritten),
  *   - what is spoken for a page, including the sentence that runs over the
  *     page turn (`speechFor`).
@@ -359,7 +359,7 @@ export function parsePaperHtml(html: string): PaperPage[] {
   return out;
 }
 
-// ── Chapters (what Counsel reads) ───────────────────────────────────────────
+// ── Chapters (what Chat reads) ───────────────────────────────────────────
 
 /**
  * ONE CHAPTER ROW PER SCANNED PAGE, and its id is the page's id.
@@ -383,7 +383,7 @@ export interface PaperChapter {
   textContent: string;
 }
 
-/** One page as Counsel sees it: a page marker it can cite, then everything on
+/** One page as Chat sees it: a page marker it can cite, then everything on
  *  the page — body, pictures, footnotes. (Speech takes the body only.) */
 export function pageTextForChat(page: PaperPage, index: number): string {
   const parts = [`[${pageLabel(page, index)}]`];
@@ -394,9 +394,9 @@ export function pageTextForChat(page: PaperPage, index: number): string {
   return parts.join("\n\n");
 }
 
-/** What Counsel is told about a page that did not come in well. In the NAME,
+/** What Chat is told about a page that did not come in well. In the NAME,
  *  because a name may change (a chapter's text may not) and the name is what
- *  heads the page in everything Counsel is sent. */
+ *  heads the page in everything Chat is sent. */
 export const POOR_SCAN_MARK = "(poor scan, may be wrong)";
 
 /** "p. 41 · Chapter Four" where a title starts, else "p. 42" / "Scan 3". */

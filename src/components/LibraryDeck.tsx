@@ -18,7 +18,6 @@ import { loadLastPage } from "@/hooks/useReaderPrefs";
 import type { BookFolder } from "@/lib/bookFolders";
 import { BOOK_CONTEXT_MAX_BOOKS, bookContextStore, bookHasCatalog } from "@/lib/chatBooks";
 import { catalogJobs } from "@/lib/catalogJobs";
-import { acquireDigestRun, generateShelfDigest, releaseDigestRun } from "@/lib/shelfDigest";
 import { useShelfMarks, type ShelfMark } from "@/lib/shelfMarks";
 import { isUnfinishedPaper, paperFraction, paperMeta, paperProgressLabel } from "@/lib/paperBook";
 
@@ -26,22 +25,22 @@ import { isUnfinishedPaper, paperFraction, paperMeta, paperProgressLabel } from 
  * The library as a deck builder.
  *
  * Three things used to live on three screens: books (the card grid), shelves
- * (their own view) and the notebook Counsel writes to (a dialog that
+ * (their own view) and the notebook Chat writes to (a dialog that
  * interrupted every load). Here they are one panel, laid out the way a card
  * game lays out a deck:
  *
  *   - One SHELF is open at a time, named at the top of the panel; "Reading
  *     now" is a shelf the app fills by itself.
- *   - The open shelf's BOOKS sit in slots — eight, because Counsel takes
+ *   - The open shelf's BOOKS sit in slots — eight, because Chat takes
  *     eight books at a time.
- *   - The NOTEBOOK Counsel is using sits beside the slots, and "Ask Counsel"
+ *   - The NOTEBOOK Chat is using sits beside the slots, and "Ask Chat"
  *     takes the shelf and that notebook to the chat. Nothing is asked on the
  *     way.
  *   - Underneath is the collection: every book.
  *
  * Tapping a card lifts it and offers what you can do with it: Info (the
  * book's profile), Read, and add to / take off the open shelf. Opening a
- * shelf only looks at it — it never changes what Counsel has loaded.
+ * shelf only looks at it — it never changes what Chat has loaded.
  *
  * Shelves are changed from ONE button: the open shelf's name, which opens the
  * list of every shelf. There used to be a sideways-scrolling row of shelf
@@ -342,9 +341,9 @@ const BookProfileDialog: React.FC<{
     else toast.error("Couldn't save the cover — try again in a moment.");
   };
 
-  // "Ask Counsel" means the same on a book as on a shelf: take this to the
+  // "Ask Chat" means the same on a book as on a shelf: take this to the
   // chat. It used to point the reader at the book and switch tabs, which left
-  // Counsel discussing whatever shelf was loaded instead.
+  // Chat discussing whatever shelf was loaded instead.
   const askCounsel = () => {
     onClose();
     void loadFocus({ kind: "books", bookIds: [book.id], neurons: { kind: "keep" } });
@@ -432,7 +431,7 @@ const BookProfileDialog: React.FC<{
               </button>
               <button type="button" className="cc-btn3d" data-tone="accent" data-size="lg" onClick={askCounsel}>
                 <span className="material-symbols-outlined" aria-hidden>psychology</span>
-                Ask Counsel
+                Ask Chat
               </button>
             </div>
             {/* Level: what it is, and what gets you the next one. */}
@@ -593,7 +592,7 @@ const LibraryDeck: React.FC<{
   const { user } = useAuth();
   const { selectedModel, apiKey, geminiApiKey, nvidiaKeyLast4 } = useChatSettings();
   const marks = useShelfMarks();
-  // "Ask Counsel" writes the book-context store; on a cold start straight to
+  // "Ask Chat" writes the book-context store; on a cold start straight to
   // the Library nothing else has initialised it yet.
   useEffect(() => { bookContextStore.init(user?.id ?? null); }, [user?.id]);
   const loaded = useSyncExternalStore(bookContextStore.subscribe, bookContextStore.get);
@@ -631,7 +630,7 @@ const LibraryDeck: React.FC<{
   const openCard = openId ? cardById.get(openId) ?? null : null;
 
   // Which tab is open. Remembered; a shelf that has since been deleted falls
-  // back to the shelf Counsel has loaded, then to whatever has books in it.
+  // back to the shelf Chat has loaded, then to whatever has books in it.
   const [tab, setTab] = useState<string>(() => {
     try { return localStorage.getItem(DECK_KEY) || ""; } catch { return ""; }
   });
@@ -697,7 +696,6 @@ const LibraryDeck: React.FC<{
   const [newName, setNewName] = useState("");
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
-  const [digesting, setDigesting] = useState(false);
   useEffect(() => { setRenaming(false); }, [deckId]);
 
   // Every shelf as a list — the one way to change which shelf is open.
@@ -746,7 +744,7 @@ const LibraryDeck: React.FC<{
   const allBooksRef = useRef(allBooks);
   useEffect(() => { allBooksRef.current = allBooks; }, [allBooks]);
   /** Chapter and book summaries for the books here that have none — what
-   *  lets Counsel carry a shelf as a map instead of its full text. */
+   *  lets Chat carry a shelf as a map instead of its full text. */
   const summarizeBooks = () => {
     const missing = deckCards.map((c) => c.book).filter((b) => !bookHasCatalog(b) && b.chapters.length > 0);
     if (missing.length === 0) { toast("Every book here that has chapters already has summaries."); return; }
@@ -760,21 +758,6 @@ const LibraryDeck: React.FC<{
       });
     }
     toast.success(`Summarizing ${missing.length} book${missing.length === 1 ? "" : "s"} — one at a time; progress shows on each card.`);
-  };
-  const summarizeShelf = async () => {
-    if (!shelf || digesting) return;
-    if (!acquireDigestRun()) { toast("Another shelf summary is still being written."); return; }
-    setDigesting(true);
-    try {
-      const result = await generateShelfDigest(shelf, deckCards.map((c) => c.book), { model: selectedModel, keys });
-      applyShelfDigest(shelf.id, result.summary, result.model);
-      toast.success(`Summary written for “${shelf.name}”`);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Couldn't write the summary");
-    } finally {
-      releaseDigestRun();
-      setDigesting(false);
-    }
   };
 
   const askCounsel = () => {
@@ -820,7 +803,7 @@ const LibraryDeck: React.FC<{
             {/* No count for a shelf until membership has loaded: "0" would be a guess. */}
             {(!shelf || membershipLoaded) && <span className="cc-deck-count">{deckCards.length}</span>}
             {inCounsel && (
-              <span className="material-symbols-outlined text-[16px] text-accent" title="Counsel has this shelf" aria-label="Counsel has this shelf">psychology</span>
+              <span className="material-symbols-outlined text-[16px] text-accent" title="Chat has this shelf" aria-label="Chat has this shelf">psychology</span>
             )}
             <span className="material-symbols-outlined text-[20px] text-on-surface-variant ml-auto" aria-hidden>expand_more</span>
           </button>
@@ -867,8 +850,8 @@ const LibraryDeck: React.FC<{
                       ? deckCards.length === 0
                         ? "Empty shelf. Tap a book below, then “Add to " + shelf.name + "”."
                         : deckCards.length > SLOTS
-                          ? `${deckCards.length} books. Counsel reads ${SLOTS} at a time — pick which in the chat.`
-                          : `${deckCards.length} of ${SLOTS} — the books Counsel reads together.`
+                          ? `${deckCards.length} books. Chat reads ${SLOTS} at a time — pick which in the chat.`
+                          : `${deckCards.length} of ${SLOTS} — the books Chat reads together.`
                       : deckId === UNFINISHED_ID
                         ? "Paper books you are still scanning."
                       : now.length === 0
@@ -880,7 +863,7 @@ const LibraryDeck: React.FC<{
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <button type="button" className="cc-tap-44 shrink-0 w-9 h-9 grid place-items-center rounded-lg text-on-surface-variant hover:text-foreground hover:bg-surface-container-highest" aria-label={`More for shelf ${shelf.name}`} title="Shelf options">
-                        <span className={`material-symbols-outlined text-[20px] ${digesting ? "animate-spin" : ""}`} aria-hidden>{digesting ? "progress_activity" : "more_horiz"}</span>
+                        <span className="material-symbols-outlined text-[20px]" aria-hidden>more_horiz</span>
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="min-w-60">
@@ -891,14 +874,7 @@ const LibraryDeck: React.FC<{
                         <span className="material-symbols-outlined text-base mr-2" aria-hidden>summarize</span>
                         <span className="flex flex-col">
                           <span>Summarize its books</span>
-                          <span className="text-[11px] text-on-surface-variant">Helps Counsel find the right chapter. Uses your AI key.</span>
-                        </span>
-                      </DropdownMenuItem>
-                      <DropdownMenuItem disabled={deckCards.length === 0 || digesting} onSelect={() => void summarizeShelf()}>
-                        <span className="material-symbols-outlined text-base mr-2" aria-hidden>notes</span>
-                        <span className="flex flex-col">
-                          <span>{shelf.summary ? "Rewrite the shelf summary" : "Write a shelf summary"}</span>
-                          <span className="text-[11px] text-on-surface-variant">What this shelf is about, in a paragraph.</span>
+                          <span className="text-[11px] text-on-surface-variant">Helps Chat find the right chapter. Uses your AI key.</span>
                         </span>
                       </DropdownMenuItem>
                       <DropdownMenuItem onSelect={() => void removeShelf()} className="text-destructive focus:text-destructive">
@@ -932,20 +908,20 @@ const LibraryDeck: React.FC<{
               )}
             </div>
 
-            {/* The one button that takes these books to Counsel; the line under it names the notebook that goes along.
+            {/* The one button that takes these books to Chat; the line under it names the notebook that goes along.
                 A shelf only: "Reading now" is a view of what's in progress, not
-                something to hand to Counsel. */}
+                something to hand to Chat. */}
             {shelf && (
             <div className="cc-deck-go">
               <button type="button" className="cc-btn3d w-full" data-tone="accent" data-size="lg" disabled={deckCards.length === 0} onClick={askCounsel}>
                 <span className="material-symbols-outlined" aria-hidden>psychology</span>
-                {inCounsel ? "Open Counsel" : "Ask Counsel"}
+                {inCounsel ? "Open Chat" : "Ask Chat"}
               </button>
               <p className="text-[11px] text-center text-on-surface-variant leading-snug">
                 {deckCards.length === 0
                   ? "Add a book first."
                   : inCounsel
-                    ? "Counsel has this shelf."
+                    ? "Chat has this shelf."
                     : notebookNames.length === 0
                       ? "Takes this shelf to the chat."
                       : `Takes this shelf and ${notebookNames.length === 1 ? `the notebook “${notebookNames[0]}”` : `${notebookNames.length} notebooks`} to the chat.`}
@@ -1061,7 +1037,7 @@ const LibraryDeck: React.FC<{
                     </span>
                     <span className="min-w-0 flex-1 truncate text-left">{s.name}</span>
                     {loaded.shelfId === s.id && (
-                      <span className="material-symbols-outlined text-[16px] text-accent" title="Counsel has this shelf" aria-label="Counsel has this shelf">psychology</span>
+                      <span className="material-symbols-outlined text-[16px] text-accent" title="Chat has this shelf" aria-label="Chat has this shelf">psychology</span>
                     )}
                     {membershipLoaded && <span className="cc-deck-count">{countByShelf.get(s.id) || 0}</span>}
                   </button>

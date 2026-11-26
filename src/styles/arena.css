@@ -902,7 +902,7 @@
   .cc-paper-stop { position: absolute; right: 0.5rem; top: 3.4rem; margin: 0; background: hsl(var(--surface-container-high)); border-radius: 999px; z-index: 5; }
 }
 
-/* The desk's shutter, alone, above Counsel's composer. */
+/* The desk's shutter, alone, above Chat's composer. */
 .cc-paper-chip {
   display: flex;
   align-items: center;

@@ -198,7 +198,7 @@ interface SendOpts {
    *  persisted on the user message so the id survives reloads. */
   images?: Array<{ dataUrl: string; mime?: string; ref?: ChatImageRef; memoryId?: string; storagePath?: string }>;
   /** Pin a saved prompt for this one send, overriding the session switcher.
-   *  `undefined` = use whatever Counsel's switcher says; `null` = no prompt
+   *  `undefined` = use whatever Chat's switcher says; `null` = no prompt
    *  this turn. For programmatic sends and (later) the router. */
   promptPresetId?: string | null;
 }
@@ -999,7 +999,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw new Error("Missing API key");
       }
 
-      // The book the prompt calls "active" is Counsel's FOCUS book, derived
+      // The book the prompt calls "active" is Chat's FOCUS book, derived
       // (counselFocus.focusBookId): the reader's book only when nothing is
       // loaded or it is a member of the effective selection. A shelf load
       // therefore drops a non-member reader book from the prompt, the tool
@@ -1077,7 +1077,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // way to decide whether an override adds anything is to compare the two
       // bodies. `opts.promptPresetId` wins over the session store so a
       // programmatic send can pin a prompt without touching what the user has
-      // chosen in Counsel; the store is what carries a manual pick onto
+      // chosen in Chat; the store is what carries a manual pick onto
       // hands-free turns, which never go through the composer.
       turnPromptStore.init(userIdRef.current);
       const turnPromptSelection =
@@ -1599,7 +1599,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ...(focusBlock ? [{ role: "system", content: focusBlock.message }] : []),
         ...(summaryNote ? [{ role: "system", content: summaryNote }] : []),
         // The switchable prompt layer rides LAST — below every breakpoint that
-        // protects the stable head, so changing it (the Counsel switcher, and
+        // protects the stable head, so changing it (the Chat switcher, and
         // later the router) re-writes only these bytes and never the ~23K of
         // instructions, the book block or the pinned focus. Last is also the
         // closest an instruction can sit to the question, which is where it is

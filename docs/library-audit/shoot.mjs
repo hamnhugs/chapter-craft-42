@@ -76,7 +76,7 @@ for (const v of VIEWS) {
   await click(`[...document.querySelectorAll('[role=menuitem]')].find(b => b.textContent.includes('View as a list'))`); await snap("7g-list");
   await click(byLabel("Cards")); await sleep(300);
   await click(byLabel("Design")); await snap("7-shelf-design");
-  await click(byLabel("Ask Counsel")); await snap("8-counsel");
+  await click(byLabel("Ask Chat")); await snap("8-counsel");
 }
 fs.writeFileSync(`${OUT}/metrics.json`, JSON.stringify(metrics, null, 1));
 if (errors.length) console.log("page errors:", [...new Set(errors)].slice(0, 8));

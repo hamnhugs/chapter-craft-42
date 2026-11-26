@@ -9,13 +9,20 @@ in `research_notes/Character voices for book narration/`).
 
 ## Using it
 
-Listen → ⋯ → **Character voices**. Needs an Inworld voice (it does nothing
-with the device voice) and a chat model key. **Cast** in the same menu lists
-who has spoken and lets you pick anyone's voice; a voice you pick sticks.
+On by default since 2026-11-25 (Listen → ⋯ → **Character voices** switches it
+off). Needs an Inworld voice (it does nothing with the device voice) and a
+chat model key.
+
+The first time a character speaks, reading pauses and a prompt asks which
+voice they should have (`CastVoicePrompt.tsx`): tap any voice to hear it read
+that character's own line, then "Use …". "Pick for me" keeps the suggestion;
+"Stop asking, pick them all" (or ⋯ → **Ask me for each voice**) casts
+everyone silently. **Cast** in the same menu lists who has spoken, shows
+what the casting is doing or why it failed, and lets you change any voice.
 "Start the cast over" forgets the book's cast.
 
-Off by default: it spends one background-model call per page of dialogue and
-makes more, shorter voice requests.
+It spends one background-model call per page of dialogue and makes more,
+shorter voice requests.
 
 ## How it works
 
@@ -34,7 +41,9 @@ Worked out just ahead of the voice, not as a batch over the whole book.
 4. `castVoices/director.ts` runs it live: the page is cut into windows of
    about a page, the window being read and the next are analysed, and the
    player asks for a quote's speaker only when it fetches that line's audio.
-   No answer within 7 seconds: the narrator reads the line.
+   It waits up to 45 seconds for the answer (the reading shows "loading"),
+   then the narrator reads the line. Progress is logged as `[cast]` in the
+   browser console.
 5. `readAlong.ts` `buildVoicedChunks` cuts the reading at every change of
    speaker; `readAlongPlayer.ts` sends each chunk with its voice. A line the
    book says is whispered or shouted carries that as its direction.
@@ -45,8 +54,11 @@ and sounds the same. No server change, no migration, no function redeploy.
 
 ## Not verified
 
-Nothing here has been heard: there is no Inworld key outside a signed-in
-session. What was checked for real is the detection, against local models on
+Checked live on 2026-11-25 in a signed-in session (Coraline, PDF, British
+single quotes): speakers were found in about 2 seconds by
+google/gemini-2.5-flash-lite and the mother's lines went to Inworld under a
+different voice from the narration. Nobody has yet judged how it sounds, and
+the voice prompt has only been tested in code. Also checked: the detection, against local models on
 the opening of Pride and Prejudice (16 quotes, mostly untagged): an 8B model
 got 16 of 16, a 4B model 11 to 12. Worth listening for:
 

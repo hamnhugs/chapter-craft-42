@@ -176,7 +176,7 @@ export interface ResolvablePreset {
  * must never be able to grant what the user's own permissions withhold.
  *
  * `neuronIds` and `bookId` are PER SWITCH. They are applied once, by the
- * switcher, as a visible action with a toast, and they show up in Counsel's
+ * switcher, as a visible action with a toast, and they show up in Chat's
  * own chips afterwards. Re-applying them every turn would fight the user every
  * time they loaded a neuron by hand; applying them silently from the ROUTER
  * would be worse still, which is why the router never does (see below).

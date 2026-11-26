@@ -38,6 +38,9 @@ export interface CastMember {
   voiceId?: string;
   /** The listener chose this voice: casting never changes it. */
   locked?: boolean;
+  /** The listener has been asked about this character's voice (and either
+   *  chose one or said "pick for me"). */
+  asked?: boolean;
 }
 
 /** One quote's verdict. `speaker` null = the narrator reads it. */
@@ -121,7 +124,7 @@ export function buildAttributionMessages(input: AttributionInput): Array<{ role:
     '{"cast":[{"name":"Full Name","aliases":["Other name"],"gender":"female|male|unknown","age":"child|young|adult|elder|unknown","voice":"a few words on how they sound"}],"quotes":[{"q":1,"why":"tag: said his lady","who":"Full Name","how":"whispering"}]}',
     "- \"cast\": only characters who speak in THIS passage; give gender and age only when the book supports it, else \"unknown\".",
     "- \"quotes\": one entry for every number, in order.",
-    "- \"why\": write this BEFORE \"who\" — the evidence in a few words: the tag (\"tag: cried his wife\"), \"same sentence as 3\", \"answers 7\", \"addresses Mr. Bennet\", or \"unclear\".",
+    "- \"why\": write this BEFORE \"who\" — the evidence in at most five words: the tag (\"tag: cried his wife\"), \"same sentence as 3\", \"answers 7\", \"addresses Mr. Bennet\", or \"unclear\".",
     "- \"how\": optional, at most four words, and only when the text itself says how the line is spoken (shouted, whispered, sobbing). Leave it out otherwise.",
   ].join("\n");
   const user = [

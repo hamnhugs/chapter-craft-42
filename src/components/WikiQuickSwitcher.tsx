@@ -22,8 +22,8 @@ import { isSystemWiki } from "@/lib/wikisApi";
 // Listens for keydown anywhere; ignores input/textarea/contenteditable focus
 // so it doesn't fight with normal in-field shortcuts.
 //
-// Selecting a notebook switches Counsel to it (replaces the loaded set),
-// except when opened from Counsel's "+" chip ("add" mode), where it is added
+// Selecting a notebook switches Chat to it (replaces the loaded set),
+// except when opened from Chat's "+" chip ("add" mode), where it is added
 // alongside. The +/− button on each row adds/removes a secondary notebook
 // without closing the palette, and the saved-sets group activates a set in
 // one hit.
@@ -44,8 +44,8 @@ const WikiQuickSwitcher: React.FC = () => {
   const { isPaid, loaded: planLoaded } = usePlan();
   const { chains } = useChains();
   const [open, setOpen] = useState(false);
-  // "add": opened from Counsel's "+" chip — picking a notebook adds it to what
-  // Counsel is using instead of replacing it.
+  // "add": opened from Chat's "+" chip — picking a notebook adds it to what
+  // Chat is using instead of replacing it.
   const [mode, setMode] = useState<"switch" | "add">("switch");
 
   // Locked neurons (free plan) stay visible but can't be loaded — same rule
@@ -101,7 +101,7 @@ const WikiQuickSwitcher: React.FC = () => {
       try {
         await setActiveWiki(wikiId);
         const wiki = wikis.find((w) => w.id === wikiId);
-        toast.success(wiki ? `Counsel is now using "${wiki.name}"` : "Counsel switched notebooks");
+        toast.success(wiki ? `Chat is now using "${wiki.name}"` : "Chat switched notebooks");
         setOpen(false);
       } catch (err: any) {
         toast.error(err.message || "Switch failed");
@@ -126,15 +126,15 @@ const WikiQuickSwitcher: React.FC = () => {
         const next = await toggleNeuronInSession(wikiId);
         const name = wiki ? `"${wiki.name}"` : "that notebook";
         if (!next.includes(wikiId)) {
-          toast.success(`Counsel stopped using ${name}`);
+          toast.success(`Chat stopped using ${name}`);
         } else {
-          toast.success(`Counsel is also using ${name} (${next.length} of ${MAX_ACTIVE_NEURONS})`);
+          toast.success(`Chat is also using ${name} (${next.length} of ${MAX_ACTIVE_NEURONS})`);
           if (next.length === 4) {
             toast.info("More isn't always better — beyond 3 loaded notebooks, connections get diluted.", { id: "neuron-dilution-tip" });
           }
         }
       } catch (err: any) {
-        toast.error(err.message || "Couldn't change Counsel's notebooks");
+        toast.error(err.message || "Couldn't change Chat's notebooks");
       }
     },
     [toggleNeuronInSession, wikis, lockedIds]
@@ -157,7 +157,7 @@ const WikiQuickSwitcher: React.FC = () => {
       try {
         await setActiveNeurons(liveIds);
         touchChainUsed(chain.id);
-        toast.success(`Counsel is now using the set "${chain.name}" (${liveIds.length} notebook${liveIds.length === 1 ? "" : "s"})`);
+        toast.success(`Chat is now using the set "${chain.name}" (${liveIds.length} notebook${liveIds.length === 1 ? "" : "s"})`);
         setOpen(false);
       } catch (err: any) {
         toast.error(err.message || "Couldn't switch to that set");
@@ -167,7 +167,7 @@ const WikiQuickSwitcher: React.FC = () => {
   );
 
   // Sort: active first, then most recently loaded, then name. The app's own
-  // notebooks stay out of the way unless Counsel is using one.
+  // notebooks stay out of the way unless Chat is using one.
   const sorted = wikis.filter((w) => !isSystemWiki(w) || activeWikiIds.includes(w.id)).sort((a, b) => {
     if (a.id === activeWikiId) return -1;
     if (b.id === activeWikiId) return 1;
@@ -183,7 +183,7 @@ const WikiQuickSwitcher: React.FC = () => {
 
   return (
     <CommandDialog open={open} onOpenChange={setOpen}>
-      <CommandInput placeholder={mode === "add" ? "Add a notebook for Counsel — type to filter…" : "Switch Counsel's notebook — type to filter…"} />
+      <CommandInput placeholder={mode === "add" ? "Add a notebook for Chat — type to filter…" : "Switch Chat's notebook — type to filter…"} />
       <CommandList>
         <CommandEmpty>No notebooks match.</CommandEmpty>
         {chains.length > 0 && (
@@ -246,7 +246,7 @@ const WikiQuickSwitcher: React.FC = () => {
               <span className="material-symbols-outlined text-[16px] shrink-0 text-muted-foreground" aria-hidden>chat_bubble</span>
               <div className="flex-1 min-w-0">
                 <span className="font-medium">Just chat</span>
-                <div className="text-xs text-muted-foreground truncate">Counsel answers without reading or saving notes.</div>
+                <div className="text-xs text-muted-foreground truncate">Chat answers without reading or saving notes.</div>
               </div>
               {activeWikiIds.length === 0 && (
                 <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-primary shrink-0">
@@ -256,7 +256,7 @@ const WikiQuickSwitcher: React.FC = () => {
             </CommandItem>
           </CommandGroup>
         )}
-        <CommandGroup heading={mode === "add" ? "Add for Counsel" : "Use with Counsel"}>
+        <CommandGroup heading={mode === "add" ? "Add for Chat" : "Use with Chat"}>
           {sorted.map((wiki) => {
             const isPrimary = wiki.id === activeWikiId;
             const isLoaded = activeWikiIds.includes(wiki.id);
