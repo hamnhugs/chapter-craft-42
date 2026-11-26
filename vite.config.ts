@@ -41,6 +41,13 @@ const CONNECT_ORIGINS = [
   "https://cdn-lfs.huggingface.co",
   "https://cdn-lfs-us-1.huggingface.co",
   "https://api.open-meteo.com", // Bookworm Studio's live Vegas sky (optional weather)
+  // Equilibrium, the linked calendar: the worm reads its health and Chat's
+  // `calendar` tool manages it (lib/equilibriumLink.ts). Both addresses it is
+  // served from. Missing, the link worked in dev and every call was refused
+  // by the browser in production. Keep in step with EQUILIBRIUM_ORIGINS there
+  // (calendarTool.test.ts fails when they drift).
+  "https://equilibrium-sigma-hazel.vercel.app",
+  "https://program-launchpad-starter.lovable.app",
 ];
 
 // Production Content-Security-Policy. Every origin here is load-bearing —
