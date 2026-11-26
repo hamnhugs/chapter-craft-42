@@ -89,7 +89,8 @@ const ChatPanel: React.FC = () => {
   // absent key has to mean enabled or every existing user silently loses it.
   const [pocketScreenEnabled] = useState(() => localStorage.getItem("hands_free_pocket_screen") !== "false");
   const handsFree = useHandsFree({
-    onUtterance: (text) => sendMessage(text, { voiceMode: true, modelOverride: voiceModel || undefined }),
+    // endSession lets Counsel close hands-free when asked to (end_hands_free).
+    onUtterance: (text, ctl) => sendMessage(text, { voiceMode: true, modelOverride: voiceModel || undefined, endHandsFree: ctl.endSession }),
     // Hands-free has its own speech speed (read-aloud buttons keep ttsRate).
     speak: (text, opts) => speak(text, { ...opts, rate: handsFreeTtsRate || undefined }),
     stopSpeaking,
