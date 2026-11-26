@@ -134,3 +134,13 @@ Two things Manny hit on a phone after the deck shipped. Research behind the fixe
 - **A long shelf row hid shelves and stranded "New shelf" at its end.** Only the tabs scroll now. Pinned after them are "All shelves" (a bottom sheet listing every shelf; a filter box appears past eight) and "New shelf". The open tab is scrolled into view, and the row ends in a fade.
 
 Checked in headless Chromium at 360×740 with touch events through the lab: a drag that starts on a card scrolls and opens nothing; a tap opens the menu with the page still scrollable; scroll, a second tap, or a tap elsewhere closes it; the sheet lists and opens shelves; "New shelf" focuses its name box. Not checked on a real phone or in Safari. Not done: pinning favourite shelves, and tap-opens-the-book.
+
+## Shelf tab row removed (2026-11-25)
+
+At the user's request the sideways-scrolling row of shelf tabs above the shelf's
+book cards is gone. The top of the shelf panel now holds one button naming the
+open shelf (mark, name, count, and the Counsel icon when Counsel has it); tapping
+it opens the existing "Shelves" list, which is now the one way to change shelf.
+"New shelf" stays beside it. The separate "All shelves" list button was folded
+into the new button. Checked in `#/arena-lab?library` at 956 and 390 wide;
+untested on a real phone.

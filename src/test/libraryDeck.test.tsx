@@ -81,9 +81,16 @@ const mount = async (props: Partial<React.ComponentProps<typeof LibraryDeck>> = 
     );
   });
 };
-const tab = (name: string) => Array.from(host.querySelectorAll<HTMLElement>('[role="tab"]')).find((t) => t.textContent!.includes(name))!;
+/** The button naming the open shelf — the one way to the list of shelves. */
+const picker = () => host.querySelector<HTMLElement>("[data-shelf-picker]")!;
+const shelfRows = () => Array.from(document.querySelectorAll<HTMLElement>(".cc-shelf-row"));
+/** Open a shelf the way a person does: the picker, then its row in the list. */
+const openShelf = async (name: string) => {
+  await act(async () => { picker().click(); });
+  await act(async () => { shelfRows().find((r) => r.textContent!.includes(name))!.click(); });
+};
 const button = (name: string) => Array.from(host.querySelectorAll("button")).find((b) => b.textContent!.includes(name))!;
-const slots = () => host.querySelector('[role="tabpanel"]')!;
+const slots = () => host.querySelector("[data-deck-body]")!;
 
 beforeEach(() => {
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -101,41 +108,50 @@ afterEach(async () => {
   host.remove();
 });
 
-describe("shelves are the deck's tabs", () => {
+describe("one shelf is open at a time", () => {
+  it("has no sideways row of shelf tabs", async () => {
+    await mount();
+    expect(host.querySelector('[role="tablist"]')).toBeNull();
+    expect(host.querySelector('[role="tab"]')).toBeNull();
+  });
+
   it("lists Reading now, every shelf with its true size, and a way to make one", async () => {
     await mount();
-    expect(tab("Reading now")).toBeTruthy();
-    expect(tab("Stoics").textContent).toContain("2");
-    expect(tab("Design").textContent).toContain("1");
+    await act(async () => { picker().click(); });
+    const rows = shelfRows();
+    expect(rows[0].textContent).toContain("Reading now");
+    expect(rows.find((r) => r.textContent!.includes("Stoics"))!.textContent).toContain("2");
+    expect(rows.find((r) => r.textContent!.includes("Design"))!.textContent).toContain("1");
     expect(button("New shelf")).toBeTruthy();
   });
 
   it("opens a shelf's books in slots, filled out to the eight Counsel takes", async () => {
     await mount();
-    await act(async () => { tab("Stoics").click(); });
-    expect(tab("Stoics").getAttribute("aria-selected")).toBe("true");
+    await openShelf("Stoics");
+    expect(picker().textContent).toContain("Stoics");
     expect(slots().querySelectorAll("[data-deck-card]")).toHaveLength(2);
     expect(slots().querySelectorAll(".cc-slot")).toHaveLength(6);
   });
 
   it("looking at a shelf does not load it", async () => {
     await mount();
-    await act(async () => { tab("Stoics").click(); });
-    await act(async () => { tab("Design").click(); });
+    await openShelf("Stoics");
+    await openShelf("Design");
     expect(app.loadFocus).not.toHaveBeenCalled();
   });
 
   it("remembers the open shelf, and falls back when it has been deleted", async () => {
     localStorage.setItem("vault_deck_tab", "s2");
     await mount();
-    expect(tab("Design").getAttribute("aria-selected")).toBe("true");
+    expect(picker().textContent).toContain("Design");
     await mount({ shelves: [SHELVES[0]] });
-    expect(tab("Stoics").getAttribute("aria-selected")).toBe("true");
+    expect(picker().textContent).toContain("Stoics");
   });
 
   it("keeps a shelf's size honest while a search narrows the collection", async () => {
     await mount({ books: [BOOKS[3]], filtered: true });
-    expect(tab("Stoics").textContent).toContain("2");
+    await openShelf("Stoics");
+    expect(picker().textContent).toContain("2");
     // The slots step aside for the results.
     expect(host.querySelector('[role="tabpanel"]')).toBeNull();
   });
@@ -144,7 +160,7 @@ describe("shelves are the deck's tabs", () => {
 describe("Ask Counsel takes the open shelf and keeps the notebook", () => {
   it("loads the shelf with the notebook untouched — nothing is asked on the way", async () => {
     await mount();
-    await act(async () => { tab("Stoics").click(); });
+    await openShelf("Stoics");
     await act(async () => { button("Ask Counsel").click(); });
     expect(app.loadFocus).toHaveBeenCalledWith({ kind: "shelf", shelfId: "s1", neurons: { kind: "keep" } });
   });
@@ -152,7 +168,7 @@ describe("Ask Counsel takes the open shelf and keeps the notebook", () => {
   it("says which notebook goes along", async () => {
     app.activeWikis = [{ id: "w1", name: "Philosophy notes" }];
     await mount();
-    await act(async () => { tab("Stoics").click(); });
+    await openShelf("Stoics");
     expect(host.querySelector(".cc-notebook-slot")!.textContent).toContain("Philosophy notes");
     app.activeWikis = [];
     await mount();
@@ -161,8 +177,8 @@ describe("Ask Counsel takes the open shelf and keeps the notebook", () => {
 
   it("is not offered on Reading now — only a shelf goes to Counsel", async () => {
     await mount();
-    await act(async () => { tab("Reading now").click(); });
-    expect(tab("Reading now").getAttribute("aria-selected")).toBe("true");
+    await openShelf("Reading now");
+    expect(picker().textContent).toContain("Reading now");
     expect(button("Ask Counsel")).toBeUndefined();
     expect(host.querySelector(".cc-notebook-slot")).toBeNull();
   });
@@ -171,46 +187,39 @@ describe("Ask Counsel takes the open shelf and keeps the notebook", () => {
     app.loaded = { shelfId: "s1", bookIds: [], excludedIds: [] };
     await mount();
     // With no remembered tab, the loaded shelf is the one that opens.
-    expect(tab("Stoics").getAttribute("aria-selected")).toBe("true");
+    expect(picker().textContent).toContain("Stoics");
     expect(button("Open Counsel")).toBeTruthy();
   });
 
   it("cannot send an empty shelf", async () => {
     await mount({ shelves: [...SHELVES, shelf("s3", "Empty")] });
-    await act(async () => { tab("Empty").click(); });
+    await openShelf("Empty");
     expect(button("Ask Counsel").disabled).toBe(true);
   });
 });
 
-describe("the shelf row on a phone", () => {
-  it("keeps New shelf and All shelves outside the part that scrolls", async () => {
-    await mount();
-    const row = host.querySelector('[role="tablist"]')!;
-    expect(row.contains(button("New shelf"))).toBe(false);
-    expect(row.contains(host.querySelector('[aria-label="All shelves"]'))).toBe(false);
-  });
-
+describe("the list of shelves", () => {
   it("lists every shelf in a sheet, and opens the one that is picked", async () => {
     await mount();
-    await act(async () => { host.querySelector<HTMLElement>('[aria-label="All shelves"]')!.click(); });
+    await act(async () => { picker().click(); });
     const rows = Array.from(document.querySelectorAll<HTMLElement>(".cc-shelf-row"));
     expect(rows.map((r) => r.textContent)).toEqual([
       expect.stringContaining("Reading now"), expect.stringContaining("Stoics"), expect.stringContaining("Design"),
     ]);
     await act(async () => { rows[2].click(); });
-    expect(tab("Design").getAttribute("aria-selected")).toBe("true");
+    expect(picker().textContent).toContain("Design");
     expect(document.querySelector(".cc-shelf-row")).toBeNull();
     expect(app.loadFocus).not.toHaveBeenCalled();
   });
 
   it("offers a filter once there are too many shelves to scan", async () => {
     await mount();
-    await act(async () => { host.querySelector<HTMLElement>('[aria-label="All shelves"]')!.click(); });
+    await act(async () => { picker().click(); });
     expect(document.querySelector('[aria-label="Find a shelf"]')).toBeNull();
     await act(async () => { root.unmount(); });
     root = createRoot(host);
     await mount({ shelves: Array.from({ length: 9 }, (_, i) => shelf(`m${i}`, `Shelf ${i}`)) });
-    await act(async () => { host.querySelector<HTMLElement>('[aria-label="All shelves"]')!.click(); });
+    await act(async () => { picker().click(); });
     expect(document.querySelector('[aria-label="Find a shelf"]')).toBeTruthy();
   });
 });

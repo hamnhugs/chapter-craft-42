@@ -31,8 +31,8 @@ import { isUnfinishedPaper, paperFraction, paperMeta, paperProgressLabel } from 
  * interrupted every load). Here they are one panel, laid out the way a card
  * game lays out a deck:
  *
- *   - SHELVES are the deck tabs. One is open at a time; "Reading now" is a
- *     tab the app fills by itself.
+ *   - One SHELF is open at a time, named at the top of the panel; "Reading
+ *     now" is a shelf the app fills by itself.
  *   - The open shelf's BOOKS sit in slots — eight, because Counsel takes
  *     eight books at a time.
  *   - The NOTEBOOK Counsel is using sits beside the slots, and "Ask Counsel"
@@ -41,12 +41,12 @@ import { isUnfinishedPaper, paperFraction, paperMeta, paperProgressLabel } from 
  *   - Underneath is the collection: every book.
  *
  * Tapping a card lifts it and offers what you can do with it: Info (the
- * book's profile), Read, and add to / take off the open shelf. Opening a tab
- * only looks at a shelf — it never changes what Counsel has loaded.
+ * book's profile), Read, and add to / take off the open shelf. Opening a
+ * shelf only looks at it — it never changes what Counsel has loaded.
  *
- * The tab row is a shortcut, not the only way in: "New shelf" and "All
- * shelves" are pinned beside it, outside the part that scrolls, so neither is
- * ever at the far end of a long row.
+ * Shelves are changed from ONE button: the open shelf's name, which opens the
+ * list of every shelf. There used to be a sideways-scrolling row of shelf
+ * tabs here as well; it was removed at the user's request (2026-11-25).
  */
 
 /** Cards mounted at once. The grid grows by this much as you near the end —
@@ -661,6 +661,8 @@ const LibraryDeck: React.FC<{
     [shelf, allCards, now, deckId, unfinished],
   );
   const inCounsel = shelf ? loaded.shelfId === shelf.id : false;
+  const deckName = shelf ? shelf.name : deckId === UNFINISHED_ID ? "Unfinished" : "Reading now";
+  const deckMark = shelf ? marks.get(shelf.id) : undefined;
 
   useEffect(() => { setShown(PAGE); }, [sort, books.length, showLoose]);
   useEffect(() => {
@@ -699,7 +701,7 @@ const LibraryDeck: React.FC<{
   const [digesting, setDigesting] = useState(false);
   useEffect(() => { setRenaming(false); }, [deckId]);
 
-  // Every shelf as a list, for when the row is too long to swipe through.
+  // Every shelf as a list — the one way to change which shelf is open.
   const [listOpen, setListOpen] = useState(false);
   const [shelfQuery, setShelfQuery] = useState("");
   const filterShelves = shelves.length > FILTER_SHELVES_FROM;
@@ -712,33 +714,6 @@ const LibraryDeck: React.FC<{
     setListOpen(false);
     setShelfQuery("");
   };
-
-  // Keep the open tab in view — it may have been picked from the list, or
-  // remembered from last time, and be well off the end of the row. The row is
-  // moved only as far as it takes (never the page, which `scrollIntoView`
-  // would move too), and again once the icon font is in: until then every
-  // icon is its name spelled out and the tabs are several times too wide.
-  const tabRow = useRef<HTMLDivElement>(null);
-  const tabRowSeen = useRef(false);
-  useEffect(() => {
-    const reveal = (behavior: ScrollBehavior) => {
-      const row = tabRow.current;
-      const el = row?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
-      if (!row || !el || typeof row.scrollTo !== "function") return;
-      const r = row.getBoundingClientRect();
-      const t = el.getBoundingClientRect();
-      const lead = t.left - (r.left + 8);
-      // 28px: clear of the fade the row ends in.
-      const trail = t.right - (r.right - 28);
-      const by = lead < 0 ? lead : trail > 0 ? Math.min(trail, lead) : 0;
-      if (by !== 0) row.scrollTo({ left: row.scrollLeft + by, behavior });
-    };
-    reveal(tabRowSeen.current ? "smooth" : "auto");
-    tabRowSeen.current = true;
-    let live = true;
-    void document.fonts?.ready.then(() => { if (live) reveal("auto"); });
-    return () => { live = false; };
-  }, [deckId, shelves.length]);
 
   const commitCreate = async () => {
     const name = newName.trim();
@@ -819,39 +794,32 @@ const LibraryDeck: React.FC<{
   return (
     <div className="flex flex-col gap-4">
       <section aria-label="Shelves" className="cc-deck">
-        {/* Deck tabs: one per shelf. Only the tabs scroll; the two buttons
-            after them stay put. */}
+        {/* The open shelf, by name. Tapping it lists every shelf. */}
         <div className="cc-deck-bar">
-          <div ref={tabRow} className="cc-deck-tabs hide-scrollbar" role="tablist" aria-label="Shelves">
-            <button type="button" role="tab" aria-selected={deckId === NOW_ID} className="cc-deck-tab" onClick={() => pickTab(NOW_ID)}>
-              <span className="material-symbols-outlined text-[18px] text-accent" aria-hidden>local_fire_department</span>
-              Reading now
-              <span className="cc-deck-count">{now.length}</span>
-            </button>
-            {unfinished.length > 0 && (
-              <button type="button" role="tab" aria-selected={deckId === UNFINISHED_ID} className="cc-deck-tab" data-paper onClick={() => pickTab(UNFINISHED_ID)}>
-                <span className="material-symbols-outlined text-[18px] text-accent" aria-hidden>photo_camera</span>
-                Unfinished
-                <span className="cc-deck-count">{unfinished.length}</span>
-              </button>
+          <button
+            type="button"
+            className="cc-deck-open"
+            data-shelf-picker
+            aria-haspopup="dialog"
+            aria-label={`Shelf: ${deckName}. Choose another shelf`}
+            title="Choose another shelf"
+            onClick={() => setListOpen(true)}
+          >
+            {shelf ? (
+              <span className="cc-deck-mark" style={deckMark ? { background: deckMark.color, color: deckMark.ink } : undefined} aria-hidden>
+                <span className="material-symbols-outlined">{deckMark?.glyph ?? "shelves"}</span>
+              </span>
+            ) : (
+              <span className="material-symbols-outlined text-[18px] text-accent" aria-hidden>{deckId === UNFINISHED_ID ? "photo_camera" : "local_fire_department"}</span>
             )}
-            {shelves.map((s) => {
-              const mark = marks.get(s.id);
-              return (
-                <button key={s.id} type="button" role="tab" aria-selected={deckId === s.id} className="cc-deck-tab" onClick={() => pickTab(s.id)}>
-                  <span className="cc-deck-mark" style={mark ? { background: mark.color, color: mark.ink } : undefined} aria-hidden>
-                    <span className="material-symbols-outlined">{mark?.glyph ?? "shelves"}</span>
-                  </span>
-                  <span className="truncate max-w-[10rem]">{s.name}</span>
-                  {/* No count until membership has loaded: "0" would be a guess. */}
-                  {membershipLoaded && <span className="cc-deck-count">{countByShelf.get(s.id) || 0}</span>}
-                  {loaded.shelfId === s.id && (
-                    <span className="material-symbols-outlined text-[16px] text-accent" title="Counsel has this shelf" aria-label="Counsel has this shelf">psychology</span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
+            <span className="truncate">{deckName}</span>
+            {/* No count for a shelf until membership has loaded: "0" would be a guess. */}
+            {(!shelf || membershipLoaded) && <span className="cc-deck-count">{deckCards.length}</span>}
+            {inCounsel && (
+              <span className="material-symbols-outlined text-[16px] text-accent" title="Counsel has this shelf" aria-label="Counsel has this shelf">psychology</span>
+            )}
+            <span className="material-symbols-outlined text-[20px] text-on-surface-variant ml-auto" aria-hidden>expand_more</span>
+          </button>
           {creating ? (
             <form onSubmit={(e) => { e.preventDefault(); void commitCreate(); }} className="shrink-0 flex">
               <input
@@ -866,22 +834,15 @@ const LibraryDeck: React.FC<{
               />
             </form>
           ) : (
-            <>
-              {shelves.length > 0 && (
-                <button type="button" className="cc-deck-pin" onClick={() => setListOpen(true)} aria-label="All shelves" title="All shelves">
-                  <span className="material-symbols-outlined text-[20px]" aria-hidden>format_list_bulleted</span>
-                </button>
-              )}
-              <button type="button" className="cc-deck-pin" data-new onClick={() => setCreating(true)} title="New shelf">
-                <span className="material-symbols-outlined text-[20px]" aria-hidden>add</span>
-                <span className="sr-only sm:not-sr-only">New shelf</span>
-              </button>
-            </>
+            <button type="button" className="cc-deck-pin" data-new onClick={() => setCreating(true)} title="New shelf">
+              <span className="material-symbols-outlined text-[20px]" aria-hidden>add</span>
+              <span className="sr-only sm:not-sr-only">New shelf</span>
+            </button>
           )}
         </div>
 
         {!filtered && (
-          <div className="cc-deck-body" role="tabpanel">
+          <div className="cc-deck-body" data-deck-body>
             <div className="min-w-0 flex-1 flex flex-col gap-2">
               <div className="flex items-center gap-2 min-h-[2rem]">
                 {renaming && shelf ? (
