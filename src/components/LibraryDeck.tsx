@@ -20,7 +20,6 @@ import { BOOK_CONTEXT_MAX_BOOKS, bookContextStore, bookHasCatalog } from "@/lib/
 import { catalogJobs } from "@/lib/catalogJobs";
 import { acquireDigestRun, generateShelfDigest, releaseDigestRun } from "@/lib/shelfDigest";
 import { useShelfMarks, type ShelfMark } from "@/lib/shelfMarks";
-import { OPEN_NEURON_SWITCHER_EVENT } from "@/components/WikiQuickSwitcher";
 import { isUnfinishedPaper, paperFraction, paperMeta, paperProgressLabel } from "@/lib/paperBook";
 
 /**
@@ -787,6 +786,11 @@ const LibraryDeck: React.FC<{
   // there the empties stop at the end of the row the last book is on.
   const empties = shelf ? Math.max(0, SLOTS - deckCards.length) : 0;
   const phoneEmpties = shelf ? Math.min(empties, (4 - (deckCards.length % 4)) % 4 || 4) : 0;
+  // One plank under every row of the shelf. A phone's row holds four and a
+  // wider screen's eight, so the phone has at least as many rows; the extra
+  // planks are hidden once the screen is wide.
+  const phoneRows = Math.ceil((deckCards.length + phoneEmpties) / 4);
+  const wideRows = Math.ceil((deckCards.length + empties) / 8);
   const finished = cards.filter((c) => c.level.maxed).length;
   const notebookNames = activeWikis.map((w) => w.name);
   const grid = "grid gap-x-3 gap-y-5 grid-cols-3 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-7 xl:grid-cols-8";
@@ -905,7 +909,10 @@ const LibraryDeck: React.FC<{
                 )}
               </div>
               {(deckCards.length > 0 || empties > 0) && (
-                <div className="grid grid-cols-4 sm:grid-cols-8 gap-x-2.5 gap-y-4 pt-1.5 pl-1.5">
+                <div className="cc-shelf-rows grid grid-cols-4 sm:grid-cols-8 gap-x-2.5 pt-1.5 pl-1.5">
+                  {Array.from({ length: phoneRows }, (_, i) => (
+                    <span key={`plank-${i}`} className="cc-plank" style={{ gridRow: `${i + 1} / ${i + 2}` }} data-phone-only={i >= wideRows || undefined} aria-hidden />
+                  ))}
                   {deckCards.map((c) => (
                     <BookCardTile key={c.book.id} card={c} compact busy={busyByBook.get(c.book.id)} shelf={openShelf} actions={actions} />
                   ))}
@@ -925,26 +932,11 @@ const LibraryDeck: React.FC<{
               )}
             </div>
 
-            {/* What goes to Counsel with these books, and the one button that takes it there.
+            {/* The one button that takes these books to Counsel; the line under it names the notebook that goes along.
                 A shelf only: "Reading now" is a view of what's in progress, not
                 something to hand to Counsel. */}
             {shelf && (
             <div className="cc-deck-go">
-              <button
-                type="button"
-                className="cc-notebook-slot"
-                onClick={() => window.dispatchEvent(new CustomEvent(OPEN_NEURON_SWITCHER_EVENT))}
-                title="Change the notebook Counsel uses"
-              >
-                <span className="material-symbols-outlined text-[22px] text-primary" aria-hidden>menu_book</span>
-                <span className="min-w-0 flex flex-col text-left leading-tight">
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Notebook</span>
-                  <span className="truncate text-sm font-bold text-foreground">
-                    {notebookNames.length === 0 ? "None — just chat" : notebookNames.length === 1 ? notebookNames[0] : `${notebookNames[0]} +${notebookNames.length - 1}`}
-                  </span>
-                </span>
-                <span className="material-symbols-outlined text-[18px] text-on-surface-variant ml-auto" aria-hidden>swap_horiz</span>
-              </button>
               <button type="button" className="cc-btn3d w-full" data-tone="accent" data-size="lg" disabled={deckCards.length === 0} onClick={askCounsel}>
                 <span className="material-symbols-outlined" aria-hidden>psychology</span>
                 {inCounsel ? "Open Counsel" : "Ask Counsel"}
@@ -954,7 +946,9 @@ const LibraryDeck: React.FC<{
                   ? "Add a book first."
                   : inCounsel
                     ? "Counsel has this shelf."
-                    : `Takes this shelf${notebookNames.length ? " and the notebook" : ""} to the chat.`}
+                    : notebookNames.length === 0
+                      ? "Takes this shelf to the chat."
+                      : `Takes this shelf and ${notebookNames.length === 1 ? `the notebook “${notebookNames[0]}”` : `${notebookNames.length} notebooks`} to the chat.`}
               </p>
             </div>
             )}

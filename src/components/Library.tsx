@@ -947,11 +947,12 @@ const Library: React.FC = () => {
         <p className="sr-only" aria-live="polite">{librarySummary}</p>
 
         {/* Tools, one row: find, order, add, and the rare things behind "more".
+            On a phone the search box takes a line of its own, above the rest.
             Sort, Auto-tag and Trash used to be three equal-weight buttons on a
             row of their own above the view switcher, which wrapped the header
             into two ragged rows. */}
         <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
             {view !== "cards" && (
               <button
                 onClick={() => setView("cards")}
@@ -963,7 +964,7 @@ const Library: React.FC = () => {
               </button>
             )}
             {books.length > 0 ? (
-              <div className="relative flex-1 min-w-0">
+              <div className="relative order-first sm:order-none w-full sm:w-auto sm:flex-1 min-w-0">
                 <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant text-xl pointer-events-none">
                   search
                 </span>
@@ -996,20 +997,19 @@ const Library: React.FC = () => {
                 )}
               </div>
             ) : (
-              <span className="flex-1" />
+              <span className="hidden sm:block flex-1" />
             )}
             {/* Add: one click to the file picker, the arrow for YouTube. */}
-            <div data-tour="add-books" className="shrink-0 flex items-stretch rounded-xl">
+            <div data-tour="add-books" className="flex-1 sm:flex-none shrink-0 flex items-stretch rounded-xl">
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isUploading}
-                className="flex items-center gap-1.5 pl-4 pr-3 py-3 rounded-l-xl bg-primary-container text-on-primary-container text-sm font-bold active:scale-95 transition-transform disabled:opacity-60"
+                className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 pl-4 pr-3 py-3 rounded-l-xl bg-primary-container text-on-primary-container text-sm font-bold active:scale-95 transition-transform disabled:opacity-60"
               >
                 <span className={`material-symbols-outlined text-lg leading-none ${isUploading ? "animate-spin" : ""}`} aria-hidden>
                   {isUploading ? "progress_activity" : "add"}
                 </span>
-                <span className="hidden sm:inline">{isUploading ? "Uploading…" : "Add books"}</span>
-                <span className="sr-only sm:hidden">Add books</span>
+                <span>{isUploading ? "Uploading…" : "Add books"}</span>
               </button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>

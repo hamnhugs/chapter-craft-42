@@ -169,10 +169,11 @@ describe("Ask Counsel takes the open shelf and keeps the notebook", () => {
     app.activeWikis = [{ id: "w1", name: "Philosophy notes" }];
     await mount();
     await openShelf("Stoics");
-    expect(host.querySelector(".cc-notebook-slot")!.textContent).toContain("Philosophy notes");
+    expect(host.querySelector(".cc-deck-go")!.textContent).toContain("the notebook “Philosophy notes”");
     app.activeWikis = [];
     await mount();
-    expect(host.querySelector(".cc-notebook-slot")!.textContent).toContain("None — just chat");
+    await openShelf("Stoics");
+    expect(host.querySelector(".cc-deck-go")!.textContent).toContain("Takes this shelf to the chat.");
   });
 
   it("is not offered on Reading now — only a shelf goes to Counsel", async () => {
@@ -180,7 +181,7 @@ describe("Ask Counsel takes the open shelf and keeps the notebook", () => {
     await openShelf("Reading now");
     expect(picker().textContent).toContain("Reading now");
     expect(button("Ask Counsel")).toBeUndefined();
-    expect(host.querySelector(".cc-notebook-slot")).toBeNull();
+    expect(host.querySelector(".cc-deck-go")).toBeNull();
   });
 
   it("shows which shelf Counsel already has", async () => {
