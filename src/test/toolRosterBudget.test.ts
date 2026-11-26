@@ -85,7 +85,15 @@ import { CHAT_TOOL_DEFINITIONS } from "@/lib/chatTools";
 // fallback for everything said less plainly, and it folds into no existing
 // verb: open_view only LOOKS, and nothing else touches the mic. One object
 // (the voice session), one intent, a description that names no sibling.
-const ROSTER_BUDGET = 86;
+//
+// +1 (the calendar): calendar. The user asked to manage their calendar from
+// the chat. The calendar is Equilibrium, a separate app, and nothing here
+// could reach it. It is ONE action-enum verb for fifteen actions over four
+// objects (day, task, weekly block, goal), not a verb per action, for the
+// sibling-expansion cost measured above. And it is on the roster only while a
+// calendar is linked on the device (off_calendar_unlinked in
+// toolAvailability.ts), so for everyone else the roster is the size it was.
+const ROSTER_BUDGET = 87;
 
 describe("the tool roster stays within its stated budget", () => {
   it(`ships at most ${ROSTER_BUDGET} tools`, () => {

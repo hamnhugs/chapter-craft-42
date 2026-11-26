@@ -1499,7 +1499,7 @@ const SettingsPanel: React.FC = () => {
                   Replay
                 </Button>
               </Row>
-              <Disclosure id="equilibrium" icon="monitor_heart" label="Equilibrium" summary="The worm shows how your calendar is going: scruffy when you are off schedule">
+              <Disclosure id="equilibrium" icon="monitor_heart" label="Equilibrium" summary="Link your calendar: the worm shows how it is going, and Chat can run it for you">
                 <EquilibriumLinkRow />
               </Disclosure>
               <Disclosure id="dev-keys" icon="code" label="Developer API keys" summary="Keys for the Bookworm API — separate from your AI provider keys">

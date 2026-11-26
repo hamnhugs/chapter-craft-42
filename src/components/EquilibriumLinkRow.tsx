@@ -5,7 +5,8 @@ import { Input } from "@/components/ui/input";
 import BookWorm from "@/components/BookWorm";
 import { getLink, parseLinkCode, refreshHealth, setLink, useEquilibriumHealth } from "@/lib/equilibriumLink";
 
-/** Settings → Account: link the worm to Equilibrium's health, or unlink it. */
+/** Settings → Account: link Equilibrium (the worm wears its health, and Chat
+ *  gets the calendar tool), or unlink it. */
 export default function EquilibriumLinkRow() {
   const health = useEquilibriumHealth();
   const [code, setCode] = useState("");
@@ -22,12 +23,12 @@ export default function EquilibriumLinkRow() {
     setCode("");
     const err = await refreshHealth();
     if (err) toast.error(err);
-    else toast.success("Linked. The worm now shows how your schedule is going.");
+    else toast.success("Linked. The worm shows how your schedule is going, and Chat can manage your calendar.");
   };
 
   if (linked) {
     return (
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <BookWorm mood="idle" health={health?.health} size={44} className="shrink-0 h-auto" />
         <div className="min-w-0 flex-1 text-sm">
           {health ? (
@@ -52,6 +53,9 @@ export default function EquilibriumLinkRow() {
         >
           Unlink
         </Button>
+        <p className="basis-full text-xs text-muted-foreground">
+          Chat can look at and change this calendar: ask what is on today, or to add, move or finish a task. To let it look only, turn off “Change your calendar” in AI permissions.
+        </p>
       </div>
     );
   }

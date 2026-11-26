@@ -50,6 +50,7 @@ export type ToolGateCode =
   | "off_foundry_unavailable"
   | "off_program_optin"
   | "off_program_unavailable"
+  | "off_calendar_unlinked"
   | "off_model_no_tools"
   | "off_model_image_turn";
 
@@ -60,7 +61,7 @@ export interface ToolGate {
   reason: string;
   /** The exact control that lifts it, in the user's words. */
   fix: string;
-  fixTarget: "settings_permissions" | "settings_foundry" | "settings_programs" | "settings_lean" | "settings_model" | "settings_studio" | "none";
+  fixTarget: "settings_permissions" | "settings_foundry" | "settings_programs" | "settings_lean" | "settings_model" | "settings_studio" | "settings_account" | "none";
 }
 
 export interface ToolGateInput {
@@ -86,7 +87,15 @@ export interface ToolGateInput {
   studioActive?: boolean;
   /** Voice turn: visual-only tools have nothing to show a listener. */
   voiceMode?: boolean;
+  /** Whether an Equilibrium calendar is linked on this device. Only an
+   *  explicit true offers the calendar tool: for everyone who has never
+   *  linked one, a calendar verb is a roster slot that can only fail. */
+  calendarLinked?: boolean;
 }
+
+/** The one calendar verb (lib/calendarTool.ts). Named here, not imported, so
+ *  this file keeps no dependency on anything that makes network calls. */
+export const CALENDAR_TOOL_NAME = "calendar";
 
 /** The two Tool Foundry tools. Opt-in with INVERTED semantics (an explicit
  *  `true` grants; everything else withholds), which is why they are absent
@@ -311,6 +320,15 @@ const RULES: GateRule[] = [
     groupFix: "Open Settings → Program Foundry: run the setup line it shows you in Lovable, then connect your VPS.",
   },
   {
+    code: "off_calendar_unlinked",
+    fixTarget: "settings_account",
+    applies: (tool, input) => tool === CALENDAR_TOOL_NAME && input.calendarLinked !== true,
+    reason: () => "No calendar is linked on this device, so the AI has no schedule to look at or change.",
+    fix: () => "Make a link code on Equilibrium's Health tab and paste it in Settings → Account → Equilibrium.",
+    groupReason: "No calendar is linked on this device, so the AI has no schedule to look at or change.",
+    groupFix: "Make a link code on Equilibrium's Health tab and paste it in Settings → Account → Equilibrium.",
+  },
+  {
     code: "off_lean_mode",
     fixTarget: "settings_lean",
     applies: (tool, input) => blockedTools(input.leanMode).includes(tool),
@@ -415,6 +433,7 @@ const MODEL_FACT: Record<ToolGateCode, string> = {
   off_foundry_unavailable: "The Tool Foundry's one-time database setup has not run on this account yet.",
   off_program_optin: "The user has the Program Foundry switch off, so the program tools are not in your list.",
   off_program_unavailable: "The Program Foundry's one-time database setup or the VPS runner connection is not ready on this account yet.",
+  off_calendar_unlinked: "No calendar is linked to this app on this device, so the calendar tool is not in your list.",
   off_model_no_tools: "The model answering this turn cannot call tools, so none were sent with the request.",
   off_model_image_turn:
     "This turn carries a picture and the model answering it drops tools on picture turns, so none were sent with the request.",
@@ -482,7 +501,7 @@ export function allGateCopy(): string[] {
     FORGE_TOOL, RUN_TOOL, "generate_video", "generate_image", "web_search",
     "delete_chapter", "rename_book", "supersede_memory_entry", "some_new_tool",
     FORGE_PROGRAM, RUN_PROGRAM, PROGRAM_SURVEY_TOOL, "read_program", "delete_program",
-    "create_blueprint_sheet", "render_blocks",
+    "create_blueprint_sheet", "render_blocks", CALENDAR_TOOL_NAME,
   ];
   // Two permission states, because off_permission now has two branches: the
   // tool's own switch, and a DEPENDS_ON switch its executor also requires.

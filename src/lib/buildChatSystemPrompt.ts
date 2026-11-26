@@ -598,6 +598,11 @@ export async function buildChatSystemPrompt({
     clause(["move_workspace_item"], " Every Workspace file is filed under a notebook; refile with `move_workspace_item`."),
     clause(["open_view"], " When the user says 'open', 'show me' or 'take me to' — a notebook, a note, a file, a tab — call `open_view`. Opening only changes what is on screen; it never changes which notebooks are loaded, so 'open my X notebook' is `open_view` and 'use', 'load' or 'switch to X' is a load."),
   ].join("");
+  // The calendar is another app (Equilibrium) reached through one verb. The
+  // line exists only while that verb is offered, i.e. while a calendar is linked.
+  const calendarLine = has("calendar") ? [
+    "The user's calendar is linked to this app. For anything about their day, week, schedule, tasks, to-dos, time blocks, routines or goals, call `calendar`: action 'today' first (it gives the date, the time now and the ids), then the action that does what they asked. Say times the way people do (3pm, not 15:00). A missed task is 'missed', never 'failed'. Never say the calendar was read or changed without the tool call succeeding.",
+  ] : [];
   const notebookCareLine = notebookCare ? ["Around the notebooks themselves:" + notebookCare + " Never say any of this was done without the tool call succeeding."] : [];
 
   // The library agent (docs/library-agent.md §2.3): one gated line per verb,
@@ -920,6 +925,7 @@ export async function buildChatSystemPrompt({
     ...wikiToolsLine,
     ...neuronLine,
     ...notebookCareLine,
+    ...calendarLine,
     ...libraryAgentLines,
     ...curateBlock,
     ...imagesBlock,

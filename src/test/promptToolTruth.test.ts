@@ -469,8 +469,12 @@ describe("the additive contract: omitting offeredTools changes nothing", () => {
   // (+575).
   // Re-captured 2026-11-25 (the app's name): the opening sentence says
   // "Bookworm Studio" where it said "Chapter Craft" — the commercial name (+2).
-  const BASELINE_LENGTH = 24740;
-  const BASELINE_DIGEST = "80f8eec3";
+  // Re-captured 2026-11-26 (the calendar in chat): one gated line says the
+  // user's calendar is linked and that `calendar` starts with action 'today'
+  // (+430). The default build carries every tool, so it carries this line; a
+  // real turn carries it only while a calendar is linked.
+  const BASELINE_LENGTH = 25170;
+  const BASELINE_DIGEST = "229be38b";
   const fnv1a = (s: string) => {
     let h = 0x811c9dc5;
     for (let i = 0; i < s.length; i++) {
