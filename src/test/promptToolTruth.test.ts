@@ -467,8 +467,10 @@ describe("the additive contract: omitting offeredTools changes nothing", () => {
   // library section says books can carry extracted figures, which tools list
   // them, and the [[fig:<handle>]] placement rule with its two-figure ceiling
   // (+575).
-  const BASELINE_LENGTH = 24738;
-  const BASELINE_DIGEST = "d5448b64";
+  // Re-captured 2026-11-25 (the app's name): the opening sentence says
+  // "Bookworm Studio" where it said "Chapter Craft" — the commercial name (+2).
+  const BASELINE_LENGTH = 24740;
+  const BASELINE_DIGEST = "80f8eec3";
   const fnv1a = (s: string) => {
     let h = 0x811c9dc5;
     for (let i = 0; i < s.length; i++) {

@@ -58,8 +58,8 @@ describe("auroraState", () => {
 
 describe("header text over a full-storm aurora (WCAG AA)", () => {
   const worst = brightestBackdrop(1, "text");
-  // Wordmark "Chapter", inactive nav (secondary token), icons/accent chip,
-  // and every stop of the "Craft" gradient.
+  // Wordmark "Bookworm", inactive nav (secondary token), icons/accent chip,
+  // and every stop of the "Studio" gradient.
   const texts: Record<string, string> = {
     frost: "#f2f5fc",
     navMist: "secondary",

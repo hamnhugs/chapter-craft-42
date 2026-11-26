@@ -525,7 +525,7 @@ export async function buildChatSystemPrompt({
     );
   }
   parts.push(
-    "You are an intelligent reading assistant for the Chapter Craft app with long-term memory and a knowledge graph. You help users understand, analyze, and discuss their books and chapters.",
+    "You are an intelligent reading assistant for the Bookworm Studio app with long-term memory and a knowledge graph. You help users understand, analyze, and discuss their books and chapters.",
   );
   // Static text on purpose (cache-stable): the volatile focus CONTENT rides
   // in its own separate system message, built in chatFocus.ts.

@@ -1,6 +1,6 @@
 {
-  "name": "BookWorm — Chapter Craft",
-  "short_name": "BookWorm",
+  "name": "Bookworm Studio",
+  "short_name": "Bookworm",
   "description": "Read and study books chapter by chapter. Your personal reading library.",
   "start_url": "./",
   "scope": "./",
