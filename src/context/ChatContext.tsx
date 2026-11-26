@@ -6,7 +6,7 @@ import { useChatSettings } from "@/hooks/useChatSettings";
 import { usePlan } from "@/hooks/usePlan";
 import { computeLockedWikiIds } from "@/lib/neuronAccess";
 import { usePromptPresets } from "@/hooks/usePromptPresets";
-import { buildChatSystemPrompt, buildFenceNonce, fenced, sanitizeBlock, type UsedMemory } from "@/lib/buildChatSystemPrompt";
+import { buildChatSystemPrompt, buildFenceNonce, fenced, loadedFocusLabel, sanitizeBlock, type LoadedFocus, type UsedMemory } from "@/lib/buildChatSystemPrompt";
 import { lensVerdict, type MemoryImageCandidate } from "@/lib/memoryLens";
 import { findSentenceCapIndex, truncateAtSentenceCap } from "@/lib/sentenceCap";
 import { isReflexEnabled } from "@/lib/reflex";
@@ -34,7 +34,7 @@ import { logPromptRoute, parkIncubatorTurn } from "@/lib/promptRoutingApi";
 import { computeCacheBreakpoints } from "@/lib/cacheLayout";
 import { makeCatalogEnqueuer } from "@/lib/catalogJobs";
 import {
-  bookContextStore, selectContextBooks, hydrateBooksForContext,
+  bookContextStore, selectContextBooks, hydrateBooksForContext, resolveLoadedFocus, lastSentFocus,
   buildBookContextBlock, bookContextCharBudget, resolveBookContextMode, bookHasCatalog, type UsedBookContext,
   type BookContextMode,
 } from "@/lib/chatBooks";
@@ -1230,6 +1230,24 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ...selectContextBooks(books, bookContextStore.get(), activeBookId ?? null).map((b) => b.id),
         ])],
       });
+      // What is loaded, named for the instructions — and, on the first send
+      // after the loaded set changed in a conversation that already has
+      // history, what it replaced. Without this the book block swapped
+      // silently at the top of the request while twenty messages about the
+      // previous shelf still rode below it, and the model carried on with
+      // those. The record of "what was loaded last time" is written only on
+      // a send that actually goes out.
+      let loadedFocus: LoadedFocus | null = null;
+      if (!preflightBlocked) {
+        const lf = resolveLoadedFocus(books, bookContextStore.get(), activeBookId ?? null, getShelves());
+        const label = lf.sig === "none" ? "" : loadedFocusLabel(lf);
+        const before = lastSentFocus.read(userIdRef.current);
+        const switched = !!before && before.sig !== lf.sig && historySource.length > 1;
+        loadedFocus = lf.titles.length > 0 || switched
+          ? { shelfName: lf.shelfName, titles: lf.titles, notLoaded: lf.notLoaded, ...(switched ? { replaced: before!.label } : {}) }
+          : null;
+        lastSentFocus.write(userIdRef.current, { sig: lf.sig, label });
+      }
       const { stablePrompt: systemPrompt, turnContext, usedMemories, memoryImages, inboundCards, routing } = preflightBlocked
         ? { stablePrompt: "", turnContext: "", usedMemories: [] as UsedMemory[], memoryImages: [] as MemoryImageCandidate[], inboundCards: [] as string[], routing: null }
         : await buildChatSystemPrompt({
@@ -1267,6 +1285,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         booksInContext: offeredNames.has("get_book")
           ? selectContextBooks(books, bookContextStore.get(), activeBookId ?? null).map((b) => b.id)
           : [],
+        loadedFocus,
       });
 
       // ── Prompt routing: apply the decision, or don't ──────────────────────

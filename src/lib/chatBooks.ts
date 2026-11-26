@@ -203,6 +203,56 @@ export function selectContextBooks(
 }
 
 /**
+ * The loaded set, NAMED — what the prompt's "What this conversation is about"
+ * section says. Built from the same `selectContextBooks` the block uses, so
+ * the instructions can never name a book the block does not carry. `sig`
+ * identifies the load itself (which shelf / which hand-picked books): it is
+ * what a later send compares against to notice that the user loaded something
+ * else. Unchecking one member of a shelf is not a different load.
+ */
+export function resolveLoadedFocus(
+  books: BookDocument[],
+  sel: BookContextSelection,
+  activeBookId: string | null,
+  shelves: ReadonlyArray<{ id: string; name: string }>,
+): { shelfName: string | null; titles: string[]; notLoaded: number; sig: string } {
+  if (isEmptySelection(sel)) return { shelfName: null, titles: [], notLoaded: 0, sig: "none" };
+  const riding = selectContextBooks(books, sel, activeBookId);
+  const titles = riding.map((b) => b.title || "Untitled");
+  if (sel.shelfId) {
+    const excluded = new Set(sel.excludedIds);
+    const members = books.filter((b) => b.folderIds.includes(sel.shelfId!) && !excluded.has(b.id)).length;
+    return {
+      shelfName: shelves.find((f) => f.id === sel.shelfId)?.name ?? "Untitled shelf",
+      titles,
+      notLoaded: Math.max(0, members - riding.length),
+      sig: `shelf:${sel.shelfId}`,
+    };
+  }
+  return { shelfName: null, titles, notLoaded: 0, sig: `books:${[...sel.bookIds].sort().join(",")}` };
+}
+
+/** What was loaded at the previous send, per user — so the first message
+ *  after a load can say the load happened. Survives a reload (the user loads
+ *  a shelf, the tab reloads, they ask): a ref alone would forget. */
+const sentKey = (uid: string) => `bw_book_ctx_sent_${uid}`;
+export const lastSentFocus = {
+  read(uid: string | null): { sig: string; label: string } | null {
+    if (!uid) return null;
+    try {
+      const o = JSON.parse(localStorage.getItem(sentKey(uid)) || "null");
+      return o && typeof o.sig === "string" && typeof o.label === "string" ? { sig: o.sig, label: o.label.slice(0, 200) } : null;
+    } catch {
+      return null;
+    }
+  },
+  write(uid: string | null, v: { sig: string; label: string }): void {
+    if (!uid) return;
+    try { localStorage.setItem(sentKey(uid), JSON.stringify(v)); } catch { /* private mode */ }
+  },
+};
+
+/**
  * Fetch full chapter text for the selected books. Pure data in, data out —
  * returns copies; the caller's book objects are never mutated. Pages at 200
  * rows per request because PostgREST silently caps un-ranged selects at 1000
