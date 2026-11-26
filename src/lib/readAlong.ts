@@ -26,6 +26,19 @@ export interface ReadChunk {
   text: string;
   /** Source offset where `text` begins (charIndex → source offset). */
   offset: number;
+  /** Cast voices: who speaks this chunk. Absent = the narrator. */
+  voice?: string;
+  /** Cast voices: how the line is delivered, when the text says. */
+  direction?: string;
+}
+
+/** A stretch of the source spoken by someone other than the narrator. */
+export interface VoiceSpan {
+  /** Source offsets, as `QuoteSpan`. */
+  start: number;
+  end: number;
+  voice: string;
+  direction?: string;
 }
 
 /** A timed token as a provider reports it (seconds from chunk audio start). */
@@ -92,7 +105,8 @@ const SENTENCE_END = /[.!?…]["'”’)\]]*$/;
  * chunk is kept short so audio starts quickly; a run-on sentence breaks at a
  * clause mark or, failing that, at the size limit.
  */
-export function buildReadChunks(text: string, words: SourceWord[], from = 0, max = 240, firstMax = 120): ReadChunk[] {
+export function buildReadChunks(text: string, words: SourceWord[], from = 0, max = 240, firstMax = 120, to = words.length): ReadChunk[] {
+  words = to < words.length ? words.slice(0, to) : words;
   const chunks: ReadChunk[] = [];
   let first = from;
   const push = (lastExclusive: number) => {
@@ -123,6 +137,47 @@ export function buildReadChunks(text: string, words: SourceWord[], from = 0, max
   }
   push(words.length);
   return chunks;
+}
+
+/**
+ * `buildReadChunks`, but no chunk crosses a change of speaker: the words are
+ * first cut into runs by who speaks them (a word belongs to the span its
+ * first letter falls in; everything else is the narrator's, dialogue tags
+ * included), then each run is sentence-packed as usual. A run is never
+ * merged with its neighbour, however short — "No," in one voice and "she
+ * said" in another is the whole point.
+ */
+export function buildVoicedChunks(
+  text: string, words: SourceWord[], spans: VoiceSpan[], from = 0, max = 240, firstMax = 120,
+): ReadChunk[] {
+  if (!spans.length) return buildReadChunks(text, words, from, max, firstMax);
+  const sorted = [...spans].sort((a, b) => a.start - b.start);
+  let si = 0;
+  const spanOf = (w: SourceWord): VoiceSpan | null => {
+    while (si < sorted.length && sorted[si].end <= w.start) si++;
+    const s = sorted[si];
+    return s && s.start <= w.start ? s : null;
+  };
+  const out: ReadChunk[] = [];
+  let runStart = from;
+  let runSpan: VoiceSpan | null = from < words.length ? spanOf(words[from]) : null;
+  const flush = (end: number) => {
+    if (end <= runStart) return;
+    const first = out.length === 0 ? firstMax : max;
+    for (const c of buildReadChunks(text, words, runStart, max, first, end)) {
+      out.push(runSpan ? { ...c, voice: runSpan.voice, ...(runSpan.direction ? { direction: runSpan.direction } : {}) } : c);
+    }
+  };
+  for (let i = from + 1; i < words.length; i++) {
+    const s = spanOf(words[i]);
+    if (s !== runSpan) {
+      flush(i);
+      runStart = i;
+      runSpan = s;
+    }
+  }
+  flush(words.length);
+  return out;
 }
 
 // Title/abbreviation words whose full stop doesn't end a sentence.
