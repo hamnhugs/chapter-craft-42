@@ -1,5 +1,6 @@
 import React from "react";
 import BookWorm, { type BookWormHandle } from "@/components/BookWorm";
+import { useWormHealth } from "@/lib/equilibriumLink";
 import type { Mood } from "@/lib/sprite/wormAnimator";
 
 /**
@@ -21,9 +22,10 @@ const WormSays = React.forwardRef<
     children: React.ReactNode;
   }
 >(function WormSays({ mood = "idle", size = 56, className = "", bubbleClassName = "", children }, ref) {
+  const health = useWormHealth();
   return (
     <div className={`flex items-end gap-2.5 ${className}`}>
-      <BookWorm ref={ref} mood={mood} size={size} className="shrink-0 h-auto" />
+      <BookWorm ref={ref} mood={mood} health={health} size={size} className="shrink-0 h-auto" />
       <div className={`cc-worm-bubble relative min-w-0 flex-1 rounded-2xl rounded-bl-md border border-outline-variant/30 bg-surface-container-high px-3.5 py-3 ${bubbleClassName}`}>
         {children}
       </div>

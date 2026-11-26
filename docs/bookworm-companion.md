@@ -374,3 +374,28 @@ is brutal about which moods are actually distinguishable.
   used during development verified mounting, refs, attribute painting and both
   themes — **not** the animation loop. Loop and settling behaviour are covered
   at unit level in `src/test/bookWorm.test.ts`.
+
+## Condition: the worm shows how the schedule is going (2026-11-26)
+
+The worm now has a CONDITION as well as a mood. A mood lasts seconds; condition lasts days. It is
+fed a health number, 10 to 100, from Equilibrium (Manny's calendar, `~/Work/program-launchpad`),
+where it is worked out from how much of the schedule is getting done.
+
+- `scruffOf(health)` and `shineOf(health)` in `wormAnimator.ts` turn the number into two eased
+  values. Below about 70 the worm starts to sag; around 50 it pulls on a slouched knit cap; under
+  35 it has stubble, bags under its eyes, a patch sewn on its side, limp feelers, a dull body and a
+  fly. Above 80 it throws off a sparkle or two. With no number it is the worm as before.
+- Condition bends every mood (`bend()`), so a down-and-out worm also cheers, reads and sleeps like
+  one. Everything fades or travels on the one number, so the shape list is still fixed-length.
+- `BookWorm` takes `health?: number | null`. `src/lib/equilibriumLink.ts` reads it from
+  Equilibrium's `GET /api/v1/health` every five minutes, with a link code the person pastes under
+  Settings → Account → Equilibrium (or arrives with, as `#eq=<code>`). The link is kept in this
+  browser only. A number older than three days is not shown.
+- Equilibrium draws its worm with these same three files (`wormGeometry.ts`, `wormAnimator.ts`,
+  `BookWorm.tsx`), copied unchanged by its `scripts/sync-worm.sh`. Change the worm HERE, run
+  `src/test/bookWorm.test.ts`, then run that script, or the two will drift apart.
+- Look at it: `npx vite-node scripts/wormCondition.ts -- out.svg` draws the worm at seven health
+  values in five moods.
+
+Not checked: a signed-in session with a real link (the browser check used a stand-in answer for
+Equilibrium), and a real phone.

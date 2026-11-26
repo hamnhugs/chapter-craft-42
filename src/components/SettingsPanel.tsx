@@ -16,6 +16,7 @@ import { openSetupWizard } from "@/components/SetupWizard";
 import { replayOnboarding } from "@/lib/onboarding";
 import PromptLibrary from "@/components/PromptLibrary";
 import ApiKeyManager from "@/components/ApiKeyManager";
+import EquilibriumLinkRow from "@/components/EquilibriumLinkRow";
 import ImageModelsSettings from "@/components/ImageModelsSettings";
 import VideoModelsSettings from "@/components/VideoModelsSettings";
 import SplatModelsSettings from "@/components/SplatModelsSettings";
@@ -1498,6 +1499,9 @@ const SettingsPanel: React.FC = () => {
                   Replay
                 </Button>
               </Row>
+              <Disclosure id="equilibrium" icon="monitor_heart" label="Equilibrium" summary="The worm shows how your calendar is going: scruffy when you are off schedule">
+                <EquilibriumLinkRow />
+              </Disclosure>
               <Disclosure id="dev-keys" icon="code" label="Developer API keys" summary="Keys for the Bookworm API — separate from your AI provider keys">
                 <ApiKeyManager />
               </Disclosure>

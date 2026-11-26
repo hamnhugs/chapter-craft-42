@@ -222,6 +222,47 @@ class Spring {
   }
 }
 
+/**
+ * CONDITION — how the worm is doing, as opposed to what it is doing.
+ *
+ * A mood lasts seconds. Condition lasts days: it is fed a 0..100 health number
+ * from outside (Equilibrium's schedule) and bends EVERY mood by it, so a worm
+ * that is down on its luck cheers like one, reads like one and sleeps like one.
+ * Two numbers come out of it: `scruff` for the bottom of the scale and `shine`
+ * for the top, with a wide plain middle where the worm is simply itself.
+ *
+ * The same two functions run in both apps, which is the whole of how the worm
+ * manages to look the same in each.
+ */
+export function scruffOf(health: number | null | undefined): number {
+  if (health == null || !Number.isFinite(health)) return 0;
+  return smoothstep((72 - health) / 44);
+}
+export function shineOf(health: number | null | undefined): number {
+  if (health == null || !Number.isFinite(health)) return 0;
+  return smoothstep((health - 80) / 14);
+}
+/** Condition changes slowly on purpose: the cap goes on over about a second. */
+const K_CONDITION = 14;
+
+function bend(m: MoodDef, s: number, z: number): MoodDef {
+  if (s < 1e-4 && z < 1e-4) return m;
+  return {
+    ...m,
+    // Slumped: leaning, bent further over, shorter, the head hanging.
+    baseAngle: m.baseAngle + 0.2 * s,
+    curl: m.curl + 0.5 * s,
+    stretch: m.stretch * (1 - 0.1 * s) * (1 + 0.04 * z),
+    headTilt: m.headTilt + 0.14 * s,
+    // Heavy lids, and the smile goes — but never past a tired flat line into
+    // a wail; it is worn out, not in pain.
+    lid: m.lid + 0.36 * s * (1 - Math.max(m.lid, 0)),
+    smile: clamp(m.smile - 0.8 * s + 0.3 * z, -0.5, 1),
+    wave: m.wave * (1 - 0.5 * s) * (1 + 0.3 * z),
+    breathAmp: m.breathAmp * (1 - 0.3 * s),
+  };
+}
+
 /** Posture is heavy, the face is light, gaze is near-ballistic. A saccade of
  *  5-15 degrees takes 30-45ms in life (duration = 2.2 * amplitude + 21 ms), so
  *  the gaze spring is stiff enough to arrive inside three frames. Easing the
@@ -334,6 +375,8 @@ export interface AnimatorOptions {
   /** Injected so blink and gaze scheduling are reproducible in tests. */
   rng?: () => number;
   mood?: Mood;
+  /** 0..100, or null for a worm with no schedule to answer to. */
+  health?: number | null;
 }
 
 export class WormAnimator {
@@ -358,6 +401,12 @@ export class WormAnimator {
   private sBreathAmp: Spring;
   private sGlasses: Spring;
   private sThink: Spring;
+  private sScruff: Spring;
+  private sShine: Spring;
+  private scruffTarget = 0;
+  private shineTarget = 0;
+  private phFly = 0;
+  private phTwinkle = 0;
 
   /**
    * THE BODY IS A DELAY LINE.
@@ -435,7 +484,11 @@ export class WormAnimator {
     this.rng = opts.rng ?? Math.random;
     this.reduced = !!opts.reduced;
     this.mood = opts.mood ?? "idle";
-    const m = MOODS[this.mood];
+    this.scruffTarget = scruffOf(opts.health);
+    this.shineTarget = shineOf(opts.health);
+    this.sScruff = new Spring(this.scruffTarget, K_CONDITION);
+    this.sShine = new Spring(this.shineTarget, K_CONDITION);
+    const m = bend(MOODS[this.mood], this.scruffTarget, this.shineTarget);
     this.sBase = new Spring(m.baseAngle, K_BODY);
     this.sCurl = new Spring(m.curl, K_BODY);
     // Zero from the very first frame when motion is off. Seeding these at the
@@ -485,6 +538,19 @@ export class WormAnimator {
     if (m === "read") this.scanX = -0.8;
     this.scheduleBlink();
     this.gazeIn = 0;
+  }
+
+  /** Feed it the health number. Null takes the worm back to plain. */
+  setHealth(health: number | null | undefined) {
+    const s = scruffOf(health);
+    const z = shineOf(health);
+    if (s === this.scruffTarget && z === this.shineTarget) return;
+    const better = s < this.scruffTarget || z > this.shineTarget;
+    this.scruffTarget = s;
+    this.shineTarget = z;
+    this.bump();
+    // Things picking up is worth a little hop; things sliding is not rubbed in.
+    if (better) this.pop(0.45);
   }
 
   setReduced(r: boolean) {
@@ -700,7 +766,13 @@ export class WormAnimator {
   step(dtMs: number): WormParams {
     const dt = clamp(dtMs, 0, 50) / 1000;
     this.clock += dt;
-    const m = MOODS[this.mood];
+    this.sScruff.to(this.scruffTarget, dt);
+    this.sShine.to(this.shineTarget, dt);
+    const scruff = clamp(this.sScruff.x, 0, 1);
+    const shine = clamp(this.sShine.x, 0, 1);
+    // Bent by where condition is HEADED, so the springs below chase one fixed
+    // target and settle detection compares against the same numbers.
+    const m = bend(MOODS[this.mood], this.scruffTarget, this.shineTarget);
 
     // --- motion budget ----------------------------------------------------
     this.sinceEvent += dt;
@@ -753,7 +825,11 @@ export class WormAnimator {
       this.phSwayA += dt / WormAnimator.SWAY_A_SEC;
       this.phSwayB += dt / WormAnimator.SWAY_B_SEC;
       this.phThink += dt * 0.85;
+      this.phFly += dt * 0.31;
+      this.phTwinkle += dt * 0.47;
     }
+    this.phFly %= 1;
+    this.phTwinkle %= 1;
     this.phThink %= 1;
     this.phWave %= 1;
     this.phBreath %= 1;
@@ -894,7 +970,9 @@ export class WormAnimator {
       this.sSmile.atRest(m.smile) &&
       this.sJaw.atRest(jawTarget) &&
       this.sLookX.atRest(0) &&
-      this.sLookY.atRest(0);
+      this.sLookY.atRest(0) &&
+      this.sScruff.atRest(this.scruffTarget) &&
+      this.sShine.atRest(this.shineTarget);
     this.restFrames = quiet ? this.restFrames + 1 : 0;
 
     return {
@@ -925,6 +1003,10 @@ export class WormAnimator {
       swell3: swell[3],
       swell4: swell[4],
       swell5: swell[5],
+      scruff,
+      shine,
+      flyPhase: this.phFly * Math.PI * 2,
+      twinkle: 0.5 + 0.5 * Math.sin(this.phTwinkle * Math.PI * 2),
     };
   }
 }

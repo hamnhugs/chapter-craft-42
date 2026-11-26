@@ -89,7 +89,12 @@ if ("serviceWorker" in navigator) {
 // HashRouter would interpret those fragments as routes and render 404,
 // so normalise them BEFORE the router reads location.
 const rawHash = window.location.hash;
-if (/^#(?!\/)/.test(rawHash)) {
+if (/^#eq=/.test(rawHash)) {
+  // Equilibrium's "Open Bookworm Studio with it" button: take the link code,
+  // then clean it out of the address so it is not left in history.
+  window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#/`);
+  import("@/lib/equilibriumLink").then(({ takeLinkFromHash }) => takeLinkFromHash(rawHash));
+} else if (/^#(?!\/)/.test(rawHash)) {
   const body = rawHash.slice(1);
   const params = new URLSearchParams(body);
 

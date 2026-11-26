@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { isTouchPrimary } from "@/lib/focusPolicy";
 import BookWorm, { type BookWormHandle } from "@/components/BookWorm";
+import { useWormHealth } from "@/lib/equilibriumLink";
 import type { Mood } from "@/lib/sprite/wormAnimator";
 import type { PocketCaption } from "@/lib/sprite/pocketCaption";
 
@@ -193,6 +194,7 @@ const PocketScreen: React.FC<Props> = ({ active, state, caption = null, wormEnab
 
   // Each spoken chunk boundary is a clause boundary — the acknowledgement
   // blink is most of what makes the worm look like it is following along.
+  const wormHealth = useWormHealth();
   const wormRef = useRef<BookWormHandle>(null);
   const prevChunk = useRef<number | null>(null);
   const box = useRef<HTMLDivElement | null>(null);
@@ -336,6 +338,7 @@ const PocketScreen: React.FC<Props> = ({ active, state, caption = null, wormEnab
             <BookWorm
               ref={wormRef}
               mood={MOOD_FOR[state] ?? "idle"}
+              health={wormHealth}
               voiceSource={voiceSource}
               size={reading ? 84 : 132}
             />

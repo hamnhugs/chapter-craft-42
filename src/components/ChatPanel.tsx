@@ -53,6 +53,7 @@ import { focusBookId } from "@/lib/counselFocus";
 import BookContextPicker from "@/components/BookContextPicker";
 import CounselToolsSheet from "@/components/CounselToolsSheet";
 import BookWorm from "@/components/BookWorm";
+import { useWormHealth } from "@/lib/equilibriumLink";
 import { useBookWorm } from "@/hooks/useBookWorm";
 import { executeQuickSearch, BURPLEXITY_BOT_ASK_URL, pickCitations, isSearchRateLimited } from "@/lib/chatTools";
 import { useDownloadableTtsId, downloadTtsAudio } from "@/lib/ttsAudioCache";
@@ -396,6 +397,7 @@ const ChatPanel: React.FC = () => {
     });
   }, [handsFree.active, handsFree.state, handsFree.interim, messages]);
   const lastMsg = messages[messages.length - 1];
+  const wormHealth = useWormHealth();
   const worm = useBookWorm({
     isLoading,
     lastId: lastMsg?.id,
@@ -1232,7 +1234,7 @@ const ChatPanel: React.FC = () => {
             never eat a tap meant for a bubble behind it. */}
         {worm.enabled && !pocketArmed && (
           <div className="absolute bottom-0 right-1 z-10 pointer-events-none select-none">
-            <BookWorm ref={worm.ref} mood={worm.mood} voiceSource={worm.voiceSource} onPet={worm.onPet} size={64} className="w-[52px] sm:w-16 h-auto" />
+            <BookWorm ref={worm.ref} mood={worm.mood} health={wormHealth} voiceSource={worm.voiceSource} onPet={worm.onPet} size={64} className="w-[52px] sm:w-16 h-auto" />
           </div>
         )}
         <div ref={messagesContainerRef} role="log" aria-label="Conversation with The Librarian" aria-live="off" onScroll={() => { cancelLongPress(); if (Date.now() >= programmaticScrollUntilRef.current) lastTranscriptInteractionRef.current = Date.now(); }} onPointerDown={() => { lastTranscriptInteractionRef.current = Date.now(); }} onWheel={() => { lastTranscriptInteractionRef.current = Date.now(); }} onTouchMove={() => { lastTranscriptInteractionRef.current = Date.now(); }} className="cc-counsel-log cc-counsel-px h-full overflow-auto py-6 space-y-6 hide-scrollbar [overflow-anchor:none]">

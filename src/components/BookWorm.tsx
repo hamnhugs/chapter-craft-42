@@ -51,8 +51,11 @@ import { WormAnimator, type Mood } from "@/lib/sprite/wormAnimator";
  *  so a theme can override them.
  */
 const INK: Record<Ink, string> = {
-  body: "var(--worm-body, #DD7C58)",
-  bodyAlt: "var(--worm-dark, #C9683F)",
+  // The body goes dull as the worm's condition drops: `--worm-grime` is written
+  // onto the <svg> from the frame loop, and mixes both tones toward a tired
+  // grey-brown. A theme's own worm colours still come through underneath.
+  body: "color-mix(in oklab, var(--worm-body, #DD7C58), #8b8274 var(--worm-grime, 0%))",
+  bodyAlt: "color-mix(in oklab, var(--worm-dark, #C9683F), #6f675b var(--worm-grime, 0%))",
   pupil: "var(--worm-pupil, #2B1B15)",
   mouth: "var(--worm-mouth, #2B1B15)",
   tongue: "var(--worm-tongue, #F4A58C)",
@@ -69,6 +72,12 @@ const INK: Record<Ink, string> = {
   // Neutral, not a tone of the body: a tinted shadow under a flat shape reads as
   // a glow. At 0.2 it is a soft ground on paper and simply absent on black.
   shadow: "var(--worm-shadow, #000000)",
+  // What it wears when it is down on its luck, and what it throws off when it
+  // is not. Fixed colours with an escape hatch each, like everything above.
+  hat: "var(--worm-hat, #5d5f73)",
+  hatAlt: "var(--worm-hat-brim, #474859)",
+  patch: "var(--worm-patch, #c9a25a)",
+  spark: "var(--worm-spark, #ffd166)",
 };
 
 export interface BookWormHandle {
@@ -89,6 +98,9 @@ export interface BookWormHandle {
 
 export interface BookWormProps {
   mood: Mood;
+  /** 0..100 from Equilibrium's schedule, or null/undefined for the plain worm.
+   *  Low and it turns up in a slouched cap with stubble; high and it sparkles. */
+  health?: number | null;
   /**
    * Pulled once per frame while the mood is "speak". Returning null means the
    * voice cannot be analysed — the browser speechSynthesis path — and the
@@ -121,7 +133,7 @@ function readReduced(): boolean {
 }
 
 const BookWorm = React.forwardRef<BookWormHandle, BookWormProps>(function BookWorm(
-  { mood, voiceSource, onPet, size = 64, className },
+  { mood, health, voiceSource, onPet, size = 64, className },
   ref,
 ) {
   const nodes = useRef<(SVGElement | null)[]>([]);
@@ -134,7 +146,19 @@ const BookWorm = React.forwardRef<BookWormHandle, BookWormProps>(function BookWo
   const voiceRef = useRef(voiceSource);
   voiceRef.current = voiceSource;
 
-  if (!anim.current) anim.current = new WormAnimator({ mood, reduced: readReduced() });
+  if (!anim.current) anim.current = new WormAnimator({ mood, health, reduced: readReduced() });
+  const grime = useRef(-1);
+
+  /** One frame: pose, paint, and keep the body's dullness in step. */
+  const draw = useCallback((a: WormAnimator, dt: number) => {
+    const p = a.step(dt);
+    paintRef.current(poseWorm(p).shapes);
+    const g = Math.round(p.scruff * 46);
+    if (g !== grime.current) {
+      grime.current = g;
+      host.current?.style.setProperty("--worm-grime", `${g}%`);
+    }
+  }, []);
 
   /** Write one pose onto the live DOM. Only the attributes that actually vary
    *  are touched; fills and strokes are set once at mount and never again. */
@@ -161,6 +185,9 @@ const BookWorm = React.forwardRef<BookWormHandle, BookWormProps>(function BookWo
     }
   }, []);
 
+  const paintRef = useRef(paint);
+  paintRef.current = paint;
+
   const stop = useCallback(() => {
     if (raf.current != null) {
       cancelAnimationFrame(raf.current);
@@ -184,7 +211,7 @@ const BookWorm = React.forwardRef<BookWormHandle, BookWormProps>(function BookWo
         const v = voiceRef.current?.();
         if (v) a.setVoice(v.level, v.wide);
       }
-      paint(poseWorm(a.step(dt)).shapes);
+      draw(a, dt);
       // The whole point: stop scheduling once there is nothing left to show.
       if (a.isSettled()) {
         raf.current = null;
@@ -193,7 +220,7 @@ const BookWorm = React.forwardRef<BookWormHandle, BookWormProps>(function BookWo
       raf.current = requestAnimationFrame(frame);
     };
     raf.current = requestAnimationFrame(frame);
-  }, [paint]);
+  }, [draw]);
 
   useImperativeHandle(
     ref,
@@ -240,8 +267,13 @@ const BookWorm = React.forwardRef<BookWormHandle, BookWormProps>(function BookWo
   // worm in its actual mood rather than a flash of the rest pose.
   useLayoutEffect(() => {
     const a = anim.current;
-    if (a) paint(poseWorm(a.step(16.67)).shapes);
-  }, [paint]);
+    if (a) draw(a, 16.67);
+  }, [draw]);
+
+  useEffect(() => {
+    anim.current?.setHealth(health);
+    kick();
+  }, [health, kick]);
 
   // prefers-reduced-motion is watched, not merely read. The media query only
   // affects CSS by itself; anything driven from JS has to listen for the change
@@ -370,8 +402,8 @@ const BookWorm = React.forwardRef<BookWormHandle, BookWormProps>(function BookWo
       style={{ pointerEvents: "none", overflow: "visible" }}
     >
       {initial.map((s, i) => {
+        const key = s.key;
         const common = {
-          key: s.key,
           ref: (el: SVGElement | null) => {
             nodes.current[i] = el;
           },
@@ -382,10 +414,11 @@ const BookWorm = React.forwardRef<BookWormHandle, BookWormProps>(function BookWo
           ...(s.cap ? { strokeLinecap: "round" as const, strokeLinejoin: "round" as const } : {}),
           ...(hit && (s.key === "body" || s.key === "head" || s.key.startsWith("bead")) ? hit : {}),
         };
-        if (s.k === "path") return <path {...common} d={s.d} />;
-        if (s.k === "circle") return <circle {...common} cx={s.cx} cy={s.cy} r={s.r} />;
+        if (s.k === "path") return <path key={key} {...common} d={s.d} />;
+        if (s.k === "circle") return <circle key={key} {...common} cx={s.cx} cy={s.cy} r={s.r} />;
         return (
           <ellipse
+            key={key}
             {...common}
             cx={s.cx}
             cy={s.cy}
