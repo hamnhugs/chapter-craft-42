@@ -104,3 +104,27 @@ a blob-URL leak on mid-chunk termination.
   unreliable on Android; barge-in remains desktop-oriented and off by default.
 - The deployed knowledge edge functions and realtime are untouched — nothing
   in this change needs a Lovable function redeploy.
+
+## Ending hands-free by voice (2026-11-25)
+
+Hands-free can be ended by asking, for the moment something interrupts you on
+the go and you can't reach the screen.
+
+- **Plain commands end it instantly.** "Stop hands-free", "end hands-free
+  mode", "turn off voice mode", "stop listening", "mic off" — with or without
+  "please / hey / can you". `src/lib/handsFreeStop.ts` matches these on the
+  device at the top of `handleUtterance` in `useHandsFree`, so no model and no
+  connection are involved. The app says "Hands-free is off. Tap the mic when
+  you need me." and the mic closes. The whole utterance has to be the command:
+  "how do I stop hands-free from timing out?" is still a question for Counsel.
+- **Anything looser goes through Counsel.** "Hang on, someone's at the door",
+  "that's all for now" — the model calls the `end_hands_free` chat tool, says
+  one short goodbye, and the session closes when that sentence finishes
+  playing (`onUtterance` hands the turn an `endSession` control; `sendMessage`
+  passes it to the tool as `deps.endHandsFree`). In a typed chat the tool
+  answers that there is nothing to stop.
+- **Limit:** the mic is closed while Counsel is speaking, so a stop request is
+  only heard between replies — unless Barge-in is on (Settings → Voice), in
+  which case saying it over the reply cuts the reply and ends the session.
+
+Tests: `src/test/handsFreeStop.test.ts`. Not yet tried on a real phone.

@@ -301,6 +301,9 @@ export interface ToolDeps {
   /** Go somewhere in the app (open_view). Absent outside the chat (tests, the
    *  E2 harness): the tool then says it cannot navigate rather than pretend. */
   openView?: (target: AppViewTarget) => void;
+  /** End the hands-free session after this reply (end_hands_free). Present
+   *  only on a hands-free turn — absent means there is no session to end. */
+  endHandsFree?: () => void;
   /** Catalog generation for a finished book, under the user's opt-in only. */
   enqueueCatalog?: (bookId: string, known?: BookDocument) => { queued: boolean; reason?: string };
   /** The document to save, read from the TRANSCRIPT rather than re-emitted
@@ -1144,6 +1147,15 @@ export const CHAT_TOOL_DEFINITIONS = [
         },
         required: ["view"],
       },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "end_hands_free",
+      description:
+        "End the hands-free voice conversation: the app stops listening as soon as your reply to this turn has been spoken, and stays off until the user taps the mic again. Call it when the user asks you, in any words, to stop, end, pause or turn off hands-free, voice mode or listening — or says they have to go, are being interrupted, or are done talking for now. It changes nothing else: the chat, the loaded notebooks and books all stay as they are. Do not call it merely because an answer is finished.",
+      parameters: { type: "object", properties: {} },
     },
   },
   {
@@ -4986,6 +4998,20 @@ export async function executeChatTool(
           };
         }
         return { result: { error: "action must be due or record" }, event: { name, summary: "Unknown action", ok: false } };
+      }
+      case "end_hands_free": {
+        if (!deps.endHandsFree) {
+          return {
+            result: { ok: true, already_off: true, note: "Hands-free is not on — this is a typed chat, so there is nothing to stop. Say so in one sentence." },
+            event: { name, summary: "Hands-free is already off", ok: true },
+          };
+        }
+        deps.endHandsFree();
+        return {
+          result: { ok: true, note: "Hands-free ends the moment your reply finishes playing. Say one short sentence confirming it is off and that tapping the mic brings you back. Do not ask a question — they will not be heard answering it." },
+          // Spoken as-is when the model says nothing after the call.
+          event: { name, summary: "Hands-free is off. Tap the mic when you need me.", ok: true },
+        };
       }
       case "open_view": {
         const view = String(args.view || "");

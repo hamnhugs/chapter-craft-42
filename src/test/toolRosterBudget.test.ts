@@ -77,7 +77,15 @@ import { CHAT_TOOL_DEFINITIONS } from "@/lib/chatTools";
 // open_view is a single navigation verb for every screen rather than one per
 // tab. Five slots for five distinct objects (notebook · saved set · review ·
 // file filing · the screen).
-const ROSTER_BUDGET = 85;
+//
+// +1 (ending hands-free by voice): end_hands_free. The user asked to be able
+// to tell the AI to stop hands-free when something interrupts them on the go.
+// Plain commands ("stop hands-free", "stop listening") never reach a model at
+// all — lib/handsFreeStop.ts matches them on the device — so this slot is the
+// fallback for everything said less plainly, and it folds into no existing
+// verb: open_view only LOOKS, and nothing else touches the mic. One object
+// (the voice session), one intent, a description that names no sibling.
+const ROSTER_BUDGET = 86;
 
 describe("the tool roster stays within its stated budget", () => {
   it(`ships at most ${ROSTER_BUDGET} tools`, () => {

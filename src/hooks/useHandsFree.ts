@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { SpeakEndReason } from "@/hooks/useReadAloud";
+import { isStopHandsFreeCommand, HANDS_FREE_OFF_NOTICE } from "@/lib/handsFreeStop";
 
 // Hands-free voice conversation, modeled as an explicit finite-state machine.
 //
@@ -25,6 +26,13 @@ import type { SpeakEndReason } from "@/hooks/useReadAloud";
 //     Gemini/ChatGPT convention) — an in-flight reply keeps playing and is
 //     never replayed; the speaker button / Read Aloud toggle silence it.
 //
+// ENDING BY VOICE: saying "stop hands-free" / "stop listening" closes the
+// session on the spot (matched on the device — see lib/handsFreeStop.ts —
+// so it needs no model and no connection), with a spoken notice. A looser
+// request reaches the model, which ends the session through `endSession`
+// (the end_hands_free chat tool): the mic stays closed once its goodbye has
+// finished playing.
+//
 // OPTIONAL BARGE-IN (toggle): a Silero VAD (lazy-loaded from CDN) listens
 // during playback. On suspected speech it PAUSES the TTS in place and opens
 // the mic to VERIFY: a real utterance commits the interruption and becomes
@@ -41,8 +49,10 @@ const SR: any =
 export type HandsFreeState = "idle" | "listening" | "thinking" | "speaking";
 
 interface UseHandsFreeOpts {
-  /** Send a user utterance to the model; resolves with the assistant reply. */
-  onUtterance: (text: string) => Promise<string>;
+  /** Send a user utterance to the model; resolves with the assistant reply.
+   *  `ctl.endSession()` ends hands-free once that reply has been spoken —
+   *  how the model honours "that's all, stop listening". */
+  onUtterance: (text: string, ctl: { endSession: () => void }) => Promise<string>;
   /** Speak the reply; onDone settles exactly once on every terminal path. */
   speak: (text: string, opts?: { onDone?: (r: { reason: SpeakEndReason }) => void }) => void;
   /** Stop any in-flight speech (settles its session "stopped"). */
@@ -334,13 +344,27 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeController {
 
   // ---- One full turn: send → speak (interruptible) → resume -------------
   const handleUtterance = useCallback(async (text: string) => {
+    // "Stop hands-free" is obeyed here, before any model is involved: the
+    // user has been interrupted and needs the mic closed NOW. Every route an
+    // utterance takes (a normal turn, a verified barge-in) passes through
+    // this function, so this one check covers them all. The notice is spoken
+    // because they may not be looking; stopAll leaves the voice alone.
+    if (isStopHandsFreeCommand(text)) {
+      const speakFn = optsRef.current.speak;
+      stopAllRef.current();
+      try { speakFn?.(HANDS_FREE_OFF_NOTICE); } catch { /* no-op */ }
+      return;
+    }
     const gen = generationRef.current;
     busyRef.current = true;
     teardownRecognition();
     setFsm("thinking");
     let pendingBargeText: string | null = null;
+    // Set by the model (end_hands_free) during this turn: close the session
+    // AFTER the reply has played, so its goodbye is heard and never cut off.
+    let endRequested = false;
     try {
-      const reply = await optsRef.current.onUtterance(text);
+      const reply = await optsRef.current.onUtterance(text, { endSession: () => { endRequested = true; } });
       // activeRef alone is not enough: hands-free may have been toggled OFF
       // and ON again while the model was thinking — activeRef is true again,
       // but this turn belongs to the dead session and must not speak its
@@ -441,6 +465,11 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeController {
         busyRef.current = false;
         if (!activeRef.current) {
           setFsm("idle");
+        } else if (endRequested) {
+          // The model was asked to end the session and its reply has now
+          // finished (or was cut short) — close the mic for good. This wins
+          // over a barge-in: the user asked to stop.
+          stopAllRef.current();
         } else if (pendingBargeText) {
           // Verified interruption — the user already spoke; treat it as the
           // next turn immediately (no cooldown: they're mid-thought).

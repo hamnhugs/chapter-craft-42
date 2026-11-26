@@ -898,8 +898,14 @@ export async function buildChatSystemPrompt({
     const libLine = libVerbs.length === 0 ? [] : [
       `Same rule for the library: 'load my X shelf', 'put this on shelf Y', 'save that as a PDF', 'delete that book' must call ${libVerbs.map((n) => `\`${n}\``).join(", ")} as appropriate. When you have asked "delete <title>?" and the user says yes, call again with the title they said as confirm_title (or the shelf's name as confirm_name) — do not ask a second time. Never say it's loaded, saved or deleted without the tool's ok result.`,
     ];
-    if (resolveLine.length === 0 && wikiLine.length === 0 && libLine.length === 0) return [];
+    // Ending the session by voice. Stands on its own: it must reach the model
+    // even on a turn where none of the conflict/notebook/library verbs are
+    // offered, because it is the user's way OUT of the conversation.
+    const endLine = ifTools(["end_hands_free"],
+      "If the user asks you to stop, end, pause or turn off hands-free, voice mode or listening — or says they have to go or are being interrupted — call `end_hands_free` right away and reply with one short sentence. Never say hands-free is off without calling it, and never ask a follow-up question in that reply: the mic is closing.");
+    if (resolveLine.length === 0 && wikiLine.length === 0 && libLine.length === 0) return endLine;
     return [
+      ...endLine,
       "## Voice-mode conflict + notebook rules (CRITICAL)",
       ...resolveLine,
       "NEVER say 'done', 'resolved', 'deleted', 'merged', 'switched', or 'created' unless the previous step in this turn was a successful tool call returning ok. If you didn't call the tool, you didn't do it — call the tool now, then speak the confirmation only after it succeeds.",

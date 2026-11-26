@@ -184,6 +184,9 @@ interface SendOpts {
   voiceMode?: boolean;
   /** Optional override model — e.g. fast voice model. */
   modelOverride?: string;
+  /** Present only on hands-free turns: ends the hands-free session once this
+   *  turn's reply has been spoken (the end_hands_free chat tool calls it). */
+  endHandsFree?: () => void;
   /** Called on every streamed delta with the cumulative assistant text. */
   onDelta?: (fullText: string) => void;
   /** Skip the user's max-sentences cap for this send (Digest — explicitly
@@ -2216,6 +2219,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               restoreBook,
               loadFocus,
               openView: (target: AppViewTarget) => openAppView({ setActiveTab, openNotebook }, target),
+              endHandsFree: opts?.endHandsFree,
               enqueueCatalog,
               getReplyText,
               currentModel: model,
