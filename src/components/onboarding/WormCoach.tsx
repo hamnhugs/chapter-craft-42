@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import BookWorm, { type BookWormHandle } from "@/components/BookWorm";
+import { useWormHealth } from "@/lib/equilibriumLink";
 import { useApp } from "@/context/AppContext";
 import { markTipSeen, muteTips, noteProgress, pendingTip, useOnboarding, type TipId } from "@/lib/onboarding";
 import { TAB_TIPS } from "@/lib/onboardingTips";
@@ -56,6 +57,7 @@ const WormCoach: React.FC = () => {
   const wizardOpen = useSetupWizardOpen();
   const [tour, setTour] = useState<{ id: TipId; step: number } | null>(null);
   const [box, setBox] = useState<Box | null>(null);
+  const wormHealth = useWormHealth();
   const worm = useRef<BookWormHandle>(null);
 
   useEffect(() => {
@@ -134,7 +136,7 @@ const WormCoach: React.FC = () => {
         data-coach={tour.id}
         className={`cc-coach ${atTop ? "cc-coach-top" : "cc-coach-bottom"} flex items-end gap-2 rounded-2xl border border-outline-variant/30 bg-popover py-3 pl-2 pr-3 text-popover-foreground`}
       >
-        <BookWorm ref={worm} mood={last ? "cheer" : "watch"} size={58} className="shrink-0 h-auto" />
+        <BookWorm ref={worm} mood={last ? "cheer" : "watch"} health={wormHealth} size={58} className="shrink-0 h-auto" />
         <div className="min-w-0 flex-1">
           <div aria-live="polite" className="pr-7">
             <p className="font-headline text-[15px] font-bold leading-tight text-foreground">{step.title}</p>

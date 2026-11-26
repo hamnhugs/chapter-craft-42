@@ -15,6 +15,7 @@ import { REST_PARAMS } from "../src/lib/sprite/wormGeometry";
 const HEX: Record<Ink, string> = {
   body: "#DD7C58", bodyAlt: "#C9683F", pupil: "#2B1B15", spec: "#FFF6EE", mouth: "#2B1B15",
   tongue: "#F4A58C", brow: "#2B1B15", glass: "#FFF6EE", frame: "#2B1B15", shadow: "#000000",
+  hat: "#5d5f73", hatAlt: "#474859", patch: "#c9a25a", spark: "#ffd166",
 };
 
 function attrs(s: Shape): string {

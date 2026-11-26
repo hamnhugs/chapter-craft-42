@@ -37,9 +37,12 @@ export const SPINE_NODES = 16;
 /** The body is a string of beads. Six is the most that still reads as separate
  *  segments at 52px, and the fewest that still reads as a caterpillar. */
 export const BEADS = 6;
+/** What the worm's CONDITION adds: body patch + stitches, hat + brim + hat
+ *  patch, two eye bags, stubble, fly + wings, two sparkles. */
+const CONDITION_SHAPES = 12;
 /** Exactly what poseWorm always returns: shadow + body + beads + antennae*4
  *  + head + eyes*6 + glasses*7 + mouth + tongue. Asserted in the tests. */
-export const SHAPE_COUNT = 1 + 1 + BEADS + 4 + 1 + 6 + 7 + 2;
+export const SHAPE_COUNT = 1 + 1 + BEADS + 4 + 1 + 6 + 7 + 2 + CONDITION_SHAPES;
 
 /** The drawing is authored in this box and scaled by the caller. The tail sits
  *  at (CX, BASE_Y) so the worm is rooted to a floor rather than floating.
@@ -75,7 +78,11 @@ export type Ink =
   | "brow"
   | "glass"
   | "frame"
-  | "shadow";
+  | "shadow"
+  | "hat"
+  | "hatAlt"
+  | "patch"
+  | "spark";
 
 interface Base {
   /** Stable across every call, so the renderer can address shapes by index. */
@@ -152,6 +159,19 @@ export interface WormParams {
   swell3: number;
   swell4: number;
   swell5: number;
+  /** CONDITION. 0 is the worm as it has always been; 1 is down and out: a
+   *  slouched knit cap, stubble, bags under the eyes, a patch sewn on its side,
+   *  feelers gone limp and a fly for company. Like the glasses, every piece
+   *  fades and travels on this one number, so there is no "bum sprite" — only
+   *  the same worm, further along a line it can come back down. */
+  scruff: number;
+  /** 0..1, the other end: a worm that is thriving throws off a sparkle or two. */
+  shine: number;
+  /** Where the fly is on its figure-of-eight, radians. Integrated by the
+   *  animator, like every other phase. */
+  flyPhase: number;
+  /** 0..1 pulse that the two sparkles trade between them. */
+  twinkle: number;
 }
 
 export const REST_PARAMS: WormParams = {
@@ -181,6 +201,10 @@ export const REST_PARAMS: WormParams = {
   swell3: 0,
   swell4: 0,
   swell5: 0,
+  scruff: 0,
+  shine: 0,
+  flyPhase: 0,
+  twinkle: 0,
 };
 
 export interface WormPose {
@@ -378,6 +402,47 @@ export function poseWorm(p: WormParams): WormPose {
     shapes.push({ k: "circle", key: `bead${j}`, cx: f(c.x), cy: f(c.y), r: f(r), fill: j % 2 ? "bodyAlt" : "body" });
   }
 
+  // --- THE PATCH ---------------------------------------------------------
+  // A square of someone else's cloth sewn on its side. It rides the spine, so
+  // it bends with the body instead of sliding over it.
+  const scruff = clamp(p.scruff, 0, 1);
+  {
+    const ps = 0.44;
+    const c0 = along(spine, ps);
+    const a0 = along(spine, ps - 0.04);
+    const a1 = along(spine, ps + 0.04);
+    const tm = Math.hypot(a1.x - a0.x, a1.y - a0.y) || 1;
+    const tx = (a1.x - a0.x) / tm;
+    const ty = (a1.y - a0.y) / tm;
+    const pr = GIRTH * radiusAt(ps) * volume * p.girth;
+    const h = pr * 0.34;
+    const pc: Vec = { x: c0.x + ty * pr * 0.3, y: c0.y - tx * pr * 0.3 };
+    const corner = (u: number, v: number): Vec => ({ x: pc.x + tx * u * h - ty * v * h, y: pc.y + ty * u * h + tx * v * h });
+    const q = [corner(-1, -1), corner(1, -1.1), corner(1.1, 1), corner(-1, 1.05)];
+    const pop = smoothstep((scruff - 0.3) / 0.3);
+    shapes.push({
+      k: "path",
+      key: "patch",
+      d: `M${f(q[0].x)},${f(q[0].y)}L${f(q[1].x)},${f(q[1].y)}L${f(q[2].x)},${f(q[2].y)}L${f(q[3].x)},${f(q[3].y)}Z`,
+      fill: "patch",
+      op: f(pop),
+    });
+    const st = (u: number, v: number, du: number, dv: number) => {
+      const s0 = corner(u - du, v - dv);
+      const s1 = corner(u + du, v + dv);
+      return `M${f(s0.x)},${f(s0.y)}L${f(s1.x)},${f(s1.y)}`;
+    };
+    shapes.push({
+      k: "path",
+      key: "stitch",
+      d: st(-1, -0.4, 0.38, 0) + st(-1, 0.45, 0.38, 0) + st(0.35, -1.05, 0, 0.38) + st(1.05, 0.3, 0.38, 0),
+      stroke: "pupil",
+      sw: 1.1,
+      cap: true,
+      op: f(pop * 0.8),
+    });
+  }
+
   // --- HEAD FRAME --------------------------------------------------------
   const neckP = spine[n - 1];
   const prevP = spine[n - 2];
@@ -409,8 +474,11 @@ export function poseWorm(p: WormParams): WormPose {
   for (const side of [-1, 1] as const) {
     const id = side < 0 ? "L" : "R";
     const root = at(0.62, side * 0.4);
-    const dir = headAngle + side * 0.5 + p.antennaLag;
-    const len = headRy * 0.78;
+    // A worm that has let itself go lets its feelers go first: they splay out
+    // sideways and sag, the left one further, because nothing limp is even.
+    const droop = scruff * (side < 0 ? 1.15 : 0.85);
+    const dir = headAngle + side * (0.5 + droop) + p.antennaLag;
+    const len = headRy * (0.78 + 0.5 * scruff);
     const mid: Vec = {
       x: root.x + Math.cos(dir - side * 0.3) * len * 0.58,
       y: root.y + Math.sin(dir - side * 0.3) * len * 0.58,
@@ -434,6 +502,73 @@ export function poseWorm(p: WormParams): WormPose {
     d: loop(HEAD_UNIT.map((u) => at(u.y, u.x))),
     fill: "body",
   });
+
+  // --- THE HAT -----------------------------------------------------------
+  // A slouched knit cap, pulled down to the brow. Like the glasses it ARRIVES:
+  // it comes down from above as `scruff` rises rather than fading in where it
+  // sits, so the worm visibly puts it on, and takes it off again when things
+  // pick up.
+  const hatOn = smoothstep((scruff - 0.35) / 0.3);
+  const lift = (1 - hatOn) * 0.6;
+  const hatPts: [number, number][] = [
+    [0.4, -1.04],
+    [0.8, -1.0],
+    [1.2, -0.72],
+    [1.45, -0.22],
+    [1.56, 0.36],
+    [1.3, 0.82],
+    [0.8, 1.01],
+    [0.4, 1.04],
+  ];
+  const hp2 = hatPts.map(([fw, lt]) => at(fw + lift, lt));
+  shapes.push({
+    k: "path",
+    key: "hat",
+    d: `M${f(hp2[0].x)},${f(hp2[0].y)}` + polyline(hp2) + "Z",
+    fill: "hat",
+    op: f(hatOn),
+  });
+  {
+    const b0 = at(0.42 + lift, -1.05);
+    const b1 = at(0.42 + lift, 1.05);
+    const bm = at(0.3 + lift, 0);
+    shapes.push({
+      k: "path",
+      key: "hatBrim",
+      d: `M${f(b0.x)},${f(b0.y)}Q${f(bm.x)},${f(bm.y)} ${f(b1.x)},${f(b1.y)}`,
+      stroke: "hatAlt",
+      sw: f(headRy * 0.24),
+      cap: true,
+      op: f(hatOn),
+    });
+    const h0 = at(0.92 + lift, 0.26);
+    const h1 = at(1.16 + lift, 0.32);
+    const h2 = at(1.12 + lift, 0.62);
+    const h3 = at(0.88 + lift, 0.56);
+    shapes.push({
+      k: "path",
+      key: "hatPatch",
+      d: `M${f(h0.x)},${f(h0.y)}L${f(h1.x)},${f(h1.y)}L${f(h2.x)},${f(h2.y)}L${f(h3.x)},${f(h3.y)}Z`,
+      fill: "patch",
+      op: f(hatOn),
+    });
+  }
+
+  // Bags under the eyes: the first thing to show and the last to go.
+  for (const side of [-1, 1] as const) {
+    const g0 = at(-0.27, side * 0.29);
+    const g1 = at(-0.27, side * 0.57);
+    const gm = at(-0.36, side * 0.43);
+    shapes.push({
+      k: "path",
+      key: `bag${side < 0 ? "L" : "R"}`,
+      d: `M${f(g0.x)},${f(g0.y)}Q${f(gm.x)},${f(gm.y)} ${f(g1.x)},${f(g1.y)}`,
+      stroke: "bodyAlt",
+      sw: 1.7,
+      cap: true,
+      op: f(smoothstep((scruff - 0.08) / 0.3)),
+    });
+  }
 
   // --- EYES --------------------------------------------------------------
   // Everything below is in fractions of the head, so the face is invariant to
@@ -624,6 +759,73 @@ export function poseWorm(p: WormParams): WormPose {
     fill: "tongue",
     op: f(smoothstep((openJaw - 0.3) * 3)),
   });
+
+  // --- STUBBLE -----------------------------------------------------------
+  // Dots, drawn as zero-length round-capped strokes: one path for the lot.
+  {
+    const dots: [number, number][] = [
+      [-0.64, -0.5],
+      [-0.76, -0.3],
+      [-0.82, -0.08],
+      [-0.8, 0.16],
+      [-0.72, 0.36],
+      [-0.6, 0.54],
+      [-0.52, -0.66],
+      [-0.5, 0.68],
+      [-0.66, 0.05],
+      [-0.64, -0.2],
+    ];
+    let d = "";
+    for (const [fw, lt] of dots) {
+      const q = at(fw, lt);
+      d += `M${f(q.x)},${f(q.y)}l0.01,0`;
+    }
+    shapes.push({ k: "path", key: "stubble", d, stroke: "pupil", sw: 1.5, cap: true, op: f(smoothstep((scruff - 0.18) / 0.3) * 0.7) });
+  }
+
+  // --- THE FLY -----------------------------------------------------------
+  // A figure-of-eight over the hat. In SCREEN space, not head space: a fly does
+  // not tilt when the thing it is bothering does.
+  {
+    const fo = smoothstep((scruff - 0.72) / 0.2);
+    const fx = hp.x + Math.cos(p.flyPhase) * headRx * 1.25;
+    const fy = hp.y - headRy * 1.55 + Math.sin(p.flyPhase * 2) * headRy * 0.3;
+    shapes.push({ k: "circle", key: "fly", cx: f(fx), cy: f(fy), r: 1.6, fill: "pupil", op: f(fo) });
+    const wb = Math.sin(p.flyPhase * 9) * 0.9;
+    shapes.push({
+      k: "path",
+      key: "flyWings",
+      d: `M${f(fx)},${f(fy - 0.8)}l${f(-2.6)},${f(-2 - wb)}M${f(fx)},${f(fy - 0.8)}l${f(2.6)},${f(-2 + wb)}`,
+      stroke: "spec",
+      sw: 1.3,
+      cap: true,
+      op: f(fo * 0.8),
+    });
+  }
+
+  // --- SPARKLES ----------------------------------------------------------
+  // Two four-point stars that trade brightness. They only exist at the top of
+  // the scale, so seeing one means something.
+  {
+    const shine = clamp(p.shine, 0, 1);
+    const tw = clamp(p.twinkle, 0, 1);
+    const star = (x: number, y: number, r: number) =>
+      `M${f(x)},${f(y - r)}Q${f(x)},${f(y)} ${f(x + r)},${f(y)}Q${f(x)},${f(y)} ${f(x)},${f(y + r)}Q${f(x)},${f(y)} ${f(x - r)},${f(y)}Q${f(x)},${f(y)} ${f(x)},${f(y - r)}Z`;
+    shapes.push({
+      k: "path",
+      key: "sparkA",
+      d: star(hp.x + headRx * 1.3, hp.y - headRy * 1.0, 2.6 + 3.2 * tw),
+      fill: "spark",
+      op: f(shine * (0.45 + 0.55 * tw)),
+    });
+    shapes.push({
+      k: "path",
+      key: "sparkB",
+      d: star(hp.x - headRx * 1.38, hp.y - headRy * 0.25, 2.2 + 2.6 * (1 - tw)),
+      fill: "spark",
+      op: f(shine * (0.45 + 0.55 * (1 - tw))),
+    });
+  }
 
   return { shapes, head: { p: hp, forward, normal, r: headRx, angle: headAngle }, spine };
 }

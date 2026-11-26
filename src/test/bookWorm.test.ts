@@ -9,7 +9,7 @@ import {
   VIEW_W,
   type WormParams,
 } from "@/lib/sprite/wormGeometry";
-import { WormAnimator, type Mood } from "@/lib/sprite/wormAnimator";
+import { WormAnimator, scruffOf, shineOf, type Mood } from "@/lib/sprite/wormAnimator";
 import { noteWordBoundary, syntheticVoice, hasWordBoundaries } from "@/lib/sprite/voiceTap";
 import { resolveWormMood, CHEER_MS, OOPS_MS, SLEEP_MS, WATCH_MS, type MoodSignals } from "@/lib/sprite/wormMood";
 import { resolvePocketCaption, plainText, CAPTION_MAX, type CaptionSignals } from "@/lib/sprite/pocketCaption";
@@ -1257,5 +1257,87 @@ describe("the geometry stays cheap", () => {
     for (const n of d.match(/-?\d+\.\d+/g) || []) {
       expect(n.split(".")[1].length).toBeLessThanOrEqual(2);
     }
+  });
+});
+
+describe("condition: the worm shows how the schedule is going", () => {
+  const settle = (health: number | null, mood: "idle" | "cheer" = "idle") => {
+    const a = new WormAnimator({ mood, health, rng: () => 0.5 });
+    let p = a.step(16);
+    for (let i = 0; i < 400; i++) p = a.step(16);
+    return { a, p };
+  };
+  const op = (p: WormParams, key: string) => poseWorm(p).shapes.find((s) => s.key === key)!.op ?? 1;
+
+  it("is the plain worm with no health, and across the steady middle", () => {
+    for (const h of [null, 75, 80]) {
+      const { p } = settle(h);
+      expect(p.scruff).toBeCloseTo(0, 2);
+      expect(p.shine).toBeCloseTo(0, 2);
+      for (const k of ["hat", "stubble", "patch", "fly", "sparkA", "bagL"]) expect(op(p, k)).toBe(0);
+    }
+  });
+
+  it("puts the cap, stubble, patch and fly on at the bottom, and sparkles at the top", () => {
+    const low = settle(12).p;
+    for (const k of ["hat", "hatBrim", "stubble", "patch", "fly", "bagL", "bagR"]) expect(op(low, k)).toBeGreaterThan(0.6);
+    expect(op(low, "sparkA")).toBe(0);
+    const high = settle(100).p;
+    expect(op(high, "sparkA") + op(high, "sparkB")).toBeGreaterThan(0.8);
+    expect(op(high, "hat")).toBe(0);
+  });
+
+  it("gets scruffier as health falls, never the other way", () => {
+    let last = -1;
+    for (let h = 100; h >= 0; h -= 5) {
+      const s = scruffOf(h);
+      expect(s).toBeGreaterThanOrEqual(last);
+      last = s;
+    }
+    expect(scruffOf(0)).toBe(1);
+    expect(shineOf(100)).toBe(1);
+  });
+
+  it("slumps and loses the smile when low, in every mood", () => {
+    const ok = settle(75).p;
+    const low = settle(12).p;
+    expect(low.mouthSmile).toBeLessThan(ok.mouthSmile - 0.4);
+    expect(low.curl).toBeGreaterThan(ok.curl + 0.3);
+    expect(low.lidL).toBeGreaterThan(ok.lidL + 0.2);
+    expect(settle(12, "cheer").p.mouthSmile).toBeLessThan(settle(75, "cheer").p.mouthSmile);
+  });
+
+  it("still settles, so the frame loop still stops", () => {
+    for (const h of [5, 50, 95]) expect(settle(h).a.isSettled()).toBe(true);
+  });
+
+  it("eases into a new condition rather than snapping", () => {
+    const { a } = settle(90);
+    a.setHealth(10);
+    const first = a.step(16);
+    expect(first.scruff).toBeLessThan(0.2);
+    let p = first;
+    for (let i = 0; i < 400; i++) p = a.step(16);
+    expect(p.scruff).toBeGreaterThan(0.95);
+  });
+
+  it("keeps the shape list fixed whatever the condition", () => {
+    const keys = poseWorm(REST_PARAMS).shapes.map((s) => s.key).join();
+    expect(poseWorm({ ...REST_PARAMS, scruff: 1, shine: 1, flyPhase: 2 }).shapes.map((s) => s.key).join()).toBe(keys);
+  });
+});
+
+describe("the Equilibrium link code", () => {
+  const code = (o: unknown) => "eqw1." + btoa(JSON.stringify(o)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  it("reads a code Equilibrium made", async () => {
+    const { parseLinkCode } = await import("@/lib/equilibriumLink");
+    expect(parseLinkCode(code({ u: "https://example.test/x", k: "eq_abcdefgh1234" }))).toEqual({ url: "https://example.test", key: "eq_abcdefgh1234" });
+  });
+  it("refuses anything else", async () => {
+    const { parseLinkCode } = await import("@/lib/equilibriumLink");
+    expect(parseLinkCode("hello")).toBeNull();
+    expect(parseLinkCode(code({ u: "http://example.test", k: "eq_abcdefgh1234" }))).toBeNull();
+    expect(parseLinkCode(code({ u: "https://example.test", k: "nope" }))).toBeNull();
+    expect(parseLinkCode("eqw1.@@@")).toBeNull();
   });
 });
