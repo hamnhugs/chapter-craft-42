@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 /**
- * The Counsel prompt switcher — change which saved prompt is steering the
+ * The Chat prompt switcher — change which saved prompt is steering the
  * assistant without leaving the conversation.
  *
  * The chip is a CLAIM about the next turn, so it is derived from exactly the
@@ -56,7 +56,7 @@ const PromptSwitcher: React.FC<{
     () => turnPromptStore.get(),
   );
 
-  // Counsel is the chat lane. A voice-only preset never rides here.
+  // Chat is the chat lane. A voice-only preset never rides here.
   const inLane = (p: { scope: string }) => p.scope === "both" || p.scope === "chat";
 
   const pinned = selection.mode === "pinned" ? presets.find((p) => p.id === selection.presetId) || null : null;
@@ -78,7 +78,7 @@ const PromptSwitcher: React.FC<{
       ? "No saved prompt is active — using your Settings instructions"
       : applies
         ? `"${effective.name}" is shaping replies${pinned ? " (pinned for this conversation)" : " (your default)"}`
-        : `"${effective.name}" is set to Voice only, so it is not applied in Counsel`;
+        : `"${effective.name}" is set to Voice only, so it is not applied in Chat`;
 
   const choose = async (next: TurnPromptSelection) => {
     turnPromptStore.set(next);
@@ -93,7 +93,7 @@ const PromptSwitcher: React.FC<{
 
   // OPEN ON TAP, NOT ON TOUCH-DOWN. Radix's DropdownMenuTrigger calls
   // `onOpenToggle()` from `onPointerDown` (react-dropdown-menu dist, the
-  // trigger's composed pointerdown handler). This chip lives in Counsel's
+  // trigger's composed pointerdown handler). This chip lives in Chat's
   // horizontally-scrolling tool row, so on a phone the finger that lands here
   // to FLICK THE ROW SIDEWAYS has already opened the prompt menu before it has
   // moved a pixel — and changing which prompt is steering the conversation is

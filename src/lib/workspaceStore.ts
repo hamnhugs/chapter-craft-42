@@ -72,7 +72,7 @@ export interface WorkspaceItem {
      *  recognise a block it already filed instead of duplicating it. */
     fingerprint?: string;
     /** The notebook this item is filed under. Stamped at creation from the
-     *  notebook Counsel has loaded (see setFilingTarget); absent means
+     *  notebook Chat has loaded (see setFilingTarget); absent means
      *  "needs a notebook". In meta, like `focused`, so it syncs cross-device
      *  with zero migration. A deleted notebook's id simply stops matching,
      *  which reads as unfiled again — nothing is lost with the notebook. */
@@ -299,7 +299,7 @@ let realtimeChannel: any = null;
 
 // ---- Filing: which notebook a new item belongs to -------------------------
 
-/** The notebook Counsel has loaded (its primary). AppContext keeps this in
+/** The notebook Chat has loaded (its primary). AppContext keeps this in
  *  step; every creation path goes through addItem, so stamping it there files
  *  artifacts, code blocks, research and save_file alike with no call-site
  *  changes — and a call site that forgets cannot produce a stray item. */
@@ -319,7 +319,7 @@ export interface FilingRequest {
  *  loses the question, never the file. */
 let filingRequest: FilingRequest | null = null;
 
-/** One file a surface outside Counsel (the Notebooks tab) wants shown in the
+/** One file a surface outside Chat (the Notebooks tab) wants shown in the
  *  Workspace. Held here because ChatPanel is unmounted on other tabs — it
  *  takes this when it mounts. */
 let openRequest: string | null = null;
@@ -547,7 +547,7 @@ export const workspaceStore = {
     }
   },
 
-  /** The notebook new items are filed under — Counsel's loaded primary, or
+  /** The notebook new items are filed under — Chat's loaded primary, or
    *  null when it is just chatting. */
   setFilingTarget(wikiId: string | null) {
     filingTarget = wikiId || null;
@@ -597,7 +597,7 @@ export const workspaceStore = {
     return filingRequest;
   },
 
-  /** Ask Counsel's Workspace to show one item (see openRequest). */
+  /** Ask Chat's Workspace to show one item (see openRequest). */
   requestOpen(id: string) {
     openRequest = id;
   },

@@ -62,7 +62,7 @@ import { FIGURE_MODELS_PAID, FIGURE_MODELS_FREE, DEFAULT_FIGURE_MODEL } from "@/
 // Controls apply immediately (no global Save button to forget); secrets keep
 // an explicit Save so a half-typed key is never stored.
 //
-// Contextual quick toggles (Read Aloud / Hands-free in Counsel, Recording
+// Contextual quick toggles (Read Aloud / Hands-free in Chat, Recording
 // mode in Neuron) intentionally stay where they are — research favors a
 // central hub PLUS shortcuts at the point of use, not either/or.
 
@@ -82,9 +82,9 @@ const SECTIONS: { id: SectionId; icon: string; title: string; blurb: string; pow
   { id: "models", icon: "tune", title: "Models", blurb: "Which AI answers, which one does each job, and what it may spend." },
   { id: "keys", icon: "key", title: "API keys", blurb: "The accounts the app uses on your behalf. Keys save only when you press Save." },
   { id: "voice", icon: "record_voice_over", title: "Voice", blurb: "How replies sound, and how hands-free conversations behave." },
-  { id: "research", icon: "travel_explore", title: "Research", blurb: "Live web search and what Counsel may read." },
+  { id: "research", icon: "travel_explore", title: "Research", blurb: "Live web search and what Chat may read." },
   { id: "images", icon: "image", title: "Images & video", blurb: "Models and defaults for pictures, video and 3D." },
-  { id: "memory", icon: "menu_book", title: "Notes & library", blurb: "Whether Counsel saves notes, and how new books are catalogued." },
+  { id: "memory", icon: "menu_book", title: "Notes & library", blurb: "Whether Chat saves notes, and how new books are catalogued." },
   { id: "prompts", icon: "edit_note", title: "Replies & prompts", blurb: "Reply length, saved prompts and standing instructions." },
   { id: "appearance", icon: "palette", title: "Appearance", blurb: "Theme and seasonal colour." },
   { id: "account", icon: "person", title: "Account", blurb: "Your plan, developer keys and the setup helper." },
@@ -413,7 +413,7 @@ const SettingsPanel: React.FC = () => {
   const [promptDraft, setPromptDraft] = useState(customSystemPrompt || "");
   useEffect(() => { setPromptDraft(customSystemPrompt || ""); }, [customSystemPrompt]);
 
-  // localStorage-backed toggles shared with Counsel (it re-reads them when shown).
+  // localStorage-backed toggles shared with Chat (it re-reads them when shown).
   const [voiceQuickSearch, setVoiceQuickSearch] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_KEY) === "true");
   const [voiceQuickSearchModel, setVoiceQuickSearchModel] = useState(() => localStorage.getItem(VOICE_QUICK_SEARCH_MODEL_KEY) || "");
   const [bargeInEnabled, setBargeInEnabled] = useState(() => localStorage.getItem(BARGE_IN_KEY) === "true");
@@ -424,7 +424,7 @@ const SettingsPanel: React.FC = () => {
   useEffect(() => { localStorage.setItem(POCKET_SCREEN_KEY, String(pocketScreen)); }, [pocketScreen]);
 
   // Off the record (user_settings.is_recording_mode, inverted). The notebook
-  // view and Counsel re-read it on mount.
+  // view and Chat re-read it on mount.
   const [memoryMode, setMemoryModeState] = useState<MemoryMode>("recording");
   const [memoryModeLoading, setMemoryModeLoading] = useState(false);
   useEffect(() => {
@@ -558,7 +558,7 @@ const SettingsPanel: React.FC = () => {
     }));
   }, []);
 
-  // Deep link from other tabs (Counsel's "add a key", Neuron's menu, …).
+  // Deep link from other tabs (Chat's "add a key", Neuron's menu, …).
   useEffect(() => {
     const id = consumeSettingsSection();
     if (id) go(id);
@@ -1250,7 +1250,7 @@ const SettingsPanel: React.FC = () => {
                   <Switch checked={voiceQuickSearch} onCheckedChange={setVoiceQuickSearch} disabled={!burplexityApiToken} aria-label="Background quick search" />
                 </Row>
               </Group>
-              <Group title="What Counsel reads" footer={<>Research and search models are picked in <button data-no-sticker className="text-primary underline" onClick={() => go("models", "role-deep")}>Models</button>.</>}>
+              <Group title="What Chat reads" footer={<>Research and search models are picked in <button data-no-sticker className="text-primary underline" onClick={() => go("models", "role-deep")}>Models</button>.</>}>
                 <Row
                   id="all-neurons"
                   label={<span className="inline-flex items-center gap-1">{!isPaid && <span className="material-symbols-outlined text-sm" aria-hidden>lock</span>}Search all notebooks</span>}
@@ -1261,7 +1261,7 @@ const SettingsPanel: React.FC = () => {
                     onCheckedChange={(v) => {
                       if (!isPaid) { openPricing("all-neurons"); return; }
                       setAccessAllNeurons(v);
-                      toast.success(v ? "Counsel can now read all your notebooks" : "Counsel reads only the loaded notebook");
+                      toast.success(v ? "Chat can now read all your notebooks" : "Chat reads only the loaded notebook");
                     }}
                     aria-label="Search all notebooks"
                   />
@@ -1297,15 +1297,15 @@ const SettingsPanel: React.FC = () => {
                 <Row
                   id="memory-mode"
                   label="Off the record"
-                  description={memoryMode === "recording" ? "Off — Counsel saves notes as you chat." : "On — Counsel reads your notes but saves nothing new."}
-                  more="Also in Counsel's tools and at the top of your notebook. Forgetting a note still works while it's on."
+                  description={memoryMode === "recording" ? "Off — Chat saves notes as you chat." : "On — Chat reads your notes but saves nothing new."}
+                  more="Also in Chat's tools and at the top of your notebook. Forgetting a note still works while it's on."
                 >
                   <Switch checked={memoryMode !== "recording"} onCheckedChange={(off) => handleMemoryMode(!off)} disabled={memoryModeLoading} aria-label="Off the record" />
                 </Row>
                 <Row
                   id="reflex"
                   label="Point out contradictions"
-                  description="Counsel tells you when something you say or read disagrees with one of your notes."
+                  description="Chat tells you when something you say or read disagrees with one of your notes."
                   more="It names the note and the page it came from, and asks which is right before changing anything. Notes in an open conflict also get an amber marker in the notebook."
                 >
                   <Switch checked={reflexCues} onCheckedChange={setReflexEnabled} aria-label="Point out contradictions" />
@@ -1319,7 +1319,7 @@ const SettingsPanel: React.FC = () => {
                   id="catalog"
                   label="Catalog new books automatically"
                   description="Summarises each chapter after upload, so the assistant can find its way around."
-                  more="Off by default because it uses your own model key — roughly one short call per eight chapters, plus one for the book. You can always catalog a book by hand from the book-context picker in Counsel."
+                  more="Off by default because it uses your own model key — roughly one short call per eight chapters, plus one for the book. You can always catalog a book by hand from the book-context picker in Chat."
                 >
                   <Switch checked={autoCatalogOnUpload} onCheckedChange={setAutoCatalogOnUpload} aria-label="Catalog new books automatically" />
                 </Row>

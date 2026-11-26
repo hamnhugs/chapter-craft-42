@@ -22,7 +22,7 @@ import type { NeuronChoice } from "@/lib/counselFocus";
 /**
  * Shown when the user loads something from the Vault — a book, a shelf, or a
  * hand-picked pile. It lets them choose which neuron (knowledge wiki) — or
- * which saved neuron CHAIN — Counsel/the AI should draw on alongside it, and
+ * which saved neuron CHAIN — Chat/the AI should draw on alongside it, and
  * says plainly what the load REPLACES (docs/library-agent.md §1: loading
  * replaces the loaded books; the reader is untouched by a shelf load; a book
  * load can open the book ALONGSIDE the loaded shelf instead).
@@ -72,7 +72,7 @@ const LoadNeuronDialog: React.FC = () => {
     return selectContextBooks(books, current, pendingLoad.bookId).some((b) => b.id === pendingLoad.bookId);
   }, [pendingLoad, current, books]);
   const offerAlongside = pendingLoad?.kind === "book" && loadedLabel !== null && !bookIsMember;
-  // Shelf/pile load: the reader's book drops out of Counsel's focus unless it
+  // Shelf/pile load: the reader's book drops out of Chat's focus unless it
   // is a member of what is being loaded.
   const readerBook = activeBookId ? books.find((b) => b.id === activeBookId) : undefined;
   const readerStopsBeingDiscussed = useMemo(() => {
@@ -173,10 +173,10 @@ const LoadNeuronDialog: React.FC = () => {
       <DialogContent className="flex flex-col w-[calc(100%-2rem)] max-h-[calc(100dvh-2rem)] gap-3 p-4 rounded-lg sm:max-w-md sm:gap-4 sm:p-6">
         <DialogHeader className="shrink-0 text-left">
           <DialogTitle className="font-display pr-6 leading-snug">
-            Which notebook should Counsel use with {subject}?
+            Which notebook should Chat use with {subject}?
           </DialogTitle>
           <DialogDescription className="text-xs sm:text-sm">
-            Pick a notebook, or a saved set of notebooks. The one Counsel is using now is
+            Pick a notebook, or a saved set of notebooks. The one Chat is using now is
             already picked; Skip keeps it.
           </DialogDescription>
         </DialogHeader>
@@ -188,13 +188,13 @@ const LoadNeuronDialog: React.FC = () => {
             className="shrink-0 rounded-md bg-surface-container-high px-3 py-2 text-xs text-on-surface-variant"
           >
             {pendingLoad?.kind === "book" && offerAlongside && (
-              <>“Load &amp; open” makes this book what Counsel discusses, in place of {loadedLabel}. “Just open it” keeps Counsel on {loadedLabel} and only opens the book to read.</>
+              <>“Load &amp; open” makes this book what Chat discusses, in place of {loadedLabel}. “Just open it” keeps Chat on {loadedLabel} and only opens the book to read.</>
             )}
             {pendingLoad?.kind !== "book" && loadedLabel && (
               <>This replaces {loadedLabel}. </>
             )}
             {readerStopsBeingDiscussed && readerBook && (
-              <>Counsel will stop discussing “{readerBook.title}” (it stays open in the reader).</>
+              <>Chat will stop discussing “{readerBook.title}” (it stays open in the reader).</>
             )}
             {" "}You can undo from the message that follows.
           </p>

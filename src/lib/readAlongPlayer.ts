@@ -2,7 +2,7 @@
  * Read-along playback engine: speaks a word list chunk by chunk and reports
  * the word being spoken, for the Read tab's highlight.
  *
- * Two engines, same voice settings Counsel uses:
+ * Two engines, same voice settings Chat uses:
  *  - "inworld": audio per chunk from the inworld-tts edge function with WORD
  *    timestamps, played on one <audio>; a rAF loop maps `currentTime` to a
  *    word. Without timestamps (older edge function) words are estimated over
@@ -29,6 +29,7 @@ import {
   type WordTimes,
 } from "@/lib/readAlong";
 import { contextBefore, synthesizeSpeechWithTimestamps, type VoiceStyle } from "@/lib/inworldTts";
+import type { PageRecorder } from "@/lib/readRecordings";
 
 export type ReadAlongEngine = "inworld" | "browser";
 export type ReadAlongStatus = "idle" | "loading" | "playing" | "paused";
@@ -41,6 +42,10 @@ export interface ReadAlongHandlers {
   onEnd: (reason: ReadAlongEnd) => void;
   /** Something the user should know (engine fallback, missing voice). */
   onNotice?: (message: string) => void;
+  /** Who is speaking now: a character's name, or null for the narrator. */
+  onSpeaker?: (name: string | null) => void;
+  /** Where the audio now playing came from: kept from before, or just made. */
+  onSource?: (source: "recorded" | "fresh") => void;
 }
 
 /**
@@ -51,7 +56,9 @@ export interface ReadAlongHandlers {
 export interface ReadAlongCast {
   spans: VoiceSpan[];
   /** Null = the narrator reads it. Must not reject. */
-  resolve(key: string): Promise<{ voiceId: string; direction?: string } | null>;
+  resolve(key: string): Promise<{ voiceId: string; direction?: string; name?: string; ask?: boolean } | null>;
+  /** The listener picks this quote's speaker's voice; resolves when done. */
+  choose?(key: string): Promise<void>;
   /** Reading is about to start at this source offset. */
   warm(at: number): void;
 }
@@ -63,11 +70,20 @@ export interface ReadAlongVoice {
   style?: VoiceStyle;
   /** Inworld only: give each character their own voice. */
   cast?: ReadAlongCast | null;
+  /** Inworld only: this page's recording — played when it has the line,
+   *  added to when it does not (readRecordings.ts). */
+  recordings?: PageRecorder | null;
 }
 
 interface PreparedChunk {
   url: string;
   tokens: Array<{ text: string; start: number; end: number }> | null;
+  /** Not synthesized yet: the listener is to pick this quote's voice first. */
+  ask?: string;
+  /** The character speaking; null for the narrator. */
+  speaker: string | null;
+  /** Played from the page's recording rather than made now. */
+  recorded: boolean;
 }
 
 /** Audio feels late without a small lead: output latency + perception. */
@@ -94,6 +110,8 @@ export class ReadAlongPlayer {
   private abort: AbortController | null = null;
   private times: WordTimes | null = null;
   private audioPaused = false;
+  /** Quotes the listener was already prompted for in this run. */
+  private askedKeys = new Set<string>();
   // browser
   private boundarySeen = false;
   private utteranceStartedAt = 0;
@@ -120,6 +138,7 @@ export class ReadAlongPlayer {
     this.text = text;
     this.words = words;
     this.voice = voice.engine === "browser" || voice.inworldVoiceId ? voice : { engine: "browser" };
+    this.askedKeys.clear();
     this.rate = rate;
     if (this.voice.engine === "browser" && typeof window !== "undefined" && !("speechSynthesis" in window)) {
       this.handlers.onNotice?.("This device has no built-in voice. Turn on an Inworld voice in Settings.");
@@ -198,7 +217,7 @@ export class ReadAlongPlayer {
     cancelAnimationFrame(this.raf);
     this.abort?.abort();
     this.abort = null;
-    for (const p of this.prepared.values()) p.then((c) => URL.revokeObjectURL(c.url)).catch(() => {});
+    for (const p of this.prepared.values()) p.then((c) => c.url && URL.revokeObjectURL(c.url)).catch(() => {});
     this.prepared.clear();
     if (this.audio) {
       this.audio.pause();
@@ -251,16 +270,38 @@ export class ReadAlongPlayer {
       // A quote's speaker is asked for here, when its audio is fetched (two
       // chunks ahead of the voice). No answer, or none in time: the narrator.
       const who = chunk.voice && cast ? cast.resolve(chunk.voice).catch(() => null) : Promise.resolve(null);
-      p = who.then((c) => synthesizeSpeechWithTimestamps(chunk.text, c?.voiceId || narrator, undefined, {
-        signal,
+      const recordings = this.voice.recordings;
+      p = who.then(async (c): Promise<PreparedChunk> => {
+        const speaker = c?.name ?? null;
+        // A character's first line: held back until the voice reaches it,
+        // when the listener is asked which voice they should have.
+        if (c?.ask && chunk.voice && cast?.choose && !this.askedKeys.has(chunk.voice)) {
+          return { url: "", tokens: null, ask: chunk.voice, speaker, recorded: false };
+        }
+        const voiceId = c?.voiceId || narrator;
         // A line the book says is whispered or shouted is spoken that way;
         // otherwise the listener's own direction holds for every voice.
-        style: c?.direction ? { ...style, direction: `speak ${c.direction}` } : style,
-        // The passage just read, so the reading flows across chunks.
-        context: { previous: contextBefore(this.chunks.map((x) => x.text), i) },
-      })).then(
-        ({ audio, words }) => ({ url: URL.createObjectURL(new Blob([audio], { type: "audio/mpeg" })), tokens: words }),
-      );
+        const lineStyle = c?.direction ? { ...style, direction: `speak ${c.direction}` } : style;
+        const toUrl = (audio: ArrayBuffer) => URL.createObjectURL(new Blob([audio], { type: "audio/mpeg" }));
+        // Said before, in this voice, this way: play that, and spend nothing.
+        const key = recordings
+          ? await recordings.key({
+              text: chunk.text, voiceId, model: lineStyle?.model, delivery: lineStyle?.delivery,
+              direction: lineStyle?.direction, scene: lineStyle?.scene,
+            }).catch(() => null)
+          : null;
+        const kept = key && recordings ? await recordings.get(key) : null;
+        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        if (kept) return { url: toUrl(kept.audio), tokens: kept.words, speaker, recorded: true };
+        const { audio, words } = await synthesizeSpeechWithTimestamps(chunk.text, voiceId, undefined, {
+          signal,
+          style: lineStyle,
+          // The passage just read, so the reading flows across chunks.
+          context: { previous: contextBefore(this.chunks.map((x) => x.text), i) },
+        });
+        if (key && recordings) void recordings.put(key, { audio, words });
+        return { url: toUrl(audio), tokens: words, speaker, recorded: false };
+      });
       // Unhandled-rejection guard for prefetches nobody awaits yet.
       p.catch(() => {});
       this.prepared.set(i, p);
@@ -286,9 +327,12 @@ export class ReadAlongPlayer {
       return;
     }
     let prepared: PreparedChunk;
+    // Waiting on the model for who is speaking: show it, don't look stuck.
+    const slow = window.setTimeout(() => { if (gen === this.generation) this.setStatus("loading"); }, 600);
     try {
       prepared = await this.prepare(i)!;
     } catch (err) {
+      window.clearTimeout(slow);
       if (gen !== this.generation) return;
       console.warn("read-along: inworld chunk failed, falling back to device voice", err);
       this.handlers.onNotice?.("Inworld voice unavailable — continuing with the device voice.");
@@ -296,7 +340,24 @@ export class ReadAlongPlayer {
       this.playFrom(chunk.first);
       return;
     }
+    window.clearTimeout(slow);
     if (gen !== this.generation) return;
+    if (prepared.ask) {
+      this.askedKeys.add(prepared.ask);
+      this.setStatus("loading");
+      await this.voice.cast?.choose?.(prepared.ask).catch(() => {});
+      if (gen !== this.generation) return;
+      // Everything fetched or held from here on may now have a new voice.
+      for (const [k, p] of this.prepared) {
+        if (k < i) continue;
+        p.then((c) => c.url && URL.revokeObjectURL(c.url)).catch(() => {});
+        this.prepared.delete(k);
+      }
+      void this.playInworldChunk(gen);
+      return;
+    }
+    this.handlers.onSpeaker?.(prepared.speaker);
+    this.handlers.onSource?.(prepared.recorded ? "recorded" : "fresh");
     // Prefetch the next two so chunk joins don't stall.
     this.prepare(i + 1);
     this.prepare(i + 2);

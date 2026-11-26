@@ -97,7 +97,7 @@ describe("CastDirector", () => {
     try {
       const dir = new CastDirector(PAGE, deps({ complete: () => new Promise(() => {}) }));
       const p = dir.resolve("0");
-      await vi.advanceTimersByTimeAsync(8000);
+      await vi.advanceTimersByTimeAsync(46000);
       expect(await p).toBeNull();
     } finally {
       vi.useRealTimers();
@@ -139,5 +139,47 @@ describe("castBookStore", () => {
     expect(castBookStore.load("u1", "b2").cast).toEqual([]);
     localStorage.setItem("bw_cast_u1_b1", "{nope");
     expect(castBookStore.load("u1", "b1")).toEqual(emptyCastBook());
+  });
+});
+
+describe("asking the listener", () => {
+  it("a character's first line is flagged, and the voice they pick sticks", async () => {
+    const asked: string[] = [];
+    const d = deps({ choose: async (m, line) => { asked.push(`${m.name}: ${line}`); return "Mark"; } });
+    const dir = new CastDirector(PAGE, d);
+    expect((await dir.resolve("0"))?.ask).toBe(true);
+    await dir.choose("0");
+    expect(asked).toEqual(["Ann: Where have you been?"]);
+    expect(await dir.resolve("0")).toEqual({ voiceId: "Mark", name: "Ann" });
+    expect(d.book.cast.find((m) => m.name === "Ann")).toMatchObject({ voiceId: "Mark", locked: true, asked: true });
+    // Bob has not been asked about yet.
+    expect((await dir.resolve("1"))?.ask).toBe(true);
+  });
+
+  it("“pick for me” keeps the suggestion and does not ask again; a dismissal asks again", async () => {
+    let answer: string | null | undefined;
+    const d = deps({ choose: async () => answer });
+    const dir = new CastDirector(PAGE, d);
+    await dir.resolve("0");
+    answer = undefined;
+    await dir.choose("0");
+    expect((await dir.resolve("0"))?.ask).toBe(true);
+    answer = null;
+    await dir.choose("0");
+    expect(await dir.resolve("0")).toEqual({ voiceId: "Olivia", name: "Ann" });
+  });
+
+  it("asks nobody when asking is switched off", async () => {
+    const dir = new CastDirector(PAGE, deps({ choose: async () => "Mark", ask: () => false }));
+    expect((await dir.resolve("0"))?.ask).toBeUndefined();
+  });
+
+  it("says what it is doing, and why it failed", async () => {
+    const seen: string[] = [];
+    await new CastDirector(PAGE, deps({ onState: (s) => seen.push(s.phase) })).resolve("0");
+    expect(seen).toEqual(["working", "ready"]);
+    const bad: string[] = [];
+    await new CastDirector(PAGE, deps({ complete: async () => { throw new Error("402 no credit"); }, onState: (s) => bad.push(s.phase === "failed" ? s.error : s.phase) })).resolve("0");
+    expect(bad).toContain("402 no credit");
   });
 });

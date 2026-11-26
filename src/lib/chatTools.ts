@@ -5505,7 +5505,7 @@ export async function executeChatTool(
         if (!imageId) return { result: { error: "image_id required" }, event: { name, summary: "Missing image_id", ok: false } };
         if (await isOffTheRecord()) {
           return {
-            result: { error: "The user turned on Off the record, so nothing new is saved to their notes. Don't retry; tell them the image wasn't saved, and that they can turn Off the record off in Counsel or their notebook." },
+            result: { error: "The user turned on Off the record, so nothing new is saved to their notes. Don't retry; tell them the image wasn't saved, and that they can turn Off the record off in Chat or their notebook." },
             event: { name, summary: "Off the record — image not saved", ok: false },
           };
         }
@@ -7959,7 +7959,7 @@ export async function executeChatTool(
         // the record is exactly what the switch is for.
         if (name !== "delete_memory_entry" && (await isOffTheRecord())) {
           return {
-            result: { error: "The user turned on Off the record, so nothing new is saved to their notes. Don't retry; tell them it wasn't saved, and that they can turn Off the record off in Counsel or their notebook." },
+            result: { error: "The user turned on Off the record, so nothing new is saved to their notes. Don't retry; tell them it wasn't saved, and that they can turn Off the record off in Chat or their notebook." },
             event: { name, summary: "Off the record — nothing saved", ok: false },
           };
         }

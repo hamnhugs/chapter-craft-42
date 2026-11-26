@@ -5,7 +5,7 @@ import { resolveWormMood } from "@/lib/sprite/wormMood";
 import { readVoice, syntheticVoice } from "@/lib/sprite/voiceTap";
 
 /**
- * Wires the BookWorm to Counsel without putting any of it in ChatPanel.
+ * Wires the BookWorm to Chat without putting any of it in ChatPanel.
  *
  * ChatPanel is already 1900 lines and owns the composer, the transcript, voice
  * mode and the tool sheet. It should not also own a priority ladder for a

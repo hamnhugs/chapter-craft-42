@@ -22,7 +22,7 @@ import type { PromptPreset } from "@/hooks/usePromptPresets";
  *    should take a human tapping something.
  *
  * So this runs once, on a pick, and announces exactly what it did. Afterwards
- * the loaded neurons are visible in Counsel's own chips and can be changed the
+ * the loaded neurons are visible in Chat's own chips and can be changed the
  * ordinary way. Switching REPLACES the loaded set, the same way activating a
  * chain does — so repeated switching cannot accumulate neurons.
  *

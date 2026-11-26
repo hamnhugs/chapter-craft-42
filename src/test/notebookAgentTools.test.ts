@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 /**
- * Counsel working the Notebooks tab (docs/notebook-agent.md): nesting,
+ * Chat working the Notebooks tab (docs/notebook-agent.md): nesting,
  * renaming and moving, saved sets, Daily recall, filing Workspace files, and
  * showing things on screen. The supabase client is an in-memory fake that
  * APPLIES writes to the rows it serves and records them, so each test checks

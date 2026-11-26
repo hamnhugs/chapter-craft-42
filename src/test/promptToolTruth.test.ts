@@ -448,7 +448,7 @@ describe("the additive contract: omitting offeredTools changes nothing", () => {
   // excerpts byte-for-byte) — +215 chars on the default build, which carries
   // every tool.
   // Re-captured 2026-09-16: the Save-to-neuron button was removed from
-  // Counsel, so the capture sentence no longer names it (+20 chars).
+  // Chat, so the capture sentence no longer names it (+20 chars).
   // Re-captured 2026-09-17 (chat cost audit): the stable prompt no longer
   // carries the legacy conversation-memory block, the partial "You have these
   // tools:" roster, the separate Memory edits section, the Contradiction
@@ -459,7 +459,7 @@ describe("the additive contract: omitting offeredTools changes nothing", () => {
   // "notebooks"/"saved sets" in every model-facing sentence, the curating
   // block names notes and asks for a one-line summary, and one sentence tells
   // the model which words to use with the user (+230).
-  // Re-captured 2026-11-13 (Counsel works the Notebooks tab): the saved-set
+  // Re-captured 2026-11-13 (Chat works the Notebooks tab): the saved-set
   // sentence names manage_chain and one new gated line covers update_wiki,
   // review_notes, move_workspace_item and open_view, including the
   // open-is-not-load rule (+830).

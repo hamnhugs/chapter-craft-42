@@ -17,7 +17,7 @@ import { useFilingRequest, useWorkspaceItems, workspaceStore } from "@/lib/works
 
 /**
  * "Which notebook is this for?" — the one place a Workspace item gets a
- * notebook when Counsel had none loaded, and the same sheet the Workspace's
+ * notebook when Chat had none loaded, and the same sheet the Workspace's
  * "Move" uses.
  *
  * The files in question are ALREADY saved. This asks where they belong; it
@@ -73,12 +73,12 @@ const WorkspaceFilingPrompt: React.FC = () => {
         await setActiveWiki(wikiId);
         loaded = true;
       } catch {
-        /* the files are filed either way; Counsel just stays as it was */
+        /* the files are filed either way; Chat just stays as it was */
       }
     }
     toast.success(
       `${count === 1 ? "Filed" : `${count} files filed`} in “${name}”`,
-      loaded ? { description: "Counsel is using this notebook now — new files go here on their own." } : undefined,
+      loaded ? { description: "Chat is using this notebook now — new files go here on their own." } : undefined,
     );
   };
 
@@ -118,7 +118,7 @@ const WorkspaceFilingPrompt: React.FC = () => {
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
             {isNew
-              ? "No notebook was open, so Counsel didn't know where to put this. Pick one and the Workspace stays tidy."
+              ? "No notebook was open, so Chat didn't know where to put this. Pick one and the Workspace stays tidy."
               : "Files show up in the Workspace and in the notebook they belong to."}
           </DialogDescription>
         </DialogHeader>
@@ -154,7 +154,7 @@ const WorkspaceFilingPrompt: React.FC = () => {
                     <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{w.name}</span>
                     {here && <span className="shrink-0 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Here now</span>}
                     {locked && isNew && (
-                      <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant" title="Files can go here, but the free plan can't open this notebook in Counsel">
+                      <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant" title="Files can go here, but the free plan can't open this notebook in Chat">
                         <Lock className="w-3 h-3" aria-hidden /> Files only
                       </span>
                     )}
@@ -197,7 +197,7 @@ const WorkspaceFilingPrompt: React.FC = () => {
                 onChange={(e) => setKeepOpen(e.target.checked)}
                 className="h-4 w-4 shrink-0 accent-[hsl(var(--primary))]"
               />
-              <span className="min-w-0">Keep it open in Counsel, so I'm not asked again</span>
+              <span className="min-w-0">Keep it open in Chat, so I'm not asked again</span>
             </label>
           )}
           <button

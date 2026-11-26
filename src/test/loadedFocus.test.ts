@@ -4,7 +4,7 @@ import type { BookDocument } from "@/types/library";
 /**
  * A LOADED SHELF IS WHAT THE CONVERSATION IS ABOUT, AND THE PROMPT SAYS SO.
  *
- * The report: "I loaded a new shelf, went to Counsel, and it ignored it." The
+ * The report: "I loaded a new shelf, went to Chat, and it ignored it." The
  * load itself was fine — the book block at the top of the request did swap to
  * the new shelf. But that block calls its books "reference", never names the
  * shelf, and changes without a word, while the conversation below it was still

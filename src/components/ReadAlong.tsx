@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useChatSettings } from "@/hooks/useChatSettings";
 import { useAuth } from "@/hooks/useAuth";
+import { useWakeLock } from "@/hooks/useWakeLock";
 import { useReadAlongStats } from "@/hooks/useReadAlongStats";
 import { fetchInworldVoices, type InworldVoice, type VoiceStyle } from "@/lib/inworldTts";
 import {
@@ -36,14 +37,16 @@ import {
 } from "@/lib/readAlong";
 import { buildTextMap, caretFromPoint, HighlightPill, paintSentence, paintWordText, type TextMap } from "@/lib/readAlongDom";
 import { ReadAlongPlayer, type ReadAlongEnd, type ReadAlongStatus, type ReadAlongVoice } from "@/lib/readAlongPlayer";
-import { CastDirector, castBookStore, type CastBook } from "@/lib/castVoices/director";
+import { CastDirector, castBookStore, type CastBook, type CastState } from "@/lib/castVoices/director";
+import CastVoicePrompt from "@/components/CastVoicePrompt";
 import type { CastMember } from "@/lib/castVoices/attribute";
 import { resolveUtilityModel } from "@/lib/chatHistory";
 import { providerConfigured, providerKey, resolveModel } from "@/lib/providers/registry";
 import { nvidiaNoThinkingBody } from "@/lib/nvidiaCatalog";
+import { erasePageRecording, formatBytes, pageRecorder, pageRecordingInfo, pageScope, type PageRecordingInfo } from "@/lib/readRecordings";
 
 /**
- * Read-along for the Read tab: reads the page aloud with the same TTS Counsel
+ * Read-along for the Read tab: reads the page aloud with the same TTS Chat
  * uses (Inworld voice when enabled, else the device voice), highlights each
  * word with a theme-coloured pill as it is spoken, auto-scrolls and turns
  * pages, and rewards listening with XP, levels, combos and a daily streak.
@@ -98,6 +101,13 @@ const SLEEP_OPTIONS: Array<{ value: string; label: string }> = [
 ];
 type SleepTimer = { kind: "page" } | { kind: "time"; minutes: string; endsAt: number } | null;
 
+/**
+ * Hands-free highlight colours, one per character in the order the book
+ * introduced them. The Okabe–Ito set: told apart with any colour vision, and
+ * all bright enough to read on a dimmed page. The narrator keeps the theme's.
+ */
+const SPEAKER_COLOURS = ["#56B4E9", "#E69F00", "#CC79A7", "#009E73", "#F0E442", "#D55E00"];
+
 const prefersReducedMotion = () =>
   typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
@@ -109,7 +119,7 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
   const settings = useChatSettings();
   const { stats, latest: statsRef, update: updateStats, flush: flushStats } = useReadAlongStats(user?.id ?? null);
 
-  // ── Voice & speed: default to exactly what Counsel uses ─────────────────
+  // ── Voice & speed: default to exactly what Chat uses ─────────────────
   const voiceStyle: VoiceStyle = {
     model: settings.inworldModel,
     delivery: settings.inworldDelivery,
@@ -143,15 +153,28 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
   // ── Character voices ─────────────────────────────────────────────────────
   // Each character speaks in their own voice; the narrator keeps everything
   // else, "she said" included. Worked out a page ahead of the voice by the
-  // background model (castVoices/director.ts). Off until switched on: it
-  // spends model calls, and more, shorter voice requests.
+  // background model (castVoices/director.ts). On unless switched off; the
+  // first time a character speaks, the listener is asked to pick their voice.
   const castPrefKey = `bw_cast_on_${user?.id ?? "anon"}`;
-  const [castOn, setCastOn] = useState(false);
+  const askPrefKey = `bw_cast_ask_${user?.id ?? "anon"}`;
+  const [castOn, setCastOn] = useState(true);
+  const [askOn, setAskOn] = useState(true);
   useEffect(() => {
-    try { setCastOn(localStorage.getItem(castPrefKey) === "1"); } catch { /* private mode */ }
-  }, [castPrefKey]);
+    try {
+      setCastOn(localStorage.getItem(castPrefKey) !== "0");
+      setAskOn(localStorage.getItem(askPrefKey) !== "0");
+    } catch { /* private mode */ }
+  }, [castPrefKey, askPrefKey]);
   const castOnRef = useRef(castOn);
   castOnRef.current = castOn;
+  const askOnRef = useRef(askOn);
+  askOnRef.current = askOn;
+  const [castState, setCastState] = useState<CastState | null>(null);
+  /** The character whose voice the listener is being asked to pick. */
+  const [voicePrompt, setVoicePrompt] = useState<{ member: CastMember; line: string; done: (v: string | null | undefined) => void } | null>(null);
+  const voicePromptRef = useRef(voicePrompt);
+  voicePromptRef.current = voicePrompt;
+  const castFailNoticeRef = useRef(false);
   const [cast, setCast] = useState<CastMember[]>([]);
   const castBookRef = useRef<{ bookId: string; uid: string | null; book: CastBook } | null>(null);
   const directorRef = useRef<CastDirector | null>(null);
@@ -218,6 +241,23 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
       book,
       save: (b) => castBookStore.save(uid, p.bookId, b),
       onCast: (members) => setCast(members),
+      onState: (st) => {
+        setCastState(st);
+        if ((st.phase === "failed" || st.phase === "novoices") && !castFailNoticeRef.current) {
+          castFailNoticeRef.current = true;
+          toast.info(st.phase === "failed"
+            ? `Character voices: couldn't work out who is speaking (${st.error.slice(0, 120)}). Reading in one voice for now.`
+            : "Character voices: no other voices are available for the cast.");
+        }
+      },
+      ask: () => askOnRef.current,
+      choose: (member, line) => {
+        void voiceCatalog();
+        return new Promise((done) => {
+          voicePromptRef.current?.done(undefined);
+          setVoicePrompt({ member, line, done });
+        });
+      },
       carry: c && c.bookId === p.bookId && (p.mode === "html" || c.page === p.page - 1 || c.page === p.page) ? c.carry : undefined,
     });
     lastCastPageRef.current = p.page;
@@ -225,6 +265,51 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
     return { ...v, cast: director };
   }, [castBook, castComplete, voiceCatalog, user?.id]);
   const lastCastPageRef = useRef(page);
+
+  // ── Recording ────────────────────────────────────────────────────────────
+  // What an Inworld voice says is kept on this device, a page at a time, so
+  // the next listen plays it back instead of paying for it again
+  // (lib/readRecordings.ts). The device voice cannot be recorded.
+  const scope = pageScope(user?.id ?? null, bookId, mode === "pdf" ? `p${page}` : "all");
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
+  const [recInfo, setRecInfo] = useState<PageRecordingInfo>({ clips: 0, bytes: 0 });
+  const refreshRecInfo = useCallback(() => {
+    const asked = scopeRef.current;
+    void pageRecordingInfo(asked).then((info) => { if (scopeRef.current === asked) setRecInfo(info); });
+  }, []);
+  useEffect(() => { setRecInfo({ clips: 0, bytes: 0 }); refreshRecInfo(); }, [scope, refreshRecInfo]);
+  const recTimer = useRef<number | null>(null);
+  /** `v` with this page's recording to play from and add to. */
+  const withRecording = useCallback((v: ReadAlongVoice): ReadAlongVoice => {
+    if (v.engine !== "inworld" || !v.inworldVoiceId) return v;
+    const at = pageScope(user?.id ?? null, propsRef.current.bookId, propsRef.current.mode === "pdf" ? `p${propsRef.current.page}` : "all");
+    return {
+      ...v,
+      recordings: pageRecorder(at, () => {
+        // A page is a dozen clips arriving one after another: count once.
+        if (recTimer.current) window.clearTimeout(recTimer.current);
+        recTimer.current = window.setTimeout(refreshRecInfo, 800);
+      }),
+    };
+  }, [user?.id, refreshRecInfo]);
+  /** Is the voice now heard from the recording, or being recorded? */
+  const [source, setSource] = useState<"recorded" | "fresh" | null>(null);
+
+  // ── Hands-free ───────────────────────────────────────────────────────────
+  // The page dims, the screen stays awake, and the word being spoken is lit
+  // in a colour of its speaker's own.
+  const [handsFree, setHandsFree] = useState(false);
+  const handsFreeRef = useRef(false);
+  handsFreeRef.current = handsFree;
+  const [speaker, setSpeaker] = useState<string | null>(null);
+  const speakerRef = useRef<string | null>(null);
+  const castRef = useRef<CastMember[]>([]);
+  const speakerColour = useCallback((name: string | null): string | null => {
+    if (!name) return null;
+    const i = castRef.current.findIndex((m) => m.name === name);
+    return SPEAKER_COLOURS[(i < 0 ? name.length : i) % SPEAKER_COLOURS.length];
+  }, []);
 
   // ── Session state ────────────────────────────────────────────────────────
   const [status, setStatus] = useState<ReadAlongStatus>("idle");
@@ -275,6 +360,9 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
     if (!src || !pill || !w) return;
     const range = src.map.rangeFor(w.start, w.end);
     const primary = getComputedStyle(document.documentElement).getPropertyValue("--primary").trim();
+    // Hands-free: the highlight is the speaker's colour, the narrator's the theme's.
+    const lit = handsFreeRef.current ? speakerColour(speakerRef.current) : null;
+    pill.tint(lit);
     const s0 = sentenceStartOf(src.words, index);
     const s1 = nextSentenceStart(src.words, index);
     const sentence = src.map.rangeFor(src.words[s0].start, src.words[s1 < 0 ? src.words.length - 1 : s1 - 1].end);
@@ -286,7 +374,7 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
       const rect = pill.place(range, { x: f.left, y: f.top });
       if (iframe.contentDocument) {
         // Theme's primary, read live so a theme switch recolours mid-read.
-        paintWordText(iframe.contentDocument, range, primary ? `hsl(${primary})` : "Highlight");
+        paintWordText(iframe.contentDocument, range, lit ?? (primary ? `hsl(${primary})` : "Highlight"));
         paintSentence(iframe.contentDocument, sentence, tint);
       }
       const win = iframe.contentWindow;
@@ -309,7 +397,7 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
       const dx = rect.left < c.left + 16 || rect.right > c.right - 16 ? rect.left - (c.left + c.width * 0.3) : 0;
       if (dy || dx) scroller.scrollBy({ top: dy, left: dx, behavior: prefersReducedMotion() ? "auto" : "smooth" });
     }
-  }, []);
+  }, [speakerColour]);
 
   // ── Credit (XP / combo / streak) ─────────────────────────────────────────
   const credit = useCallback((index: number) => {
@@ -394,6 +482,8 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
       },
       onEnd: (r) => handleEndRef.current(r),
       onNotice: (m) => toast.info(m),
+      onSpeaker: (name) => { speakerRef.current = name; setSpeaker(name); },
+      onSource: (src) => setSource(src),
     });
   }
 
@@ -508,8 +598,8 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
     lastCreditedRef.current = from - 1;
     userScrolledAtRef.current = 0;
     setWordPos({ index: from, total: src.words.length });
-    playerRef.current!.start(src.map.text, src.words, from, withCast(voiceRef.current, src.map.text), rateRef.current);
-  }, [buildSource, ensurePill, attachInteractions, withCast]);
+    playerRef.current!.start(src.map.text, src.words, from, withRecording(withCast(voiceRef.current, src.map.text)), rateRef.current);
+  }, [buildSource, ensurePill, attachInteractions, withCast, withRecording]);
 
   const stopReading = useCallback(() => {
     continueOnNextTextRef.current = false;
@@ -613,8 +703,61 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
     if (player.state.status === "idle" || !sourceRef.current) return;
     const at = Math.max(0, currentWordRef.current);
     lastCreditedRef.current = at - 1;
-    player.start(sourceRef.current.map.text, sourceRef.current.words, at, withCast(voiceRef.current, sourceRef.current.map.text), rateRef.current);
-  }, [withCast]);
+    player.start(sourceRef.current.map.text, sourceRef.current.words, at, withRecording(withCast(voiceRef.current, sourceRef.current.map.text)), rateRef.current);
+  }, [withCast, withRecording]);
+
+  /** Throw this page's recording away; if reading, read it again from the top. */
+  const recordOver = useCallback(async () => {
+    try {
+      await erasePageRecording(scopeRef.current);
+    } catch {
+      toast.error("Couldn't clear this page's recording.");
+      return;
+    }
+    refreshRecInfo();
+    const player = playerRef.current;
+    const src = sourceRef.current;
+    if (player && src && player.state.status !== "idle") {
+      lastCreditedRef.current = -2;
+      comboRef.current = 0;
+      setCombo(0);
+      player.start(src.map.text, src.words, 0, withRecording(withCast(voiceRef.current, src.map.text)), rateRef.current);
+      toast.success("Recording this page again from the top.");
+    } else {
+      toast.success("Recording cleared. The next listen records this page again.");
+    }
+  }, [refreshRecInfo, withCast, withRecording]);
+
+  // Hands-free ends with the session; while it is on, the page is dimmed and
+  // the screen is kept awake (the lock is dropped by the browser whenever the
+  // tab is hidden, so it is asked for again on the way back).
+  useEffect(() => {
+    if (status === "idle") { setHandsFree(false); setSource(null); speakerRef.current = null; setSpeaker(null); }
+  }, [status]);
+  const dimmed = handsFree && active;
+  useWakeLock(dimmed);
+  useEffect(() => {
+    if (!dimmed) return;
+    const root = document.documentElement;
+    const p = propsRef.current;
+    const hosts = [p.pageHostRef.current, p.htmlHostRef.current].filter((h): h is HTMLDivElement => !!h);
+    root.setAttribute("data-ra-handsfree", "");
+    for (const h of hosts) h.setAttribute("data-ra-dim", "");
+    p.scrollRef.current?.setAttribute("data-ra-dark", "");
+    if (currentWordRef.current >= 0) placeWord(currentWordRef.current, false);
+    return () => {
+      root.removeAttribute("data-ra-handsfree");
+      for (const h of hosts) h.removeAttribute("data-ra-dim");
+      p.scrollRef.current?.removeAttribute("data-ra-dark");
+      pillRef.current?.tint(null);
+    };
+    // textVersion: a re-rendered page is a new host to dim.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dimmed, textVersion, mode]);
+  // The speaker changed: recolour the word already lit.
+  useEffect(() => {
+    if (dimmed && currentWordRef.current >= 0) placeWord(currentWordRef.current, false);
+  }, [dimmed, speaker, placeWord]);
 
   const changeVoice = (next: ReadAlongVoice) => {
     setVoiceOverride(next.engine === counselVoice.engine && next.inworldVoiceId === counselVoice.inworldVoiceId ? null : next);
@@ -622,18 +765,40 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
     restartHere();
   };
 
+  // Reading stopped while the question was up: put it away unanswered.
+  useEffect(() => {
+    if (status === "idle" && voicePromptRef.current) {
+      const p = voicePromptRef.current;
+      setVoicePrompt(null);
+      p.done(undefined);
+    }
+  }, [status]);
+
+  const answerVoicePrompt = (v: string | null | undefined) => {
+    const p = voicePromptRef.current;
+    if (!p) return;
+    setVoicePrompt(null);
+    p.done(v);
+  };
+  const toggleAsk = (on: boolean) => {
+    setAskOn(on);
+    askOnRef.current = on;
+    try { localStorage.setItem(askPrefKey, on ? "1" : "0"); } catch { /* private mode */ }
+  };
+
   const toggleCast = (on: boolean) => {
     setCastOn(on);
     castOnRef.current = on;
     try { localStorage.setItem(castPrefKey, on ? "1" : "0"); } catch { /* private mode */ }
     if (on) void voiceCatalog();
+    else setCastState(null);
     restartHere();
   };
 
   /** The listener picks a character's voice: it sticks, on every page. */
   const recast = (memberId: string, voiceId: string) => {
     const book = castBook();
-    book.cast = book.cast.map((m) => (m.id === memberId ? { ...m, voiceId, locked: true } : m));
+    book.cast = book.cast.map((m) => (m.id === memberId ? { ...m, voiceId, locked: true, asked: true } : m));
     castBookStore.save(user?.id ?? null, bookId, book);
     setCast(book.cast);
     restartHere();
@@ -713,6 +878,14 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
     : "Device voice";
   /** Who has spoken, leads first — the Cast menu. */
   const speakers = useMemo(() => [...cast].sort((a, b) => b.lines - a.lines).slice(0, 40), [cast]);
+  castRef.current = cast;
+  const canRecord = voice.engine === "inworld";
+  const recorded = recInfo.clips > 0;
+  const recLine = !canRecord
+    ? "The device voice can't be recorded."
+    : recorded
+      ? `This page is recorded (${formatBytes(recInfo.bytes)}). It plays back without paying for the voice again.`
+      : "Recorded as it is read, so the next listen is free.";
   const sleepValue = !sleep ? "off" : sleep.kind === "page" ? "page" : sleep.minutes;
   const sleepLabel = !sleep
     ? null
@@ -864,10 +1037,10 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
                 >
                   {counselVoice.engine === "inworld" && (
                     <DropdownMenuRadioItem value={`inworld:${counselVoice.inworldVoiceId}`}>
-                      {voices?.find((v) => v.voice_id === counselVoice.inworldVoiceId)?.name ?? counselVoice.inworldVoiceId} (Counsel voice)
+                      {voices?.find((v) => v.voice_id === counselVoice.inworldVoiceId)?.name ?? counselVoice.inworldVoiceId} (Chat voice)
                     </DropdownMenuRadioItem>
                   )}
-                  <DropdownMenuRadioItem value="browser">Device voice{counselVoice.engine === "browser" ? " (Counsel voice)" : ""}</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="browser">Device voice{counselVoice.engine === "browser" ? " (Chat voice)" : ""}</DropdownMenuRadioItem>
                   {settings.inworldEnabled && (
                     <>
                       <DropdownMenuSeparator />
@@ -891,13 +1064,28 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
                   <span className="flex-1">Character voices</span>
                 </DropdownMenuCheckboxItem>
                 {castOn && (
+                  <DropdownMenuCheckboxItem
+                    checked={askOn}
+                    onCheckedChange={(v) => toggleAsk(v === true)}
+                    onSelect={(e) => e.preventDefault()}
+                  >
+                    <span className="flex-1">Ask me for each voice</span>
+                  </DropdownMenuCheckboxItem>
+                )}
+                {castOn && (
                   <DropdownMenuSub>
                     <DropdownMenuSubTrigger>
                       <span className="flex-1">Cast</span>
                       <span className="text-xs text-muted-foreground">{speakers.length || "None yet"}</span>
                     </DropdownMenuSubTrigger>
                     <DropdownMenuSubContent className="max-h-[50dvh] w-60 overflow-y-auto">
-                      {speakers.length === 0 && (
+                      {castState?.phase === "working" && (
+                        <div className="px-2 py-1.5 text-xs text-muted-foreground">Working out who is speaking…</div>
+                      )}
+                      {castState?.phase === "failed" && (
+                        <div className="px-2 py-1.5 text-xs text-destructive">Couldn't work out the speakers: {castState.error.slice(0, 140)}</div>
+                      )}
+                      {speakers.length === 0 && castState?.phase !== "working" && (
                         <div className="px-2 py-1.5 text-xs text-muted-foreground">
                           Characters appear here as they speak. The narrator reads everything else.
                         </div>
@@ -931,6 +1119,21 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
                 )}
               </>
             )}
+            <DropdownMenuCheckboxItem
+              checked={handsFree}
+              onCheckedChange={(v) => setHandsFree(v === true)}
+            >
+              <span className="flex-1">Hands-free</span>
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="font-normal text-xs text-muted-foreground">{recLine}</DropdownMenuLabel>
+            {canRecord && (
+              <DropdownMenuItem disabled={!recorded} onSelect={() => void recordOver()}>
+                <span className="material-symbols-outlined text-base mr-2" aria-hidden>fiber_manual_record</span>
+                Record over this page
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuSeparator />
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <span className="flex-1">Sleep timer</span>
@@ -963,17 +1166,71 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => { startReading(false); onInteract?.(); }}
-        className={slotClass}
-        title={`Read this page aloud · Level ${lvl.level}${streak > 0 ? ` · ${streak}-day streak` : ""}`}
-        aria-label="Listen: read this page aloud"
-      >
-        {levelRing(26, <span className="material-symbols-outlined text-base text-primary" aria-hidden>graphic_eq</span>)}
-        <span className={slotLabelClass}>Listen</span>
-      </button>
+      <DropdownMenu onOpenChange={() => onInteract?.()}>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className={slotClass}
+            title={`Read this page aloud · Level ${lvl.level}${streak > 0 ? ` · ${streak}-day streak` : ""}`}
+            aria-label="Listen: read this page aloud"
+          >
+            {levelRing(26, <span className="material-symbols-outlined text-base text-primary" aria-hidden>graphic_eq</span>)}
+            <span className={slotLabelClass}>Listen</span>
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="center" side={barAtBottom ? "top" : "bottom"} className="w-72">
+          <DropdownMenuItem onSelect={() => { setHandsFree(false); startReading(false); }}>
+            <span className="material-symbols-outlined text-xl mr-3" aria-hidden>graphic_eq</span>
+            <span className="flex flex-col">
+              <span className="font-semibold">Listen</span>
+              <span className="text-xs text-muted-foreground">Read this page aloud and follow the words.</span>
+            </span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => { setHandsFree(true); startReading(false); }}>
+            <span className="material-symbols-outlined text-xl mr-3" aria-hidden>bedtime</span>
+            <span className="flex flex-col">
+              <span className="font-semibold">Hands-free</span>
+              <span className="text-xs text-muted-foreground">The screen stays on and dims. Each character's words light up in their own colour.</span>
+            </span>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel className="font-normal text-xs text-muted-foreground">{recLine}</DropdownMenuLabel>
+          {canRecord && recorded && (
+            <DropdownMenuItem onSelect={() => void recordOver()}>
+              <span className="material-symbols-outlined text-xl mr-3" aria-hidden>fiber_manual_record</span>
+              Record over this page
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
       {player}
+      {dimmed && createPortal(
+        <div className="ra-handsfree-caption" role="status" aria-live="off">
+          <span className="ra-handsfree-dot" style={{ background: speakerColour(speaker) ?? "var(--ra-narrator)" }} aria-hidden />
+          <span className="truncate">{speaker ?? "Narrator"}</span>
+          {source && canRecord && (
+            <span className="material-symbols-outlined text-sm opacity-70" title={source === "recorded" ? "Playing your recording" : "Recording"} aria-label={source === "recorded" ? "Playing your recording" : "Recording"}>
+              {source === "recorded" ? "download_done" : "fiber_manual_record"}
+            </span>
+          )}
+          <button type="button" className="ra-handsfree-exit" onClick={() => setHandsFree(false)} aria-label="Leave hands-free: bring the lights back up" title="Lights up">
+            <span className="material-symbols-outlined text-base" aria-hidden>light_mode</span>
+          </button>
+        </div>,
+        document.body,
+      )}
+      {voicePrompt && (
+        <CastVoicePrompt
+          key={voicePrompt.member.id}
+          member={voicePrompt.member}
+          line={voicePrompt.line}
+          voices={voices}
+          narratorVoiceId={voice.inworldVoiceId || ""}
+          style={voice.style}
+          onDone={answerVoicePrompt}
+          onStopAsking={() => { toggleAsk(false); answerVoicePrompt(null); }}
+        />
+      )}
     </>
   );
 };

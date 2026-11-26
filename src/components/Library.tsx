@@ -128,8 +128,8 @@ const Library: React.FC = () => {
   const { books, addBook, setBookCover, removeBook, trashAvailable, trashedBooks, trashLoading, refreshTrash, restoreBook, purgeBook, emptyTrash, updateBookTitle, updateBookTags, addChapter, removeChapter, loadBookFile, applyChapterGists, applyBookSummary, loadChapterText,
     shelves, toggleBookShelf, booksLoading, booksError, retryLoadBooks, loadFocus, setActiveTab } = useApp();
   // Reading is not a question about notebooks. Opening a book from here opens
-  // the reader and leaves what Counsel has loaded alone; taking something to
-  // Counsel is its own button ("Ask Counsel") on a book and on a shelf.
+  // the reader and leaves what Chat has loaded alone; taking something to
+  // Chat is its own button ("Ask Chat") on a book and on a shelf.
   const requestBookLoad = useCallback((bookId: string) => {
     void loadFocus({ kind: "book", bookId, neurons: { kind: "keep" }, alongside: true });
   }, [loadFocus]);

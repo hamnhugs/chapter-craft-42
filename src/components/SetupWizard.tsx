@@ -389,7 +389,7 @@ const SetupWizard: React.FC = () => {
                 </summary>
                 <div className="mt-2 space-y-2">
                   <p className="text-xs text-on-surface-variant">
-                    Counsel will use <span className="font-mono">{selectedModel}</span>. Add more here, or any time in Settings.
+                    Chat will use <span className="font-mono">{selectedModel}</span>. Add more here, or any time in Settings.
                   </p>
             {/* NVIDIA-only setup: the OpenRouter rankings below are unusable
                       without an OpenRouter key, so offer curated NVIDIA picks

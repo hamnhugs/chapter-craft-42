@@ -143,7 +143,7 @@ const ModelExplorer: React.FC = () => {
               ? "Google's own models, called directly from your browser. Chat and vision are free with a generous daily allowance; image generation needs billing enabled on your Google account."
               : provider === "nvidia"
               ? "Models NVIDIA hosts — mostly other companies' open models (Llama, DeepSeek, GPT-OSS, Gemma), free with an NVIDIA key and no balance required. Adding from this tab tags them as NVIDIA so they route correctly."
-              : "Ranked by real weekly usage across OpenRouter. Pick a category to see what people actually use for that kind of work, then add any model to your list — it appears in Counsel's model picker instantly."}
+              : "Ranked by real weekly usage across OpenRouter. Pick a category to see what people actually use for that kind of work, then add any model to your list — it appears in Chat's model picker instantly."}
           </p>
         </div>
 

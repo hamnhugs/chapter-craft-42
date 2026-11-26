@@ -89,7 +89,7 @@ const ChatPanel: React.FC = () => {
   // absent key has to mean enabled or every existing user silently loses it.
   const [pocketScreenEnabled] = useState(() => localStorage.getItem("hands_free_pocket_screen") !== "false");
   const handsFree = useHandsFree({
-    // endSession lets Counsel close hands-free when asked to (end_hands_free).
+    // endSession lets Chat close hands-free when asked to (end_hands_free).
     onUtterance: (text, ctl) => sendMessage(text, { voiceMode: true, modelOverride: voiceModel || undefined, endHandsFree: ctl.endSession }),
     // Hands-free has its own speech speed (read-aloud buttons keep ttsRate).
     speak: (text, opts) => speak(text, { ...opts, rate: handsFreeTtsRate || undefined }),
@@ -219,9 +219,9 @@ const ChatPanel: React.FC = () => {
   // ---- Voice features absorbed from the former Echo (Voice) tab ----
   const [notesPanelOpen, setNotesPanelOpen] = useState(false);
 
-  // Off the record: Counsel still reads notes but saves nothing new
+  // Off the record: Chat still reads notes but saves nothing new
   // (user_settings.is_recording_mode = false, enforced in the save tools).
-  // Read on mount — Counsel remounts each time its tab opens, and Settings
+  // Read on mount — Chat remounts each time its tab opens, and Settings
   // can flip it too.
   const [offTheRecord, setOffTheRecord] = useState(false);
   useEffect(() => {
@@ -234,7 +234,7 @@ const ChatPanel: React.FC = () => {
     setOffTheRecord(next);
     try {
       await setMemoryMode(next ? "retrieval" : "recording");
-      toast.success(next ? "Off the record — Counsel won't save new notes" : "Saving notes again");
+      toast.success(next ? "Off the record — Chat won't save new notes" : "Saving notes again");
     } catch (e: any) {
       setOffTheRecord(!next);
       toast.error(e?.message || "Couldn't change that setting");
@@ -250,7 +250,7 @@ const ChatPanel: React.FC = () => {
   const workspaceItems = useWorkspaceItems();
   // A file opened from the Notebooks tab: this panel was unmounted then, so
   // the request waits in the store and is taken here on the way in.
-  // Counsel's open_view asks the same way while this panel is already up.
+  // Chat's open_view asks the same way while this panel is already up.
   useEffect(() => {
     const take = () => {
       const id = workspaceStore.takeOpenRequest();
@@ -805,7 +805,7 @@ const ChatPanel: React.FC = () => {
     setActiveTab("settings");
   }, [setActiveTab]);
 
-  // Counsel's FOCUS book (derived — counselFocus.focusBookId), not the
+  // Chat's FOCUS book (derived — counselFocus.focusBookId), not the
   // reader's: with a shelf loaded, the reader's book is discussed only if it
   // is on the shelf. `readerBook` is what the Read tab shows.
   const focusId = focusBookId(books, bookSelection, activeBookId ?? null);
@@ -1093,7 +1093,7 @@ const ChatPanel: React.FC = () => {
     <div className="flex h-full overflow-hidden">
       <div className="flex flex-col h-full flex-1 min-w-0 relative">
       {/* Focus indicator — confirms to the user (and signals that the AI
-          knows) which book Counsel is discussing. When the reader shows a
+          knows) which book Chat is discussing. When the reader shows a
           book that is NOT on the loaded shelf, both are named, so the screen
           never implies the AI is reading what the user is reading. */}
       {selectedBook && (
@@ -1118,7 +1118,7 @@ const ChatPanel: React.FC = () => {
         </div>
       )}
 
-      {/* Loaded-neuron chips — the set Counsel reads from. Secondary chips
+      {/* Loaded-neuron chips — the set Chat reads from. Secondary chips
           can be unloaded inline; "+" opens the ⌘K switcher; 2+ loaded shows
           a save-as-chain affordance (Linear-style: save at point of use).
           One line that scrolls, like the composer's strips: wrapping grew a
@@ -1135,7 +1135,7 @@ const ChatPanel: React.FC = () => {
           <button
             onClick={() => window.dispatchEvent(new CustomEvent("open-neuron-switcher", { detail: { mode: "add" } }))}
             className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-dashed border-outline-variant/40 hover:border-primary/50 hover:text-primary transition-colors"
-            title="Load a notebook so Counsel can read and save notes"
+            title="Load a notebook so Chat can read and save notes"
           >
             <span className="material-symbols-outlined text-[14px]">add</span>
             <span className="text-[10px] font-bold uppercase tracking-widest">Use a notebook</span>
@@ -1177,8 +1177,8 @@ const ChatPanel: React.FC = () => {
           <button
             onClick={() => window.dispatchEvent(new CustomEvent("open-neuron-switcher", { detail: { mode: "add" } }))}
             className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full border border-dashed border-outline-variant/40 hover:border-primary/50 hover:text-primary transition-colors"
-            title="Add another notebook for Counsel"
-            aria-label="Add another notebook for Counsel"
+            title="Add another notebook for Chat"
+            aria-label="Add another notebook for Chat"
           >
             <span className="material-symbols-outlined text-[14px]">add</span>
           </button>
@@ -1257,7 +1257,7 @@ const ChatPanel: React.FC = () => {
             <p className="text-sm text-center max-w-md">
               {selectedBook
                 ? `Ready to discuss "${selectedBook.title}". ${selectedBook.chapters.length > 0 ? `${selectedBook.chapters.length} chapter(s) loaded.` : "No chapters isolated yet."}`
-                : "Ask anything. Open a book from your Library and Counsel will talk it through with you."}
+                : "Ask anything. Open a book from your Library and Chat will talk it through with you."}
             </p>
             {!apiKey && !nvidiaKeyLast4 && !geminiApiKey && loaded && (
               <button onClick={() => openSettings("models")} className="flex items-center gap-2 px-4 py-2 bg-surface-container-high rounded-lg text-primary text-sm border border-outline-variant/10 hover:bg-surface-container-highest transition-colors">
@@ -1849,7 +1849,7 @@ const ChatPanel: React.FC = () => {
               onClick={() => setToolsOpen(true)}
               aria-haspopup="dialog"
               aria-expanded={toolsOpen}
-              title="Attach an image, or change what Counsel can read and how it answers"
+              title="Attach an image, or change what Chat can read and how it answers"
               aria-label={activeModeCount > 0 ? `Attach and tools — ${activeModeCount} active` : "Attach and tools"}
               className="relative h-9 w-9 shrink-0 self-end mb-0.5 flex items-center justify-center rounded-xl bg-surface-container-high text-on-surface-variant hover:text-primary hover:bg-surface-container-highest transition-colors after:content-[''] after:absolute after:-inset-[4px]"
             >

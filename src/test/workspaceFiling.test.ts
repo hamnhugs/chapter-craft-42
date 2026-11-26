@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { workspaceStore } from "@/lib/workspaceStore";
 
 /**
- * Filing: every Workspace item belongs to the notebook Counsel had loaded
+ * Filing: every Workspace item belongs to the notebook Chat had loaded
  * when it was made, and an item made with none loaded raises one question
  * instead of landing in a pile.
  */

@@ -144,7 +144,7 @@ const WikiLibrary: React.FC<{ store?: NotebookStore }> = ({ store = supabaseNote
     setFolded(next);
   };
 
-  // Opening is view-only: Counsel's loaded notebooks stay as they are.
+  // Opening is view-only: Chat's loaded notebooks stay as they are.
   const handleOpen = (wiki: WikiWithStats) => {
     if (lockedIds.has(wiki.id)) {
       openPricing("neuron-locked");
@@ -436,10 +436,10 @@ const NotebookRow: React.FC<{
             </span>
             {inCounsel && (
               <span
-                title="Counsel is using this notebook"
+                title="Chat is using this notebook"
                 className="shrink-0 rounded-full bg-accent/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest text-accent"
               >
-                Counsel
+                Chat
               </span>
             )}
           </span>
@@ -499,7 +499,7 @@ const SearchResults: React.FC<{
   if (shown.length === 0) {
     return (
       <p className="py-12 text-sm text-center text-on-surface-variant max-w-sm mx-auto">
-        No notes match. Try other words, or ask Counsel — it can also search inside your books.
+        No notes match. Try other words, or ask Chat — it can also search inside your books.
       </p>
     );
   }

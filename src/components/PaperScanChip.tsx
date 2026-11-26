@@ -7,18 +7,18 @@ import { paperProgressLabel } from "@/lib/paperBook";
 import { PROBLEM_COPY } from "@/lib/pagePhoto";
 
 /**
- * "Snap the next page" inside Counsel.
+ * "Snap the next page" inside Chat.
  *
  * Talking about a paper book and adding to it are one sitting: the reader
  * asks about page 47, turns the page, and wants page 48 in the conversation
  * without walking back to the Read tab. This is the desk's shutter, alone,
- * above the composer — shown only while Counsel has an unfinished paper book
- * loaded. The page lands in the book, and Counsel reads the book.
+ * above the composer — shown only while Chat has an unfinished paper book
+ * loaded. The page lands in the book, and Chat reads the book.
  */
 const PaperScanChip: React.FC<{ bookId: string; title: string }> = ({ bookId, title }) => {
   const input = useRef<HTMLInputElement>(null);
   const onEvent = useCallback((e: ScanEvent) => {
-    if (e.type === "pages") toast.success(`Added ${e.labels.join(" and ")}. Counsel can read ${e.count === 1 ? "it" : "them"} now.`);
+    if (e.type === "pages") toast.success(`Added ${e.labels.join(" and ")}. Chat can read ${e.count === 1 ? "it" : "them"} now.`);
     else toast.success("Cover added");
   }, []);
   const scan = usePaperScan({ bookId, onEvent });

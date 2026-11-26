@@ -5,7 +5,7 @@
  * the order is the crash-safety argument:
  *
  *   1. the book FILE (the whole book as HTML — the one copy of the pages),
- *   2. the CHAPTERS Counsel reads (one row per page; only new pages are
+ *   2. the CHAPTERS Chat reads (one row per page; only new pages are
  *      written, and no row's text is ever rewritten),
  *   3. the book ROW (page count + the "unfinished" state the Library shows).
  *

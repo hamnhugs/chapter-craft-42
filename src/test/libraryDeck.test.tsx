@@ -8,16 +8,16 @@ import type { BookFolder } from "@/lib/bookFolders";
 
 /**
  * The library's deck: shelves as tabs, their books in slots, and one button
- * that takes a shelf to Counsel.
+ * that takes a shelf to Chat.
  *
  * What is pinned here is the contract between the three things the deck ties
  * together — books, shelves, the notebook — because each of these was a way
  * the old layout confused people:
  *   - looking at a shelf must not load it;
- *   - "Ask Counsel" loads exactly the open shelf and KEEPS the notebook (no
+ *   - "Ask Chat" loads exactly the open shelf and KEEPS the notebook (no
  *     dialog in between);
  *   - a shelf's contents are the truth, whatever is typed in the search box;
- *   - opening a book to read leaves what Counsel has loaded alone.
+ *   - opening a book to read leaves what Chat has loaded alone.
  */
 
 const app = vi.hoisted(() => ({
@@ -125,7 +125,7 @@ describe("one shelf is open at a time", () => {
     expect(button("New shelf")).toBeTruthy();
   });
 
-  it("opens a shelf's books in slots, filled out to the eight Counsel takes", async () => {
+  it("opens a shelf's books in slots, filled out to the eight Chat takes", async () => {
     await mount();
     await openShelf("Stoics");
     expect(picker().textContent).toContain("Stoics");
@@ -157,11 +157,11 @@ describe("one shelf is open at a time", () => {
   });
 });
 
-describe("Ask Counsel takes the open shelf and keeps the notebook", () => {
+describe("Ask Chat takes the open shelf and keeps the notebook", () => {
   it("loads the shelf with the notebook untouched — nothing is asked on the way", async () => {
     await mount();
     await openShelf("Stoics");
-    await act(async () => { button("Ask Counsel").click(); });
+    await act(async () => { button("Ask Chat").click(); });
     expect(app.loadFocus).toHaveBeenCalledWith({ kind: "shelf", shelfId: "s1", neurons: { kind: "keep" } });
   });
 
@@ -176,26 +176,26 @@ describe("Ask Counsel takes the open shelf and keeps the notebook", () => {
     expect(host.querySelector(".cc-deck-go")!.textContent).toContain("Takes this shelf to the chat.");
   });
 
-  it("is not offered on Reading now — only a shelf goes to Counsel", async () => {
+  it("is not offered on Reading now — only a shelf goes to Chat", async () => {
     await mount();
     await openShelf("Reading now");
     expect(picker().textContent).toContain("Reading now");
-    expect(button("Ask Counsel")).toBeUndefined();
+    expect(button("Ask Chat")).toBeUndefined();
     expect(host.querySelector(".cc-deck-go")).toBeNull();
   });
 
-  it("shows which shelf Counsel already has", async () => {
+  it("shows which shelf Chat already has", async () => {
     app.loaded = { shelfId: "s1", bookIds: [], excludedIds: [] };
     await mount();
     // With no remembered tab, the loaded shelf is the one that opens.
     expect(picker().textContent).toContain("Stoics");
-    expect(button("Open Counsel")).toBeTruthy();
+    expect(button("Open Chat")).toBeTruthy();
   });
 
   it("cannot send an empty shelf", async () => {
     await mount({ shelves: [...SHELVES, shelf("s3", "Empty")] });
     await openShelf("Empty");
-    expect(button("Ask Counsel").disabled).toBe(true);
+    expect(button("Ask Chat").disabled).toBe(true);
   });
 });
 
@@ -227,7 +227,7 @@ describe("the list of shelves", () => {
 
 /**
  * The card's menu must open on TAP, never on touch-down — see
- * promptSwitcherTap.test.tsx for the same bug in Counsel's tool row. Here the
+ * promptSwitcherTap.test.tsx for the same bug in Chat's tool row. Here the
  * finger that landed on a card to scroll the Library opened its menu, and the
  * menu, being modal, then stopped the page until it was dismissed.
  */
@@ -268,7 +268,7 @@ describe("a book card's menu", () => {
 describe("the Library page around the deck", () => {
   const LIBRARY = readFileSync(resolve(__dirname, "../components/Library.tsx"), "utf8");
 
-  it("opens a book to read without touching what Counsel has loaded", () => {
+  it("opens a book to read without touching what Chat has loaded", () => {
     expect(LIBRARY).toContain('void loadFocus({ kind: "book", bookId, neurons: { kind: "keep" }, alongside: true });');
     // The notebook dialog is no longer on the way to reading a book: the
     // page does not take the dialog-raising loader from the app at all.

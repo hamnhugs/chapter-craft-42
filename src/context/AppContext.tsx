@@ -63,7 +63,7 @@ interface AppState {
    *  shelf/books. */
   resolveLoad: (neurons: NeuronChoice, opts?: { alongside?: boolean }) => Promise<void>;
   /** THE focus writer (docs/library-agent.md L4): every surface that changes
-   *  what Counsel discusses — the dialog, the picker's shelf switch, the AI
+   *  what Chat discusses — the dialog, the picker's shelf switch, the AI
    *  tool — goes through this. Neurons are written first (the async layer);
    *  the toast with Undo is raised after they settle. */
   loadFocus: (action: LoadAction, opts?: { toast?: boolean; navigate?: boolean }) => Promise<LoadReport>;
@@ -75,9 +75,9 @@ interface AppState {
   getShelves: () => BookFolder[];
   setActiveTab: (tab: TabId) => void;
   /** The notebook the Notebooks view shows when opened from the list. Null =
-   *  show Counsel's loaded set. Viewing never changes what Counsel has loaded. */
+   *  show Chat's loaded set. Viewing never changes what Chat has loaded. */
   viewedWikiId: string | null;
-  /** Open one notebook to read, leaving Counsel's loaded set alone. */
+  /** Open one notebook to read, leaving Chat's loaded set alone. */
   openNotebook: (wikiId: string) => void;
   addChapter: (bookId: string, chapter: Chapter) => Promise<void>;
   /** Bulk insert (one request per 100 rows, one state patch). */
@@ -150,7 +150,7 @@ interface AppState {
   setActiveNeurons: (wikiIds: string[]) => Promise<void>;
   /** Add/remove a notebook from the loaded set. Removing the primary promotes the next one; removing the last leaves plain chat. Resolves to the new set. */
   toggleNeuronInSession: (wikiId: string) => Promise<string[]>;
-  /** Unload every notebook — Counsel becomes a plain chat. */
+  /** Unload every notebook — Chat becomes a plain chat. */
   unloadAllNeurons: () => Promise<void>;
   signOut: () => void;
 }
@@ -337,7 +337,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [trashLoading, setTrashLoading] = useState(false);
   // Restore-the-last-book runs once per signed-in session (guard ref).
   const restoredBookRef = useRef(false);
-  // Home is the middle of the dock: Counsel. It works from the first second
+  // Home is the middle of the dock: Chat. It works from the first second
   // (no book, no notebook and no API key required), which the Library — empty
   // for a new account — does not.
   // One exception: a reload forced by a trip to the phone's camera app puts
@@ -392,7 +392,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!user) { setWikis([]); setActiveWikiId(null); setActiveWikiIds([]); activeWikiIdsRef.current = []; workspaceStore.setFilingTarget(null); return; }
     try {
       let [list, active] = await Promise.all([fetchWikis(), fetchActiveWikiIds()]);
-      // A brand-new account gets a first notebook, loaded, so Counsel has
+      // A brand-new account gets a first notebook, loaded, so Chat has
       // somewhere to keep notes from the first conversation. That is a
       // welcome, not a rule: someone who later deletes every notebook has
       // chosen to have none, and must not find "My notes" recreated and
@@ -402,7 +402,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       let hadNotebook = false;
       try { hadNotebook = localStorage.getItem(hadNotebookKey) === "1"; } catch { /* storage blocked */ }
       if (list.length === 0 && !hadNotebook) {
-        const created = await createWiki({ name: "My notes", description: "Your first notebook — Counsel saves notes here." });
+        const created = await createWiki({ name: "My notes", description: "Your first notebook — Chat saves notes here." });
         await loadWikiApi(created.id);
         list = [created]; active = { primary: created.id, set: [created.id], setPersisted: true };
       }
@@ -506,7 +506,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const toggleNeuronInSession = useCallback(async (wikiId: string): Promise<string[]> => {
     const current = activeWikiIdsRef.current;
     // Unloading the primary promotes the next loaded notebook; unloading the
-    // last one leaves Counsel in plain chat, with no notebook at all.
+    // last one leaves Chat in plain chat, with no notebook at all.
     let next: string[];
     if (current.includes(wikiId)) {
       next = current.filter((id) => id !== wikiId);
@@ -520,14 +520,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return next;
   }, [applyActiveSet]);
 
-  /** Plain chat: unload every notebook. Counsel then neither reads saved
+  /** Plain chat: unload every notebook. Chat then neither reads saved
    *  notes nor saves new ones until a notebook is loaded again. */
   const unloadAllNeurons = useCallback(async () => {
     if (activeWikiIdsRef.current.length === 0) return;
     await applyActiveSet([]);
   }, [applyActiveSet]);
 
-  // ── Counsel's focus: one reducer, one writer ─────────────────────────────
+  // ── Chat's focus: one reducer, one writer ─────────────────────────────
   // docs/library-agent.md §1. The reducer (counselFocus.applyLoad) is pure;
   // this is the place that writes each layer through its owner, in the one
   // order that keeps Undo honest: neurons first (async, can fail), then the
@@ -928,7 +928,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [user?.id]);
 
   // Restore the last-opened book across reloads — SILENTLY (no tab jump), so
-  // Counsel/the AI still knows which book is loaded after a refresh. Runs once,
+  // Chat/the AI still knows which book is loaded after a refresh. Runs once,
   // as soon as the library has loaded, and only if nothing is already active.
   useEffect(() => {
     if (!user || restoredBookRef.current || books.length === 0) return;

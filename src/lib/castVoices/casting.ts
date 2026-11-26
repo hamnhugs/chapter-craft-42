@@ -80,19 +80,38 @@ export function voiceLanguages(v: InworldVoice): string[] {
   return [...new Set(all.filter((x): x is string => typeof x === "string" && x.length >= 2).map((x) => x.slice(0, 2).toLowerCase()))];
 }
 
+/** The catalog voices a character may be given: not the narrator's, and in
+ *  the narrator's language. */
+export function eligibleVoices(voices: InworldVoice[], opts: CastingOptions): InworldVoice[] {
+  const narrator = voices.find((v) => v.voice_id === opts.narratorVoiceId);
+  const lang = (opts.language || (narrator && voiceLanguages(narrator)[0]) || "en").slice(0, 2).toLowerCase();
+  return voices.filter((v) => {
+    if (!v.voice_id || v.voice_id === opts.narratorVoiceId) return false;
+    const langs = voiceLanguages(v);
+    return langs.length === 0 || langs.includes(lang);
+  });
+}
+
+/**
+ * The voices to offer the listener for one character, best fit first: the
+ * voice already suggested, then by gender and age, then by name.
+ */
+export function rankVoices(member: CastMember, voices: InworldVoice[], opts: CastingOptions): Array<InworldVoice & { traits: VoiceTraits }> {
+  const score = (t: VoiceTraits, id: string) => (id === member.voiceId ? 1000 : 0)
+    + (member.gender !== "unknown" && t.gender !== "unknown" ? (member.gender === t.gender ? 100 : -100) : 0)
+    + ageFit(member.age, t.age);
+  return eligibleVoices(voices, opts)
+    .map((v) => ({ ...v, traits: voiceTraits(v) }))
+    .sort((a, b) => score(b.traits, b.voice_id) - score(a.traits, a.voice_id) || a.name.localeCompare(b.name));
+}
+
 /**
  * Give a voice to every member who lacks one. Pure: returns a new cast,
  * leaving voices already assigned (and still in the catalog) exactly as they
  * were. A member whose voice has left the catalog is recast, unless locked.
  */
 export function castVoices(cast: CastMember[], voices: InworldVoice[], opts: CastingOptions): CastMember[] {
-  const narrator = voices.find((v) => v.voice_id === opts.narratorVoiceId);
-  const lang = (opts.language || (narrator && voiceLanguages(narrator)[0]) || "en").slice(0, 2).toLowerCase();
-  const eligible = voices.filter((v) => {
-    if (!v.voice_id || v.voice_id === opts.narratorVoiceId) return false;
-    const langs = voiceLanguages(v);
-    return langs.length === 0 || langs.includes(lang);
-  });
+  const eligible = eligibleVoices(voices, opts);
   if (eligible.length === 0) return cast;
   const inCatalog = new Set(voices.map((v) => v.voice_id));
   const traits = new Map(eligible.map((v) => [v.voice_id, voiceTraits(v)]));

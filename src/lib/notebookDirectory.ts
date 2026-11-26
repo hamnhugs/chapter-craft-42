@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 
 /**
  * The notebooks, as the Workspace needs to know them: a name and a colour per
- * id, and which one Counsel has loaded.
+ * id, and which one Chat has loaded.
  *
  * AppContext owns this data and publishes it here. The Workspace panel reads
  * it from here rather than from useApp() because it is also mounted with no
@@ -17,7 +17,7 @@ export interface DirectoryNotebook {
 
 export interface NotebookDirectory {
   notebooks: DirectoryNotebook[];
-  /** Counsel's loaded primary — where new Workspace items are filed. */
+  /** Chat's loaded primary — where new Workspace items are filed. */
   activeId: string | null;
 }
 

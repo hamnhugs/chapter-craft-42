@@ -34,7 +34,7 @@ const SettingsPanel = React.lazy(() => import("@/components/SettingsPanel"));
 // Navigation — the arena shell.
 //
 // One bottom dock on every screen size: four big tabs — the things you
-// collect, home (Counsel), the reader and the things you make. It replaced three different navigations (a desktop top bar,
+// collect, home (Chat), the reader and the things you make. It replaced three different navigations (a desktop top bar,
 // a tablet rail, a phone bar with a "More" sheet) — one layout to learn, the
 // same place for everything on every device.
 //
@@ -44,7 +44,7 @@ const SettingsPanel = React.lazy(() => import("@/components/SettingsPanel"));
 // Existing tab IDs must never change.
 const DOCK_TABS = [
   { id: "library" as const, icon: "style", label: "Library" },
-  { id: "chat" as const, icon: "psychology", label: "Counsel" },
+  { id: "chat" as const, icon: "psychology", label: "Chat" },
   { id: "viewer" as const, icon: "auto_stories", label: "Read" },
   // "wiki" (one open notebook) and "wikis" (the list) are two views of ONE
   // destination: the dock shows only "Notebooks" and lights up for both.
@@ -146,8 +146,8 @@ const Index: React.FC = () => {
               onClick={() => setActiveTab("wiki")}
               title={
                 activeWikis.length > 1
-                  ? `Counsel is using: ${activeWikis.map((w) => w.name).join(", ")} — press ⌘K to switch`
-                  : `Counsel is using: ${activeWiki.name} — press ⌘K to switch`
+                  ? `Chat is using: ${activeWikis.map((w) => w.name).join(", ")} — press ⌘K to switch`
+                  : `Chat is using: ${activeWiki.name} — press ⌘K to switch`
               }
               className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent/10 hover:bg-accent/20 transition-colors text-xs font-body font-medium text-accent max-w-[200px] truncate"
             >

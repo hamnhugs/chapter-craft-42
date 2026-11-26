@@ -136,7 +136,7 @@ const ToolStatusPanel: React.FC<{
    * Render nothing unless something is actually WRONG.
    *
    * The healthy chip ("60 tools · 20 off") was a permanent line of arithmetic
-   * in Counsel's composer that changed only when the user changed settings —
+   * in Chat's composer that changed only when the user changed settings —
    * it reported a number nobody was waiting for, and it cost a slot on a bar
    * that has no slots to spare. `stranded` is different: it means the
    * assistant cannot run the user's tools at all, which is worth interrupting

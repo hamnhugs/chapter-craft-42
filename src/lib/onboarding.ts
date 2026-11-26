@@ -146,7 +146,7 @@ export function buildChecklist(f: ChecklistFacts): ChecklistItem[] {
   return [
     { id: "ai", label: "Connect an AI", hint: "About a minute. There are free ones.", done: f.hasAiKey },
     { id: "book", label: "Add your first book", hint: "A PDF or EPUB, or a YouTube link.", done: f.bookCount > 0 },
-    { id: "ask", label: "Ask Counsel about it", hint: "Any question, typed or spoken.", done: f.askedCounsel },
+    { id: "ask", label: "Ask Chat about it", hint: "Any question, typed or spoken.", done: f.askedCounsel },
     { id: "notebook", label: "Open your notebook", hint: "See what was worth keeping.", done: f.openedNotebook },
   ];
 }

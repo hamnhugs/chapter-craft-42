@@ -99,7 +99,7 @@ const DailyRecall: React.FC<{
             <p className="text-xs text-on-surface-variant mt-1 max-w-xs mx-auto">
               {done > 0
                 ? "Notes you remembered come back later and later; the ones you missed come back tomorrow."
-                : "As Counsel saves notes from your reading and chats, three of them show up here each day."}
+                : "As Chat saves notes from your reading and chats, three of them show up here each day."}
             </p>
             <button onClick={onClose} className="mt-5 px-5 py-2 rounded-xl bg-primary-container text-on-primary-container font-semibold text-sm active:scale-95 transition-transform">Done</button>
           </div>

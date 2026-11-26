@@ -3,7 +3,7 @@ import { poseWorm, REST_PARAMS, VIEW_H, VIEW_W, type Ink, type Shape } from "@/l
 import { WormAnimator, type Mood } from "@/lib/sprite/wormAnimator";
 
 /**
- * The BookWorm — a small creature that lives at the bottom of Counsel and
+ * The BookWorm — a small creature that lives at the bottom of Chat and
  * reacts to the conversation.
  *
  * The app is called BookWorm and has never had one. This is it.
@@ -264,7 +264,7 @@ const BookWorm = React.forwardRef<BookWormHandle, BookWormProps>(function BookWo
 
   // Nothing animates while the tab is hidden or the worm is scrolled out of
   // view. rAF is already throttled in a background tab, but an IntersectionObserver
-  // also covers the case where Counsel is mounted behind another tab of the app.
+  // also covers the case where Chat is mounted behind another tab of the app.
   useEffect(() => {
     const onVis = () => {
       visible.current = !document.hidden;

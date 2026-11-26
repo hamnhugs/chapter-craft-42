@@ -36,12 +36,12 @@ export const TAB_TIPS: Record<TipId, TabTip> = {
       },
       {
         title: "Tap a card",
-        body: "A book's card opens it for reading, hands it to Counsel, or puts it on a shelf.",
+        body: "A book's card opens it for reading, hands it to Chat, or puts it on a shelf.",
       },
     ],
   },
   chat: {
-    name: "Counsel tour",
+    name: "Chat tour",
     steps: [
       {
         title: "Ask me anything",

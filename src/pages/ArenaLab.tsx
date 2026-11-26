@@ -32,7 +32,7 @@ import type { NotebookStore, WikiWithStats } from "@/lib/wikisApi";
  *   #/arena-lab?reader the shell on the Read tab with a real PDF open (a
  *                      document from docs/, served by the dev server), with
  *                      three chapters. `&html` opens an HTML book instead.
- *   #/arena-lab?chat   the shell on Counsel with a reply on it that has every
+ *   #/arena-lab?chat   the shell on Chat with a reply on it that has every
  *                      kind of prose in it (heading, list, quote, rule, code).
  *   #/arena-lab?notebooks the Notebooks list and an open notebook over a
  *                      fixture tree held in memory: create, nest, move and
@@ -215,7 +215,7 @@ That single decision is what lets the rest of the paper exist. Three things foll
 
 The entropy itself is \`H = -Σ p log p\`. See [the paper](https://example.com) for the proof.`;
 
-/** `?chat` — the Counsel tab with a reply already on it. */
+/** `?chat` — the Chat tab with a reply already on it. */
 const ChatLab: React.FC = () => {
   const { injectDisplayMessage } = useChat();
   useEffect(() => {

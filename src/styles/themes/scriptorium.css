@@ -457,7 +457,7 @@
 [data-theme="scriptorium"] .cc-card-face { border-radius: 3px; box-shadow: inset 0 0 0 1px rgba(233, 199, 102, 0.55); }
 [data-theme="scriptorium"] .cc-card-name { font-family: var(--font-headline); font-weight: 700; letter-spacing: 0; }
 
-/* Chat — the text and its gloss. Counsel writes on the leaf, with a rubric
+/* Chat — the text and its gloss. Chat writes on the leaf, with a rubric
    down the margin; you answer in the margin's own colour, lapis ruled in
    gold. A reply long enough to have paragraphs opens on a gilded versal. */
 [data-theme="scriptorium"] .message-bubble-ai {

@@ -420,7 +420,7 @@ export function applyRetrievalBudget(
  * "reference", never names the shelf, and changes silently at the top of the
  * request when the user loads something else — so a conversation that had
  * been about one shelf simply carried on about it (the user's report: "I
- * loaded a new shelf and Counsel ignored it"). This is the part that says,
+ * loaded a new shelf and Chat ignored it"). This is the part that says,
  * in the instructions, WHAT the conversation is about now.
  */
 export interface LoadedFocus {

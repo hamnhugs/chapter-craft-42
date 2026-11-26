@@ -15,7 +15,7 @@ import { resolveWormMood, CHEER_MS, OOPS_MS, SLEEP_MS, WATCH_MS, type MoodSignal
 import { resolvePocketCaption, plainText, CAPTION_MAX, type CaptionSignals } from "@/lib/sprite/pocketCaption";
 
 /**
- * The BookWorm — the companion sprite in Counsel.
+ * The BookWorm — the companion sprite in Chat.
  *
  * WHAT THIS PROTECTS. Four of these are regressions for defects that actually
  * happened while building it, and they are the reason this file exists rather
@@ -46,7 +46,7 @@ import { resolvePocketCaption, plainText, CAPTION_MAX, type CaptionSignals } fro
  *   4. THE VOICE TAP CAN SILENCE THE APP. createMediaElementSource REROUTES an
  *      element: from that moment its audio reaches the speakers only through
  *      the graph you built. If the destination connect is moved after anything
- *      that can throw, a failure there makes Counsel permanently mute — far
+ *      that can throw, a failure there makes Chat permanently mute — far
  *      worse than a still mouth. The connect ORDER is load-bearing.
  *
  * Style follows counselComposer.test.ts: pure logic is exercised directly, and
@@ -713,7 +713,7 @@ describe("the component is a decoration and behaves like one", () => {
 describe("the voice tap cannot silence the app", () => {
   it("connects the destination before it builds anything that can throw", () => {
     // createMediaElementSource REROUTES the element. If this order is inverted,
-    // a failure anywhere after it leaves Counsel permanently mute.
+    // a failure anywhere after it leaves Chat permanently mute.
     const src = TAP.indexOf("createMediaElementSource");
     const dest = TAP.indexOf("source.connect(ctx.destination)");
     const analyser = TAP.indexOf("createAnalyser");
