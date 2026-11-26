@@ -327,7 +327,7 @@
 }
 
 /* The versal. The bar's book glyph becomes the wordmark's own initial: a
-   blackletter C in gold leaf on a lapis ground inside a gilt frame, with
+   blackletter B in gold leaf on a lapis ground inside a gilt frame, with
    the white-dot filigree an illuminator works into the blue. The rest of
    the word follows in the same hand, in ink. */
 [data-theme="scriptorium"] [data-app-header] > div > .material-symbols-outlined.text-accent {
@@ -347,7 +347,7 @@
   margin: 0 0.1rem 0 0.25rem;
 }
 [data-theme="scriptorium"] [data-app-header] > div > .material-symbols-outlined.text-accent::before {
-  content: "C";
+  content: "B";
   position: absolute;
   inset: 0;
   display: grid;
@@ -378,7 +378,7 @@
   font-family: var(--font-display) !important;
 }
 [data-theme="scriptorium"] [data-wordmark]::before {
-  content: "hapter Craft";
+  content: "ookworm Studio";
   font-family: var(--font-display);
   font-weight: 700;
   font-size: 1.6rem;
