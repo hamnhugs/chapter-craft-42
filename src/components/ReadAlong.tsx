@@ -4,7 +4,9 @@ import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -34,6 +36,11 @@ import {
 } from "@/lib/readAlong";
 import { buildTextMap, caretFromPoint, HighlightPill, paintSentence, paintWordText, type TextMap } from "@/lib/readAlongDom";
 import { ReadAlongPlayer, type ReadAlongEnd, type ReadAlongStatus, type ReadAlongVoice } from "@/lib/readAlongPlayer";
+import { CastDirector, castBookStore, type CastBook } from "@/lib/castVoices/director";
+import type { CastMember } from "@/lib/castVoices/attribute";
+import { resolveUtilityModel } from "@/lib/chatHistory";
+import { providerConfigured, providerKey, resolveModel } from "@/lib/providers/registry";
+import { nvidiaNoThinkingBody } from "@/lib/nvidiaCatalog";
 
 /**
  * Read-along for the Read tab: reads the page aloud with the same TTS Counsel
@@ -117,12 +124,107 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
   const [rateOverride, setRateOverride] = useState<number | null>(null);
   const rate = rateOverride ?? settings.ttsRate ?? 1;
   const [voices, setVoices] = useState<InworldVoice[] | null>(null);
+  // One fetch of the catalog, shared by the Voice menu and the casting.
+  const voicesPromiseRef = useRef<Promise<InworldVoice[]> | null>(null);
+  const voiceCatalog = useCallback((): Promise<InworldVoice[]> => {
+    if (!voicesPromiseRef.current) {
+      voicesPromiseRef.current = fetchInworldVoices().then(
+        (v) => { setVoices(v); return v; },
+        () => { setVoices([]); voicesPromiseRef.current = null; return [] as InworldVoice[]; },
+      );
+    }
+    return voicesPromiseRef.current;
+  }, []);
   const loadVoices = useCallback(() => {
     if (voices || !settings.inworldEnabled) return;
-    fetchInworldVoices()
-      .then(setVoices)
-      .catch(() => setVoices([]));
-  }, [voices, settings.inworldEnabled]);
+    void voiceCatalog();
+  }, [voices, settings.inworldEnabled, voiceCatalog]);
+
+  // ── Character voices ─────────────────────────────────────────────────────
+  // Each character speaks in their own voice; the narrator keeps everything
+  // else, "she said" included. Worked out a page ahead of the voice by the
+  // background model (castVoices/director.ts). Off until switched on: it
+  // spends model calls, and more, shorter voice requests.
+  const castPrefKey = `bw_cast_on_${user?.id ?? "anon"}`;
+  const [castOn, setCastOn] = useState(false);
+  useEffect(() => {
+    try { setCastOn(localStorage.getItem(castPrefKey) === "1"); } catch { /* private mode */ }
+  }, [castPrefKey]);
+  const castOnRef = useRef(castOn);
+  castOnRef.current = castOn;
+  const [cast, setCast] = useState<CastMember[]>([]);
+  const castBookRef = useRef<{ bookId: string; uid: string | null; book: CastBook } | null>(null);
+  const directorRef = useRef<CastDirector | null>(null);
+  /** What the page before said, when pages are read in order. */
+  const carryRef = useRef<{ bookId: string; page: number; carry: ReturnType<CastDirector["carryOut"]> } | null>(null);
+  const castNoticeRef = useRef(false);
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+
+  const castBook = useCallback((): CastBook => {
+    const uid = user?.id ?? null;
+    const cur = castBookRef.current;
+    if (cur && cur.bookId === bookId && cur.uid === uid) return cur.book;
+    const book = castBookStore.load(uid, bookId);
+    castBookRef.current = { bookId, uid, book };
+    return book;
+  }, [bookId, user?.id]);
+  useEffect(() => { setCast(castBook().cast); }, [castBook]);
+
+  /** One call to the background model: who says each numbered quote. */
+  const castComplete = useCallback(async (messages: Array<{ role: "system" | "user"; content: string }>, signal?: AbortSignal) => {
+    const s = settingsRef.current;
+    const keys = { apiKey: s.apiKey, geminiApiKey: s.geminiApiKey, nvidiaKeyLast4: s.nvidiaKeyLast4 };
+    const model = resolveUtilityModel(s.utilityModel, s.selectedModel);
+    const { adapter, provider, localId } = resolveModel(model);
+    if (!model || !providerConfigured(provider, keys)) {
+      if (!castNoticeRef.current) {
+        castNoticeRef.current = true;
+        toast.info("Character voices need a chat model — add a model key in Settings. Reading in one voice for now.");
+      }
+      throw new Error("No model configured for character voices");
+    }
+    return adapter.completeChat({
+      model: localId,
+      // A page of dialogue is ~40 quotes ≈ 900 tokens of answer; the rest is
+      // room for a model that thinks first.
+      maxTokens: 3000,
+      apiKey: providerKey(provider, keys),
+      extraBody: provider === "nvidia" ? nvidiaNoThinkingBody(localId) : undefined,
+      signal,
+      messages,
+    });
+  }, []);
+
+  /** `v` with a casting director for `text`, when character voices apply. */
+  const withCast = useCallback((v: ReadAlongVoice, text: string): ReadAlongVoice => {
+    const prev = directorRef.current;
+    const p = propsRef.current;
+    if (prev) {
+      // Reading on in order: the next page hears who was just talking.
+      carryRef.current = { bookId: p.bookId, page: lastCastPageRef.current, carry: prev.carryOut() };
+      prev.dispose();
+      directorRef.current = null;
+    }
+    if (!castOnRef.current || v.engine !== "inworld" || !v.inworldVoiceId) return { ...v, cast: null };
+    const uid = user?.id ?? null;
+    const book = castBook();
+    const c = carryRef.current;
+    const director = new CastDirector(text, {
+      complete: castComplete,
+      voices: voiceCatalog,
+      narratorVoiceId: v.inworldVoiceId,
+      bookTitle: p.bookTitle,
+      book,
+      save: (b) => castBookStore.save(uid, p.bookId, b),
+      onCast: (members) => setCast(members),
+      carry: c && c.bookId === p.bookId && (p.mode === "html" || c.page === p.page - 1 || c.page === p.page) ? c.carry : undefined,
+    });
+    lastCastPageRef.current = p.page;
+    directorRef.current = director;
+    return { ...v, cast: director };
+  }, [castBook, castComplete, voiceCatalog, user?.id]);
+  const lastCastPageRef = useRef(page);
 
   // ── Session state ────────────────────────────────────────────────────────
   const [status, setStatus] = useState<ReadAlongStatus>("idle");
@@ -299,6 +401,7 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
     playerRef.current?.destroy();
     pillRef.current?.destroy();
     detachRef.current?.();
+    directorRef.current?.dispose();
   }, []);
 
   // ── Building the text source from what's rendered ─────────────────────────
@@ -405,8 +508,8 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
     lastCreditedRef.current = from - 1;
     userScrolledAtRef.current = 0;
     setWordPos({ index: from, total: src.words.length });
-    playerRef.current!.start(src.map.text, src.words, from, voiceRef.current, rateRef.current);
-  }, [buildSource, ensurePill, attachInteractions]);
+    playerRef.current!.start(src.map.text, src.words, from, withCast(voiceRef.current, src.map.text), rateRef.current);
+  }, [buildSource, ensurePill, attachInteractions, withCast]);
 
   const stopReading = useCallback(() => {
     continueOnNextTextRef.current = false;
@@ -455,6 +558,9 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
     stopReading();
     pillRef.current?.destroy();
     pillRef.current = null;
+    directorRef.current?.dispose();
+    directorRef.current = null;
+    carryRef.current = null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookId]);
 
@@ -501,15 +607,44 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
     player.seek(to);
   }, []);
 
+  /** Carry on from the current word with the voices as they now stand. */
+  const restartHere = useCallback(() => {
+    const player = playerRef.current!;
+    if (player.state.status === "idle" || !sourceRef.current) return;
+    const at = Math.max(0, currentWordRef.current);
+    lastCreditedRef.current = at - 1;
+    player.start(sourceRef.current.map.text, sourceRef.current.words, at, withCast(voiceRef.current, sourceRef.current.map.text), rateRef.current);
+  }, [withCast]);
+
   const changeVoice = (next: ReadAlongVoice) => {
     setVoiceOverride(next.engine === counselVoice.engine && next.inworldVoiceId === counselVoice.inworldVoiceId ? null : next);
     voiceRef.current = next;
-    const player = playerRef.current!;
-    if (player.state.status !== "idle" && sourceRef.current) {
-      const at = Math.max(0, currentWordRef.current);
-      lastCreditedRef.current = at - 1;
-      player.start(sourceRef.current.map.text, sourceRef.current.words, at, next, rateRef.current);
-    }
+    restartHere();
+  };
+
+  const toggleCast = (on: boolean) => {
+    setCastOn(on);
+    castOnRef.current = on;
+    try { localStorage.setItem(castPrefKey, on ? "1" : "0"); } catch { /* private mode */ }
+    if (on) void voiceCatalog();
+    restartHere();
+  };
+
+  /** The listener picks a character's voice: it sticks, on every page. */
+  const recast = (memberId: string, voiceId: string) => {
+    const book = castBook();
+    book.cast = book.cast.map((m) => (m.id === memberId ? { ...m, voiceId, locked: true } : m));
+    castBookStore.save(user?.id ?? null, bookId, book);
+    setCast(book.cast);
+    restartHere();
+  };
+
+  const forgetCast = () => {
+    castBookStore.clear(user?.id ?? null, bookId);
+    castBookRef.current = null;
+    carryRef.current = null;
+    setCast([]);
+    restartHere();
   };
 
   const cycleSpeed = () => {
@@ -576,6 +711,8 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
   const voiceLabel = voice.engine === "inworld"
     ? (voices?.find((v) => v.voice_id === voice.inworldVoiceId)?.name ?? voice.inworldVoiceId ?? "Inworld")
     : "Device voice";
+  /** Who has spoken, leads first — the Cast menu. */
+  const speakers = useMemo(() => [...cast].sort((a, b) => b.lines - a.lines).slice(0, 40), [cast]);
   const sleepValue = !sleep ? "off" : sleep.kind === "page" ? "page" : sleep.minutes;
   const sleepLabel = !sleep
     ? null
@@ -744,6 +881,56 @@ const ReadAlong: React.FC<ReadAlongProps> = (props) => {
                 </DropdownMenuRadioGroup>
               </DropdownMenuSubContent>
             </DropdownMenuSub>
+            {voice.engine === "inworld" && (
+              <>
+                <DropdownMenuCheckboxItem
+                  checked={castOn}
+                  onCheckedChange={(v) => toggleCast(v === true)}
+                  onSelect={(e) => e.preventDefault()}
+                >
+                  <span className="flex-1">Character voices</span>
+                </DropdownMenuCheckboxItem>
+                {castOn && (
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger>
+                      <span className="flex-1">Cast</span>
+                      <span className="text-xs text-muted-foreground">{speakers.length || "None yet"}</span>
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="max-h-[50dvh] w-60 overflow-y-auto">
+                      {speakers.length === 0 && (
+                        <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                          Characters appear here as they speak. The narrator reads everything else.
+                        </div>
+                      )}
+                      {speakers.map((m) => (
+                        <DropdownMenuSub key={m.id}>
+                          <DropdownMenuSubTrigger>
+                            <span className="flex-1 truncate">{m.name}</span>
+                            <span className="max-w-[6rem] truncate text-xs text-muted-foreground">
+                              {voices?.find((v) => v.voice_id === m.voiceId)?.name ?? m.voiceId ?? "Narrator"}
+                            </span>
+                          </DropdownMenuSubTrigger>
+                          <DropdownMenuSubContent className="max-h-[50dvh] overflow-y-auto">
+                            <DropdownMenuRadioGroup value={m.voiceId ?? ""} onValueChange={(v) => recast(m.id, v)}>
+                              {voices === null && <div className="px-2 py-1.5 text-xs text-muted-foreground">Loading…</div>}
+                              {voices?.map((v) => (
+                                <DropdownMenuRadioItem key={v.voice_id} value={v.voice_id}>{v.name}</DropdownMenuRadioItem>
+                              ))}
+                            </DropdownMenuRadioGroup>
+                          </DropdownMenuSubContent>
+                        </DropdownMenuSub>
+                      ))}
+                      {speakers.length > 0 && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onSelect={forgetCast}>Start the cast over</DropdownMenuItem>
+                        </>
+                      )}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                )}
+              </>
+            )}
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <span className="flex-1">Sleep timer</span>

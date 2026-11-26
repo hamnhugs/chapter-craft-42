@@ -18,12 +18,14 @@
 import {
   alignTimings,
   buildReadChunks,
+  buildVoicedChunks,
   estimateDuration,
   estimateTimings,
   wordAtOffset,
   wordAtTime,
   type ReadChunk,
   type SourceWord,
+  type VoiceSpan,
   type WordTimes,
 } from "@/lib/readAlong";
 import { contextBefore, synthesizeSpeechWithTimestamps, type VoiceStyle } from "@/lib/inworldTts";
@@ -41,11 +43,26 @@ export interface ReadAlongHandlers {
   onNotice?: (message: string) => void;
 }
 
+/**
+ * Character voices for one text (castVoices/director.ts). The player only
+ * needs to know where the quotes are and how to ask who says one; it asks at
+ * the moment it fetches that line's audio, a few seconds ahead of the voice.
+ */
+export interface ReadAlongCast {
+  spans: VoiceSpan[];
+  /** Null = the narrator reads it. Must not reject. */
+  resolve(key: string): Promise<{ voiceId: string; direction?: string } | null>;
+  /** Reading is about to start at this source offset. */
+  warm(at: number): void;
+}
+
 export interface ReadAlongVoice {
   engine: ReadAlongEngine;
   inworldVoiceId?: string;
   /** Model, delivery and direction — the Voice settings, with a book scene. */
   style?: VoiceStyle;
+  /** Inworld only: give each character their own voice. */
+  cast?: ReadAlongCast | null;
 }
 
 interface PreparedChunk {
@@ -199,7 +216,11 @@ export class ReadAlongPlayer {
     this.audioPaused = false;
     const gen = this.generation;
     const max = this.voice.engine === "browser" ? BROWSER_MAX_CHUNK : 240;
-    this.chunks = buildReadChunks(this.text, this.words, wordIndex, max, Math.min(120, max));
+    const cast = this.voice.engine === "inworld" ? this.voice.cast : null;
+    this.chunks = cast?.spans.length
+      ? buildVoicedChunks(this.text, this.words, cast.spans, wordIndex, max, Math.min(120, max))
+      : buildReadChunks(this.text, this.words, wordIndex, max, Math.min(120, max));
+    if (cast && this.words[wordIndex]) cast.warm(this.words[wordIndex].start);
     this.chunkIndex = 0;
     this.currentWord = -1;
     this.emitWord(wordIndex);
@@ -224,12 +245,20 @@ export class ReadAlongPlayer {
     let p = this.prepared.get(i);
     if (!p) {
       const signal = this.abort?.signal;
-      p = synthesizeSpeechWithTimestamps(chunk.text, this.voice.inworldVoiceId || "", undefined, {
+      const narrator = this.voice.inworldVoiceId || "";
+      const style = this.voice.style;
+      const cast = this.voice.cast;
+      // A quote's speaker is asked for here, when its audio is fetched (two
+      // chunks ahead of the voice). No answer, or none in time: the narrator.
+      const who = chunk.voice && cast ? cast.resolve(chunk.voice).catch(() => null) : Promise.resolve(null);
+      p = who.then((c) => synthesizeSpeechWithTimestamps(chunk.text, c?.voiceId || narrator, undefined, {
         signal,
-        style: this.voice.style,
-        // The passage just read, so the narration flows across chunks.
-        context: { previous: contextBefore(this.chunks.map((c) => c.text), i) },
-      }).then(
+        // A line the book says is whispered or shouted is spoken that way;
+        // otherwise the listener's own direction holds for every voice.
+        style: c?.direction ? { ...style, direction: `speak ${c.direction}` } : style,
+        // The passage just read, so the reading flows across chunks.
+        context: { previous: contextBefore(this.chunks.map((x) => x.text), i) },
+      })).then(
         ({ audio, words }) => ({ url: URL.createObjectURL(new Blob([audio], { type: "audio/mpeg" })), tokens: words }),
       );
       // Unhandled-rejection guard for prefetches nobody awaits yet.
